@@ -225,13 +225,20 @@ static bool loose_match(const std::string& a, const std::string& b) {
 int pack_pick(const std::vector<std::string>& keys, const std::string& want) {
     if (want.empty()) return -1;
     for (size_t i = 0; i < keys.size(); ++i) if (keys[i] == want) return (int)i;
+    /* Loose candidates: the one sharing the most words with `want` wins ("zelda ocarina of time master quest" beats "legend of zelda ocarina of
+     * time" for the pack's "legend of zelda ocarina of time master quest"); two different candidates with the same overlap: do not guess. */
     int hit = -1;
+    size_t best = 0;
+    bool tie = false;
+    const std::vector<std::string> ww = words(want);
     for (size_t i = 0; i < keys.size(); ++i) {
         if (keys[i].empty() || !loose_match(keys[i], want)) continue;
-        if (hit >= 0 && keys[(size_t)hit] != keys[i]) return -1;   // two different candidates: do not guess
-        if (hit < 0) hit = (int)i;
+        const std::vector<std::string> wk = words(keys[i]);
+        const size_t score = std::min(wk.size(), ww.size());
+        if (hit < 0 || score > best) { hit = (int)i; best = score; tie = false; }
+        else if (score == best && keys[(size_t)hit] != keys[i]) tie = true;
     }
-    return hit;
+    return tie ? -1 : hit;
 }
 
 /* Game Boy and Game Boy Color packs hold each other's games (Pokemon Red often sits in a GBC folder). */

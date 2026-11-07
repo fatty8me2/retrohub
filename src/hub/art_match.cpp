@@ -139,6 +139,11 @@ std::vector<std::string> thumb_urls(const std::string& system_short, int kind, c
     std::string id, region;
     if (parse_gametdb_name(nointro_name, &id, &region)) {   // GameTDB cover scans, fetched on demand and cached like the rest
         if (kind != 0 && kind != 3) return out;
+        if (!region.empty() && region.back() == '!') {   // "EN!": exactly this folder (a regional sibling's scan: no wandering through the other folders)
+
+            auto us = gametdb::image_urls(system_short, id, kind == 3 ? gametdb::Img::CoverFull : gametdb::Img::Cover, region.substr(0, region.size() - 1));
+            return us;
+        }
         std::vector<std::string> folders = gametdb::region_folders(id, region == "*" ? "" : region);
         if (region != "*" && region.size() == 2 && !folders.empty()) {   // the name's own folder first
             folders.erase(std::remove(folders.begin(), folders.end(), region), folders.end());
@@ -382,6 +387,15 @@ std::string serial_from_key(const std::string& system, const std::string& key) {
     if (system == "ps1" || system == "ps2" || system == "psp") return r.compare(0, 5, "file-") == 0 ? "" : r;
     if (system == "gc" || system == "gba" || system == "nds") { size_t d = r.find('-'); if (d != std::string::npos) r.resize(d); return r; }
     return "";
+}
+
+std::string system_of_key(const std::string& sys, const std::string& key) {
+    size_t c = key.find(':');
+    if (c == std::string::npos || c == 0) return sys;
+    const std::string p = key.substr(0, c);
+    for (const char* s : {"n64", "gba", "gb", "gbc", "gc", "nds", "3ds", "wiiu", "ps1", "ps2", "psp", "nes", "snes", "switch"})
+        if (p == s) return p;
+    return sys;
 }
 
 std::string match_name(const std::vector<DatRec>& dat, const Query& q, std::string* how) {
