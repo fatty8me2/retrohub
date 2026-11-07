@@ -463,6 +463,66 @@ static void test_recover() {
 }
 
 /* ---- the process runner: output, exit code, pause (suspends the whole job), cancel ---- */
+static void test_staging_saves() {
+    {   // saves in stagingSer are moved away, never deleted; the rest of staging goes
+        Dirs d;
+        d.make_staging();
+        write(d.staging / "user" / "save" / "x" / "account.sav", "PRECIOUS");
+        std::string note;
+        CHECK(remove_staging_keeping_saves(d.staging.u8string(), d.root.u8string(), &note));
+        CHECK(!has(d.staging));
+        CHECK(!note.empty());
+        bool found = false;
+        for (fs::directory_iterator it(d.root), end; it != end; ++it)
+            if (it->path().filename().string().find("hookshot-saves-recovered-") == 0)
+                found = slurp(it->path() / "user" / "save" / "x" / "account.sav") == "PRECIOUS";
+        CHECK(found);
+    }
+    {   // no saves: it is just removed, and nothing is made
+        Dirs d;
+        d.make_staging();
+        std::string note;
+        CHECK(remove_staging_keeping_saves(d.staging.u8string(), d.root.u8string(), &note));
+        CHECK(!has(d.staging) && note.empty());
+        CHECK(remove_staging_keeping_saves(d.staging.u8string(), d.root.u8string(), &note));   // already gone
+    }
+    {   // the move fails (recovered parent is a file): staging and its saves are kept
+        Dirs d;
+        d.make_staging();
+        write(d.staging / "user" / "a.sav", "KEEP");
+        write(d.root / "notadir", "file");
+        std::string note;
+        CHECK(!remove_staging_keeping_saves(d.staging.u8string(), (d.root / "notadir").u8string(), &note));
+        CHECK(slurp(d.staging / "user" / "a.sav") == "KEEP");
+        CHECK(!note.empty());
+    }
+    {   // first build, an old folder without user\: not a failure
+        Dirs d;
+        d.make_staging();
+        write(d.old / "stale.txt", "x");
+        std::string err;
+        CHECK(swap_in(d.staging.u8string(), d.game.u8string(), d.old.u8string(), &err));
+        CHECK(slurp(d.game / "hookshot.exe") == "new exe");
+    }
+    {   // first build, an old folder WITH saves: still refused
+        Dirs d;
+        d.make_staging();
+        write(d.old / "user" / "a.sav", "KEEP");
+        std::string err;
+        CHECK(!swap_in(d.staging.u8string(), d.game.u8string(), d.old.u8string(), &err));
+        CHECK(slurp(d.old / "user" / "a.sav") == "KEEP");
+    }
+}
+
+static void test_exe_running() {
+    wchar_t me[MAX_PATH];
+    GetModuleFileNameW(nullptr, me, MAX_PATH);
+    CHECK(exe_running_from(fs::path(me).u8string()));                                  // this very test is running from here
+    Dirs d;
+    CHECK(!exe_running_from((d.root / fs::path(me).filename()).u8string()));         // same file name, other folder
+    CHECK(!swap_in_progress());
+}
+
 static void test_runner() {
     const std::string ps = R"(C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe)";
     if (!has(ps)) { std::printf("SKIP runner tests (no powershell.exe)\n"); return; }
@@ -560,6 +620,8 @@ int main(int argc, char** argv) {
     test_overall();
     test_swap();
     test_recover();
+    test_staging_saves();
+    test_exe_running();
     test_runner();
     test_unpack_selftest();
     std::printf("hookshot build test: %d passed, %d failed\n", g_pass, g_fail);

@@ -203,7 +203,7 @@ void apply_scan() {
                 A.lib.push_back(g);
             }
         }
-        if (!only_native && std::getenv("HUB_SHOT_HOOKSHOT")) {   // Hookshot card screenshots (hookshot_ui.h): Ocarina of Time (Switch 2)
+        if (!only_native && g_headless && std::getenv("HUB_SHOT_HOOKSHOT")) {   // Hookshot card screenshots (hookshot_ui.h): Ocarina of Time (Switch 2)
             hub::GameEntry g;
             g.system = hub::System::Switch;
             g.key = "switch:0400486024dec000";
