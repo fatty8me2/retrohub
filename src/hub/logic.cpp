@@ -79,6 +79,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"discover_sort\": \"" << json::escape(s.discover_sort) << "\",\n"
       << "  \"lib_layout\": \"" << json::escape(s.lib_layout) << "\",\n"
       << "  \"lib_cases_default\": " << (s.lib_cases_default ? "true" : "false") << ",\n"
+      << "  \"lib_cases_classic\": " << (s.lib_cases_classic ? "true" : "false") << ",\n"
       << "  \"lib_shelf_mixed\": " << (s.lib_shelf_mixed ? "true" : "false") << ",\n"
       << "  \"lib_list_col\": \"" << json::escape(s.lib_list_col) << "\",\n"
       << "  \"lib_list_desc\": " << (s.lib_list_desc ? "true" : "false") << ",\n"
@@ -197,6 +198,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     if (!json_bool(j, "lib_cases_default", false) && out->lib_layout == "grid") out->lib_layout = "cases";   // one-time: Cases became the default layout
     out->lib_cases_default = true;
     out->lib_list_col = j.str("lib_list_col", out->lib_list_col);
+    out->lib_cases_classic = json_bool(j, "lib_cases_classic", out->lib_cases_classic);
     out->lib_shelf_mixed = json_bool(j, "lib_shelf_mixed", out->lib_shelf_mixed);
     out->lib_list_desc = json_bool(j, "lib_list_desc", out->lib_list_desc);
     out->cloud_enabled = json_bool(j, "cloud_enabled", out->cloud_enabled);   // legacy sync_states / cloud_saves keys are ignored

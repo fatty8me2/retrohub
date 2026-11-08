@@ -148,6 +148,223 @@ inline float neighbour_x(const CaseDims& c, float cs, const CaseDims& n, float n
 }
 constexpr float kNeighbourBase = 0.66f;   // slot_pose(1).x: enough for two keep cases
 
+/* ================= Coverflow (the default carousel style): a straight coverflow, layout numbers adapted from PyroCade (MIT, Pyrodrifter) =================
+ * World units as above (a keep case is 1.0 high; 1.0 = 323 px of the reference). z here is the engine's z: positive = away from the camera. */
+namespace cf {
+constexpr float kDeg = 0.017453293f;
+constexpr float kDist = 4.64f;       // camera distance in case heights (their perspective 1500 px / 323 px)
+constexpr float kEye = 0.68f;        // camera height above the floor (their vanishing point sits a little above the case centre)
+constexpr float kPivot = 0.5f;       // every case is centred on this height (they pivot about their centre; normalised sizes keep the bottoms close)
+constexpr int kReach = 6;            // cases shown each side before the fade
+constexpr float kFadeSpan = 1.2f;    // ...and the distance over which one more fades out
+constexpr float kHeroX = -0.17f, kHeroZ = -0.40f, kHeroLift = 0.025f, kHeroYaw = -22.f * kDeg, kHeroPitch = -4.f * kDeg;
+constexpr float kNbLift = -0.031f, kNbScale = 0.92f, kNbYaw = 50.f * kDeg;
+constexpr float kMoveSecs = 0.7f, kMediaSecs = 0.85f, kMediaDwell = 0.42f, kIdleSecs = 6.f;
+
+struct Pose { float x = 0, lift = 0, z = 0, yaw = 0, pitch = 0, scale = 1, alpha = 1; };
+inline float nb_x(int a) { return 1.006f + (float)(a - 1) * 0.483f; }
+inline float nb_z(int a) { return 0.356f * (float)a + 0.263f; }
+/* The resting pose of slot k (k >= 0; 0 = the selected case) on the side `sgn` (+1 right, -1 left). */
+inline Pose slot_int(int k, float sgn) {
+    Pose p;
+    if (k <= 0) { p.x = kHeroX; p.lift = kHeroLift; p.z = kHeroZ; p.yaw = kHeroYaw; p.pitch = kHeroPitch; p.scale = 1.f; return p; }
+    p.x = sgn * nb_x(k); p.lift = kNbLift; p.z = nb_z(k); p.yaw = sgn * kNbYaw; p.scale = kNbScale;
+    return p;
+}
+/* The pose for a signed, fractional distance d from the selection: straight lines between the slots, so a case in transit keeps a steady look. */
+inline Pose slot(float d) {
+    const float a = std::fabs(d), sgn = d < 0.f ? -1.f : 1.f;
+    const int k = (int)std::floor(a);
+    const float f = a - (float)k;
+    const Pose p0 = slot_int(k, sgn), p1 = slot_int(k + 1, sgn);
+    Pose p;
+    auto L = [&](float u, float v) { return u + (v - u) * f; };
+    p.x = L(p0.x, p1.x); p.lift = L(p0.lift, p1.lift); p.z = L(p0.z, p1.z); p.yaw = L(p0.yaw, p1.yaw); p.pitch = L(p0.pitch, p1.pitch); p.scale = L(p0.scale, p1.scale);
+    p.alpha = a <= (float)kReach ? 1.f : 1.f - smoothstep01((a - (float)kReach) / kFadeSpan);
+    return p;
+}
+/* Every case is shown about as large as the stage allows whatever its real size: their ds = min(1.5, 323/H, 300/W). */
+inline float display_scale(shelf::Media m) { const CaseDims d = case_dims(m); return std::min(1.5f, std::min(1.f / d.h, (300.f / 323.f) / d.w)); }
+/* The case's centre stands on one height, so its bottom is at: */
+inline float base_lift(const CaseDims& c, float scale) { return kPivot - 0.5f * c.h * scale; }
+
+/* The selected case's idle loop (6 s ease-in-out, starting at rest): bob up to 0.015, yaw 22 -> 26 degrees, pitch -4 -> -3. t in seconds since it settled. */
+struct Idle { float lift = 0, yaw = 0, pitch = 0; };
+inline Idle idle(double t) {
+    const float u = 0.5f - 0.5f * (float)std::cos(6.283185307 * std::fmod(std::max(0.0, t), (double)kIdleSecs) / (double)kIdleSecs);
+    return {0.015f * u, -4.f * kDeg * u, 1.f * kDeg * u};
+}
+
+/* ---- the motion: cubic-bezier(.22, 1, .36, 1) over 0.7 s, restarted from wherever it is when the target moves (no overshoot) ---- */
+inline float ease(float t) {
+    if (!(t > 0.f)) return 0.f;
+    if (t >= 1.f) return 1.f;
+    float lo = 0.f, hi = 1.f, s = t;
+    for (int i = 0; i < 22; ++i) {   // x(s) = t, x(s) = 3(.22)s(1-s)^2 + 3(.36)s^2(1-s) + s^3
+        const float u = 1.f - s, x = 0.66f * s * u * u + 1.08f * s * s * u + s * s * s;
+        if (x < t) lo = s; else hi = s;
+        s = 0.5f * (lo + hi);
+    }
+    return 3.f * s * (1.f - s) + s * s * s;
+}
+constexpr float kEaseSlope0 = 4.5454545f;   // ease'(0) = 3 / (3 * 0.22): how much faster than average the curve starts
+/* The slope of ease() at t: dy/dx at the bezier parameter s with x(s) = t. */
+inline float ease_slope(float t) {
+    t = std::max(0.f, std::min(1.f, t));
+    float lo = 0.f, hi = 1.f, s = t;
+    for (int i = 0; i < 22; ++i) {
+        const float u = 1.f - s, x = 0.66f * s * u * u + 1.08f * s * s * u + s * s * s;
+        if (x < t) lo = s; else hi = s;
+        s = 0.5f * (lo + hi);
+    }
+    const float u = 1.f - s;
+    const float dx = 0.66f * (u * u - 2.f * s * u) + 1.08f * (2.f * s * u - s * s) + 3.f * s * s;
+    return 3.f * u * u / std::max(1e-4f, dx);
+}
+struct EaseState { float from = 0, to = 0, t = 1e9f, out = 0, vel = 0, v0 = 0; };
+/* Moves x toward target; true while moving. A retarget in mid-glide starts the new segment at the speed the carousel already has (a correction term that
+ * dies out with zero slope at the end), so held keys glide instead of kicking at every press; from rest the curve's own fast start is kept. A change of x
+ * from outside (a jump) restarts from the new place. reduced snaps. */
+inline bool ease_step(float& x, EaseState& e, float target, float dt, bool reduced, float dur = kMoveSecs) {
+    if (reduced || !(dur > 0.f)) { x = target; e.from = e.to = e.out = target; e.t = 1e9f; e.vel = 0.f; return false; }
+    const bool was_moving = e.t < dur;
+    if (x != e.out) { e.from = x; e.to = target; e.t = 0.f; e.v0 = (target - x) * kEaseSlope0 / dur; e.vel = 0.f; }
+    else if (target != e.to) {
+        e.from = x; e.to = target; e.t = 0.f;
+        e.v0 = was_moving ? e.vel : (target - x) * kEaseSlope0 / dur;
+        if (was_moving && e.v0 * (target - x) < 0.f) e.v0 = 0.f;   // turning round: no momentum backwards (the media never dips on its way back out)
+    }
+    if (e.t >= dur) { x = e.out = e.to; e.vel = 0.f; return false; }
+    if (!(dt > 0.f)) return true;
+    const float h = std::min(dt, 0.1f);
+    e.t += h;
+    if (e.t >= dur) { x = e.out = e.to; e.vel = 0.f; return false; }
+    const float D = e.to - e.from, tt = e.t / dur, k = 1.f - tt;
+    float xn = e.from + D * ease(tt) + (e.v0 - D * kEaseSlope0 / dur) * e.t * k * k;
+    const float C = e.v0 - D * kEaseSlope0 / dur;
+    float vel = D * ease_slope(tt) / dur + C * (k * k - 2.f * e.t * k / dur);   // the derivative of the curve at its end, not the average over the step
+    if (D > 0.f && xn >= e.to) { xn = e.to; vel = 0.f; } else if (D < 0.f && xn <= e.to) { xn = e.to; vel = 0.f; }   // never past the target
+    e.vel = vel;
+    x = e.out = xn;
+    return true;
+}
+
+/* ---- wide boxes: the neighbours may not run into the selected case ---- */
+/* Screen x extent (units of U at depth 0) of a case at x, depth z, turned by yaw, scaled: l / r. */
+inline void screen_extent(const CaseDims& c, float scale, float yaw, float x, float z, float* l, float* r) {
+    const float ct = std::cos(yaw), st = std::sin(yaw);
+    float lo = 1e9f, hi = -1e9f;
+    for (int i = 0; i < 4; ++i) {
+        const float lx = (i & 1 ? 0.5f : -0.5f) * c.w * scale, lz = (i & 2 ? 0.5f : -0.5f) * c.d * scale;
+        const float k = kDist / std::max(0.4f, kDist + z - lx * st + lz * ct);
+        const float px = (x + lx * ct + lz * st) * k;
+        lo = std::min(lo, px); hi = std::max(hi, px);
+    }
+    *l = lo; *r = hi;
+}
+/* How far (>= 0) the first neighbour on one side must stand beyond its slot so its inner edge clears the selected case (c, drawn at scale cs) by a gap. */
+inline float neighbour_extra(const CaseDims& c, float cs, const CaseDims& n, float ns, bool right, float gap = 0.03f) {
+    float hl, hr;
+    screen_extent(c, cs, kHeroYaw, kHeroX, kHeroZ, &hl, &hr);
+    const float edge = right ? hr + gap : -hl + gap;   // the left side is the mirror image (positive yaw / x below)
+    const float ct = std::cos(kNbYaw), st = std::sin(kNbYaw), sc = kNbScale * ns;
+    float need = -1e9f;
+    for (int i = 0; i < 4; ++i) {
+        const float lx = (i & 1 ? 0.5f : -0.5f) * n.w * sc, lz = (i & 2 ? 0.5f : -0.5f) * n.d * sc;
+        const float xr = lx * ct + lz * st, zr = -lx * st + lz * ct;
+        const float k = kDist / std::max(0.4f, kDist + nb_z(1) + zr);
+        need = std::max(need, edge / k - xr);
+    }
+    return std::max(0.f, need - nb_x(1));
+}
+/* ---- the disc / cartridge that slides out from behind the selected case ---- */
+enum class MediaKind { None, Disc, Card };
+struct MediaSpec {
+    MediaKind kind = MediaKind::None;
+    float w = 0, h = 0, thick = 0;                  // a card: world units for a 190 mm tall case = 1.0 (a disc: see disc_dia)
+    float slide = 0, rise = 0, yaw = 0, roll = 0;   // fractions of the case width / height, radians (yaw: face turned toward the centre; roll: clockwise on screen)
+    bool mini = false;
+};
+inline MediaSpec media_spec(shelf::Media m) {
+    using shelf::Media;
+    MediaSpec s;
+    auto card = [&](float wmm, float hmm, float tmm) { s.kind = MediaKind::Card; s.w = wmm / 190.f; s.h = hmm / 190.f; s.thick = tmm / 190.f; s.slide = 0.71f; s.rise = 0.28f; s.yaw = 17.f * kDeg; s.roll = 9.f * kDeg; };
+    auto disc = [&](bool mini) { s.kind = MediaKind::Disc; s.mini = mini; s.thick = 1.2f / 190.f; s.slide = 0.65f; s.rise = 0.04f; s.yaw = 15.f * kDeg; s.roll = 14.f * kDeg; };
+    switch (m) {
+        case Media::SwitchCase: card(21.f, 31.f, 3.f); break;
+        case Media::DsCase: case Media::N3dsCase: card(33.f, 35.f, 3.8f); break;
+        case Media::N64Cart: card(116.f, 76.6f, 18.5f); break;
+        case Media::SnesCart: card(135.85f, 87.7f, 19.7f); break;
+        case Media::NesCart: card(120.f, 134.f, 17.f); break;
+        case Media::GbCart: case Media::GbcCart: card(57.f, 65.f, 7.8f); break;
+        case Media::GbaCart: card(60.f, 35.f, 8.f); break;
+        case Media::PspCase: card(65.f, 64.f, 4.2f); break;   // the UMD
+        case Media::GcCase: disc(true); break;
+        case Media::Ps1Jewel: case Media::Ps2Case: case Media::WiiUCase: case Media::Generic: disc(false); break;
+    }
+    return s;
+}
+/* Disc diameter in world units for a case (before the display scale): 0.94 min(W, H), a GameCube mini-disc 8/12 of that. */
+inline float disc_dia(const MediaSpec& s, const CaseDims& c) { return 0.94f * std::min(c.w, c.h) * (s.mini ? 8.f / 12.f : 1.f); }
+/* How far (world units, at amount 1) the media sits right of / above the case centre. `scale` = the case's whole scale, mw / mh = the media's size (scaled),
+ * `far_limit` = the world x (at the case's depth) its far edge must stay left of (the next neighbour). */
+struct MediaOffset { float out = 0, up = 0; };
+inline MediaOffset media_offset(const MediaSpec& s, const CaseDims& c, float scale, float mw, float mh, float case_x, float far_limit) {
+    MediaOffset o;
+    const float W = c.w * scale, H = c.h * scale;
+    const float reach = far_limit - case_x - 0.5f * mw * std::cos(s.yaw);   // the most the media may sit right of the case centre
+    o.out = std::min(s.slide * W, reach);
+    o.out = std::max(o.out, std::min(0.25f * W, reach));   // some of it always shows, but never into the next case
+    o.out = std::max(o.out, 0.f);
+    o.up = s.kind == MediaKind::Disc ? std::max(s.rise * H, 0.5f * (mh - H)) : s.rise * H;
+    return o;
+}
+/* Who has their media out: the selected case after a 420 ms dwell (cancelled when the selection moves on), slid back in over 0.85 s on leaving. */
+struct MediaSlot { int idx = -1; float dwell = 0, x = 0; EaseState es; };
+struct MediaReveal {
+    static constexpr int kN = 6;
+    MediaSlot s[kN];   // s[0]: the selected case; the others: cases whose media is still sliding back in
+    void reset() { for (MediaSlot& m : s) m = MediaSlot(); }
+    void step(int focus, bool show, float dt, bool reduced) {
+        if (reduced) {
+            reset();
+            s[0].idx = focus; s[0].x = (show && focus >= 0) ? 1.f : 0.f;
+            s[0].es.from = s[0].es.to = s[0].es.out = s[0].x;
+            return;
+        }
+        if (s[0].idx != focus) {
+            MediaSlot back;
+            bool had = false;
+            for (int k = 1; k < kN; ++k) if (s[k].idx == focus && focus >= 0) { back = s[k]; had = true; s[k] = MediaSlot(); break; }
+            if (s[0].idx >= 0 && s[0].x > 0.002f) {   // the old selection's media slides back: it takes a free slot, or evicts the one least out (never one that is further out)
+                int worst = 1;
+                for (int k = 1; k < kN; ++k) { if (s[k].idx < 0) { worst = k; break; } if (s[k].x < s[worst].x) worst = k; }
+                if (s[worst].idx < 0 || s[worst].x <= s[0].x) s[worst] = s[0];
+            }
+            s[0] = had ? back : MediaSlot();
+            s[0].idx = focus; s[0].dwell = (had && back.x > 0.001f) ? kMediaDwell : 0.f;   // still (partly) out: no dwell, carry on from where it is
+        }
+        if (show && focus >= 0) s[0].dwell += std::max(0.f, dt); else s[0].dwell = 0.f;
+        ease_step(s[0].x, s[0].es, (show && focus >= 0 && s[0].dwell >= kMediaDwell) ? 1.f : 0.f, dt, false, kMediaSecs);
+        for (int k = 1; k < kN; ++k) {
+            if (s[k].idx < 0) continue;
+            ease_step(s[k].x, s[k].es, 0.f, dt, false, kMediaSecs);
+            if (s[k].x <= 0.001f && s[k].es.t >= kMediaSecs) s[k] = MediaSlot();
+        }
+    }
+    float amount(int idx) const { for (const MediaSlot& m : s) if (m.idx == idx && idx >= 0) return m.x; return 0.f; }
+    bool any() const { for (const MediaSlot& m : s) if (m.idx >= 0 && m.x > 0.001f) return true; return false; }
+};
+/* What the info panel was built for: the text is rebuilt when any of it changes (the game actually shown, not only the carousel's focus). */
+struct InfoKey {
+    int focus = -2, idx = -2, tick = -1; uint64_t sig = ~0ull, gen = ~0ull; float w = 0, fs = 0; bool tight = false;
+    bool same(const InfoKey& o) const { return focus == o.focus && idx == o.idx && tick == o.tick && sig == o.sig && gen == o.gen && std::fabs(w - o.w) <= 2.f && fs == o.fs && tight == o.tight; }
+};
+/* The selected-case text block: fades in with a 12 px rise over 0.45 s on every new selection (t = seconds since the selection). */
+inline float info_alpha(float t) { return std::max(0.f, std::min(1.f, t / 0.45f)); }
+inline float info_rise(float t) { const float k = 1.f - info_alpha(t); return 12.f * k * k; }
+}  // namespace cf
+
 /* ---- the spring that moves the carousel ---- */
 /* One frame of a soft, slightly under-damped spring toward `target` (the stiffer the further away it is, so a long run keeps up).
  * reduced_motion snaps. Returns true while still moving. */
