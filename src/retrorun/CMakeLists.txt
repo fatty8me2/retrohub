@@ -70,6 +70,10 @@ add_executable(retrorun_resync_test test_resync.cpp rollback.cpp)
 target_include_directories(retrorun_resync_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
 add_executable(retrorun_dropin_test test_dropin.cpp rollback.cpp ../n64run/spectate.cpp)
 target_include_directories(retrorun_dropin_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../n64run)
+# Join fingerprint game identity (joinid.h, netcore-H4): zip vs unpacked, ROM headers, disc sheets and serials.
+add_executable(retrorun_joinid_test test_joinid.cpp)
+target_include_directories(retrorun_joinid_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(retrorun_joinid_test PRIVATE hubcommon hubminiz)
 
 # QA helper (not shipped): writes a command into control.json with the hub's own sender, runctl::send_command_ex. Used by qa\ctl_headless.ps1 / qa\handoff.ps1.
 add_executable(retrorun_ctl_send ctl_send.cpp)
