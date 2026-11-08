@@ -741,6 +741,7 @@ extern hub::gs::Store GSTORE;
 void gs_load();   // after the vault dir is known
 hub::gs::Values gs_values_for(const hub::GameEntry& e);   // resolved incl. the global fullscreen default
 bool gs_set_game_value(const hub::GameEntry& e, const std::string& key, const std::string& value);   // the per-game override, saved (same path as the Settings rows)
+bool gs_set_system_value(hub::System sys, const std::string& key, const std::string& value);   // the system default (e.g. Switch "switch.runner"), saved
 bool gs_has_game_section(const hub::GameEntry& e);
 void gs_draw_game_section(const hub::GameEntry& e);       // details modal
 void gs_draw_defaults_area();                              // Settings page
@@ -1076,7 +1077,7 @@ std::set<std::string> hidden_game_keys();
 void apply_located_paths(std::vector<hub::GameEntry>* lib, const std::map<std::string, std::string>& preferred);
 void ps1_bios_ask_shot();   // screenshot aid
 void ps2_bios_ask(const std::string& key);   // ps1_ui.cpp: "PlayStation 2 BIOS" prompt (pad-friendly folder choice)
-bool switch_ready_or_ask(const hub::GameEntry& e, const std::string& install_dir);   // switch_ui.cpp: keys + firmware present (else the prompt opens for the game)
+bool switch_ready_or_ask(const hub::GameEntry& e, const std::string& install_dir, hubemu::Kind kind = hubemu::Kind::Lichii);   // switch_ui.cpp: keys + firmware present (else the prompt opens for the game)
 void switch_setup_ask_shot();      // switch_ui.cpp: the prompt without a game (screenshots)
 void draw_switch_dialogs();        // switch_ui.cpp
 void hookshot_av1_ask(const hub::GameEntry& e);   // hookshot_run_ui.cpp: "movies need Microsoft's AV1 Video Extension" prompt before Hookshot starts
@@ -1092,6 +1093,10 @@ void ps1_settings_ui();
 void emu_modal_begin(const char* name, bool* open_flag);
 void emu_modal_begin(const char* name, bool* open_flag);
 void draw_emulator_dialogs();
+bool nxprep_gate(const hub::GameEntry& e, const std::string& fritchii_dir);   // nx_prep_ui.cpp: Fritchii's one-time copy of keys / firmware / shaders from Lichii; true = launch waits for the job
+void poll_nxprep();
+void draw_nxprep_dialog();
+bool fritchii_running();   // launch.cpp: the running Switch game is Fritchii (not Lichii / Hookshot)
 
 std::vector<hubui::fg::Owned> owned_snapshot();   // friend_games_ui.cpp: what this library owns (sys, key, catalog id, title; clean-name and pack aliases too)
 void page_discover();   // page_discover.cpp

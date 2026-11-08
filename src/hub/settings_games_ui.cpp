@@ -104,6 +104,14 @@ void options_grouped(hub::System sys, const std::string& game_key, int level) {
 
 }  // namespace
 
+bool gs_set_system_value(hub::System sys, const std::string& key, const std::string& value) {
+    std::string n;
+    const hub::gs::Option* o = hub::gs::find_option(key);
+    if (o && !hub::gs::normalize(*o, value, &n)) return false;
+    GSTORE.set_system(sys, key, o ? n : value);
+    return GSTORE.save(hub::saves::vault_dir());
+}
+
 bool gs_has_game_section(const hub::GameEntry& e) { return !hub::gs::options_for(e.system).empty(); }
 
 void gs_draw_game_section(const hub::GameEntry& e) {   // body of the details "Settings" tab
