@@ -182,36 +182,6 @@ std::vector<Identity> older_identities(const std::string& data_dir, const std::s
 void dedupe_requests(const std::vector<Friend>& friends, std::vector<Request>& incoming, std::vector<Request>& outgoing,
                      const std::string& self_uid = "");
 
-/* ---- the PCs signed in to this account (per-PC credentials, docs/ACCOUNTS.md) ----
- * Every PC that connects with an up-to-date client gets its own secret from the server; the server keeps a small list. Locking a PC out
- * deletes its entry, so its next connect is refused. The first connect after an update swaps this PC's identity.json secret for its own
- * (same file format: an older RetroHub still reads it). */
-struct DeviceInfo {
-    std::string id, pc, cdev, name;   // id: the server's id; pc: the PC's own id; cdev: its cloud-sync device id (links "Stop syncing" to it); name: its computer name
-    int64_t created = 0, seen = 0;    // ms since epoch
-    bool current = false;             // this PC
-};
-struct DeviceList {
-    std::vector<DeviceInfo> devices;
-    int cap = 8;
-    bool legacy = false;              // a PC that has not updated may still use the shared secret
-    bool loaded = false;
-};
-/* The answer to the last lock-out / sign-out / delete request. seq bumps on every answer, so the UI can tell a new one. */
-struct AccountResult {
-    int seq = 0;
-    std::string op;       // revoke_device | revoke_others | sign_out | delete_account
-    bool ok = false;
-    std::string reason;   // not-found | self | needs-device | confirm-mismatch | rate-limited | ...
-    int count = 0;        // revoke_others: how many PCs were locked out
-};
-/* Pure rules (tested): the plain sentence for a lock-out / delete answer. */
-std::string account_result_text(const AccountResult& r);
-/* True when `typed` confirms deleting the account: the username or the friend code, any case, spaces at the ends ignored. */
-bool delete_confirmation_ok(const std::string& typed, const std::string& username, const std::string& friend_code);
-/* Plain-English status for a close the client will not retry (4003). */
-extern const char* const kSignedOutStatus;
-
 class FriendsClient {
   public:
     FriendsClient();
@@ -314,22 +284,6 @@ class FriendsClient {
     const AdminInvites& admin_invites() const;
     void admin_request_pending();                 // asks for the waiting accounts (the Pending queue); the answer is admin_pending_list()
     const AdminList& admin_pending_list() const;  // the waiting accounts (complete list, newest activity first); empty when nobody waits
-
-    /* ---- account lifecycle (all need a welcomed connection; the answer lands in account_result() / devices()) ---- */
-    void request_devices();                                        // ask the server for the PCs on this account
-    const DeviceList& devices() const;
-    int devices_version() const;                                   // bumps whenever devices() changed
-    void revoke_device(const std::string& id, const std::string& cdev = std::string());   // lock one PC out (by server id, or by its cloud device id)
-    void revoke_other_pcs();                                       // lock out every other PC; the shared secret and every old account code stop working
-    void sign_out_this_pc();                                       // the server drops this PC's credential; answer "sign_out" in account_result()
-    void release_username();                                       // give the username up (held for you 7 days)
-    void delete_account(const std::string& typed);                 // irreversible; `typed` must pass delete_confirmation_ok on the server too
-    const AccountResult& account_result() const;
-    /* After a "sign_out" answer: forgets the identity on this PC (identity.json, the vault copy and the per-user backup; the account code
-     * reminder is the caller's job) and restarts as a brand-new anonymous account. Saves and games are not touched. */
-    bool forget_identity_and_restart();
-    std::string my_pc_id() const;                                  // this install's stable id (made once, kept in friends-pc.txt)
-    bool server_has_devices() const;                               // the connected server offers per-PC sign-ins (an older server does not: nothing changes for this PC and the PC tools stay hidden)
 
     /* state */
     const std::vector<Friend>& friends() const;
