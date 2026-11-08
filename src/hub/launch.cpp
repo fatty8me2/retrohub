@@ -37,6 +37,7 @@
 #include "third_party/stb_image.h"
 #include "app.h"
 #include "launch_guard_logic.h"
+#include "launch_logic.h"
 #include "exit_combo.h"
 #include "remote_play.h"
 #include "hint_popup.h"
@@ -498,15 +499,11 @@ std::string find_core(const std::string& name) {
 std::string quote(const std::string& s) { return winutil::quote_arg(s); }
 
 /* Game window caption: "<title> — RetroHub" (UTF-8 em dash), quoted for the command line. */
-std::string title_arg(const std::string& game_title) {
-    std::string t = game_title;
-    t.erase(std::remove(t.begin(), t.end(), '"'), t.end());   // a quote would break the argument
-    return " --title " + quote(t + " \xE2\x80\x94 RetroHub");
-}
+std::string title_arg(const std::string& game_title) { return hubui::title_arg(game_title); }   // launch_logic.h
 
 /* retrorun names the DS save <stem>.srm after the ROM file. A zipped ROM is extracted as rom.<ext>, so pass the inner name's stem. */
 std::string save_stem_arg(const hub::GameEntry& e) {
-    return e.save_stem.empty() ? std::string() : " --save-stem " + quote(e.save_stem);
+    return hubui::save_stem_arg(e.save_stem);
 }
 
 /* Env for every Smash Classic launch: ROM hand-off + vault save path. Migrates the legacy save once (copy, never delete). */
@@ -939,10 +936,9 @@ void play_entry(const hub::GameEntry& e_in) {
     }
     switch (e.system) {
         case hub::System::N64: {
-            std::string args = "--rom " + quote(e.path) + " --game " + (e.catalog_id.empty() ? "unknown" : e.catalog_id) +
-                               " --save-dir " + quote(battery) + title_arg(e.title) + controls_arg("n64", e.key);
+            std::string args = hubui::n64_base_args(e.path, e.catalog_id, battery, e.title) + controls_arg("n64", e.key);
             args += hubui::n64_extra_args(gs_values_for(e));
-            if (e.catalog_id == "remix" || e.catalog_id == "smash64") {   // Smash Remix / Smash 64 ROM: VS results for rivals, party mode and brackets
+            if (hubui::n64_wants_result_file(e.catalog_id)) {   // Smash Remix / Smash 64 ROM: VS results for rivals, party mode and brackets
                 ri.result_file = hub::data_dir() + "n64_result.json";
                 { std::error_code ec; std::filesystem::remove(std::filesystem::u8path(ri.result_file), ec); }
                 args += " --result-file " + quote(ri.result_file);
@@ -953,7 +949,7 @@ void play_entry(const hub::GameEntry& e_in) {
             const bool tp_on = args.size() > pre_tp;   // a state would restore the cartridge's save too: no resume then
             args += qm_args(ri, e, true);
             args += resume_arg(e, battery, states, tp_on);   // Wave 3 R1: n64run --resume loads <state-dir>/auto.state (offline only)
-            if (args.find(" --resume") != std::string::npos && args.find("--state-dir ") == std::string::npos) args += " --state-dir " + quote(states);
+            args = hubui::ensure_state_dir_for_resume(args, states);
             if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
                 std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
                 if (!emu.empty()) args += " --emu-dir " + quote(no_slash(dir_of(emu)));
@@ -964,17 +960,16 @@ void play_entry(const hub::GameEntry& e_in) {
         case hub::System::GBA:
         case hub::System::GB:
         case hub::System::GBC: {
-            std::string core = find_core(e.system == hub::System::GBA ? "mgba" : A.st.gb_core);
+            std::string core = find_core(hubui::retro_core_name(e.system, A.st.gb_core));
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
             const RealBootPlan rb_plan = real_boot_plan(e);
             const bool rb_drops = rb_plan.use && hub::realboot::drops_resume(e.system);   // a real startup replaces the resume
-            std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + resume_arg(e, battery, states, rb_drops) + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+            std::string args = hubui::retro_base_args(core, e.path, sys, battery, states, resume_arg(e, battery, states, rb_drops), e.title, e.save_stem) + controls_arg("retro", e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             {   // the console's own startup (boot ROM / BIOS of the player); a resumed state would skip it
                 bool dr = false;
                 std::string rb = real_boot_retro_args(e, real_boot_plan(e), &dr);
-                if (dr) { size_t k = args.find(" --resume"); if (k != std::string::npos) args.erase(k, 9); }
+                if (dr) args = hubui::erase_resume_arg(args);
                 args += rb;
             }
             args += cheats_launch_args(e, false, true, nullptr);
@@ -984,11 +979,9 @@ void play_entry(const hub::GameEntry& e_in) {
         }
         case hub::System::NES:
         case hub::System::SNES: {   // Nestopia UE (NES) / Snes9x (SNES) through retrorun; battery .srm in the vault, auto-resume state like GBA
-            const bool nes = e.system == hub::System::NES;
-            std::string core = find_core(nes ? "nestopia" : "snes9x");
+            std::string core = find_core(hubui::retro_core_name(e.system, A.st.gb_core));
             if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
-            std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys + " --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + resume_arg(e, battery, states, false) + title_arg(e.title) + save_stem_arg(e) + controls_arg(sys, e.key);
+            std::string args = hubui::retro_base_args(core, e.path, sys, battery, states, resume_arg(e, battery, states, false), e.title, e.save_stem) + controls_arg(sys, e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             args += " --max-local " + std::to_string(hubcaps::runner_local_seats(e.system, hub::find_game(e.catalog_id)));   // seats of this game: retrorun never boots an adapter for a 1-2 player game
             args += cheats_launch_args(e, false, true, nullptr);
@@ -997,10 +990,9 @@ void play_entry(const hub::GameEntry& e_in) {
             break;
         }
         case hub::System::NDS: {   // melonDS DS core; no --resume (a stale auto state could overwrite a save synced from another PC)
-            std::string core = find_core("melondsds");
+            std::string core = find_core(hubui::retro_core_name(hub::System::NDS, A.st.gb_core));
             if (core.empty()) { set_notice("Emulator core for Nintendo DS not found (cores folder)."); return; }
-            std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system nds --save-dir " + quote(battery) +
-                               " --state-dir " + quote(states) + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
+            std::string args = hubui::retro_base_args(core, e.path, "nds", battery, states, "", e.title, e.save_stem) + controls_arg("retro", e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             args += real_boot_retro_args(e, real_boot_plan(e), nullptr);   // DS menu through the player's BIOS + firmware
             args += cheats_launch_args(e, false, true, nullptr);
