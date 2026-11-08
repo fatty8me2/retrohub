@@ -139,6 +139,19 @@ int main() {
         CHECK(!hubui::game_selectable("wiiu:sm3dw", 2, {h, g1, g2}, 0, true).ok);   // cap still applies
     }
 
+    {   /* the producer of the room "v:<catalog id>" version ids (my_games calls add_version_id) */
+        using hub::System;
+        std::map<std::string, std::string> m;
+        const System with[] = {System::GB, System::GBC, System::GBA, System::NES, System::SNES, System::NDS};
+        for (System s : with) hubcaps::add_version_id(&m, s, std::string("g") + std::to_string((int)s), "key" + std::to_string((int)s));
+        CHECK(m.size() == 6);
+        for (System s : with) { auto it = m.find("v:g" + std::to_string((int)s)); CHECK(it != m.end() && it->second == "key" + std::to_string((int)s)); }
+        std::map<std::string, std::string> none;
+        for (System s : {System::N64, System::GC, System::N3DS, System::PS1, System::PS2, System::WiiU}) hubcaps::add_version_id(&none, s, "x", "k");
+        hubcaps::add_version_id(&none, System::GBA, "", "k");   // no catalog id: nothing to name (the key itself already differs)
+        CHECK(none.empty());
+    }
+
     /* remote_play.h: args per docs/REMOTE_PLAY.md, exit texts, attach timing, launch fragment */
     CHECK(hubrp::room_name("ABCD", 3) == "ABCD-3");
     CHECK(hubrp::guest_count(1) == 0 && hubrp::guest_count(2) == 1 && hubrp::guest_count(4) == 3 && hubrp::guest_count(9) == 3);

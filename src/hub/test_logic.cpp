@@ -94,6 +94,18 @@ int main() {
         CHECK(game_selectable("tetris", 4, {h, same, old}, 0).ok);
         CHECK(game_selectable("tetris", 4, {old, h}, 0).ok);   // old host: nothing to compare
         CHECK(game_selectable("tetris", 4, {h, jp}, 0, true).ok);   // remote play: guests need no copy
+        PeerInfo jp2{3, "Nina", true, {{"v:tetris", "gb:tetris-bbbb"}}, {"tetris"}};
+        CHECK(game_selectable("tetris", 4, {h, jp, jp2}, 0).reason == "Hal has a different version of this game (region or revision)");   // the host is the odd one out
+        CHECK(game_selectable("tetris", 4, {h, same, jp, jp2}, 0).reason == "Mickey has a different version of this game (region or revision)");
+    }
+    {   /* a library of 2,000 games: every hello part stays under the server's text limit (4096) and nothing is lost */
+        std::map<std::string, std::string> big;
+        std::vector<std::string> bigk;
+        for (int i = 0; i < 2000; ++i) { big["v:game" + std::to_string(i)] = "gba:abcd-1234567" + std::to_string(i % 10); bigk.push_back("gba:game" + std::to_string(i) + "-12345678"); }
+        auto bm = hello_messages("2", big, bigk, 3000, "1.0.0");
+        PeerInfo bp; Json bj; bool fits = true;
+        for (auto& m : bm) { fits = fits && m.size() <= 3200 && json::parse(m, &bj) && parse_hello(bj, &bp); }
+        CHECK(fits && bp.games == big && bp.keys == bigk && bp.hello_complete());
     }
     CHECK(game_selectable("gba:abcd-1234", 2, {a, b, c}, 0).reason.find("too many") == 0);
     PeerInfo d; d.slot = 3; d.name = "Di";
