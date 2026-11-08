@@ -101,11 +101,11 @@ $hashSave = $runA.Hash
 Add-Result "2a PC A: 600 frames writes SRAM + auto.state" ((Test-Path "$($dA.Battery)\sram.srm") -and (Test-Path "$($dA.States)\auto.state") -and ($hashSave -ne "")) "hash $hashSave"
 $shaA = Get-Sha "$($dA.Battery)\sram.srm"
 $syncA = Invoke-Sync $VA -States
-Add-Result "2b PC A -> SYNC pushes SRAM and auto.state" ($syncA.Ok -eq 1 -and $syncA.Pushed -eq 2) "pushed=$($syncA.Pushed)"
+Add-Result "2b PC A -> SYNC pushes SRAM, auto.state and its .plan" ($syncA.Ok -eq 1 -and $syncA.Pushed -eq 3) "pushed=$($syncA.Pushed)"   # retrorun writes a .plan sidecar next to every state; it syncs with it
 
 # ---------------------------------------------------------------- 3. PC B pulls and resumes
 $syncB = Invoke-Sync $VB -States
-Add-Result "3a PC B <- SYNC pulls both files" ($syncB.Ok -eq 1 -and $syncB.Pulled -eq 2) "pulled=$($syncB.Pulled)"
+Add-Result "3a PC B <- SYNC pulls SRAM, auto.state and its .plan" ($syncB.Ok -eq 1 -and $syncB.Pulled -eq 3) "pulled=$($syncB.Pulled)"
 $shaB0 = Get-Sha "$($dB.Battery)\sram.srm"
 Add-Result "3b SRAM on B is byte-identical to A" ($shaB0 -eq $shaA -and $shaA -ne "MISSING") "A $shaA / B $shaB0"
 $rB = Invoke-Rr $RomB $dB @("--resume", "--frames", "0")
