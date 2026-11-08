@@ -106,7 +106,7 @@ std::string Store::to_json() const {
     json::Value games = json::make_object();
     for (auto& kv : g_) {
         const GameState& s = kv.second;
-        if (s.on.empty() && s.custom.empty() && s.backup.empty() && s.values.empty()) continue;
+        if (s.on.empty() && s.custom.empty() && s.backup.empty() && s.values.empty() && s.updated <= 0) continue;   // an emptied game keeps its stamped entry: "all off" must win over an older "on" on another PC
         json::Value o = json::make_object();
         json::Value on = json::make_array();
         for (auto& id : s.on) on.a.push_back(json::make_string(id));
