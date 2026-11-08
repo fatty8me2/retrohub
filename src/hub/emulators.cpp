@@ -853,6 +853,11 @@ std::string azahar_config_patch(const std::string& in, const hubctl::Profile& pr
     for (const char* c : {"circle_pad", "c_stick"}) { std::string v = az_analog(prof, c, pad); if (!v.empty()) set("Controls", c, "\"" + v + "\""); }
     return t;
 }
+/* The Qt UI language, English, so the 3DS link automation finds its menus by name on any Windows language. Only RetroHub's own Azahar. */
+std::string azahar_pin_language(const std::string& in) {
+    std::string t = hubui::ini_set(in, "UI", "language\default", "false");
+    return hubui::ini_set(t, "UI", "language", "en");
+}
 std::string azahar_config_patch(const std::string& in, const hubctl::Profile& prof) { return azahar_config_patch(in, prof, AzPad()); }
 std::string azahar_config_patch(const std::string& in) { return azahar_config_patch(in, hubctl::default_profile("3ds"), AzPad()); }
 
@@ -898,6 +903,10 @@ void prepare_azahar(const std::string& install_dir, const hubctl::Profile& prof,
     make_dirs(cfgdir);
     make_dirs(join(user, "sdmc"));
     std::string marker = join(cfgdir, "retrohub-pad.txt");
+    {   // every launch (the pad mapping below is written once per profile): the UI stays English
+        const std::string ini0 = join(cfgdir, "qt-config.ini"), cur = read_text(ini0), pinned = azahar_pin_language(cur);
+        if (pinned != cur) write_text(ini0, pinned);
+    }
     std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof)) + pad_suffix(pad.guid.empty() ? "" : pad.guid + "/" + std::to_string(pad.port));
     if (file_exists(marker) && marker_hash(read_text(marker), "3ds") == want) return;   // already written for this profile; later edits are kept
     std::string ini = join(cfgdir, "qt-config.ini");
@@ -1207,6 +1216,7 @@ std::string dolphin_ini_ports(const std::string& in, const DolphinPads& pads) {
     t = hubui::ini_set(t, "Core", "EmulationSpeed", "1.0");   // the Game menu's Speed row starts every session at 1x
     t = hubui::ini_set(t, "General", "HotkeysRequireFocus", "False");   // every launch (upgraded installs too): the speed pad needs no focus; other hotkeys are unbound (dolphin_hotkeys_ini)
     t = hubui::ini_set(t, "Interface", "ConfirmStop", "False");         // every launch: Back+Start closes Dolphin; a "stop?" dialog would pop up over the game
+    t = hubui::ini_set(t, "Interface", "LanguageCode", "en");           // every launch: the NetPlay automation finds Dolphin's menus by their English names
     t = hubui::ini_set(t, "Input", "BackgroundInput", "False");         // every launch, not only first setup: Dolphin ignores the pad while the menu has focus
     t = hubui::ini_set(t, "Core", "SkipIPL", "True");   // every launch; the offline "real console startup" turns it off for that launch only (real_boot_ui.cpp)
     for (int i = 0; i < 4; ++i)
@@ -1249,6 +1259,13 @@ static bool hotkey_reads_keyboard(const std::string& expr, bool device_is_keyboa
  * gate for EVERY hotkey (DolphinQt/HotkeyScheduler.cpp: Core::UpdateInputGate(MAIN_FOCUSED_HOTKEYS) before all of them), and its
  * keyboard backend reads keys globally: a default binding such as Stop = Escape or Toggle Pause = F10 would fire while the user types in
  * another app. So every other hotkey in RetroHub's own Dolphin is unbound; the quick menu covers stop / pause / states. */
+/* `val` without RetroHub's chord `expr` and the `|` that joined it: the user's own (pad) part of the binding. */
+static std::string strip_chord(std::string val, const std::string& expr) {
+    for (size_t p; (p = val.find(expr)) != std::string::npos;) val.erase(p, expr.size());
+    const size_t a = val.find_first_not_of(" |\t\r"), b = val.find_last_not_of(" |\t\r");
+    return a == std::string::npos ? std::string() : val.substr(a, b - a + 1);
+}
+
 static std::string blank_other_hotkeys(const std::string& in) {
     std::string out, line;
     bool in_hk = false;
@@ -1268,7 +1285,14 @@ static std::string blank_other_hotkeys(const std::string& in) {
                 std::string key = tl.substr(a, eq - a), val = tl.substr(eq + 1);
                 while (!key.empty() && key.back() == ' ') key.pop_back();
                 const bool ours = key == "Device" || key == hubqm::dolphin_hotkey_name(hubqm::DolphinKey::Increase) || key == hubqm::dolphin_hotkey_name(hubqm::DolphinKey::Decrease);
-                if (!ours && val.find_first_not_of(" ") != std::string::npos && hotkey_reads_keyboard(val, dev_kb)) line = key + " = " + (!line.empty() && line.back() == '\r' ? "\r" : "");
+                const std::string cr = !line.empty() && line.back() == '\r' ? "\r" : "";
+                bool act_key = false;
+                for (hubqm::DolphinAct a : hubqm::dolphin_acts()) if (key == hubqm::dolphin_act_hotkey_name(a)) {   // Pause / Save / Load: our chord is dropped, the user's pad-only part stays
+                    act_key = true;
+                    const std::string rest = strip_chord(val, hubqm::dolphin_act_hotkey_expr(a));
+                    line = key + " = " + (!rest.empty() && !hotkey_reads_keyboard(rest, dev_kb) ? rest : std::string()) + cr;
+                }
+                if (!ours && !act_key && val.find_first_not_of(" ") != std::string::npos && hotkey_reads_keyboard(val, dev_kb)) line = key + " = " + cr;
             }
         }
         out += line;
@@ -1284,6 +1308,10 @@ std::string dolphin_hotkeys_ini(const std::string& in) {
     if (hubui::ini_get(t, "Hotkeys", "Device").empty()) t = hubui::ini_set(t, "Hotkeys", "Device", "DInput/0/Keyboard Mouse");
     for (auto k : {hubqm::DolphinKey::Increase, hubqm::DolphinKey::Decrease})
         t = hubui::ini_set(t, "Hotkeys", hubqm::dolphin_hotkey_name(k), hubds::hotkey_expr(k));   // DSU pad button | Ctrl+Shift+F13/F14
+    for (hubqm::DolphinAct a : hubqm::dolphin_acts()) {   // the Game menu's Pause / Save state / Load state (slot 1): chords nobody presses (qm_logic.h); a user's pad-only binding is kept beside it
+        const std::string keep = hubui::ini_get(t, "Hotkeys", hubqm::dolphin_act_hotkey_name(a)), expr = hubqm::dolphin_act_hotkey_expr(a);
+        t = hubui::ini_set(t, "Hotkeys", hubqm::dolphin_act_hotkey_name(a), keep.empty() ? expr : keep + " | " + expr);
+    }
     return t;
 }
 
