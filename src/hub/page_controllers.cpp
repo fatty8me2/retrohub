@@ -1,5 +1,6 @@
 #include "lichii.h"
 #include "app.h"
+#include "capture_hold_logic.h"
 #include "osk.h"
 #include "controls_live.h"
 
@@ -53,6 +54,7 @@ struct CtlState {
     int fake_pads = 0;                     // HUB_SHOT_FAKE_PADS
     bool shot_nosave = false;              // HUB_SCREENSHOT run: never write controls.json
     hubctl::Capture cap;
+    hubui::CaptureHold cap_hold;   // B / Back: tap = assign, hold 1 s = cancel
     std::string cap_control, cap_label;
     double cap_t0 = 0;
     bool open_capture = false, fake_capture = false, demo_done = false;
@@ -233,6 +235,7 @@ void ctl_begin_capture(const std::string& control, const std::string& label) {
     CTL.cap_control = control;
     CTL.cap_label = label;
     CTL.cap_t0 = ImGui::GetTime();
+    CTL.cap_hold = hubui::CaptureHold();
     if (!CTL.cap_keyboard) CTL.cap.start("");
     CTL.open_capture = true;
 }
@@ -260,7 +263,15 @@ void draw_capture_modal() {
             if (!k[i]) CTL.key_rest[i] = false;
             else if (!CTL.key_rest[i] && hubctl::key_name(i)[0] && i != SDL_SCANCODE_ESCAPE) tok = hubctl::key_name(i);
         }
-    } else if (CTL.cap.active()) tok = CTL.cap.poll();
+    } else if (CTL.cap.active()) {
+        /* A pad user cancels by HOLDING B / Back for a second; a short press of them is assigned like any other button (the dialog is NoNav). */
+        const double now = ImGui::GetTime();
+        const std::string raw = CTL.cap.poll();
+        const bool still_held = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight) || ImGui::IsKeyDown(ImGuiKey_GamepadBack);
+        const hubui::CaptureStep st = hubui::capture_hold_step(CTL.cap_hold, raw, still_held, now);
+        if (st == hubui::CaptureStep::Commit) tok = CTL.cap_hold.tok;
+        else if (st == hubui::CaptureStep::Cancel) close = true;
+    }
     if (!tok.empty()) {
         std::string err;
         bool ok = CTL.cap_keyboard ? hubctl::set_key(CTL.st, kTabs[CTL.tab].key, CTL.game, CTL.cap_control, tok, &err)
@@ -284,7 +295,7 @@ void draw_capture_modal() {
         o.y += sp(0.5f);
         dl->AddRectFilled(o, o + ImVec2(w, h), COL_PANEL2, h);
         dl->AddRectFilled(o, o + ImVec2(w * frac, h), COL_ACCENT, h);
-        ImGui::TextDisabled(CTL.cap_keyboard ? "Cancels by itself in %d s. Click Cancel to stop now." : "Cancels by itself in %d s. Press Esc or click Cancel to stop now.", (int)std::ceil(std::max(0.0, left)));
+        ImGui::TextDisabled(CTL.cap_keyboard ? "Cancels by itself in %d s. Click Cancel to stop now." : "Cancels by itself in %d s. Hold B to cancel, or press Esc or click Cancel.", (int)std::ceil(std::max(0.0, left)));
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
         ImGui::TextWrapped("No controller found. Plug one in and try again.");
