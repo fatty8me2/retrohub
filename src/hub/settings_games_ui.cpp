@@ -37,7 +37,7 @@ bool option_row(const hub::gs::Option& o, const std::string& cur, int src, int l
     ImGui::SetNextItemWidth(sp(30.f));
     ImGui::TextUnformatted(o.label.c_str());
     ImGui::SameLine(sp(32.f));
-    ImGui::SetNextItemWidth(sp(26.f));
+    ImGui::SetNextItemWidth(sp(o.key == "switch.runner" ? 36.f : 26.f));   // (the runner labels are the longest)
     if (o.kind == hub::gs::Kind::Bool) {
         bool b = cur == "true";
         if (ImGui::Checkbox("##v", &b)) { *out = b ? "true" : "false"; changed = true; }

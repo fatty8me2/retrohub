@@ -305,10 +305,9 @@ void draw_kit_actions(const hub::GameEntry& e, const View& v) {
 void draw_ready(const hub::GameEntry& e, const View& v) {
     using ui::sp;
     ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT);
-    ImGui::TextUnformatted(v.use_hookshot ? "Play starts Hookshot (native)." : v.runner == "fritchii" ? "Play starts Fritchii (Ocarina fork of Lichii)." : "Play starts Lichii (emulator).");
+    ImGui::TextUnformatted(v.use_hookshot ? "Play starts Hookshot (native)." : v.runner == "fritchii" ? "Play starts Fritchii, the Ocarina of Time version of Lichii." : "Play starts Lichii (emulator).");
     ImGui::PopStyleColor();
-    wrapped(v.use_hookshot ? "Hookshot is experimental. Switch back to Lichii if it misbehaves; your saves are shared by all of them."
-                           : "The native Hookshot version is built and ready. Your saves are shared by Lichii, Fritchii and Hookshot.", ui::TEXT3);
+    wrapped("Your saves are shared by Lichii, Fritchii and Hookshot.", ui::TEXT3);
     {   // one button for each runner that is NOT in use now (three runners)
         struct R { const char* id; const char* label; };
         const R all[] = {{"lichii", "Play with Lichii instead"}, {"fritchii", "Play with Fritchii instead"}, {"hookshot", "Play with Hookshot instead"}};
@@ -317,12 +316,17 @@ void draw_ready(const hub::GameEntry& e, const View& v) {
             if (v.runner == r.id) continue;
             if (!first) ImGui::SameLine(0, sp(1.f));
             first = false;
-            if (ui::button(r.label, ImVec2(0, sp(4.f)), std::string(r.id) == "hookshot" && !v.use_hookshot, true, ui::Icon::Refresh)) {
+            if (ui::button(r.label, ImVec2(0, sp(4.f)), std::string(r.id) == "hookshot" && !v.use_hookshot, true, ui::Icon::Play)) {   // (Rebuild keeps the only refresh icon)
                 if (HU.fake.on) { HU.fake_runner = r.id; HU.fake_on_hookshot = HU.fake_runner == "hookshot"; }
                 else if (!gs_set_game_value(e, hs::kRunnerSetting, r.id)) push_toast("Could not save that choice.", ui::WARN, 6.0);
             }
         }
     }
+    ImGui::Dummy(ImVec2(0, sp(0.75f)));
+    ImGui::PushFont(ui::F.bold);
+    ImGui::TextUnformatted("Native version (Hookshot)");   // its own section: the runner choice above is not part of it
+    ImGui::PopFont();
+    wrapped(v.use_hookshot ? "Hookshot is experimental. Switch back to Lichii if it misbehaves." : "The native Hookshot version is built and ready.", ui::TEXT3);
     const std::string d = date_text(v.built);
     if (!d.empty()) wrapped("Built on " + d + ".", ui::TEXT3);
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -424,7 +428,7 @@ void hookshot_details_section(const hub::GameEntry& e) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.5f)));   // a compact card: the page needs the room
 
     ImGui::PushFont(ui::F.bold);
-    ImGui::TextUnformatted("Native version (Hookshot)");
+    ImGui::TextUnformatted(v.mode == Mode::Ready ? "Which version plays" : "Native version (Hookshot)");
     ImGui::PopFont();
     ImGui::Dummy(ImVec2(0, sp(0.25f)));
 
