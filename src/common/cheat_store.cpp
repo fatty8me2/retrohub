@@ -1,4 +1,5 @@
 #include "cheat_store.h"
+#include "game_settings.h"
 
 #include <algorithm>
 #include <cctype>
@@ -187,6 +188,18 @@ void Store::merge_from(const Store& other) {
     }
 }
 
+bool Store::empty() const { return g_.empty(); }   // a game whose cheats were all turned off still has its (newer) entry, which has to sync
+
+bool merge_cloud_into_vault(const std::string& vault_dir, const std::string& cloud_json) {
+    Store cloud;
+    if (!cloud.from_json(cloud_json)) return false;
+    std::lock_guard<std::mutex> lk(hub::gs::files_mutex());
+    Store disk;
+    if (!disk.load(vault_dir)) disk = Store();
+    disk.merge_from(cloud);
+    return disk.save_unmerged(vault_dir);
+}
+
 bool Store::load(const std::string& vault_dir) {
     std::ifstream f(fs::u8path(file_path(vault_dir)), std::ios::binary);
     if (!f) { g_.clear(); return true; }
@@ -195,6 +208,13 @@ bool Store::load(const std::string& vault_dir) {
     return from_json(ss.str());
 }
 bool Store::save(const std::string& vault_dir) const {
+    std::lock_guard<std::mutex> lk(hub::gs::files_mutex());
+    Store out = *this;
+    Store disk;
+    if (disk.load(vault_dir)) out.merge_from(disk);   // merge-on-write: a game changed on disk since this store loaded (cloud pull) is not lost
+    return out.save_unmerged(vault_dir);
+}
+bool Store::save_unmerged(const std::string& vault_dir) const {
     fs::path p = fs::u8path(file_path(vault_dir)), tmp = p;
     tmp += ".tmp";
     std::error_code ec;

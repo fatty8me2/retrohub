@@ -1,5 +1,6 @@
 #include "logic.h"
 #include "state_slots.h"
+#include "state_tombstones.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -52,6 +53,32 @@ int main() {
     CHECK(count_states(list_states(d.string()), true) == 2);
     fs::remove_all(d, ec);
     CHECK(count_states(list_states((d / "missing").string()), true) == 0);
+
+    {   // saves-F15: a delete inside a vault game folder is remembered by WHAT was deleted (size + SHA-256) so the cloud sync does not bring that file back
+        namespace tb = hub::saves::tomb;
+        fs::path vault = d.parent_path() / "tomb_vault";
+        fs::remove_all(vault, ec);
+        fs::path sd = vault / "gba" / "gba-abc" / "states";
+        fs::create_directories(sd, ec);
+        put(sd / "slot2.state", "x"); put(sd / "slot2.png", "p"); put(sd / "auto.state", "a");
+        CHECK(delete_state(sd.string(), 2));
+        auto m = tb::load(vault.string());
+        CHECK(m.size() == 2 && m.count("gba/gba-abc/states/slot2.state") && m.count("gba/gba-abc/states/slot2.png"));   // slot2.json never existed: nothing to identify
+        CHECK(m["gba/gba-abc/states/slot2.state"].size == 1 && m["gba/gba-abc/states/slot2.state"].sha == "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881");   // SHA-256("x")
+        CHECK(!m.count("gba/gba-abc/states/auto.state") && fs::exists(sd / "auto.state"));
+        CHECK(delete_state(sd.string(), -1));
+        CHECK(tb::load(vault.string()).count("gba/gba-abc/states/auto.state"));
+        tb::clear(vault.string(), "gba/gba-abc/states/auto.state");
+        CHECK(!tb::load(vault.string()).count("gba/gba-abc/states/auto.state"));
+        // SHA-256 of a longer input (two blocks) matches the known value
+        put(sd / "long.bin", std::string(1000, 'a'));
+        tb::Entry e;
+        CHECK(tb::identity_of_file((sd / "long.bin").string(), &e) && e.size == 1000 && e.sha == "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3");
+        std::string v2, k2;
+        CHECK(!tb::key_for_state_file("C:\\tmp\\states", "a.state", &v2, &k2));   // not vault shaped: nothing remembered
+        CHECK(tb::key_for_state_file("C:\\v\\n64\\k\\states\\", "a.state", &v2, &k2) && v2 == "C:/v" && k2 == "n64/k/states/a.state");
+        fs::remove_all(vault, ec);
+    }
 
     CHECK(state_slot_label(-1) == "Auto" && state_slot_label(4) == "Slot 4");
     CHECK(system_has_states("gba", false) && system_has_states("ps1", false) && !system_has_states("gc", false));

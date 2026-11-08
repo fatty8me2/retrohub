@@ -228,7 +228,8 @@ struct SaveSession {
     bool wiiu_unknown_title = false;      // wud/wux: find the save folder by what changed during the session
     std::string wiiu_save_parent;         // <mlc>\usr\save\00050000
     int64_t started_unix = 0;
-    bool restore_only_if_missing = false; // existing Cemu install: fill an empty save folder, never overwrite
+    bool own_install = false;             // the user's own Cemu: the newest save wins, but their copy is snapshotted (save-backups) before it is replaced
+    std::string snapshot_emu;             // name used in that snapshot folder ("<stamp>-before-cemu-launch")
     std::string summary;                  // for a log/toast after end_session
     std::string error;                    // first failure of begin/end_session ("" = all fine)
     std::string manifest_path;            // <vault>\.sync\emu-<key>.json: what both sides agreed on last time

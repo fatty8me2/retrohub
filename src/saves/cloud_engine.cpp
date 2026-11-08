@@ -15,6 +15,9 @@
 #include "json.h"
 #include "winutil.h"
 #include "prefs.h"
+#include "game_settings.h"
+#include "cheat_store.h"
+#include "state_tombstones.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -84,7 +87,18 @@ fs::path game_root(const GameId& g) {   // does not create anything
     return fs::u8path(v) / fs::u8path(sanitize(g.system)) / fs::u8path(sanitize(g.key));
 }
 str norm_rel(str p) { for (auto& c : p) if (c == '\\') c = '/'; return p; }
-fs::path abs_of(const GameId& g, const str& rel) { return game_root(g) / fs::u8path(rel); }
+/* saves-F11: the per-game settings and cheat choices ride along with the account prefs. Cloud path (in "_account/_", classified "settings") <-> file in the vault. */
+constexpr const char* kCloudGameSettings = "_account/game_settings.json";
+constexpr const char* kCloudCheats = "_account/cheats.json";
+constexpr const char* kLocalGameSettings = "_settings/game_settings.json";
+constexpr const char* kLocalCheats = "_settings/cheats.json";
+std::atomic<unsigned> g_settings_rev{0};   // bumped whenever a pull / merge rewrote one of those two files (cloud_settings_rev)
+bool is_merged_file(const GameId& g, const str& path) { return is_account_game(g) && (path == kCloudGameSettings || path == kCloudCheats); }
+str local_rel_of(const GameId& g, const str& rel) {
+    if (is_account_game(g)) { if (rel == kCloudGameSettings) return kLocalGameSettings; if (rel == kCloudCheats) return kLocalCheats; }
+    return rel;
+}
+fs::path abs_of(const GameId& g, const str& rel) { return game_root(g) / fs::u8path(local_rel_of(g, rel)); }
 
 bool read_all(const fs::path& p, str* out) {
     std::ifstream f(p, std::ios::binary);
@@ -474,6 +488,13 @@ std::map<str, LFile> scan_game(const GameId& g, std::vector<str>* unsyncable = n
         std::sort(rv.begin(), rv.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
         if (rv.size() > kRivalsSyncMax) rv.resize(kRivalsSyncMax);
         for (auto& r : rv) acct_only.push_back(r.second);
+        /* only a PC with custom settings / cheats has these files in the cloud: two small files, however many games are customised */
+        {
+            hub::gs::Store gsv;
+            if (gsv.load(vault_dir()) && !gsv.empty() && fs::is_regular_file(root / kLocalGameSettings, ec)) acct_only.push_back(root / kLocalGameSettings);
+            cheatstore::Store cs;
+            if (cs.load(vault_dir()) && !cs.empty() && fs::is_regular_file(root / kLocalCheats, ec)) acct_only.push_back(root / kLocalCheats);
+        }
     }
     fs::recursive_directory_iterator rit, rend;
     if (!acct) rit = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
@@ -485,6 +506,7 @@ std::map<str, LFile> scan_game(const GameId& g, std::vector<str>* unsyncable = n
         str name = cur.filename().u8string();
         if (name.size() > 7 && name.compare(name.size() - 7, 7, ".hubtmp") == 0) continue;
         str rel = norm_rel(fs::relative(cur, root, ec).u8string());
+        if (acct) { if (rel == kLocalGameSettings) rel = kCloudGameSettings; else if (rel == kLocalCheats) rel = kCloudCheats; }
         if (rel.empty() || rel[0] == '.' || rel.rfind("_conflicts/", 0) == 0 || rel.rfind("_identity", 0) == 0) continue;
         if (!plan_path_ok(rel)) { if (unsyncable) unsyncable->push_back(rel); continue; }
         LFile lf;
@@ -535,6 +557,8 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
         auto it = E.base.games.find(wire_key(g));
         if (it != E.base.games.end()) bg = it->second;
     }
+    const bool is_acct = is_account_game(g);
+    const std::map<str, hub::saves::tomb::Entry> tombs = is_acct ? std::map<str, hub::saves::tomb::Entry>() : hub::saves::tomb::load(vault_dir());   // states deleted on this PC (saves-F15)
     for (const str& p : paths) {
         const bool is_shot = p.compare(0, 6, "shots/") == 0;   // screenshots (runner_ctl.h): large-pool "shot" class, only when "Back up screenshots" is on
         if (is_shot && !g_backup_shots.load()) continue;
@@ -563,6 +587,16 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
             it.base_ver = br.ver;
             it.refused_sha = br.refused_sha;
             it.lo_marked = !bf->second.lo.empty();
+        }
+        if (!tombs.empty() && p.compare(0, 7, "states/") == 0) {   // deleted on this PC: hide only the exact file that was deleted (size + SHA-256), no clocks
+            const str tkey = wire_key(g) + "/" + p;
+            auto tm = tombs.find(tkey);
+            if (tm != tombs.end()) {
+                if (!it.local.present && it.has_cv && it.cloud.sha == tm->second.sha && it.cloud.size == tm->second.size) {
+                    it.act = Act::Nothing; items.push_back(it); continue;   // still that deleted file: never downloaded again, nothing to upload
+                }
+                hub::saves::tomb::clear(vault_dir(), tkey);   // a different file now (saved again here, or uploaded by another PC) or gone from the cloud: a live state again
+            }
         }
         int64_t sz = it.local.present ? it.local.size : (it.has_cv ? it.cv.size : 0);
         if (is_shot) it.cls = FileClass::Shot; else
@@ -718,7 +752,7 @@ bool class_ok(const SyncOpts& o, FileClass c, int64_t size) {
 /* The synced account prefs (_account/prefs.json): a both-sides-changed conflict is MERGED (prefs::merge_text), never keep-both.
  * Pulls the cloud copy to a scratch file, writes merge(local, cloud) over the local file and, when that differs from the cloud
  * copy, queues a re-push against the cloud version. Returns false if it could not (caller falls back to the normal path). */
-bool is_prefs_conflict(const GameId& g, const str& path) { return is_account_game(g) && path == "_account/prefs.json"; }
+bool is_prefs_conflict(const GameId& g, const str& path) { return (is_account_game(g) && path == "_account/prefs.json") || is_merged_file(g, path); }   // merged key by key instead of asking
 
 void prefs_after_change() {   // library.json favorites follow the merged prefs
     hub::prefs::Prefs p;
@@ -734,15 +768,31 @@ bool merge_prefs_conflict(Api& api, const GameId& g, const str& gkey, const str&
     std::error_code ec;
     if (!r.ok || !read_all(scratch, &theirs)) { fs::remove(scratch, ec); return false; }
     fs::remove(scratch, ec);
-    (void)mine;
-    hub::prefs::Prefs incoming;
-    hub::prefs::parse(theirs, &incoming);
-    backup_local(g, path, "pc");
-    hub::prefs::merge_into_file(vault_dir(), incoming);   // merges with the CURRENT local file under the prefs lock (no race with favorite toggles)
     str merged;
-    if (!read_all(local, &merged)) return false;
-    ++*pulled;
-    prefs_after_change();
+    if (is_merged_file(g, path)) {
+        /* saves-F11: per-game settings / cheats. Key by key: what only one PC set is kept, the newer wins a key both set. Nothing is written when the cloud copy is unreadable. */
+        backup_local(g, path, "pc");   // always, even when the local file is unreadable: nothing is replaced without a copy
+        const bool ok = path == kCloudCheats ? cheatstore::merge_cloud_into_vault(vault_dir(), theirs) : hub::gs::merge_cloud_into_vault(vault_dir(), theirs);
+        if (!ok) {   // the cloud copy is unreadable: keep this PC's file as it is, keep the cloud copy aside to look at
+            fs::path bad = fs::u8path(vault_dir()) / "_conflicts" / "_account" / fs::u8path(path + ".cloud-unreadable-" + stamp());
+            std::error_code e2;
+            fs::create_directories(bad.parent_path(), e2);
+            write_atomic(bad, theirs);
+            log_line("cloud copy of " + path + " could not be read; kept this PC's file");
+            return false;
+        }
+        if (!read_all(local, &merged)) return false;
+        g_settings_rev++;
+        ++*pulled;
+    } else {
+        hub::prefs::Prefs incoming;
+        hub::prefs::parse(theirs, &incoming);
+        backup_local(g, path, "pc");
+        hub::prefs::merge_into_file(vault_dir(), incoming);   // merges with the CURRENT local file under the prefs lock (no race with favorite toggles)
+        if (!read_all(local, &merged)) return false;
+        ++*pulled;
+        prefs_after_change();
+    }
     if (merged == theirs) {   // the cloud copy already contains everything
         set_file_mtime_unix(local.u8string(), cv.mtime);
         base_set(gkey, path, cv.ver, cv.sha, cv.size, cv.mtime);
@@ -846,6 +896,7 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                     if (a.has_current && is_prefs_conflict(g, p.path)) {
                         Item re;
                         if (merge_prefs_conflict(api, g, gkey, p.path, a.current, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) next.push_back(re); continue; }
+                        if (is_merged_file(g, p.path)) continue;   // could not merge: keep this PC's file, never overwrite it with the cloud copy
                     }
                     if (it.cls == FileClass::Battery || it.cls == FileClass::Card || !a.has_current) out.conflicts.push_back(conflict_item(it));
                     else if (a.current.mtime > p.lf.mtime) {    // newest wins: cloud
@@ -893,6 +944,7 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                     if (r.has_current && is_prefs_conflict(g, r.path)) {
                         Item re;
                         if (merge_prefs_conflict(api, g, gkey, r.path, r.current, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) next.push_back(re); continue; }
+                        if (is_merged_file(g, r.path)) continue;   // could not merge: keep this PC's file, never overwrite it with the cloud copy
                     }
                     if ((it.cls == FileClass::Battery || it.cls == FileClass::Card) || !r.has_current) out.conflicts.push_back(conflict_item(it));
                     else if (r.current.mtime > pp->lf.mtime) {
@@ -1002,22 +1054,29 @@ SyncOut sync_game_with(Api& api, const GameId& g, const WGame* cg, const SyncOpt
         if (pa != pb) return pa;
         return a->cloud.mtime > b->cloud.mtime;
     });
+    std::vector<Item> push_items;
     for (Item* it : pulls) {
         if (opts.deadline_ms && mono_ms() > opts.deadline_ms) { out.pending_bytes += it->cloud.size; out.oc.k = Outcome::Offline; out.oc.code = "deadline"; continue; }
+        if (it->has_cv && is_merged_file(g, it->path) && it->local.present) {   // always merged under the settings mutex (a UI save may have changed the file meanwhile), never replaced
+            Item re;
+            if (merge_prefs_conflict(api, g, gkey, it->path, it->cv, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) push_items.push_back(re); }
+            else out.pending_bytes += it->cloud.size;
+            continue;
+        }
         /* newest-wins replaced a changed local copy; also a copy the cloud once refused (its sha is not an agreement) - never overwritten unseen */
         if (it->local.present && (it->local.sha != it->base.sha || it->lo_marked || !it->refused_sha.empty())) backup_local(g, it->path, "pc");
         PullResult r = pull_file(api, g, gkey, it->path, it->cv, opts.deadline_ms);
         if (r.ok) {
             base_set(gkey, it->path, it->cv.ver, it->cv.sha, it->cv.size, it->cv.mtime);
             out.pulled++;
-            if (is_prefs_conflict(g, it->path)) prefs_after_change();
+            if (is_merged_file(g, it->path)) g_settings_rev++;
+            else if (is_prefs_conflict(g, it->path)) prefs_after_change();
         } else {
             out.pending_bytes += it->cloud.size;
             if (!r.oc.ok()) { out.oc = r.oc; if (r.oc.k != Outcome::Other) break; }
             log_line("pull failed " + gkey + "/" + it->path + ": " + r.err);
         }
     }
-    std::vector<Item> push_items;
     for (auto& it : items) {
         if (!class_ok(opts, it.cls, std::max(it.local.size, it.cloud.size))) continue;
         switch (it.act) {
@@ -1394,7 +1453,8 @@ void queue_initial_backup_locked_free() {
     }
     {   // the synced account prefs ride along as the pseudo game "_account/_"
         std::error_code ec2;
-        if (fs::is_regular_file(fs::u8path(v) / "_account" / "prefs.json", ec2) || fs::is_directory(fs::u8path(v) / "_account" / "rivals", ec2)) games.push_back(GameId{"_account", "_"});
+        if (fs::is_regular_file(fs::u8path(v) / "_account" / "prefs.json", ec2) || fs::is_directory(fs::u8path(v) / "_account" / "rivals", ec2) ||
+            fs::is_regular_file(fs::u8path(v) / kLocalGameSettings, ec2) || fs::is_regular_file(fs::u8path(v) / kLocalCheats, ec2)) games.push_back(GameId{"_account", "_"});
     }
     {
         std::lock_guard<std::mutex> lk(E.mu);
@@ -1939,6 +1999,7 @@ void cloud_game_exited(const GameId& g) {
     base_save();
     if (dl) { set_state(g, CloudState::Conflict, LocalOnlyReason::DecideLater, "Not uploading until you decide."); return; }
     set_state(g, CloudState::Waiting, LocalOnlyReason::None, "Waiting to sync.");
+    enqueue("_account/_", "push");   // settings / cheats changed around this play (saves-F11); a no-op plan when nothing changed
     enqueue(gkey, "push");
 }
 
@@ -1987,6 +2048,8 @@ bool cloud_pop_event(CloudEvent* out) {
     E.events.pop_front();
     return true;
 }
+
+unsigned cloud_settings_rev() { return g_settings_rev.load(); }
 
 void cloud_account_prefs_changed() {   // favorites etc. changed locally: push _account/prefs.json soon
     if (!enabled_now()) return;

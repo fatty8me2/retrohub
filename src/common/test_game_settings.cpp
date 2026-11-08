@@ -2,6 +2,7 @@
 #include "game_settings.h"
 
 #include <cstdio>
+#include <fstream>
 #include <filesystem>
 #include <string>
 
@@ -154,6 +155,52 @@ int main() {
     CHECK(has_pair(retrorun_args(System::GBA, rr.resolve(System::GBA, "gba:k")), "--fx", "lcd") && has_pair(retrorun_args(System::GBA, rr.resolve(System::GBA, "gba:k")), "--bezel", "1"));
     CHECK(!rr.set_game("gba:k", System::GBA, "fx.filter", "bogus"));
     CHECK(!has_pair(retrorun_args(System::GBA, rr.resolve(System::GBA, "other:k")), "--bezel", "1"));
+
+    {   // saves-F11: per-game stamps, merge game by game (newer stamp wins the whole entry), a reset is a stamped tombstone, merge-on-write, garbage never wins
+        fs::path v = fs::temp_directory_path() / "hub_gs_merge_test";
+        std::error_code ec;
+        fs::remove_all(v, ec);
+        const std::string vd = v.u8string();
+        set_stamp_clock(1000);
+        Store pc1;
+        pc1.set_game("n64:a", System::N64, "fullscreen", "true");
+        pc1.set_game("n64:c", System::N64, "fullscreen", "true");
+        CHECK(!pc1.empty() && Store().empty());
+        CHECK(pc1.save(vd));
+        set_stamp_clock(2000);
+        Store pc2;   // another PC: its own game, a newer value for n64:a
+        pc2.set_game("n64:a", System::N64, "fullscreen", "false");
+        pc2.set_game("n64:b", System::N64, "fullscreen", "true");
+        pc2.set_game("n64:c", System::N64, "fullscreen", "false");
+        pc2.reset_game("n64:c");   // a reset writes a stamped, empty entry: a tombstone
+        // the cloud engine merges pc2's file into the file on disk
+        CHECK(merge_cloud_into_vault(vd, pc2.to_json()));
+        Store m;
+        CHECK(m.load(vd));
+        CHECK(m.resolve(System::N64, "n64:a")["fullscreen"] == "false");   // the newer entry won
+        CHECK(m.resolve(System::N64, "n64:b")["fullscreen"] == "true");    // only pc2 had it: kept
+        CHECK(!m.has_game_overrides("n64:c"));                             // the newer reset is not undone by the union
+        // a stale in-memory store (pc1 loaded long ago, still believes n64:a is true) saves: the newer disk data survives
+        set_stamp_clock(1500);
+        pc1.set_game("n64:d", System::N64, "fullscreen", "true");
+        CHECK(pc1.save(vd));
+        CHECK(m.load(vd) && m.resolve(System::N64, "n64:a")["fullscreen"] == "false" && m.has_game_overrides("n64:b") && m.has_game_overrides("n64:d") && !m.has_game_overrides("n64:c"));
+        // a reset here is stamped and wins over the older disk entry
+        set_stamp_clock(3000);
+        m.reset_game("n64:b");
+        CHECK(m.save(vd));
+        Store back;
+        CHECK(back.load(vd) && !back.has_game_overrides("n64:b") && back.has_game_overrides("n64:d"));
+        // garbage from the cloud never replaces the file; a malformed local file is treated as empty
+        CHECK(!merge_cloud_into_vault(vd, "not json") && back.load(vd) && back.has_game_overrides("n64:d"));
+        { std::ofstream f(Store::file_path(vd), std::ios::binary | std::ios::trunc); f << "{broken"; }
+        CHECK(merge_cloud_into_vault(vd, pc2.to_json()) && back.load(vd) && back.has_game_overrides("n64:a"));
+        // an older RetroHub's file has no stamps: still loads, and its keys are kept by a union
+        Store legacy;
+        CHECK(legacy.from_json("{\"games\":{\"n64:z\":{\"fullscreen\":\"true\"}}}") && legacy.has_game_overrides("n64:z") && !legacy.empty());
+        set_stamp_clock(0);
+        fs::remove_all(v, ec);
+    }
 
     std::printf(g_fail ? "FAILED (%d)\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;

@@ -320,6 +320,8 @@ int cheats_enabled_count(const hub::GameEntry& e) {
     return g_store.on_count(e.key);
 }
 
+void cheats_reload_from_vault() { reload(); }
+
 void cheats_open(const hub::GameEntry& e) {
     if (!cheats_supported(e)) return;
     reload();
