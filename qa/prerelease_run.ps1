@@ -1,9 +1,17 @@
 # Pre-release QA driver: runs the headless QA scripts one after another against a LOCAL worker and prints a PASS/FAIL table.
-#   powershell -File qa\prerelease_run.ps1 -Server ws://127.0.0.1:9900 [-Rom <n64 rom>]
-param([string]$Server = 'ws://127.0.0.1:9900', [string]$Rom = 'C:\Users\fatty\Desktop\Everything\Games\N64\Mario Kart 64 (U) [!].z64',
-      [string]$Only = '', [string]$Cf = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'qa-124-bs\server\cloudflare'))
+#   powershell -File qa\prerelease_run.ps1 [-Server ws://127.0.0.1:8761] [-Rom <n64 rom>] [-Cf <BattleShip\server\cloudflare>]
+# -Server must be a LOCAL wrangler (default port 8761, same as CLAUDE.md). -Cf defaults to ..\BattleShip\server\cloudflare
+# next to the RetroHub repo root.
+param([string]$Server = 'ws://127.0.0.1:8761', [string]$Rom = 'C:\Users\fatty\Desktop\Everything\Games\N64\Mario Kart 64 (U) [!].z64',
+      [string]$Only = '', [string]$Cf = '')
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 $root = Split-Path $PSScriptRoot -Parent
+if (-not $Cf) { $Cf = Join-Path (Split-Path $root -Parent) 'BattleShip\server\cloudflare' }
+if (-not (Test-Path -LiteralPath $Cf -PathType Container)) {
+    Write-Host "ERROR: Cloudflare worker folder not found: $Cf" -ForegroundColor Red
+    Write-Host "Pass -Cf <path to BattleShip\server\cloudflare> (the default is ..\BattleShip\server\cloudflare next to this repo)." -ForegroundColor Red
+    exit 2
+}
 Set-Location $root
 $env:SSB64_MUTE = '1'; $env:RETRORUN_MUTE = '1'; $env:N64RUN_MUTE = '1'
 $rows = @()
