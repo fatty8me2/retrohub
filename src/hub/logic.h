@@ -33,6 +33,7 @@ struct Settings {
     bool boot_short = false;           // "Short version" (~1 s)
     bool boot_skip_online = true;      // "Skip in online games"
     std::string real_boot_off;         // "Real console startup" turned OFF for these systems (comma separated short names); default on where the file exists
+    bool n64_clips = true;             // "Instant replay for N64 games": off = n64run runs with N64RUN_CLIPS=0 (no frame readback)
     bool start_hint = true;            // "Show controller tips when a game starts": ~5 s card (View+Y menu, View+Menu leave)
     std::string sync_folder;           // save sync folder ("" = off)
     bool sync_auto = true;             // sync after playing / on hub start
@@ -103,6 +104,12 @@ struct Settings {
     std::string win_monitor;          // device name of the last monitor (\\.\DISPLAY2); empty = primary
 };
 std::string settings_to_json(const Settings& s);
+/* The environment n64run gets for the instant-replay setting: {"N64RUN_CLIPS","0"} when it is off, nothing when on (the default). */
+inline std::vector<std::pair<std::string, std::string>> n64_clips_env(bool on) {
+    std::vector<std::pair<std::string, std::string>> v;
+    if (!on) v.push_back({"N64RUN_CLIPS", "0"});
+    return v;
+}
 bool settings_from_json(const std::string& text, Settings* out);   // missing keys keep defaults in *out
 bool load_settings(const std::string& path, Settings* out);
 bool save_settings(const std::string& path, const Settings& s);
