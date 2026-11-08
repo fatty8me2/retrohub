@@ -16,6 +16,7 @@
 
 #include "rollback.h"
 #include "spectate.h"
+#include "joinfp.h"
 
 static int g_fail = 0;
 #define CHECK(c, ...) do { if (!(c)) { g_fail++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -113,6 +114,8 @@ struct Run {
     int loss = 3;
     bool relayed = false;
     bool old_peer = false;      // slot 1 does not advertise drop-in
+    int fp_case = 0;            // the joiner's knock fingerprint: 0 not modelled, 1 matches, 2 other game, 3 other core, 4 no fingerprint (older RetroHub), 5 other netcode
+    bool refused_fp = false; uint8_t fp_code = 0;   // the host refused the joiner for its fingerprint (kPktNoLive reason)
     int join_at[2] = {300, -1}; // host frame at which the next joiner (slot 2, then slot 3) is admitted; -1 none
     bool joiner_crashes = false;
     int kill_j0_at = -1;        // host frame at which the first joiner dies after it played (its port must become free again)
@@ -200,6 +203,16 @@ static void run(Run& r) {
             const int slot = r.players + k;
             if (r.join_at[k] < 0 || js[k].started || (k == 1 && !js[0].done && !r.joiner_crashes) || eng[0]->cur() < (uint32_t)r.join_at[k]) continue;
             if (k == 1 && eng[0]->free_port() < 0) continue;   // wait until the first joiner's port was given up by the drop logic
+            if (r.fp_case) {   // the host's knock gate (Frontend::join_gate): the same bytes the joiner puts on the wire
+                joinfp::Fp host; host.content = 0xA1B2C3D4u; host.core = 0x11223344u;
+                joinfp::Fp mine = host;
+                if (r.fp_case == 2) mine.content ^= 1; else if (r.fp_case == 3) mine.core ^= 1; else if (r.fp_case == 5) mine.proto++;
+                std::vector<uint8_t> kn = {spectate::kPktJoin, (uint8_t)slot, 2, rb::kCapDropIn, 0};
+                if (r.fp_case != 4) joinfp::append(kn, mine);
+                joinfp::Gate gt = joinfp::gate(host, kn);   // the host's whole decision (Frontend::join_gate calls exactly this)
+                joinfp::Verdict v = gt.v;
+                if (v != joinfp::Verdict::Ok) { r.refused_fp = true; r.fp_code = gt.reason; js[k].started = true; js[k].done = true; r.join_at[k] = -1; continue; }
+            }
             if (!eng[0]->dropin_capable()) { if (r.old_peer) { r.refused_old = true; js[k].started = true; js[k].done = true; r.join_at[k] = -1; } continue; }
             std::vector<uint8_t> raw; uint32_t F; uint64_t ro, ri;
             if (!eng[0]->snapshot_confirmed(&raw, &F, &ro, &ri)) continue;
@@ -353,6 +366,45 @@ int main() {
         Run r; r.old_peer = true; r.frames = 900; run(r);
         CHECK(r.refused_old, "host should refuse with an old peer");
         CHECK(!r.desync[0] && !r.desync[1] && r.h[0] == r.h[1] && r.frame[0] == 900, "match disturbed by the refused join");
+    }
+    // 5b) the joiner's fingerprint (netcore-H4): a matching one is admitted; another game / core is refused with the mismatch reason, no fingerprint or another netcode
+    //     version with the old-peer reason; the room plays on untouched every time
+    for (int fc = 1; fc <= 5; fc++) {
+        Run r; r.fp_case = fc; r.frames = 900; run(r);
+        printf("fingerprint case %d: refused %d code %u admitted %d\n", fc, r.refused_fp, (unsigned)r.fp_code, r.admitted[0]);
+        if (fc == 1) { CHECK(!r.refused_fp && r.admitted[0], "a matching fingerprint must be admitted"); continue; }
+        const uint8_t want = fc == 2 ? joinfp::kRefuseMismatch : fc == 3 ? joinfp::kRefuseCore : joinfp::kRefuseOldPeer;
+        CHECK(r.refused_fp && r.fp_code == want && !r.admitted[0], "fingerprint case %d: expected refusal %u, got %d/%u", fc, (unsigned)want, r.refused_fp, (unsigned)r.fp_code);
+        CHECK(!r.desync[0] && !r.desync[1] && r.h[0] == r.h[1] && r.frame[0] == 900, "fingerprint case %d disturbed the match", fc);
+    }
+    {   // wire format: drop-in knock (after the name) and plain spectator knock (offset 3); content 0 = unknown matches anything; index files carry no game identity
+        joinfp::Fp a; a.content = 0xDEADBEEFu; a.core = 0x01020304u; a.proto = 7;
+        std::vector<uint8_t> k = {spectate::kPktJoin, 2, 2, rb::kCapDropIn, 3, 'a', 'b', 'c'};
+        joinfp::append(k, a);
+        joinfp::Fp g;
+        CHECK(joinfp::parse(k.data(), k.size(), 8, &g) && g.content == a.content && g.core == a.core && g.proto == 7, "drop-in trailer round trip");
+        CHECK(!joinfp::parse(k.data(), 8, 8, &g) && !joinfp::parse(k.data(), k.size() - 1, 8, &g) && !joinfp::parse(k.data(), k.size(), 5, &g), "short / misplaced trailer");
+        std::vector<uint8_t> sp = {spectate::kPktJoin, 4, 1};
+        joinfp::append(sp, a);
+        CHECK(joinfp::parse(sp.data(), sp.size(), 3, &g) && g.core == a.core, "spectator trailer round trip");
+        std::vector<uint8_t> plain = {spectate::kPktJoin, 4, 1};
+        CHECK(!joinfp::parse(plain.data(), plain.size(), 3, &g), "an older spectator has no trailer");
+        joinfp::Fp unk = a; unk.content = 0;
+        CHECK(joinfp::check(a, true, unk) == joinfp::Verdict::Rom && joinfp::check(unk, true, a) == joinfp::Verdict::Rom && joinfp::check(unk, true, unk) == joinfp::Verdict::Ok, "an unknown game id only matches another unknown one");
+        CHECK(joinfp::trailer_offset(k) == 8 && joinfp::trailer_offset(sp) == 3 && joinfp::trailer_offset({spectate::kPktJoin, 4, 9}) == 3, "trailer offsets");
+        CHECK(joinfp::gate(a, k).pass && joinfp::gate(a, sp).pass && !joinfp::gate(a, plain).pass && joinfp::gate(a, plain).reason == joinfp::kRefuseOldPeer, "gate: both knock layouts, no trailer");
+        std::vector<uint8_t> nine = {spectate::kPktJoin, 4, 9};
+        CHECK(!joinfp::gate(a, nine).pass && !joinfp::gate(a, {spectate::kPktJoin}).pass, "gate: short / drop-in-done knocks are not let through");
+        joinfp::Fp oc = a; oc.core ^= 1;
+        std::vector<uint8_t> kc = {spectate::kPktJoin, 4, 1}; joinfp::append(kc, oc);
+        CHECK(joinfp::gate(a, kc).reason == joinfp::kRefuseCore, "core mismatch has its own reason");
+        CHECK(joinfp::check(a, false, a) == joinfp::Verdict::Missing && joinfp::refuse_code(joinfp::Verdict::Missing) == joinfp::kRefuseOldPeer, "missing -> old peer");
+        joinfp::Fp o = a; o.core ^= 5;
+        CHECK(joinfp::check(a, true, o) == joinfp::Verdict::Core, "other core");
+        o = a; o.content ^= 5;
+        CHECK(joinfp::check(a, true, o) == joinfp::Verdict::Rom && joinfp::refuse_code(joinfp::Verdict::Rom) == joinfp::kRefuseMismatch, "other game");
+        CHECK(joinfp::is_index_file("C:\g\Game.CUE") && joinfp::is_index_file("a.m3u") && !joinfp::is_index_file("a.chd") && !joinfp::is_index_file("nodot"), "index files");
+        CHECK(joinfp::core_id("Beetle", "1.0") != joinfp::core_id("Beetle", "1.1") && joinfp::core_id("Beetle", "1.0") == joinfp::core_id("Beetle", "1.0"), "core id");
     }
     // 4b) a LATE admit (the admit frame is already behind every peer when the message arrives) and a very lossy link: still one game
     for (int lead : {0, -20}) {
