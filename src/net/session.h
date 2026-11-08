@@ -134,9 +134,9 @@ class Session {
     void set_wake_event(void* event);
     void set_ping_interval(uint32_t ms);   // default 500; min 20
     /* Frames dropped because the sender byte inside them did not match where they really came from (relay: the server's stamp; UDP: the
-     * peer's private token from the relay and the address that showed it). Anyone who could reach the UDP port or the room could otherwise
-     * pose as another slot, even the host. Peers on an older RetroHub send no token and keep the old rules (their frames are counted by
-     * unproven_frames() instead). */
+     * peer's private token, sent over the relay, and the address that showed it). This stops off-path spoofing and other room members
+     * claiming a slot (even the host's). The token travels in plaintext in the direct frames, so someone who can watch the traffic could
+     * replay it. Peers on an older RetroHub send no token and keep the old rules (their frames are counted by unproven_frames() instead). */
     uint32_t spoofed_frames() const;
     uint32_t unproven_frames() const;
     /* Offline tests (no sockets): set up a session in `cfg.slot`, describe the peers, and feed it frames as if they had arrived. */

@@ -406,10 +406,11 @@ struct Session::Impl {
             break;
         case 'T':
             if (via_relay && n >= 6) {
-                p.tok = get32(d + 2);
-                p.tok_known = p.tok != 0;
-                p.has_bound = false;
-                if (tokens_on() && now - p.last_tok_send >= 500) send_token(path, now);
+                const uint32_t nt = get32(d + 2);
+                const bool changed = !p.tok_known || nt != p.tok;
+                if (changed) { p.tok = nt; p.tok_known = nt != 0; p.has_bound = false; }   // a repeat of the same token must not unbind a working path
+                /* Answer so the peer learns ours: a new token gets one answer, a repeat only while our own sends are within the normal budget; never more than 12 in all. */
+                if (tokens_on() && now - p.last_tok_send >= 500 && p.tok_sends < (changed ? 12u : 6u)) send_token(path, now);
             }
             break;
         case 'H':
