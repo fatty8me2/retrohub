@@ -160,7 +160,7 @@ std::vector<Option> build() {
     // Shown ONLY for that game (settings_games_ui.cpp); offline only, ignored by online / sync code.
     // v1.37.0 stored "auto" (= Hookshot); it is no longer a choice, so loading / merging / resolving drops it and the default (Lichii) applies.
     v.push_back(mk("switch.runner", "Plays with", "Emulation", SWITCH, K::Choice, S::Visual, "lichii",
-                   {{"lichii", "Lichii (emulator)"}, {"fritchii", "Fritchii (Ocarina fork)"}, {"hookshot", "Hookshot (native)"}}));
+                   {{"lichii", "Lichii (emulator)"}, {"fritchii", "Fritchii (made for Ocarina of Time)"}, {"hookshot", "Hookshot (native)"}}));
     return v;
 }
 

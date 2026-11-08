@@ -476,7 +476,7 @@ static void test_env() {
 static void test_runner() {
     const hub::gs::Option* o = hub::gs::find_option("switch.runner");
     CHECK(o && o->def == "lichii" && o->choices.size() == 3);
-    CHECK(o && o->choices[1].value == "fritchii" && o->choices[1].label == "Fritchii (Ocarina fork)" && o->choices[0].label == "Lichii (emulator)" && o->choices[2].label == "Hookshot (native)");
+    CHECK(o && o->choices[1].value == "fritchii" && o->choices[1].label == "Fritchii (made for Ocarina of Time)" && o->choices[0].label == "Lichii (emulator)" && o->choices[2].label == "Hookshot (native)");
     const std::string oot = "switch:0400486024dec000", other = "switch:0100abcd12340000";
     hub::gs::Store st;
     CHECK(st.resolve(hub::System::Switch, oot)["switch.runner"] == "lichii");   // Lichii stays the default

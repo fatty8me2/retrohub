@@ -352,6 +352,24 @@ int main() {
         wr(save_dir(w.lichii) / "slot.sav", "only-lichii", 5);
         NxSaveSyncReport r = nx_sync_saves_before_launch(w.req(Kind::Lichii));
         CHECK(r.ok && !r.ran && r.copied == 0 && !fs::exists(w.backups) && !fs::exists(w.battery));
+        CHECK(!fs::exists(w.root / "vault" / ".sync"));                        // no manifest of either emulator, in particular no emu-*-fritchii.json
+        {   // a "user" folder in the WORKING directory must never be mistaken for a Fritchii install (an empty dir makes the path relative)
+            const fs::path cwd = fs::current_path();
+            const fs::path wd = w.root / "cwd";
+            fs::create_directories(wd / "user" / "nand" / "user" / "save" / "0000000000000000" / kLichiiUserUuid / kTidHex);
+            wr(wd / "user" / "nand" / "user" / "save" / "0000000000000000" / kLichiiUserUuid / kTidHex / "slot.sav", "cwd-save", 1);
+            fs::current_path(wd);
+            NxSaveSync req = w.req(Kind::Lichii);
+            req.fritchii_dir.clear();
+            NxSaveSyncReport rc = nx_sync_saves_before_launch(req);
+            NxSaveSync req2 = w.req(Kind::Fritchii);
+            req2.lichii_dir.clear();
+            NxSaveSyncReport rc2 = nx_sync_saves_before_launch(req2);
+            fs::current_path(cwd);
+            CHECK(rc.ok && !rc.ran && rc.copied == 0 && rc.backups == 0);
+            CHECK(rc2.ok && !rc2.ran && rc2.copied == 0 && rc2.backups == 0);
+            CHECK(!fs::exists(w.battery) && !fs::exists(w.backups) && !fs::exists(w.root / "vault" / ".sync") && rd(wd / "user" / "nand" / "user" / "save" / "0000000000000000" / kLichiiUserUuid / kTidHex / "slot.sav") == "cwd-save");
+        }
         // Fritchii installed but with no save yet, vault empty: the Lichii save comes over, no backup (nothing was replaced)
         fs::create_directories(w.fritchii / "user");
         r = nx_sync_saves_before_launch(w.req(Kind::Fritchii));
@@ -420,7 +438,7 @@ int main() {
         CHECK(files_with(w.backups, "vault-ORIGINAL") == before);
     }
     {
-        // the _conflicts copies are never pruned (sync_tree_newest's default keeps only 10): 12 older ones stay, plus the new one
+        // the vault's _conflicts keeps its usual last 10 copies per file (it syncs to every PC and the cloud), as for every other emulator; the LOCAL snapshots are never pruned
         World w(tmp / "saves_prune");
         w.install_dirs();
         wr(vault_save(w.battery) / "slot.sav", "vault-old", 50);
@@ -430,8 +448,17 @@ int main() {
         const int n0 = count_files(conf);
         CHECK(n0 == 12);
         CHECK(nx_sync_saves_before_launch(w.req(Kind::Fritchii)).ok);
-        CHECK(count_files(conf) == n0 + 1);
-        for (int i = 0; i < 12; ++i) CHECK(files_with(conf, "older backup " + std::to_string(i)) == 1);
+        CHECK(count_files(conf) == 10);                              // 12 old + 1 new, pruned to the last 10
+        CHECK(files_with(conf, "older backup 0") == 0 && files_with(conf, "lichii-wins") == 0);   // (the oldest went; the new copy holds the replaced vault file)
+        CHECK(files_with(conf, "vault-old") == 1);
+        // the local snapshots: 15 earlier ones under save-backups stay after more launches that make new snapshots
+        for (int i = 0; i < 15; ++i) wr(w.backups / "switch_0400486024dec000" / ("2020010" + std::to_string(i % 10) + "-0" + std::to_string(i) + "-before-x-launch") / "vault-before-sync" / "slot.sav", "kept forever " + std::to_string(i));
+        for (int k = 0; k < 3; ++k) {
+            wr(save_dir(w.lichii) / "slot.sav", "lichii-round-" + std::to_string(k), 4 - k);
+            wr(save_dir(w.fritchii) / "slot.sav", "fritchii-round-" + std::to_string(k), 20);
+            CHECK(nx_sync_saves_before_launch(w.req(Kind::Fritchii)).ok);
+        }
+        for (int i = 0; i < 15; ++i) CHECK(files_with(w.backups, "kept forever " + std::to_string(i)) == 1);
     }
     {
         // Fritchii only runs offline: an online or room launch is always Lichii

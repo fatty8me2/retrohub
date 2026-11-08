@@ -301,7 +301,7 @@ NxSaveSyncReport nx_sync_saves_before_launch(const NxSaveSync& in) {
     const bool lich_first = in.launching == Kind::Lichii;
     const std::string kdir = lich_first ? in.lichii_dir : in.fritchii_dir;
     const std::string odir = lich_first ? in.fritchii_dir : in.lichii_dir;
-    if (!dir_ok(lichii_user_dir(odir)) || kdir.empty()) return rep;   // no other emulator: nothing to compare (exactly the old behaviour)
+    if (odir.empty() || kdir.empty() || !dir_ok(lichii_user_dir(odir))) return rep;   // (an empty dir would make "user" a path relative to the working directory)   // no other emulator: nothing to compare (exactly the old behaviour)
     const Kind other = lich_first ? Kind::Fritchii : Kind::Lichii;
     rep.ran = true;
     std::string battery = in.battery;
@@ -361,17 +361,18 @@ NxSaveSyncReport nx_sync_saves_before_launch(const NxSaveSync& in) {
         }
     }
 
-    // ---- phase 2: the writes. keep_backups = 0: sync_tree_newest never prunes the older _conflicts copies (nothing is deleted).
+    // ---- phase 2: the writes. sync_tree_newest keeps its usual last 10 copies in the vault's _conflicts (that folder syncs to every PC and the cloud, so it stays bounded,
+    // as for every other emulator); the local snapshots taken above are what is never pruned.
     for (const Item& it : items) {
         // 1. the other emulator -> the vault
         if (hub::tree_has_files(it.otree)) {
-            hub::TreeSyncReport r = hub::sync_tree_newest(it.otree, it.vtree, join(conflicts, it.vrel), tag, &oman, it.prefix, 0);
+            hub::TreeSyncReport r = hub::sync_tree_newest(it.otree, it.vtree, join(conflicts, it.vrel), tag, &oman, it.prefix);
             rep.copied += r.copied;
             if (!r.ok) { rep.ok = false; rep.error = r.error; hub::manifest_save(kman_path, kman); hub::manifest_save(oman_path, oman); return rep; }
         }
         // 2. the vault -> the launching emulator
         if (hub::tree_has_files(it.vtree)) {
-            hub::TreeSyncReport r = hub::sync_tree_newest(it.vtree, it.ktree, join(conflicts + "\\emulator", it.vrel), tag, &kman, it.prefix, 0);
+            hub::TreeSyncReport r = hub::sync_tree_newest(it.vtree, it.ktree, join(conflicts + "\\emulator", it.vrel), tag, &kman, it.prefix);
             rep.copied += r.copied;
             if (!r.ok) { rep.ok = false; rep.error = r.error; hub::manifest_save(kman_path, kman); hub::manifest_save(oman_path, oman); return rep; }
         }

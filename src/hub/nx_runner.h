@@ -88,10 +88,11 @@ std::string default_save_backup_root();
  *   1. other install -> vault (newest wins, with the other install's own "last agreed" manifest),
  *   2. vault -> launching install (newest wins, with its manifest).
  * Before a tree is overwritten, or left behind holding changes made since it last synced, it is copied to
- * <backup_root>\<game>\<yyyymmdd-hhmmss>-before-<emulator>-launch\<vault|lichii|fritchii>-before-sync... Nothing is ever deleted; a missing folder on any side is fine; if a
+ * <backup_root>\<game>\<yyyymmdd-hhmmss>-before-<emulator>-launch\<vault|lichii|fritchii>-before-sync... RetroHub deletes nothing here; a missing folder on any side is fine; if a
  * backup cannot be written the launch ends with ok=false and NOTHING has been written: every snapshot is planned and taken BEFORE the first write, each in its own folder
  * (vault-before-sync, lichii-before-sync, fritchii-before-sync) under a stamp folder that did not exist before, and a snapshot never overwrites a file already in the backup
- * folder. The _conflicts copies of sync_tree_newest are never pruned either. A no-op when the other emulator is not installed (a Lichii-only PC
+ * folder. These LOCAL snapshots are kept forever (RetroHub never prunes the save-backups folder). The vault's _conflicts folder (it syncs to every PC and the cloud) keeps the
+ * last 10 copies per file, as for every other emulator. A no-op when the other emulator is not installed (a Lichii-only PC
  * behaves exactly as before). The session's own begin_session / end_session still run afterwards, with the manifest suffix nx_manifest_suffix(kind). */
 NxSaveSyncReport nx_sync_saves_before_launch(const NxSaveSync& in);
 /* "" for Lichii, "-fritchii" for Fritchii (a manifest per emulator: a shared one would let a stale copy win). */
