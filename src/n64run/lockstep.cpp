@@ -115,6 +115,12 @@ void Lockstep::pump() {
             if (!opt_.spectator && msg.size() >= 2 && msg[1] < kPorts && (int)msg[1] == from && (dj_mask_ >> from & 1u)) { di_candidate_left(from, "said bye"); continue; }
             if (opt_.spectator || (spec_mask() >> (msg[1] & 3) & 1u)) continue;   // spectators come and go; a spectator's goodbye is not the match ending
             if (msg.size() >= 6 && msg[1] < kPorts && (int)msg[1] == from && msg[1] != opt_.my_slot && (core_.slot_mask() >> msg[1] & 1u)) {   // a bye from a slot that is not in the match any more (a dropped drop-in player's late goodbye) ends nothing
+                uint32_t gone = bye_mask_;
+                for (int s = 0; s < kPorts; s++) if (core_.drop_begun(s) || drops_.count(s)) gone |= 1u << s;
+                if (bye_becomes_drop(from, opt_.my_slot, core_.slot_mask(), gone)) {   // a guest quit cleanly: like a crash, the others play on
+                    if (!(gone >> from & 1u)) { if (hooks_.log) hooks_.log("partner in slot " + std::to_string(from) + " quit; playing on without it"); drop_begin(from, hubnet::now_ms()); }
+                    continue;
+                }
                 uint32_t last; std::memcpy(&last, &msg[2], 4);
                 if (!(bye_mask_ >> msg[1] & 1u) && hooks_.log) hooks_.log("partner in slot " + std::to_string((int)msg[1]) + " ended the session");
                 bye_mask_ |= 1u << msg[1];
@@ -231,9 +237,15 @@ void Lockstep::drop_send(const netdrop::Agreement& ag) {
 
 void Lockstep::drop_on_msg(int from, const std::vector<uint8_t>& msg, uint32_t now) {
     netdrop::Msg m;
-    if (!netdrop::decode(kPktDrop, msg.data(), msg.size(), &m) || m.from != from || m.dead >= kPorts) return;
+    if (!netdrop::decode(kPktDrop, msg.data(), msg.size(), &m) || m.from != from || from >= kPorts || m.dead >= kPorts) return;
     if (m.dead == opt_.my_slot || m.dead == 0 || !(core_.slot_mask() >> m.dead & 1u)) return;
     if (core_.drop_done(m.dead) && !drops_.count(m.dead)) return;
+    if (!drop_msg_allowed(from, drops_.count(m.dead) || core_.drop_begun(m.dead))) {   // a guest cannot make me drop someone I still hear
+        static uint32_t logged = 0;   // one line per (sender, target): the sender repeats every 100 ms
+        const uint32_t bit = 1u << (from * kPorts + m.dead);
+        if (hooks_.log && !(logged & bit)) { logged |= bit; hooks_.log("drop: ignored a request from slot " + std::to_string(from) + " to drop slot " + std::to_string((int)m.dead) + " (only the host can)"); }
+        return;
+    }
     if (!drops_.count(m.dead)) drop_begin(m.dead, now);
     auto it = drops_.find(m.dead);
     if (it == drops_.end()) return;
