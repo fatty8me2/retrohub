@@ -400,6 +400,7 @@ void gc_guest_poll() {
     if (!gc_begin(GCO.entry, false, room_my_slot(), GCO.fw.connect_port())) gc_stop_all("gc_begin failed");
 }
 
+static std::string NP3_pw;   // onlineflow-M6: this launch's room password, for the Direct Connect helper
 /* 3DS: bring up the room server (host) + UDP forwarder, then poll_np3ds() starts Azahar once everyone is reachable. */
 void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg, const hubnp3ds::Plan* resumed) {
     if (launch_blocked("launch_online_3ds")) return;
@@ -426,6 +427,8 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
     if (is_host) {
         plan.expected = (int)A.lobby.members().size();
         plan.port = hubnp3ds::kDefaultRoomPort;
+        plan.password = hubnp3ds::take_pending_host_password();   // onlineflow-M6: the one the launch message carries; members only
+        if (plan.password.empty()) plan.password = hubnp3ds::new_room_password();
         std::string room = hubnp3ds::room_exe_for(inst.exe);
         std::string wd = no_slash(hub::data_dir()) + "\\netplay\\3ds";
         make_dirs(wd);
@@ -435,6 +438,7 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
         else if (!msg || !hubnp3ds::parse_plan(*msg, &plan)) { launch_note(is_host, "The host's 3DS room settings are missing - ask them to update RetroHub.", 10.0); return; }
         if (!NP3.start_guest(server_url(), A.code, launch_no, plan, room_my_slot(), &err)) { launch_note(is_host, "3DS online: " + err, 12.0); return; }
     }
+    NP3_pw = plan.password;
     NP3_mp = hubnp3ds::multiplayer_arg(hubnp3ds::nickname(A.st.name, room_my_slot()), plan.password, "127.0.0.1", NP3.connect_port());
     hubnp3ds::seed_join_config_file(inst.dir, "", "127.0.0.1", NP3.connect_port());   // prefill Direct Connect before Azahar starts
     NP3_game = e;
@@ -500,7 +504,7 @@ void poll_np3ds() {
             NP3_join_status.clear();
             make_dirs(no_slash(hub::data_dir()) + "\\netplay\\3ds");   // only the host created it before: a guest's helper could not write its status file
             NP3_join_pid = hubnp3ds::start_join_driver(GetProcessId(A.proc), no_slash(hub::data_dir()) + "\\netplay\\3ds", hubnp3ds::nickname(A.st.name, room_my_slot()),
-                                                       "", "127.0.0.1", NP3.connect_port(), L"", &NP3_join_status);
+                                                       NP3_pw, "127.0.0.1", NP3.connect_port(), L"", &NP3_join_status);
             NP3_join_t0 = GetTickCount64();
             NP3_join_watch = true;
         }
@@ -668,7 +672,7 @@ void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host) {
         if (is_remote_stand_in(e)) { launch_note(true, "Remote play needs your own copy of " + e.title + " on the host's PC."); return; }
         RunInfo r = run_info_for(e, true);
         r.room = true;
-        r.dsu_players = hubrp::guest_count((int)A.lobby.members().size());   // guests' pads = Cemu players 2.. on DSU slots (this launch only)
+        { std::vector<int> pad_slots; for (auto& m : room_members()) pad_slots.push_back(m.slot); r.dsu_players = hubrp::dsu_slot_count(pad_slots); }   // onlineflow-M5: by the guests' real lobby slots, so a lower slot that left leaves no gap; guests' pads = Cemu players 2.. on DSU slots (this launch only)
         RP.room = room;
         RP.members = (int)A.lobby.members().size();
         RP.names = member_names();

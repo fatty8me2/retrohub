@@ -24,6 +24,15 @@ inline std::string quote(const std::string& s) {
 /* Guests = everyone but the host (the host plays on its own pad); Cemu has 4 pad slots so at most 3 guests. */
 inline int guest_count(int members) { return members <= 1 ? 0 : (members - 1 > 3 ? 3 : members - 1); }
 
+/* How many DSU pad slots Cemu must bind. A guest in lobby slot K feeds DSU slot K-1 (stream/pad_convert.h), so when a lower-numbered guest left
+ * before launch the count of guests is too small (room {0,2}: 1 guest, but slot 2 feeds DSU slot 1). Bind up to the highest guest slot present
+ * (the empty slots below it just stay unplugged). `slots` = the lobby slots of everyone in the room (the host's slot 0 is ignored). */
+inline int dsu_slot_count(const std::vector<int>& slots) {
+    int top = 0;
+    for (int s : slots) if (s >= 1 && s > top) top = s;
+    return top > 3 ? 3 : top;
+}
+
 /* streamrun --host ... ; `capture_pid` is Cemu's PID (streamrun picks its biggest window and captures its audio). Guests' pads reach
  * Cemu through the DSU server embedded in streamrun (127.0.0.1:dsu_port, players 2-4); status_file feeds the room's "streaming to" line. */
 inline std::string host_args(unsigned long capture_pid, const std::string& net, const std::string& room, int members, bool upnp,

@@ -151,7 +151,7 @@ void host_launch_selected() {
     GRP.again = false;
     std::vector<hubui::PeerInfo> peers = peer_list();
             int delay = A.st.delay_auto ? 0 : A.st.input_delay;   // 0 = auto, same for everyone
-            bool share = A.share_host_save && (rg->system == hub::System::N64 || hub::is_lockstep_gb_system(rg->system));
+            bool share = A.share_host_save && !is_kanto(*rg) && hubcaps::share_host_save_supported(rg->system);
             unsigned seed = std::random_device{}();
             ++A.launch_counter;
             hubui::PortPlan plan = hubui::build_ports(member_pads());   // built once; guests use it verbatim
@@ -160,7 +160,7 @@ void host_launch_selected() {
             gcnp::Spec gspec; bool gc_ok = true;
             if (with_match) spec = hubui::resolve_match(plan.ports, all_picks(), A.rules, seed, match_remix_roster());
             std::string np_extra;
-            if (rg->system == hub::System::N3DS) { hubnp3ds::Plan np; np.expected = (int)A.lobby.members().size(); np_extra = hubnp3ds::plan_json_fragment(np); }
+            if (rg->system == hub::System::N3DS) { hubnp3ds::Plan np; np.expected = (int)A.lobby.members().size(); np.password = hubnp3ds::new_room_password(); hubnp3ds::set_pending_host_password(np.password); np_extra = hubnp3ds::plan_json_fragment(np); }
             if (rg->system == hub::System::GC) {
                 if (!gc_host_spec(*rg, (int)peers.size(), &gspec)) gc_ok = false;
                 else np_extra = gcnp::launch_fragment(gspec);
@@ -523,11 +523,11 @@ void page_online_room() {
     room_picker(host, left_w - ImGui::GetStyle().ScrollbarSize - 2 * S, peers);
 
     ImGui::Dummy(ImVec2(0, 6 * S));
-    if (rg && !is_kanto(*rg) && (rg->system == hub::System::N64 || hub::is_lockstep_gb_system(rg->system))) {
+    if (rg && !is_kanto(*rg) && hubcaps::share_host_save_supported(rg->system)) {
         if (host) {
-            if (ImGui::Checkbox("Use host's save (unlocked characters/boards)", &A.share_host_save)) A.hello_dirty = true;
+            if (ImGui::Checkbox(hubcaps::share_host_save_label(rg->system), &A.share_host_save)) A.hello_dirty = true;
         } else {
-            ImGui::TextDisabled("%s", A.share_host_save ? "Using the host's save (unlocked characters/boards)." : "Starting from an empty save.");
+            ImGui::TextDisabled("%s", hubcaps::share_host_save_state_text(rg->system, A.share_host_save));
         }
     }
     if (rg && !is_kanto(*rg) && hubctl::turbo_supported(hubctl::system_key(rg->system))) {   // turbo buttons are local-only input; off online unless the host allows it for everyone
