@@ -220,4 +220,29 @@ class LockstepCore {
     uint32_t compared_ = 0;
 };
 
+// Pure decisions for leaving / kicking (unit-tested without a network).
+// A clean "bye" from guest `from` is handled like a drop (the others agree a cutoff, its port goes idle, play
+// continues) when at least one other player besides me and the leaver is still in the match. The host's bye, a bye
+// in a 2-player match, or the last guest leaving still end the match as before.
+//   slot_mask: players in the match; gone_mask: slots already dropping/dropped/said bye.
+inline bool bye_becomes_drop(int from, int my_slot, uint32_t slot_mask, uint32_t gone_mask) {
+    if (from <= 0 || from >= kPorts || from == my_slot) return false;   // the host leaving ends the match
+    if (gone_mask >> from & 1u) return true;                            // already being dropped: nothing more to do
+    for (int q = 0; q < kPorts; q++)
+        if (q != from && q != my_slot && (slot_mask >> q & 1u) && !(gone_mask >> q & 1u)) return true;
+    return false;
+}
+
+// A drop message names a player to drop. The host may always make a peer start a drop. A guest's message counts when
+// this peer already began that drop, or when this peer itself has not heard the named player for half the silence
+// limit (so a guest that lost the victim while the host still hears it cannot stall the match, but nobody can
+// kick a player this peer can hear). silent_ms = time since this peer last heard the victim (0 = never/unknown).
+inline bool drop_msg_allowed(int from, bool already_begun, uint32_t silent_ms, uint32_t drop_silence_ms) {
+    if (already_begun || from == 0) return true;
+    return drop_silence_ms != 0 && silent_ms != 0 && silent_ms >= drop_silence_ms / 2;
+}
+
+// A Ready announcement names its slot in byte 1; it must be the slot the packet really came from.
+inline bool ready_slot_ok(int from, const uint8_t* msg, size_t n) { return n >= 2 && msg[1] < 8 && (int)msg[1] == from; }
+
 }  // namespace n64run

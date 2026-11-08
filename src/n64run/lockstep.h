@@ -250,6 +250,7 @@ class Lockstep {
     void catch_up(uint32_t now);
     uint32_t bye_mask_ = 0, bye_last_[kPorts] = {0, 0, 0, 0};
     bool peer_left_ = false;
+    uint32_t drop_ignored_logged_ = 0;   // (sender, target) pairs whose refused drop request was already logged
     void adapt(uint32_t now, uint32_t stall_ms);
     /* spectating */
     uint32_t spec_get_keys(int port);

@@ -115,6 +115,12 @@ void Lockstep::pump() {
             if (!opt_.spectator && msg.size() >= 2 && msg[1] < kPorts && (int)msg[1] == from && (dj_mask_ >> from & 1u)) { di_candidate_left(from, "said bye"); continue; }
             if (opt_.spectator || (spec_mask() >> (msg[1] & 3) & 1u)) continue;   // spectators come and go; a spectator's goodbye is not the match ending
             if (msg.size() >= 6 && msg[1] < kPorts && (int)msg[1] == from && msg[1] != opt_.my_slot && (core_.slot_mask() >> msg[1] & 1u)) {   // a bye from a slot that is not in the match any more (a dropped drop-in player's late goodbye) ends nothing
+                uint32_t gone = bye_mask_;
+                for (int s = 0; s < kPorts; s++) if (core_.drop_begun(s) || drops_.count(s)) gone |= 1u << s;
+                if (bye_becomes_drop(from, opt_.my_slot, core_.slot_mask(), gone)) {   // a guest quit cleanly: like a crash, the others play on
+                    if (!(gone >> from & 1u)) { if (hooks_.log) hooks_.log("partner in slot " + std::to_string(from) + " quit; playing on without it"); drop_begin(from, hubnet::now_ms()); }
+                    continue;
+                }
                 uint32_t last; std::memcpy(&last, &msg[2], 4);
                 if (!(bye_mask_ >> msg[1] & 1u) && hooks_.log) hooks_.log("partner in slot " + std::to_string((int)msg[1]) + " ended the session");
                 bye_mask_ |= 1u << msg[1];
@@ -144,7 +150,7 @@ void Lockstep::pump() {
         } else if (msg[0] == kPktCheats) {
             // handshake leftovers: ignore
         } else if (msg[0] == kPktReady) {
-            if (msg.size() >= 2 && msg[1] < 8) { ready_mask_ |= 1u << msg[1]; if (msg.size() >= 3) caps_[msg[1]] = msg[2]; rsv_[msg[1]] = msg.size() >= 4 ? msg[3] : 0; }   // 4th byte: the ports it plugs in for drop-in
+            if (ready_slot_ok(from, msg.data(), msg.size())) { ready_mask_ |= 1u << msg[1]; if (msg.size() >= 3) caps_[msg[1]] = msg[2]; rsv_[msg[1]] = msg.size() >= 4 ? msg[3] : 0; }   // 4th byte: the ports it plugs in for drop-in
         } else {
             core_.on_packet(from, msg.data(), msg.size());
         }
@@ -231,9 +237,15 @@ void Lockstep::drop_send(const netdrop::Agreement& ag) {
 
 void Lockstep::drop_on_msg(int from, const std::vector<uint8_t>& msg, uint32_t now) {
     netdrop::Msg m;
-    if (!netdrop::decode(kPktDrop, msg.data(), msg.size(), &m) || m.from != from || m.dead >= kPorts) return;
+    if (!netdrop::decode(kPktDrop, msg.data(), msg.size(), &m) || m.from != from || from >= kPorts || m.dead >= kPorts) return;
     if (m.dead == opt_.my_slot || m.dead == 0 || !(core_.slot_mask() >> m.dead & 1u)) return;
     if (core_.drop_done(m.dead) && !drops_.count(m.dead)) return;
+    const uint32_t silent = last_rx_[m.dead] ? now - last_rx_[m.dead] : 0u;
+    if (!drop_msg_allowed(from, drops_.count(m.dead) || core_.drop_begun(m.dead), silent, opt_.drop_silence_ms)) {   // a guest cannot make me drop someone I still hear
+        const uint32_t bit = 1u << (from * kPorts + m.dead);   // one log line per (sender, target): the sender repeats every 100 ms
+        if (hooks_.log && !(drop_ignored_logged_ & bit)) { drop_ignored_logged_ |= bit; hooks_.log("drop: ignored a request from slot " + std::to_string(from) + " to drop slot " + std::to_string((int)m.dead) + " (only the host can)"); }
+        return;
+    }
     if (!drops_.count(m.dead)) drop_begin(m.dead, now);
     auto it = drops_.find(m.dead);
     if (it == drops_.end()) return;
@@ -316,7 +328,8 @@ void Lockstep::rs_on_ctl(int from, const std::vector<uint8_t>& msg) {
         static int lost = 0;
         if (lost < std::atoi(std::getenv("N64RUN_QA_LOSE_ABORTS"))) { lost++; if (hooks_.log) hooks_.log("resync: QA dropped an Abort"); return; }
     }
-    resync::Act a = rs_.on_msg(m, sample_ < 0 ? 0u : (uint32_t)sample_, &reply);
+    resync::Act a = rs_.on_msg(m, sample_ < 0 ? 0u : (uint32_t)sample_, &reply, hubnet::now_ms() ? hubnet::now_ms() : 1);
+    if (rs_.take_throttle_note() && hooks_.log) hooks_.log("resync: ignoring repeated recovery requests from slot " + std::to_string(from) + " (one per " + std::to_string(resync::kReqWindowMs / 1000) + " s)");
     if (a == resync::Act::Reply) {
         rs_send(from, reply);
         if (reply.sub == resync::Abort && opt_.my_slot != 0) { if (hooks_.log) hooks_.log("resync: we already passed the proposed sample; recovery off"); desync_unrecovered("this PC was already past the repair point"); if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop(); }

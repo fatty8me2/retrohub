@@ -270,7 +270,37 @@ static void test_status_poll_and_drop() {
     CHECK(h3.all_acked());
 }
 
+// netcore-M2: a guest repeating Req cannot burn the host's recoveries; the first request works at once.
+static void test_req_throttle() {
+    uint8_t c[8]; caps(c, 1, 1, 1);
+    resync::Ctl h;
+    h.configure(0, 0b111, c, 90);
+    resync::Msg req = h.req_msg(600), rep;
+    req.from = 1;
+    CHECK(h.on_msg(req, 650, &rep, 1000) == resync::Act::None && h.active());   // first request: honoured immediately
+    CHECK(!h.take_throttle_note());
+    h.complete();                                                                // recovery 1 done
+    req.s = 1200;
+    CHECK(h.on_msg(req, 1300, &rep, 2000) == resync::Act::None && !h.active());  // 1 s later from the same guest: refused
+    CHECK(h.take_throttle_note() && !h.take_throttle_note());                    // logged once ...
+    h.on_msg(req, 1301, &rep, 2100);
+    CHECK(!h.take_throttle_note() && h.count() == 1 && !h.failed());             // ... not again
+    resync::Msg req2 = req; req2.from = 2;
+    CHECK(h.on_msg(req2, 1302, &rep, 2200) == resync::Act::None && h.active());   // another guest is not affected
+    h.complete();
+    req.s = 5000;
+    CHECK(h.on_msg(req, 1500, &rep, 1000 + resync::kReqWindowMs) == resync::Act::None && h.active());   // window over: honoured again
+    h.complete();
+    CHECK(h.count() == 3);
+    // spam after the limit cannot be used to switch recovery off before the window passes either
+    resync::Ctl k; k.configure(0, 0b11, c, 90);
+    k.on_msg(req, 650, &rep, 10000); k.complete();
+    k.on_msg(req, 1300, &rep, 10100);
+    CHECK(!k.failed() && k.count() == 1);
+}
+
 int main() {
+    test_req_throttle();
     test_fbmask();
     test_status_poll_and_drop();
     test_codec();
