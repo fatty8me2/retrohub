@@ -153,11 +153,11 @@ int main() {
 
     {   // invites / came-online while a game runs: never a Windows toast; bell always; OSD only when the runner can show one
         EventRoute a = route_event(true, false, true, false);
-        CHECK(a.bell && !a.windows_toast && a.osd);
+        CHECK(a.bell && !a.windows_toast && a.osd);   // game running: no toast, OSD
         EventRoute b = route_event(false, true, false, false);   // session without a runner channel: bell only
         CHECK(b.bell && !b.windows_toast && !b.osd);
         EventRoute c = route_event(false, false, true, false);   // idle hub: the in-hub toast covers it
-        CHECK(c.bell && !c.windows_toast && !c.osd);
+        CHECK(c.bell && c.windows_toast && !c.osd);   // nothing running: the opt-in toast is allowed
         EventRoute d = route_event(true, true, true, true);      // headless: nothing external
         CHECK(d.bell && !d.windows_toast && !d.osd);
     }
