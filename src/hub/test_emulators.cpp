@@ -524,9 +524,9 @@ static void test_config() {
     CHECK(ini.find("confirmClose = false") != std::string::npos && ini.find("check_for_update_on_start = false") != std::string::npos);
     CHECK(hubemu::azahar_config_patch(ini) == ini);   // idempotent
     {   // UI language pinned to English (every launch, managed Azahar); other lines kept
-        const std::string l = hubemu::azahar_pin_language("[UI]\nlanguage\\default=true\nlanguage=de\nconfirmClose=false\n");
-        CHECK(hubui::ini_get(l, "UI", "language") == "en" && hubui::ini_get(l, "UI", "language\\default") == "false" && hubui::ini_get(l, "UI", "confirmClose") == "false");
-        CHECK(hubemu::azahar_pin_language(l) == l && hubui::ini_get(hubemu::azahar_pin_language(""), "UI", "language") == "en");
+        const std::string l = hubemu::azahar_pin_language("[UI]\nlanguage\\default=true\nlanguage=de\ngamedirs=x\n");
+        CHECK(hubui::ini_get(l, "Paths", "language") == "en" && hubui::ini_get(l, "Paths", "language\\default") == "false" && hubui::ini_get(l, "Paths", "gamedirs") == "false" && hubui::ini_get(l, "UI", "language").empty());
+        CHECK(hubemu::azahar_pin_language(l) == l && hubui::ini_get(hubemu::azahar_pin_language(""), "Paths", "language") == "en");
     }
 
     std::string st = hubemu::cemu_default_settings_xml();

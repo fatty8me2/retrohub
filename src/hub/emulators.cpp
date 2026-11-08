@@ -853,10 +853,10 @@ std::string azahar_config_patch(const std::string& in, const hubctl::Profile& pr
     for (const char* c : {"circle_pad", "c_stick"}) { std::string v = az_analog(prof, c, pad); if (!v.empty()) set("Controls", c, "\"" + v + "\""); }
     return t;
 }
-/* The Qt UI language, English, so the 3DS link automation finds its menus by name on any Windows language. Only RetroHub's own Azahar. */
+/* The Qt UI language, English (Azahar config.cpp: UISettings::values.language lives in the [Paths] group), so the 3DS link automation finds its menus by name on any Windows language. Only RetroHub's own Azahar. */
 std::string azahar_pin_language(const std::string& in) {
-    std::string t = hubui::ini_set(in, "UI", "language\\default", "false");
-    return hubui::ini_set(t, "UI", "language", "en");
+    std::string t = hubui::ini_set(in, "Paths", "language\\default", "false");
+    return hubui::ini_set(t, "Paths", "language", "en");
 }
 std::string azahar_config_patch(const std::string& in, const hubctl::Profile& prof) { return azahar_config_patch(in, prof, AzPad()); }
 std::string azahar_config_patch(const std::string& in) { return azahar_config_patch(in, hubctl::default_profile("3ds"), AzPad()); }
