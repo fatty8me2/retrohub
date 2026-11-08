@@ -59,8 +59,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"gb_core\": \"" << json::escape(s.gb_core) << "\",\n"
       << "  \"fullscreen\": " << (s.fullscreen ? "true" : "false") << ",\n"
       << "  \"volume\": " << s.volume << ",\n"
-      << "  \"n64_clips\": " << (s.n64_clips ? "true" : "false") << ",
-"
+      << "  \"n64_clips\": " << (s.n64_clips ? "true" : "false") << ",\n"
       << "  \"start_hint\": " << (s.start_hint ? "true" : "false") << ",\n"
       << "  \"boot_anim\": " << (s.boot_anim ? "true" : "false") << ",\n"
       << "  \"boot_sounds\": " << (s.boot_sounds ? "true" : "false") << ",\n"
