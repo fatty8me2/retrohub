@@ -131,5 +131,19 @@ void flow_reflection(const CaseScene& sc, const CaseDraw& d, const CasePose& ps,
 /* The colour of the background grid at screen fractions (u, v) (bilinear), for the colour the cases fade into. */
 ImU32 flow_grid_at(const ImU32 grid[64], float u, float v);
 
+struct MediaDraw {
+    hubui::shelf::Media media = hubui::shelf::Media::Generic;
+    SDL_Texture* art = nullptr; int art_w = 0, art_h = 0;   // the cover: the disc's label / the cartridge's label well
+    ImU32 c0 = 0, c1 = 0;                                   // console colours
+    bool nx2 = false;
+    float scale = 1;                  // the case's whole scale (display scale x slot scale)
+    float x = 0, z = 0, centre_y = 0.5f;   // world position of the case centre
+    float item_yaw = 0;               // the slot's turn (without the selected case's own sway): the media slides along it
+    float far_limit = 1e9f;           // world x at the case's depth that the media's far edge must stay left of
+    float amount = 0;                 // 0 = hidden behind the case, 1 = fully out
+    float alpha = 1;
+    double time = 0;
+};
+void cases_media(const CaseScene& sc, const MediaDraw& d);
 
 }  // namespace shelfdraw

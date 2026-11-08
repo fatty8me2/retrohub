@@ -621,6 +621,7 @@ void draw_cases(Disp& D) {
             CS.sysv[(size_t)p] = (unsigned char)std::min(31, (int)sy);
         }
         CS.text_sig = 0;
+        CFX.media.reset();
         if (CS.land_pending) {
             int p = 0;
             if (!CS.land_key.empty()) { auto it = D.pos_of.find(CS.land_key); if (it != D.pos_of.end()) p = it->second; }
@@ -784,6 +785,7 @@ void draw_cases(Disp& D) {
         CFX.idle_rest = at_rest;
         CFX.idle_t += (double)dt;
         ui::anim(CFX.idle_w, at_rest ? 1.f : 0.f, at_rest ? 3.f : 9.f);
+        CFX.media.step(n ? CS.focus : -1, CS.mode == Mode::Browse && !CS.menu_open, dt, reduced);
     }
     // ---- stage ----
     const bool tight = H < sp(44.f);   // a big UI size in a small window: a smaller title and hint bar so the cases keep their room
@@ -1115,7 +1117,21 @@ void draw_cases(Disp& D) {
     // ---- the cases, far to near, each with its floor shadow ----
     each_far_to_near([&](Slot& s) {
         if (s.i == ic && ins > 0.01f) dl->AddRectFilled(p0, p1, IM_COL32(0, 0, 0, (int)(170.f * ins)));   // dim the neighbours: a scrim between them and the inspected case
-        if (!cfm) shelfdraw::cases_shadow(sc, s.cd, s.ps);
+        if (cfm) {   // the disc / cartridge that slid out from behind this case
+            namespace cf = hubui::cases::cf;
+            const float am = CFX.media.amount(s.i);
+            if (am > 0.004f) {
+                shelfdraw::MediaDraw md;
+                md.media = s.cd.media; md.art = s.cd.art; md.art_w = s.cd.art_w; md.art_h = s.cd.art_h; md.c0 = s.cd.c0; md.c1 = s.cd.c1; md.nx2 = s.cd.nx2;
+                md.scale = s.ps.scale; md.x = s.ps.x; md.z = s.ps.z;
+                md.centre_y = s.ps.lift + 0.5f * case_dims(s.cd.media).h * s.ps.scale;
+                md.item_yaw = (s.d < 0.f ? -cf::kNbYaw : cf::kNbYaw) * std::min(1.f, std::fabs(s.d));
+                const int k = (int)(&s - slots);
+                if (k + 1 < ns && slots[k + 1].i == s.i + 1) md.far_limit = ((slots[k + 1].mn.x - sc.cx) / sc.U) / (sc.dist / std::max(0.4f, sc.dist + s.ps.z)) - 0.02f;
+                md.amount = am; md.alpha = s.ps.alpha; md.time = CS.clock;
+                shelfdraw::cases_media(sc, md);
+            }
+        } else shelfdraw::cases_shadow(sc, s.cd, s.ps);
         shelfdraw::cases_case(sc, s.cd, s.ps, false);
     });
 

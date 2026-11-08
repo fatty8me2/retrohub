@@ -506,6 +506,56 @@ int main() {
             cf::ease_step(x, es, 7.f, 1.f / 60.f, true);
             CHECK(x == 7.f);
         }
+        // the media: specs per console, sizes relative to the case
+        {
+            const CaseDims keep = case_dims(Media::Ps2Case);
+            const cf::MediaSpec dvd = cf::media_spec(Media::Ps2Case), mini = cf::media_spec(Media::GcCase), sw = cf::media_spec(Media::SwitchCase);
+            CHECK(dvd.kind == cf::MediaKind::Disc && mini.kind == cf::MediaKind::Disc && sw.kind == cf::MediaKind::Card);
+            CHECK(std::fabs(cf::disc_dia(dvd, keep) - 0.94f * 0.71f) < 1e-5f && std::fabs(cf::disc_dia(mini, keep) - 0.94f * 0.71f * 8.f / 12.f) < 1e-5f);
+            CHECK(std::fabs(dvd.slide - 0.65f) < 1e-6f && std::fabs(dvd.rise - 0.04f) < 1e-6f && std::fabs(dvd.yaw - 15.f * deg) < 1e-5f && std::fabs(dvd.roll - 14.f * deg) < 1e-5f);
+            CHECK(std::fabs(sw.slide - 0.71f) < 1e-6f && std::fabs(sw.rise - 0.28f) < 1e-6f && std::fabs(sw.yaw - 17.f * deg) < 1e-5f && std::fabs(sw.roll - 9.f * deg) < 1e-5f);
+            CHECK(sw.w < 0.12f && sw.h < 0.17f && sw.h > sw.w);   // a Switch card is tiny (21 x 31 mm against a 190 mm case)
+            CHECK(cf::media_spec(Media::N64Cart).kind == cf::MediaKind::Card && cf::media_spec(Media::GbaCart).kind == cf::MediaKind::Card && cf::media_spec(Media::DsCase).kind == cf::MediaKind::Card);
+            CHECK(cf::media_spec(Media::Ps1Jewel).kind == cf::MediaKind::Disc && cf::media_spec(Media::WiiUCase).kind == cf::MediaKind::Disc);
+            // the reach: the slide, or less when the next case is in the way; never behind the case (>= a quarter of its width)
+            const float dia = cf::disc_dia(dvd, keep);
+            const cf::MediaOffset free_ = cf::media_offset(dvd, keep, 1.f, dia, dia, cf::kHeroX, 9.f);
+            CHECK(std::fabs(free_.out - 0.65f * 0.71f) < 1e-5f && std::fabs(free_.up - 0.04f) < 1e-5f);
+            const cf::MediaOffset tight = cf::media_offset(dvd, keep, 1.f, dia, dia, cf::kHeroX, 0.5f);
+            CHECK(tight.out < free_.out && tight.out + cf::kHeroX + 0.5f * dia * std::cos(dvd.yaw) <= 0.5f + 1e-4f);
+            const CaseDims sk = case_dims(Media::SwitchCase);
+            const cf::MediaOffset c1 = cf::media_offset(sw, sk, 1.f, sw.w, sw.h, cf::kHeroX, 9.f);
+            CHECK(std::fabs(c1.up - 0.28f * sk.h) < 1e-5f && std::fabs(c1.out - 0.71f * sk.w) < 1e-5f);
+        }
+        // the reveal: a 420 ms dwell, cancelled when the selection moves on; slides out over 0.85 s; back in when it moves
+        {
+            cf::MediaReveal r;
+            const float dt = 1.f / 60.f;
+            for (int i = 0; i < 20; ++i) r.step(5, true, dt, false);   // 0.33 s: not yet
+            CHECK(r.amount(5) == 0.f);
+            r.step(7, true, dt, false);                                  // moved on before the dwell: never launched
+            for (int i = 0; i < 20; ++i) r.step(7, true, dt, false);
+            CHECK(r.amount(5) == 0.f && r.amount(7) == 0.f);
+            int steps = 0;
+            while (r.amount(7) < 0.999f && steps < 600) { r.step(7, true, dt, false); ++steps; }
+            CHECK(r.amount(7) >= 0.999f && (float)steps * dt > 0.09f + 0.5f && (float)steps * dt < 0.09f + 0.85f + 0.05f);
+            r.step(8, true, dt, false);                                  // the selection moves: 7 slides back in, 8 waits its dwell
+            CHECK(r.amount(7) > 0.9f && r.amount(8) == 0.f);
+            for (int i = 0; i < 20; ++i) r.step(8, true, dt, false);
+            const float mid = r.amount(7);
+            CHECK(mid < 0.9f && mid > 0.f);
+            for (int i = 0; i < 120; ++i) r.step(8, true, dt, false);
+            CHECK(r.amount(7) == 0.f && r.amount(8) > 0.99f);
+            r.step(8, false, dt, false);                                 // flip / inspect: it slides in
+            for (int i = 0; i < 120; ++i) r.step(8, false, dt, false);
+            CHECK(r.amount(8) == 0.f && !r.any());
+            r.step(9, true, dt, true);                                   // reduced motion: instant
+            CHECK(r.amount(9) == 1.f);
+            r.step(10, true, dt, true);
+            CHECK(r.amount(9) == 0.f && r.amount(10) == 1.f);
+            r.reset();
+            CHECK(!r.any() && r.amount(10) == 0.f);
+        }
         // the info block's entrance: 12 px rise and fade over 0.45 s
         CHECK(cf::info_alpha(0.f) == 0.f && cf::info_alpha(0.45f) == 1.f && cf::info_alpha(1.f) == 1.f && std::fabs(cf::info_rise(0.f) - 12.f) < 1e-5f && cf::info_rise(0.45f) == 0.f && cf::info_rise(0.2f) < 12.f);
     }

@@ -256,6 +256,78 @@ inline float first_edge(const CaseDims& n, float ns, float extra) {
     return l;
 }
 
+/* ---- the disc / cartridge that slides out from behind the selected case ---- */
+enum class MediaKind { None, Disc, Card };
+struct MediaSpec {
+    MediaKind kind = MediaKind::None;
+    float w = 0, h = 0, thick = 0;                  // a card: world units for a 190 mm tall case = 1.0 (a disc: see disc_dia)
+    float slide = 0, rise = 0, yaw = 0, roll = 0;   // fractions of the case width / height, radians (yaw: face turned toward the centre; roll: clockwise on screen)
+    bool mini = false;
+};
+inline MediaSpec media_spec(shelf::Media m) {
+    using shelf::Media;
+    MediaSpec s;
+    auto card = [&](float wmm, float hmm, float tmm) { s.kind = MediaKind::Card; s.w = wmm / 190.f; s.h = hmm / 190.f; s.thick = tmm / 190.f; s.slide = 0.71f; s.rise = 0.28f; s.yaw = 17.f * kDeg; s.roll = 9.f * kDeg; };
+    auto disc = [&](bool mini) { s.kind = MediaKind::Disc; s.mini = mini; s.thick = 1.2f / 190.f; s.slide = 0.65f; s.rise = 0.04f; s.yaw = 15.f * kDeg; s.roll = 14.f * kDeg; };
+    switch (m) {
+        case Media::SwitchCase: card(21.f, 31.f, 3.f); break;
+        case Media::DsCase: case Media::N3dsCase: card(33.f, 35.f, 3.8f); break;
+        case Media::N64Cart: card(116.f, 76.6f, 18.5f); break;
+        case Media::SnesCart: card(135.85f, 87.7f, 19.7f); break;
+        case Media::NesCart: card(120.f, 134.f, 17.f); break;
+        case Media::GbCart: case Media::GbcCart: card(57.f, 65.f, 7.8f); break;
+        case Media::GbaCart: card(60.f, 35.f, 8.f); break;
+        case Media::PspCase: card(65.f, 64.f, 4.2f); break;   // the UMD
+        case Media::GcCase: disc(true); break;
+        case Media::Ps1Jewel: case Media::Ps2Case: case Media::WiiUCase: case Media::Generic: disc(false); break;
+    }
+    return s;
+}
+/* Disc diameter in world units for a case (before the display scale): 0.94 min(W, H), a GameCube mini-disc 8/12 of that. */
+inline float disc_dia(const MediaSpec& s, const CaseDims& c) { return 0.94f * std::min(c.w, c.h) * (s.mini ? 8.f / 12.f : 1.f); }
+/* How far (world units, at amount 1) the media sits right of / above the case centre. `scale` = the case's whole scale, mw / mh = the media's size (scaled),
+ * `far_limit` = the world x (at the case's depth) its far edge must stay left of (the next neighbour). */
+struct MediaOffset { float out = 0, up = 0; };
+inline MediaOffset media_offset(const MediaSpec& s, const CaseDims& c, float scale, float mw, float mh, float case_x, float far_limit) {
+    MediaOffset o;
+    const float W = c.w * scale, H = c.h * scale;
+    o.out = std::min(s.slide * W, far_limit - case_x - 0.5f * mw * std::cos(s.yaw));
+    o.out = std::max(o.out, 0.25f * W);
+    o.up = s.kind == MediaKind::Disc ? std::max(s.rise * H, 0.5f * (mh - H)) : s.rise * H;
+    return o;
+}
+/* Who has their media out: the selected case after a 420 ms dwell (cancelled when the selection moves on), slid back in over 0.85 s on leaving. */
+struct MediaSlot { int idx = -1; float dwell = 0, x = 0; EaseState es; };
+struct MediaReveal {
+    static constexpr int kN = 4;
+    MediaSlot s[kN];   // s[0]: the selected case; the others: cases whose media is still sliding back in
+    void reset() { for (MediaSlot& m : s) m = MediaSlot(); }
+    void step(int focus, bool show, float dt, bool reduced) {
+        if (reduced) {
+            reset();
+            s[0].idx = focus; s[0].x = (show && focus >= 0) ? 1.f : 0.f;
+            s[0].es.from = s[0].es.to = s[0].es.out = s[0].x;
+            return;
+        }
+        if (s[0].idx != focus) {
+            MediaSlot back;
+            bool had = false;
+            for (int k = 1; k < kN; ++k) if (s[k].idx == focus && focus >= 0) { back = s[k]; had = true; for (int j = k; j + 1 < kN; ++j) s[j] = s[j + 1]; s[kN - 1] = MediaSlot(); break; }
+            if (s[0].idx >= 0 && s[0].x > 0.002f) { for (int k = kN - 1; k >= 2; --k) s[k] = s[k - 1]; s[1] = s[0]; }
+            s[0] = had ? back : MediaSlot();
+            s[0].idx = focus; s[0].dwell = 0.f;
+        }
+        if (show && focus >= 0) s[0].dwell += std::max(0.f, dt); else s[0].dwell = 0.f;
+        ease_step(s[0].x, s[0].es, (show && focus >= 0 && s[0].dwell >= kMediaDwell) ? 1.f : 0.f, dt, false, kMediaSecs);
+        for (int k = 1; k < kN; ++k) {
+            if (s[k].idx < 0) continue;
+            ease_step(s[k].x, s[k].es, 0.f, dt, false, kMediaSecs);
+            if (s[k].x <= 0.001f && s[k].es.t >= kMediaSecs) s[k] = MediaSlot();
+        }
+    }
+    float amount(int idx) const { for (const MediaSlot& m : s) if (m.idx == idx && idx >= 0) return m.x; return 0.f; }
+    bool any() const { for (const MediaSlot& m : s) if (m.idx >= 0 && m.x > 0.001f) return true; return false; }
+};
 /* The selected-case text block: fades in with a 12 px rise over 0.45 s on every new selection (t = seconds since the selection). */
 inline float info_alpha(float t) { return std::max(0.f, std::min(1.f, t / 0.45f)); }
 inline float info_rise(float t) { const float k = 1.f - info_alpha(t); return 12.f * k * k; }
