@@ -299,6 +299,115 @@ static void test_req_throttle() {
     CHECK(!k.failed() && k.count() == 1);
 }
 
+// netcore-M5: the whole recovery in a 3-4 player room over a lossy, delayed virtual network. One guest's state diverged; every peer runs the
+// real agreement (resync::Ctl) and the real shared state transfer (one rb::xfer Sender, one Receiver per guest, as Lockstep::rs_host_barrier does).
+// Optionally one guest dies before the proposal is acknowledged: the host drops it and the others still recover. Checks: all live peers end on
+// the host's state, exactly one recovery ran, nobody fell back, and every live peer plays on past the barrier.
+static void test_room(int peers, double loss, uint32_t one_way_ms, int dead_slot) {
+    uint8_t cp[8]; caps(cp, 1, 1, 1);
+    for (int i = 3; i < peers; i++) cp[i] = 1;
+    uint32_t mask = (1u << peers) - 1;
+    auto make_state = [](uint32_t seed) {
+        std::vector<uint8_t> v(300000);
+        uint32_t x = seed;
+        for (auto& b : v) { x = x * 1664525u + 1013904223u; b = (uint8_t)(x >> 24); }
+        return v;
+    };
+    const std::vector<uint8_t> good = make_state(11);
+    struct Peer {
+        resync::Ctl ctl; rb::xfer::Receiver rcv;
+        std::vector<uint8_t> state; uint32_t sample = 500; bool stalled = false, saw_mismatch = false;
+        int done_ep = -1; uint32_t last_status = 0;
+    };
+    std::vector<Peer> P(peers);
+    for (int i = 0; i < peers; i++) { P[i].ctl.configure(i, mask, cp, 90); P[i].state = good; }
+    P[1].state = make_state(99);   // guest 1 diverged
+    CHECK(P[0].ctl.enabled() && P[1].ctl.enabled());
+    struct Pkt { uint32_t at; int to; bool is_xfer; std::vector<uint8_t> d; };
+    std::vector<Pkt> net;
+    srand(900 + peers);
+    auto lossy = [&] { return (double)rand() / RAND_MAX < loss; };
+    auto send = [&](uint32_t now, int from, int to, bool x, std::vector<uint8_t> d) {
+        if (from == dead_slot || to == dead_slot) return;   // a dead peer neither sends nor receives
+        if (!lossy()) net.push_back({now + one_way_ms, to, x, std::move(d)});
+    };
+    rb::xfer::Sender snd;
+    uint32_t host_s = 0;
+    const uint8_t kType = 0x77;
+    bool dropped = dead_slot < 0;
+    uint32_t finished = 0, now = 1000;
+    for (; now < 90000; now++) {
+        for (size_t i = 0; i < net.size();) {   // deliver
+            if (net[i].at > now) { i++; continue; }
+            Pkt p = std::move(net[i]); net.erase(net.begin() + i);
+            Peer& me = P[p.to];
+            const uint8_t* d = p.d.data();
+            if (!p.is_xfer) {
+                resync::Msg m, rep;
+                if (!resync::decode(kType, d, p.d.size(), &m)) continue;
+                resync::Act a = me.ctl.on_msg(m, me.sample, &rep, now);
+                if (a == resync::Act::Reply) send(now, p.to, p.to == 0 ? m.from : 0, false, resync::encode(kType, rep));
+            } else if (p.to == 0) {
+                int from = d[2];
+                if (d[1] == rb::xfer::Ack) snd.on_ack(from, rb::xfer::g16(d + 4), rb::xfer::g64(d + 6));
+                else if (d[1] == rb::xfer::Done) snd.on_done(from);
+            } else if (d[1] == rb::xfer::Begin || d[1] == rb::xfer::Chunk) {
+                if (me.done_ep == d[3]) { auto v = rb::xfer::header(rb::xfer::Done, p.to, d[3]); v.push_back(1); send(now, p.to, 0, true, v); }   // loaded already: our Done was lost
+                else if (d[1] == rb::xfer::Begin) { rb::xfer::Meta mt; if (rb::xfer::dec_begin(d, p.d.size(), &mt)) me.rcv.on_begin(d[3], mt); }
+                else me.rcv.on_chunk(d[3], rb::xfer::g16(d + 4), d + 6, p.d.size() - 6);
+            }
+        }
+        for (int i = 0; i < peers; i++) {
+            if (i == dead_slot) continue;
+            Peer& me = P[i];
+            if (i == 1 && me.sample == 600 && !me.saw_mismatch) { me.saw_mismatch = true; me.ctl.on_mismatch(600, me.sample); }
+            if (i >= 2 && !me.saw_mismatch && me.sample == 612) { me.saw_mismatch = true; me.ctl.on_mismatch(600, me.sample); }   // they compare against guest 1 too
+            if (i == 0 && me.sample == 700 && !me.saw_mismatch) { me.saw_mismatch = true; me.ctl.on_mismatch(600, me.sample); }
+            if (i > 0 && me.ctl.req_due(now)) send(now, i, 0, false, resync::encode(kType, me.ctl.req_msg(600)));
+            if (i == 0 && me.ctl.propose_due(now)) for (int g = 1; g < peers; g++) send(now, 0, g, false, resync::encode(kType, me.ctl.propose_msg()));
+            if (me.ctl.active() && me.sample >= me.ctl.target()) me.stalled = true;
+            if (!me.stalled) me.sample++;
+            if (i == 0) {
+                if (me.ctl.save_due(me.sample)) { me.ctl.mark_saved(); host_s = me.ctl.target(); }
+                if (me.stalled && host_s && me.ctl.all_acked() && !snd.active()) {
+                    rb::xfer::Meta m;
+                    m.frame = host_s; m.raw = m.comp = (uint32_t)good.size(); m.chunks = (uint16_t)((good.size() + rb::xfer::kChunk - 1) / rb::xfer::kChunk); m.hash = 5;
+                    snd.start((uint8_t)(0xC0 | (me.ctl.seq() & 0x3F)), m, good, me.ctl.guests(), now, 1500.0);
+                }
+                if (snd.active()) {
+                    snd.service(now, 0, [&](const uint8_t* d, size_t n) { for (int g = 1; g < peers; g++) send(now, 0, g, true, std::vector<uint8_t>(d, d + n)); });
+                    if (snd.all_done()) { snd.stop(); me.ctl.complete(); me.stalled = false; host_s = 0; if (!finished) finished = now; }
+                }
+                // the host notices the dead peer (the drop agreement of the real game) a while after the proposal went out
+                if (!dropped && me.ctl.active() && now > 3000) { me.ctl.drop(dead_slot); snd.remove(dead_slot); dropped = true; }
+            } else {
+                if (me.stalled && now - me.last_status >= 250) { me.last_status = now; send(now, i, 0, false, resync::encode(kType, me.ctl.ack_msg())); }
+                uint16_t nx; uint64_t bits;
+                if (me.rcv.active() && me.rcv.ack_due(now, &nx, &bits)) send(now, i, 0, true, rb::xfer::enc_ack(i, me.rcv.epoch(), nx, bits));
+                if (me.stalled && me.rcv.complete()) {
+                    me.state = me.rcv.payload();
+                    me.done_ep = me.rcv.epoch();
+                    auto v = rb::xfer::header(rb::xfer::Done, i, (uint8_t)me.done_ep); v.push_back(1);
+                    send(now, i, 0, true, v);
+                    me.rcv.reset(); me.ctl.complete(); me.stalled = false;
+                }
+            }
+        }
+        if (finished && now > finished + 400) break;   // everyone had time to run on
+    }
+    CHECK(finished != 0);
+    CHECK(P[0].ctl.count() == 1 && !P[0].ctl.failed() && !P[0].ctl.active());
+    uint32_t target = P[0].ctl.floor();
+    for (int i = 1; i < peers; i++) {
+        if (i == dead_slot) continue;
+        CHECK(P[i].state == good);                           // the diverged guest was repaired, the others still match
+        CHECK(P[i].ctl.count() == 1 && !P[i].ctl.failed());  // nobody fell back to the old behaviour
+        CHECK(P[i].sample > target);                         // and they play on past the barrier
+    }
+    CHECK(P[0].sample > target);
+    std::printf("  room of %d%s, loss %.0f%%: recovered in %u ms\n", peers, dead_slot >= 0 ? " (one peer died)" : "", loss * 100, finished ? finished - 1000 : 0);
+}
+
 int main() {
     test_req_throttle();
     test_fbmask();
@@ -312,6 +421,12 @@ int main() {
     test_three_players();
     test_transfer(0.0, 20);
     test_transfer(0.10, 60);
+    test_room(3, 0.0, 20, -1);
+    test_room(4, 0.0, 20, -1);
+    test_room(3, 0.05, 40, -1);
+    test_room(4, 0.05, 40, -1);
+    test_room(4, 0.05, 40, 3);   // a guest dies mid-recovery: the host drops it and the other two are repaired
+    test_room(3, 0.0, 20, 2);
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("n64run_resync_test: all passed\n");
     return 0;

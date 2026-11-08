@@ -156,6 +156,35 @@ static void test_session(const fs::path& d, bool hardcore) {
     CHECK(!off.start(q, h));
 }
 
+/* Failed sign-in with hardcore chosen (audit M7a): once RA answers, nothing stays blocked and the session says it is final. */
+static void test_failed_login(const fs::path& d) {
+    fs::path rom = d / "mock2.nes";
+    { std::ofstream f(rom, std::ios::binary); std::string z(8192, 'B'); f.write(z.data(), (std::streamsize)z.size()); }
+    std::vector<uint8_t> ram(2048, 0);
+    for (int mode = 0; mode < 2; mode++) {   // 0: token rejected by the server, 1: server unreachable
+        cheevos::Params p;
+        p.cfg.enabled = true; p.cfg.hardcore = true; p.cfg.username = "MockUser"; p.cfg.token = "BADTOKEN";
+        p.cache_dir = (d / "cache_fail").string();
+        p.game_key = "nes:mock2"; p.system = "nes"; p.rom_path = rom.string(); p.now = fake_now;
+        cheevos::Host h;
+        h.inline_http = true;
+        if (mode == 0) h.http = mock_server;   // "t=BADTOKEN" -> invalid_credentials
+        else h.http = [](const std::string&, const std::string&, const std::string&, std::string*, int*) { return false; };
+        h.core_memory = [&](unsigned id, uint8_t** data, size_t* n) {
+            if (id == 2) { *data = ram.data(); *n = ram.size(); } else { *data = nullptr; *n = 0; }
+        };
+        cheevos::Session s;
+        CHECK(s.start(p, h));
+        CHECK(s.resolved());                      // answered (inline http): the outcome is final
+        CHECK(!s.game_ready());
+        CHECK(!s.hardcore());                     // not half-on: nothing can be earned, so nothing is blocked
+        CHECK(s.allow(cheevos::Feature::Cheats) && s.allow(cheevos::Feature::LoadState) && s.allow(cheevos::Feature::Rewind));
+        CHECK(s.allow_speed(2.0));
+        for (int i = 0; i < 3; i++) s.frame();     // must not crash with no game
+        s.stop();
+    }
+}
+
 int main() {
     fs::path d = fs::temp_directory_path() / "retrohub_cheevos_test";
     std::error_code ec;
@@ -165,6 +194,7 @@ int main() {
     test_login();
     test_session(d, false);
     test_session(d, true);
+    test_failed_login(d);
     fs::remove_all(d, ec);
     if (g_fail) { std::printf("cheevos_test: %d failure(s)\n", g_fail); return 1; }
     std::printf("cheevos_test: all passed\n");

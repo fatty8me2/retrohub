@@ -43,6 +43,7 @@ struct Session::Impl {
     rc_client_t* client = nullptr;
     rc_libretro_memory_regions_t regions{};
     bool regions_ok = false, started = false, ready = false;
+    bool resolved = false;   // sign-in and game load have both answered (success or failure): hardcore is now final
     GameCache gc;
     std::vector<Recent> recent;
     long long last_block_msg = 0;
@@ -193,7 +194,10 @@ static void RC_CCONV c_login(int result, const char* err, rc_client_t* c, void*)
     auto* d = (Session::Impl*)rc_client_get_userdata(c);
     if (result != RC_OK) {
         d->log(std::string("login failed: ") + (err ? err : "?"));
-        osd::push("Achievements: sign-in failed (open Settings > Account)", osd::Kind::Warn, 5.0);
+        const bool was_hc = rc_client_get_hardcore_enabled(c) != 0;
+        osd::push(was_hc ? "Achievements: sign-in failed, so hardcore is off for this game (open Settings > Account)"
+                         : "Achievements: sign-in failed (open Settings > Account)", osd::Kind::Warn, 5.0);
+        d->resolved = true;
         rc_client_set_hardcore_enabled(c, 0);   // nothing can be earned this session: do not block rewind / cheats / speed for no reason (audit M7a)
         d->log("hardcore off: not signed in");
         return;
@@ -206,11 +210,13 @@ static void RC_CCONV c_game(int result, const char* err, rc_client_t* c, void*) 
     if (result != RC_OK) {
         d->log(std::string("game load failed: ") + (err ? err : "?"));
         if (result == RC_NO_GAME_LOADED) d->log("no achievements for this game");
+        d->resolved = true;
         rc_client_set_hardcore_enabled(c, 0);   // nothing to earn: the hardcore restrictions would only get in the way (audit M7a)
         d->log("hardcore off: no game loaded");
         return;
     }
     d->ready = true;
+    d->resolved = true;
     d->rebuild_cache();
     const bool hc = rc_client_get_hardcore_enabled(c) != 0;
     if (d->gc.total)
@@ -308,6 +314,7 @@ void Session::stop() {
 bool Session::active() const { return d_->started; }
 bool Session::hardcore() const { return d_->started && d_->client && rc_client_get_hardcore_enabled(d_->client) != 0; }
 bool Session::game_ready() const { return d_->ready; }
+bool Session::resolved() const { return d_->started && d_->resolved; }
 unsigned Session::unlocked() const { return d_->gc.unlocked; }
 const GameCache& Session::cache() const { return d_->gc; }
 
