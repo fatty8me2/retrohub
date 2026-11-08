@@ -26,6 +26,9 @@ NxRunner nx_runner_value(const hub::gs::Values& v);
 /* Play this Switch game with Fritchii: System::Switch and the runner is exactly "fritchii". (Hookshot is checked before this by launch.cpp.) */
 bool fritchii_selected(const hub::GameEntry& e, const hub::gs::Values& v);
 
+/* Lichii or Fritchii for a Switch game. Fritchii is offline only (like Hookshot): an online or room launch always gets Lichii, whatever the setting says. */
+Kind nx_emulator_for(const hub::GameEntry& e, const hub::gs::Values& v, bool online_or_room);
+
 /* ---- config / environment ---- */
 /* "Section.key" names RetroHub must NOT write into Fritchii's qt-config.ini. Fritchii resets its own tuned Ocarina keys at every start, so RetroHub's values would not
  * stick. Empty until the compatibility audit names the exact list; lichii_ini_launch / prepare_lichii take it as skip_keys. Lichii never skips anything. */
@@ -85,8 +88,10 @@ std::string default_save_backup_root();
  *   1. other install -> vault (newest wins, with the other install's own "last agreed" manifest),
  *   2. vault -> launching install (newest wins, with its manifest).
  * Before a tree is overwritten, or left behind holding changes made since it last synced, it is copied to
- * <backup_root>\<game>\<yyyymmdd-hhmmss>-before-<emulator>-launch\<lichii|fritchii|vault>\... Nothing is ever deleted; a missing folder on any side is fine; if a
- * backup cannot be written the step is skipped (no backup, no overwrite) and ok=false. A no-op when the other emulator is not installed (a Lichii-only PC
+ * <backup_root>\<game>\<yyyymmdd-hhmmss>-before-<emulator>-launch\<vault|lichii|fritchii>-before-sync... Nothing is ever deleted; a missing folder on any side is fine; if a
+ * backup cannot be written the launch ends with ok=false and NOTHING has been written: every snapshot is planned and taken BEFORE the first write, each in its own folder
+ * (vault-before-sync, lichii-before-sync, fritchii-before-sync) under a stamp folder that did not exist before, and a snapshot never overwrites a file already in the backup
+ * folder. The _conflicts copies of sync_tree_newest are never pruned either. A no-op when the other emulator is not installed (a Lichii-only PC
  * behaves exactly as before). The session's own begin_session / end_session still run afterwards, with the manifest suffix nx_manifest_suffix(kind). */
 NxSaveSyncReport nx_sync_saves_before_launch(const NxSaveSync& in);
 /* "" for Lichii, "-fritchii" for Fritchii (a manifest per emulator: a shared one would let a stale copy win). */

@@ -35,6 +35,10 @@ bool fritchii_selected(const hub::GameEntry& e, const hub::gs::Values& v) {
     return e.system == hub::System::Switch && nx_runner_value(v) == NxRunner::Fritchii;
 }
 
+Kind nx_emulator_for(const hub::GameEntry& e, const hub::gs::Values& v, bool online_or_room) {
+    return !online_or_room && fritchii_selected(e, v) ? Kind::Fritchii : Kind::Lichii;
+}
+
 const std::vector<std::string>& nx_skip_keys(Kind k) {
     // TODO(audit): the compatibility audit is still pinning down which keys Fritchii resets at every start (gpu_accuracy, vsync_mode, resolution_setup,
     // scaling_filter, docked mode ... "Section.key"). Add them here and RetroHub stops writing them for Fritchii; nothing else changes.
@@ -190,6 +194,7 @@ std::string shader_seed_run(const std::vector<ShaderSeedItem>& plan, const std::
         std::error_code ec;
         fs::create_directories(P(it.dst).parent_path(), ec);
         const fs::path part = P(it.dst + ".retrohub-part");
+        uint64_t copied = 0;
         {
             std::ifstream in(P(it.src), std::ios::binary);
             std::ofstream out(part, std::ios::binary | std::ios::trunc);
@@ -203,14 +208,18 @@ std::string shader_seed_run(const std::vector<ShaderSeedItem>& plan, const std::
                 out.write(buf.data(), n);
                 if (!out) { out.close(); fs::remove(part, ec); return "could not write the shader cache copy (disk full?)"; }
                 done += (uint64_t)n;
+                copied += (uint64_t)n;
                 if (progress) progress(done, total);
             }
+            if (in.bad()) { out.close(); fs::remove(part, ec); return "could not read the shader cache (read error)"; }
+            out.flush();
+            if (!out) { out.close(); fs::remove(part, ec); return "could not write the shader cache copy (disk full?)"; }
         }
+        if (copied != it.size) { fs::remove(part, ec); return "the shader cache changed while it was copied (" + std::to_string(copied) + " of " + std::to_string(it.size) + " bytes): not used"; }   // never rename a truncated copy into place
         std::error_code e1;
         auto mt = fs::last_write_time(P(it.src), e1);
         if (!e1) fs::last_write_time(part, mt, e1);   // same time as the source: it is not "older" next time
-        fs::remove(P(it.dst), ec);
-        fs::rename(part, P(it.dst), ec);
+        fs::rename(part, P(it.dst), ec);   // replaces an existing (older) file in one step on Windows; a failure leaves the old cache as it was
         if (ec) { std::error_code e2; fs::remove(part, e2); return "could not put the shader cache copy in place: " + ec.message(); }
     }
     return "";
@@ -261,6 +270,26 @@ static bool trees_differ(const std::string& a, const std::string& b) {
     return false;
 }
 
+/* A plain copy of every file under src into dst that keeps the file times and REFUSES to overwrite: a file that is already there is an error. */
+static bool copy_tree_no_overwrite(const std::string& src, const std::string& dst, std::string* err) {
+    std::error_code ec;
+    fs::create_directories(P(dst), ec);
+    for (fs::recursive_directory_iterator it(P(src), ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e0;
+        if (!it->is_regular_file(e0)) continue;
+        const fs::path rel = fs::relative(it->path(), P(src), e0);
+        const fs::path to = P(dst) / rel;
+        if (e0 || fs::exists(to, e0)) { *err = "snapshot target exists: " + S(to); return false; }
+        fs::create_directories(to.parent_path(), e0);
+        fs::copy_file(it->path(), to, fs::copy_options::none, e0);
+        if (e0) { *err = "cannot copy " + S(it->path()) + ": " + e0.message(); return false; }
+        auto mt = fs::last_write_time(it->path(), e0);
+        if (!e0) fs::last_write_time(to, mt, e0);
+    }
+    if (ec) { *err = "cannot read " + src; return false; }
+    return true;
+}
+
 static std::string safe_name(std::string s) {
     for (char& c : s) if (!(std::isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.')) c = '_';
     return s.empty() ? "switch" : s;
@@ -293,47 +322,59 @@ NxSaveSyncReport nx_sync_saves_before_launch(const NxSaveSync& in) {
     const std::string root = in.backup_root.empty() ? default_save_backup_root() : in.backup_root;
     const std::string label = safe_name(in.game_label.empty() ? S(game.filename()) : in.game_label);
     const std::string tag = stamp("local.%Y%m%d-%H%M%S");
-    std::string snap_dir;   // <root>\<game>\<stamp>-before-<emu>-launch, made on first use
-    auto snapshot = [&](const std::string& tree, const char* who, const std::string& vrel) -> bool {
-        if (!hub::tree_has_files(tree)) return true;
-        if (root.empty()) { rep.error = "no place for save backups (LOCALAPPDATA is not set)"; return false; }
-        if (snap_dir.empty()) {
-            const std::string base = join(join(root, label), stamp("%Y%m%d-%H%M%S") + "-before-" + lower(name(in.launching)) + "-launch");
-            std::string d = base;
-            std::error_code ec;
-            for (int n = 2; fs::exists(P(d), ec) && n < 1000; ++n) d = base + "-" + std::to_string(n);   // never reuse (or touch) an existing backup
-            snap_dir = d;
-        }
-        const std::string to = join(join(snap_dir, who), vrel);
-        hub::TreeSyncReport r = hub::sync_tree_newest(tree, to, "", tag);   // a fresh folder: a plain copy that keeps the file times
-        if (!r.ok) { rep.error = "could not back up " + tree + ": " + r.error; return false; }
-        rep.backups++;
-        rep.backup_dirs.push_back(to);
-        return true;
-    };
 
-    for (size_t i = 0; i < km.rels.size(); ++i) {
-        const std::string& vrel = km.vault_rels[i];
-        const std::string ktree = join(km.user_root, km.rels[i]), otree = join(om.user_root, om.rels[i]), vtree = join(battery, vrel);
-        const std::string prefix = vrel + "/";
+    struct Item { std::string ktree, otree, vtree, vrel, prefix; };
+    std::vector<Item> items;
+    for (size_t i = 0; i < km.rels.size(); ++i)
+        items.push_back({join(km.user_root, km.rels[i]), join(om.user_root, om.rels[i]), join(battery, km.vault_rels[i]), km.vault_rels[i], km.vault_rels[i] + "/"});
+
+    // ---- phase 1: decide and take EVERY snapshot before anything is written. A snapshot that cannot be made ends the launch here, with nothing changed.
+    // A tree is kept when this launch (or the session that follows) could replace it or leave it behind holding changes that never synced:
+    //   the vault: when it differs from either emulator (step 1 may replace it, or the session's copy-back will);
+    //   an emulator: when it differs from the vault or the other one AND holds changes since it last synced.
+    // Every snapshot point has its own folder (vault-before-sync, <emulator>-before-sync) under a stamp folder that did not exist before, and the copy refuses
+    // to overwrite a file that is already there, so one snapshot can never replace another.
+    struct Snap { std::string tree, who, vrel; };
+    std::vector<Snap> snaps;
+    for (const Item& it : items) {
+        if (hub::tree_has_files(it.vtree) && (trees_differ(it.otree, it.vtree) || trees_differ(it.ktree, it.vtree))) snaps.push_back({it.vtree, "vault-before-sync", it.vrel});
+        if (hub::tree_has_files(it.ktree) && (trees_differ(it.ktree, it.vtree) || trees_differ(it.ktree, it.otree)) && tree_unsynced(it.ktree, it.prefix, kman))
+            snaps.push_back({it.ktree, lower(name(in.launching)) + "-before-sync", it.vrel});
+        if (hub::tree_has_files(it.otree) && (trees_differ(it.otree, it.vtree) || trees_differ(it.otree, it.ktree)) && tree_unsynced(it.otree, it.prefix, oman))
+            snaps.push_back({it.otree, lower(name(other)) + "-before-sync", it.vrel});
+    }
+    if (!snaps.empty()) {
+        if (root.empty()) { rep.ok = false; rep.error = "no place for save backups (LOCALAPPDATA is not set)"; return rep; }
+        const std::string base = join(join(root, label), stamp("%Y%m%d-%H%M%S") + "-before-" + lower(name(in.launching)) + "-launch");
+        std::string snap_dir = base;
+        std::error_code ec;
+        for (int n = 2; fs::exists(P(snap_dir), ec) && n < 1000; ++n) snap_dir = base + "-" + std::to_string(n);   // never reuse (or touch) an existing backup
+        if (fs::exists(P(snap_dir), ec)) { rep.ok = false; rep.error = "could not find a free backup folder"; return rep; }
+        fs::create_directories(P(snap_dir), ec);
+        if (ec || !fs::is_directory(P(snap_dir), ec)) { rep.ok = false; rep.error = "could not create the backup folder " + snap_dir; return rep; }
+        for (const Snap& s : snaps) {
+            const std::string to = join(join(snap_dir, s.who), s.vrel);
+            std::string err;
+            if (!copy_tree_no_overwrite(s.tree, to, &err)) { rep.ok = false; rep.error = "could not back up " + s.tree + ": " + err; return rep; }
+            rep.backups++;
+            rep.backup_dirs.push_back(to);
+        }
+    }
+
+    // ---- phase 2: the writes. keep_backups = 0: sync_tree_newest never prunes the older _conflicts copies (nothing is deleted).
+    for (const Item& it : items) {
         // 1. the other emulator -> the vault
-        if (hub::tree_has_files(otree)) {
-            if (trees_differ(otree, vtree) && !snapshot(vtree, "vault", vrel)) { rep.ok = false; return rep; }   // the vault copy that may be replaced
-            hub::TreeSyncReport r = hub::sync_tree_newest(otree, vtree, join(conflicts, vrel), tag, &oman, prefix);
+        if (hub::tree_has_files(it.otree)) {
+            hub::TreeSyncReport r = hub::sync_tree_newest(it.otree, it.vtree, join(conflicts, it.vrel), tag, &oman, it.prefix, 0);
             rep.copied += r.copied;
-            if (!r.ok) { rep.ok = false; rep.error = r.error; return rep; }
+            if (!r.ok) { rep.ok = false; rep.error = r.error; hub::manifest_save(kman_path, kman); hub::manifest_save(oman_path, oman); return rep; }
         }
         // 2. the vault -> the launching emulator
-        if (hub::tree_has_files(vtree)) {
-            if (trees_differ(vtree, ktree) && tree_unsynced(ktree, prefix, kman) && !snapshot(ktree, lower(name(in.launching)).c_str(), vrel)) { rep.ok = false; return rep; }
-            hub::TreeSyncReport r = hub::sync_tree_newest(vtree, ktree, join(conflicts + "\\emulator", vrel), tag, &kman, prefix);
+        if (hub::tree_has_files(it.vtree)) {
+            hub::TreeSyncReport r = hub::sync_tree_newest(it.vtree, it.ktree, join(conflicts + "\\emulator", it.vrel), tag, &kman, it.prefix, 0);
             rep.copied += r.copied;
-            if (!r.ok) { rep.ok = false; rep.error = r.error; return rep; }
+            if (!r.ok) { rep.ok = false; rep.error = r.error; hub::manifest_save(kman_path, kman); hub::manifest_save(oman_path, oman); return rep; }
         }
-        // 2b. the launching emulator kept a newer copy of its own: the vault's older version will be replaced when the session ends, keep it too
-        if (trees_differ(vtree, ktree) && !snapshot(vtree, "vault", vrel)) { rep.ok = false; return rep; }
-        // 3. the other emulator still differs from the vault AND holds changes it never synced: it lost this round, keep what it had
-        if (trees_differ(otree, vtree) && tree_unsynced(otree, prefix, oman) && !snapshot(otree, lower(name(other)).c_str(), vrel)) { rep.ok = false; return rep; }
     }
     hub::manifest_save(kman_path, kman);
     hub::manifest_save(oman_path, oman);

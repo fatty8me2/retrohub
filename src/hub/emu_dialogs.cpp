@@ -67,12 +67,12 @@ void draw_emulator_dialogs() {
             if (EMU.state == hubemu::Installer::Asking) {
                 if (back) EMU.state = hubemu::Installer::Idle;
                 if (hubemu::release_is_placeholder(EMU.kind)) {   // Fritchii before its release is pinned: nothing to download yet
-                    ImGui::TextWrapped("%s is not available to download yet. Lichii plays your Switch games meanwhile.", nm.c_str());
+                    ImGui::TextWrapped("%s isn't available yet. Pick Lichii in Settings > Switch to play now.", nm.c_str());
                     ImGui::Dummy(ImVec2(0, 8 * S));
                     if (button("Close", ImVec2(160 * S, 44 * S), true)) EMU.state = hubemu::Installer::Idle;
                     ImGui::SetItemDefaultFocus();
                 } else if (EMU.updating && EMU.kind == hubemu::Kind::Fritchii && !hubemu::update_leftovers(EMU.kind, hubemu::find(EMU.kind, "", "").dir).empty()) {   // its own updater left a half-finished update: Fritchii would open an "Interrupted Update" box over the game
-                    ImGui::TextWrapped("Fritchii was left half-updated by its own updater. Reinstall the tested version (%s, about %d MB download from its official release) so it starts cleanly? "
+                    ImGui::TextWrapped("Fritchii was left half-updated by its own updater. Reinstall the tested version (%s, about %d MB, the copy built by GitHub from Frizti's published source) so it starts cleanly? "
                                        "Your keys, firmware, saves and settings are kept.", rel.version, (int)(rel.size / 1048576));
                     ImGui::Dummy(ImVec2(0, 8 * S));
                     if (button("Reinstall", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());
@@ -80,9 +80,9 @@ void draw_emulator_dialogs() {
                     ImGui::SameLine();
                     if (button("Cancel", ImVec2(160 * S, 44 * S))) { EMU.state = hubemu::Installer::Idle; EMU.updating = false; }
                 } else if (EMU.updating) {
-                    ImGui::TextWrapped("%s has a newer version (%s, about %d MB download from its official release). Update it now? "
+                    ImGui::TextWrapped("%s has a newer version (%s, about %d MB download%s). Update it now? "
                                        "Your keys, firmware, saves and settings are kept. If the update fails, the current version stays.",
-                                       nm.c_str(), rel.version, (int)(rel.size / 1048576));
+                                       nm.c_str(), rel.version, (int)(rel.size / 1048576), EMU.kind == hubemu::Kind::Fritchii ? ", a copy built by GitHub from Frizti's published source" : " from its official release");
                     ImGui::Dummy(ImVec2(0, 8 * S));
                     if (button("Update", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());
                     ImGui::SetItemDefaultFocus();
@@ -95,9 +95,9 @@ void draw_emulator_dialogs() {
                     }
                 } else {
                 if (EMU.kind == hubemu::Kind::Fritchii)
-                    ImGui::TextWrapped("Fritchii: an Ocarina of Time-focused version of Lichii by Frizti (about %d MB download from its official release, %s). "
+                    ImGui::TextWrapped("Fritchii: an Ocarina of Time-focused version of Lichii by Frizti (about %d MB). RetroHub downloads a copy built by GitHub from Frizti's published source. "
                                        "It is kept inside RetroHub's data folder, separate from Lichii, and your saves are shared between the two. Download now?",
-                                       (int)(rel.size / 1048576), rel.license);
+                                       (int)(rel.size / 1048576));
                 else
                 ImGui::TextWrapped("%s games need the %s emulator (about %d MB download from its official release, %s). "
                                    "It is kept inside RetroHub's data folder. Download now?",
