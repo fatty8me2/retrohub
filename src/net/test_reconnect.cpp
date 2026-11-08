@@ -17,6 +17,17 @@ static bool got(Session& s, int* from)
     std::vector<uint8_t> d;
     return s.recv(from, &d);
 }
+namespace hubnet { std::string server_reason_text(const std::string& reason); }
+static void caps_checks()
+{
+    CHECK(game_room_caps(false) == "&caps=reasons");                       // no account proof: unchanged
+    CHECK(game_room_caps(true) == "&caps=reasons,gameauth");               // older servers split on "," and still see "reasons"
+    const char* codes[] = {"not-in-lobby", "wrong-slot", "slot-not-yours", "ident-required"};
+    for (const char* c : codes) {
+        std::string t = hubnet::server_reason_text(c);
+        CHECK(t.size() > 20 && t.find(c) == std::string::npos && t.find(' ') != std::string::npos);
+    }
+}
 static void session_checks()
 {
     const char* H0 = "127.0.0.1:5000";
@@ -201,6 +212,7 @@ static void session_checks()
 
 int main()
 {
+    caps_checks();
     session_checks();
     WsReconnect r;
     CHECK(!r.active());
