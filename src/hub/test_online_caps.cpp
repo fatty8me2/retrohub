@@ -155,7 +155,25 @@ int main() {
     /* remote_play.h: args per docs/REMOTE_PLAY.md, exit texts, attach timing, launch fragment */
     CHECK(hubrp::room_name("ABCD", 3) == "ABCD-3");
     CHECK(hubrp::guest_count(1) == 0 && hubrp::guest_count(2) == 1 && hubrp::guest_count(4) == 3 && hubrp::guest_count(9) == 3);
-    CHECK(hubrp::host_args(1234, "wss://x", "ABCD-3", 3, false) == "--host --capture-hwnd 1234 --net \"wss://x\" --room ABCD-3 --slot 0 --guests 2");
+    {   /* onlineflow-M5: DSU slots follow the guests' real lobby slots (slot K -> DSU K-1) */
+        CHECK(hubrp::dsu_slot_count({}) == 0 && hubrp::dsu_slot_count({0}) == 0);
+        CHECK(hubrp::dsu_slot_count({0, 1}) == 1 && hubrp::dsu_slot_count({0, 1, 2, 3}) == 3);
+        CHECK(hubrp::dsu_slot_count({0, 2}) == 2);       // slot 1 left: guest in slot 2 feeds DSU 1, so DSU 0 and 1 are bound
+        CHECK(hubrp::dsu_slot_count({0, 2, 3}) == 3 && hubrp::dsu_slot_count({0, 3}) == 3);
+        CHECK(hubrp::dsu_slot_count({0, 5}) == 3 && hubrp::dsu_slot_count({3, 0}) == 3);
+    }
+    {   /* onlineflow-M11: which systems get the "use host's save" option */
+        for (System s : {System::N64, System::GB, System::GBC, System::GBA, System::NES, System::SNES, System::PS1, System::PS2})
+            CHECK(hubcaps::share_host_save_supported(s));
+        for (System s : {System::GC, System::WiiU, System::N3DS, System::NDS, System::Unknown})
+            CHECK(!hubcaps::share_host_save_supported(s));
+        for (System s : {System::N64, System::GB, System::GBC, System::GBA}) CHECK(hubcaps::share_host_save_default(s) && hubcaps::share_host_save_effective(s, -1));   // old default kept
+        for (System s : {System::NES, System::SNES, System::PS1, System::PS2}) CHECK(!hubcaps::share_host_save_default(s) && !hubcaps::share_host_save_effective(s, -1));   // new: off, so NES/SNES keep drop-in
+        CHECK(hubcaps::share_host_save_effective(System::SNES, 1) && !hubcaps::share_host_save_effective(System::N64, 0));   // an explicit choice wins
+        CHECK(std::string(hubcaps::share_host_save_label(System::PS2)).find("memory card") != std::string::npos);
+        CHECK(std::string(hubcaps::share_host_save_label(System::SNES)).find("save") != std::string::npos);
+    }
+    CHECK(hubrp::host_args(1234,"wss://x", "ABCD-3", 3, false) == "--host --capture-hwnd 1234 --net \"wss://x\" --room ABCD-3 --slot 0 --guests 2");
     CHECK(hubrp::host_args(1, "wss://x", "R-1", 2, true).find(" --upnp") != std::string::npos);
     CHECK(hubrp::guest_args("wss://x", "ABCD-3", 2, true) == "--guest --net \"wss://x\" --room ABCD-3 --slot 2 --fullscreen");
     CHECK(hubrp::exit_text(3, false) == hubrp::kNoDirectText && hubrp::exit_text(3, true) == hubrp::kNoDirectText);

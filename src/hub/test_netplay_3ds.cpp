@@ -59,6 +59,23 @@ int main() {
     std::string pw = random_password(7u);
     CHECK(pw.size() == 12 && pw == random_password(7u) && pw != random_password(8u));
 
+    {   /* onlineflow-M6: a per-room password reaches the launch message, the room server args, the -m arg and the Direct Connect helper */
+        std::string rp = new_room_password(), rp2 = new_room_password();
+        CHECK(rp.size() == 12 && rp2.size() == 12 && rp != rp2);
+        for (char c : rp) CHECK((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'));
+        Plan hp; hp.expected = 2; hp.password = rp;
+        hubui::Json hj, none2; Plan gp;
+        CHECK(json::parse(hubui::launch_json("x", 1, 0, 1u, "", false, nullptr, nullptr, plan_json_fragment(hp)), &hj) && parse_plan(hj, &gp) && gp.password == rp);   // survives parse_plan's character check
+        CHECK(room_args(hp.port, gp.password, 8, "", "").find(" --password " + rp) != std::string::npos);
+        CHECK(multiplayer_arg("P_1", gp.password, "127.0.0.1", 5) == "-m \"P_1:" + rp + "@127.0.0.1:5\"");
+        CHECK(join_driver_args(1, "s.txt", "P_1", gp.password, "127.0.0.1", 5, 120).find("-Pw \"" + rp + "\"") != std::string::npos);
+        CHECK(room_password_supported({"v1.39.1", "1.39.1", "v1.40.0"}));       // all-new room: password
+        CHECK(!room_password_supported({"v1.39.1", "v1.39.0"}));                // one older guest: none
+        CHECK(!room_password_supported({"v1.39.1", ""}) && !room_password_supported({}) && !room_password_supported({"v1.39.1", "junk"}));   // unknown / not yet announced: none
+        set_pending_host_password(rp);
+        CHECK(take_pending_host_password() == rp && take_pending_host_password().empty());   // handed to launch_online_3ds once
+    }
+
     /* nicknames: Azahar accepts 4..20 of [A-Za-z0-9 ._-]; unique per slot */
     CHECK(nickname("Player", 0) == "Player_1" && nickname("Player", 2) == "Player_3");
     CHECK(nickname("a", 1) == "ax_2" || nickname("a", 1).size() >= 4);
