@@ -621,7 +621,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     hubemu::Kind kind = hubemu::kind_for(e.system);
     if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot_lichii_once_consume(e.key)) { /* "Play with Lichii this time": skip Hookshot once */ }
     else if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot::use_for(e, gs_values_for(e))) { launch_hookshot(e, ri, battery); return; }   // before any Lichii-only step: works without Lichii, keys or firmware
-    if (kind == hubemu::Kind::Lichii && hubemu::fritchii_selected(e, gs_values_for(e))) kind = hubemu::Kind::Fritchii;   // opt-in per game (switch.runner): the same code path as Lichii, with Fritchii's own install folder
+    if (kind == hubemu::Kind::Lichii) kind = hubemu::nx_emulator_for(e, gs_values_for(e), ri.online || ri.room);   // opt-in per game (switch.runner), offline only like Hookshot: the same code path as Lichii, with Fritchii's own install folder
     hubemu::Bios ps2_bios;
     if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is unpacked, downloaded or started
         ps2_bios = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
@@ -774,7 +774,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         ss.game_label = e.key;
         const hubemu::NxSaveSyncReport rep = hubemu::nx_sync_saves_before_launch(ss);
         if (rep.ran) autotest_log("nx saves: " + (rep.ok ? rep.summary : "ERROR " + rep.error));
-        if (!rep.ok) { set_notice("Couldn't compare your saves between Lichii and Fritchii (" + rep.error + "). The game was not started, so nothing changes.", 15.0); return; }
+        if (!rep.ok) { set_notice("Couldn't compare your saves between Lichii and Fritchii (" + rep.error + "). The game was not started. Nothing was lost: every save file that could have been replaced was backed up first (save-backups, and the vault's _conflicts folder).", 15.0); return; }
     }
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, "", wiiu_tid, hubemu::nx_manifest_suffix(kind)));
     autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);

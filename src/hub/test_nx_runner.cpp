@@ -2,7 +2,10 @@
 // Temp folders only; nothing is launched, nothing touches the real data dir or %LOCALAPPDATA%\RetroHub (the backup root is a temp folder too).
 #include "nx_runner.h"
 
+#include <windows.h>
+
 #include <atomic>
+#include <cstdlib>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -260,6 +263,28 @@ int main() {
         CHECK(shader_seed_run(p2, nullptr, &cancel) == "cancelled");
         CHECK(count_files(c.fritchii) == 0);
         CHECK(shader_seed_run(std::vector<ShaderSeedItem>{}, nullptr).empty());
+        // a copy that comes out short (the source changed or vanished while it was read) is never put in place
+        World t(tmp / "shader3");
+        wr(t.lichii / "user" / "cache" / "shader" / "0400486024dec000" / "vulkan.fork-v53.bin", std::string(1000, 'a'), 10);
+        auto p3 = shader_seed_plan(U8(t.lichii), U8(t.fritchii), kTid);
+        CHECK(p3.size() == 1);
+        p3[0].size += 500;                                                              // the planned size no longer matches what was read
+        const std::string t_dst = p3[0].dst;
+        CHECK(shader_seed_run(p3, nullptr).find("changed while") != std::string::npos);
+        CHECK(!fs::exists(fs::u8path(t_dst)) && !fs::exists(fs::u8path(t_dst + ".retrohub-part")));
+        // ...and a failing replace leaves the old cache exactly as it was (no remove before the rename)
+        auto p4 = shader_seed_plan(U8(t.lichii), U8(t.fritchii), kTid);
+        CHECK(p4.size() == 1);
+        wr(fs::u8path(t_dst), "my own older cache", 600);
+        p4 = shader_seed_plan(U8(t.lichii), U8(t.fritchii), kTid);
+        CHECK(p4.size() == 1);
+        HANDLE h = CreateFileW(fs::u8path(t_dst).wstring().c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);   // held open: the rename cannot replace it
+        CHECK(h != INVALID_HANDLE_VALUE);
+        const std::string e4 = shader_seed_run(p4, nullptr);
+        CHECK(!e4.empty());
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        CHECK(rd(fs::u8path(t_dst)) == "my own older cache" && !fs::exists(fs::u8path(t_dst + ".retrohub-part")));
+        CHECK(shader_seed_run(p4, nullptr).empty() && rd(fs::u8path(t_dst)) == std::string(1000, 'a'));   // released: the same plan now replaces it
     }
 
     // ---- saves
@@ -360,6 +385,69 @@ int main() {
         r = nx_sync_saves_before_launch(blocked);
         CHECK(!r.ok);
         CHECK(rd(save_dir(f.fritchii) / "slot.sav") == "fritchii-old");        // not overwritten without a backup
+        CHECK(!fs::exists(vault_save(f.battery) / "slot.sav"));                // ...and the vault was not written either (every snapshot comes before the first write)
+        CHECK(!fs::exists(f.root / "vault" / ".sync" / "emu-switch-switch_0400486024dec000-fritchii.json"));
+        CHECK(r.copied == 0 && r.error.size() > 0);
+        // no backup root at all (LOCALAPPDATA unset and none given): the same, nothing written
+        NxSaveSync noroot = f.req(Kind::Fritchii);
+        noroot.backup_root.clear();
+        _putenv_s("LOCALAPPDATA", "");
+        r = nx_sync_saves_before_launch(noroot);
+        CHECK(!r.ok && !fs::exists(vault_save(f.battery) / "slot.sav") && rd(save_dir(f.fritchii) / "slot.sav") == "fritchii-old");
+    }
+    {
+        // the vault's own pre-launch copy survives two snapshot points in one launch: step 1 replaces the vault with the other emulator's newer save, and the
+        // launching emulator then holds something newer still (the vault's older version is replaced again at the session's end). Both used to land in one folder.
+        World w(tmp / "saves_snap");
+        w.install_dirs();
+        wr(vault_save(w.battery) / "slot.sav", "vault-ORIGINAL", 50);
+        wr(save_dir(w.lichii) / "slot.sav", "lichii-newer", 30);
+        wr(save_dir(w.fritchii) / "slot.sav", "fritchii-newest", 5);
+        NxSaveSyncReport r = nx_sync_saves_before_launch(w.req(Kind::Fritchii));
+        CHECK(r.ok);
+        CHECK(files_with(w.backups, "vault-ORIGINAL") == 1);                      // the version the vault held BEFORE this launch is kept
+        CHECK(files_with(w.backups, "lichii-newer") >= 1);                        // so is the other emulator's unsynced save
+        CHECK(rd(save_dir(w.fritchii) / "slot.sav") == "fritchii-newest");
+        bool vault_dir_named = false;
+        for (const auto& d : r.backup_dirs) if (d.find("vault-before-sync") != std::string::npos) vault_dir_named = true;
+        CHECK(vault_dir_named);
+        for (const auto& d : r.backup_dirs) CHECK(d.find("-before-sync") != std::string::npos);
+        // a second launch in the same second never reuses or touches the first backup folder
+        const int before = files_with(w.backups, "vault-ORIGINAL");
+        wr(vault_save(w.battery) / "slot.sav", "vault-v2", 20);
+        wr(save_dir(w.fritchii) / "slot.sav", "fritchii-v2", 1);
+        CHECK(nx_sync_saves_before_launch(w.req(Kind::Fritchii)).ok);
+        CHECK(files_with(w.backups, "vault-ORIGINAL") == before);
+    }
+    {
+        // the _conflicts copies are never pruned (sync_tree_newest's default keeps only 10): 12 older ones stay, plus the new one
+        World w(tmp / "saves_prune");
+        w.install_dirs();
+        wr(vault_save(w.battery) / "slot.sav", "vault-old", 50);
+        wr(save_dir(w.lichii) / "slot.sav", "lichii-wins", 5);
+        const fs::path conf = w.root / "vault" / "_conflicts" / "switch" / "switch_0400486024dec000" / "battery" / "save" / kTidHex;
+        for (int i = 0; i < 12; ++i) wr(conf / ("slot.sav.local.2020010" + std::string(i < 10 ? "1-00000" : "1-0001") + std::to_string(i % 10)), "older backup " + std::to_string(i));
+        const int n0 = count_files(conf);
+        CHECK(n0 == 12);
+        CHECK(nx_sync_saves_before_launch(w.req(Kind::Fritchii)).ok);
+        CHECK(count_files(conf) == n0 + 1);
+        for (int i = 0; i < 12; ++i) CHECK(files_with(conf, "older backup " + std::to_string(i)) == 1);
+    }
+    {
+        // Fritchii only runs offline: an online or room launch is always Lichii
+        hub::GameEntry e;
+        e.system = hub::System::Switch;
+        e.key = "switch:0400486024dec000";
+        hub::gs::Values v;
+        v["switch.runner"] = "fritchii";
+        CHECK(nx_emulator_for(e, v, false) == Kind::Fritchii);
+        CHECK(nx_emulator_for(e, v, true) == Kind::Lichii);
+        v["switch.runner"] = "lichii";
+        CHECK(nx_emulator_for(e, v, false) == Kind::Lichii);
+        hub::GameEntry gc;
+        gc.system = hub::System::GC;
+        v["switch.runner"] = "fritchii";
+        CHECK(nx_emulator_for(gc, v, false) == Kind::Lichii);
     }
 
     // ---- update leftovers of Fritchii's own updater
