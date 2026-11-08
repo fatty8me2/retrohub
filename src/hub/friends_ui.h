@@ -163,6 +163,8 @@ void fr_notify_night(const std::string& night_id, const std::string& who);   // 
 std::string gn_display_text(const std::string& text);                       // DM text without the machine tag
 bool gn_on_message(const std::string& uid, const std::string& name, const std::string& text);   // true = it was a game night plan
 void gn_tick();
+void gn_open_night(const std::string& id);   // a reminder toast was clicked (retrohub://night/<id>): show that night's card (bell while a game runs)
+void gn_shutdown();                          // normal exit: re-register the scheduled reminder toasts (also hooked on atexit as a backup)
 bool gn_card_info(const std::string& id, std::string* title, std::string* sub, const char** action);
 void gn_card_action(const std::string& id);
 void gn_card_dismiss(const std::string& id);
