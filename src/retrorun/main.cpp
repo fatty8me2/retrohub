@@ -2239,6 +2239,7 @@ bool Frontend::join_gate(int slot, const std::vector<uint8_t>& m) {
     compute_join_fp();   // normally done at setup; a lazy first use would hitch the running game
     const joinfp::Gate g = joinfp::gate(join_fp_, m);
     if (g.pass) { spec_refused_ &= ~(1u << slot); return true; }
+    if (!g.reason) return false;   // not a real knock: ignore it
     joinfp::Fp theirs;
     joinfp::parse(m.data(), m.size(), joinfp::trailer_offset(m), &theirs);
     rlog("join: slot %d refused: %s (theirs game %08x core %08x proto %u; ours %08x %08x %u)", slot, joinfp::verdict_name(g.v), theirs.content, theirs.core, (unsigned)theirs.proto,
