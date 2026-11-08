@@ -156,6 +156,7 @@ add_test(NAME retrorun_rewind_test COMMAND retrorun_rewind_test)   # rewind ring
 add_test(NAME clip_test COMMAND clip_test)   # frame ring caps + MP4 encode and decode round trip (Media Foundation, no window)
 add_test(NAME retrorun_rollback_stall_test COMMAND retrorun_rollback_stall_test)
 add_test(NAME retrorun_dropin_test COMMAND retrorun_dropin_test)   # drop-in: admit frame, joiner takeover, 2-4 peers, old peer refusal, crashed joiner
+add_test(NAME retrorun_joinid_test COMMAND retrorun_joinid_test)   # join fingerprint game id: zip vs unpacked, NES/SNES/N64 headers, disc sheets + serials
 add_test(NAME retrorun_resync_test COMMAND retrorun_resync_test)   # desync recovery: host state transfer, 2-4 peers, loss, give-up after 3
 add_test(NAME ps1_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_synctest.ps1)   # Beetle PSX rollback SyncTest on homebrew discs (skips without the core / python)
 set_tests_properties(ps1_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "RETROHUB_QA=1")

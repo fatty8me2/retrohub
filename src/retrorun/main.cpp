@@ -52,6 +52,8 @@ namespace slot2 = retrorun::slot2;
 #include "cheats.h"
 #include "cheevos.h"
 #include "miniz.h"
+#include "joinfp.h"
+#include "joinid.h"
 
 constexpr uint8_t kPktCfg = 0x60;
 constexpr uint8_t kPktCfg2 = 0x61;   // PS2: {type, slot, u64 total, u32 core, u32 bios, u32 disc, u32 options}: which part differs is reported   // {type, slot, u64 PlayStation setup fingerprint}; unknown to lockstep/rollback (ignored there)
@@ -561,6 +563,15 @@ class Frontend {
      * confirmed snapshot like a live spectator, admits the slot on a free port once the snapshot is loaded, and the joiner reports [kPktJoin, slot, 9] when it plays. */
     static constexpr uint8_t kRefuseNoPort = 4, kRefuseOldPeer = 5, kRefuseSlot = 6, kRefuseBusy = 7;   // spectate::JoinRefuse extensions (drop-in only)
     bool multiport_ = false, dropin_ok_ = false;
+    /* netcore-H4: who may join a running game. join_fp_ = this PC's game / core / netcode fingerprint (computed once, before the game runs);
+     * the host checks every spectator and drop-in knock against it (join_gate), a joiner puts it in its knock (join_fp_trailer). */
+    joinfp::Fp join_fp_;
+    bool join_fp_ready_ = false, join_refused_ = false;
+    uint32_t spec_refused_ = 0;   // spectator slots the host turned away (wrong game / core / version): out of the stream mask until they leave
+    void compute_join_fp();
+    void join_fp_trailer(std::vector<uint8_t>& knock);
+    bool join_gate(int slot, const std::vector<uint8_t>& m);   // host: true = let the knock through, false = refused (already answered)
+    bool join_refusal(uint8_t reason);   // joiner: the host refused for a different game / version: remember the plain-words reason
     /* Controller hand-off (--handoff, rollback netplay only): the engine owns the per-port timeline; this side keeps the pad plan. A port this PC passed on stays in
      * local_ports until its first frame under the new owner is behind us (the engine still asks for our pad until then), then it leaves and the pads shift up. */
     bool handoff_ok_ = false;
@@ -569,7 +580,7 @@ class Frontend {
     uint32_t dropin_mask_ = 0;
     std::map<int, std::string> dropin_name_;
     std::map<int, uint32_t> dropin_since_;
-    uint32_t spec_mask_eff() { return session.spectator_mask() | dropin_mask_; }
+    uint32_t spec_mask_eff() { spec_refused_ &= session.spectator_mask(); return (session.spectator_mask() | dropin_mask_) & ~spec_refused_; }   // a refused spectator gets nothing more (relay frames cost server budget)
     void dj_on_knock(int slot, const std::vector<uint8_t>& m);
     void dj_on_done(int slot);
     void dj_refuse(int slot, uint8_t reason);
@@ -2210,6 +2221,43 @@ bool Frontend::ps2_card_presync() {
     return true;
 }
 
+void Frontend::compute_join_fp() {
+    if (join_fp_ready_) return;
+    join_fp_.content = joinid::of_game(a.system, a.rom, a.setup_tag);
+    join_fp_.core = joinfp::core_id(core.info().library_name ? core.info().library_name : "", core.info().library_version ? core.info().library_version : "");
+    join_fp_.proto = joinfp::kProto;
+    join_fp_ready_ = true;
+    rlog("net: join fingerprint game %08x core %08x proto %u", join_fp_.content, join_fp_.core, (unsigned)join_fp_.proto);
+}
+
+void Frontend::join_fp_trailer(std::vector<uint8_t>& knock) {
+    compute_join_fp();
+    joinfp::append(knock, join_fp_);
+}
+
+bool Frontend::join_gate(int slot, const std::vector<uint8_t>& m) {
+    compute_join_fp();   // normally done at setup; a lazy first use would hitch the running game
+    const joinfp::Gate g = joinfp::gate(join_fp_, m);
+    if (g.pass) { spec_refused_ &= ~(1u << slot); return true; }
+    joinfp::Fp theirs;
+    joinfp::parse(m.data(), m.size(), joinfp::trailer_offset(m), &theirs);
+    rlog("join: slot %d refused: %s (theirs game %08x core %08x proto %u; ours %08x %08x %u)", slot, joinfp::verdict_name(g.v), theirs.content, theirs.core, (unsigned)theirs.proto,
+         join_fp_.content, join_fp_.core, (unsigned)join_fp_.proto);
+    uint8_t r[3] = {spectate::kPktNoLive, 0, g.reason};
+    session.send(slot, r, 3);
+    spec_refused_ |= 1u << slot;   // no more frames for it (a drop-in knock also leaves the drop-in mask)
+    dropin_mask_ &= ~(1u << slot);
+    dropin_since_.erase(slot);
+    return false;
+}
+
+bool Frontend::join_refusal(uint8_t reason) {
+    if (reason != joinfp::kRefuseMismatch && reason != joinfp::kRefuseCore) return false;   // (kRefuseOldPeer is handled by the callers)
+    join_refused_ = true;
+    net_fail(reason == joinfp::kRefuseCore ? joinfp::core_text() : joinfp::mismatch_text());
+    return true;
+}
+
 bool Frontend::ps1_config_check() {
     const uint64_t mine = ps1_config_fingerprint();
     rlog("net: PlayStation setup fingerprint %016llx (BIOS %s)", (unsigned long long)mine, ([&] {
@@ -2308,7 +2356,7 @@ rb::Transport Frontend::rb_transport() {
             if (t0 == spectate::kPktJoin) {
                 if (o->size() >= 3 && (*o)[2] == 2) dj_on_knock(*from, *o);
                 else if (o->size() >= 3 && (*o)[2] == 9) dj_on_done(*from);
-                else if (spec) spec_on_join(*from);
+                else if (spec) { if (join_gate(*from, *o)) spec_on_join(*from); }
                 continue;
             }
             if (t0 == rb::xfer::kPkt && o->size() >= 4 && ((*o)[3] & 0x80)) { if (spec || (dropin_mask_ >> *from & 1u)) spec_on_xfer(*from, o->data(), o->size()); continue; }
@@ -2490,6 +2538,7 @@ int Frontend::dj_attempt(int slot_try, bool first) {
                     last_knock = now + 800;
                     if (busy_n > 6) { rlog("dropin: the host stayed busy"); fail_rc = 11; }
                 }
+                else if (join_refusal(m[2])) fail_rc = 12;   // another copy of the game / core: the reason file says so in plain words
                 else fail_rc = m[2] == kRefuseNoPort ? 9 : m[2] == kRefuseOldPeer ? 10 : 11;
             } else if (m[0] == rb::xfer::kPkt && m.size() >= 4 && m[2] == 0) {
                 if (m[1] == rb::xfer::Begin) {
@@ -2514,6 +2563,7 @@ int Frontend::dj_attempt(int slot_try, bool first) {
                 std::string nm = a.name.substr(0, 24);
                 k.push_back((uint8_t)nm.size());
                 k.insert(k.end(), nm.begin(), nm.end());
+                join_fp_trailer(k);
                 session.send(0, k.data(), (int)k.size());
             }
             if (!host_ack && now - t_join > 6000) { rlog("dropin: the host does not answer: its RetroHub is too old for drop-in"); fail_rc = 10; break; }
@@ -2576,6 +2626,7 @@ bool Frontend::setup_net() {
     if (a.room.empty()) { rlog("net: --room required with --net"); return false; }
     online = true;
     if (!a.log.empty()) net_set_log_file((a.log + ".net").c_str());
+    compute_join_fp();   // before the game runs: hashing the game file mid-match would hitch
     if (a.dropin) return setup_dropin();
     hubnet::SessionConfig cfg;
     cfg.server = a.net;
@@ -2741,7 +2792,7 @@ bool Frontend::setup_net() {
             }
             return;
         }
-        if (m[0] == spectate::kPktJoin) spec_on_join(from);
+        if (m[0] == spectate::kPktJoin) { if (join_gate(from, m)) spec_on_join(from); }   // every knock is gated ([.., 9] drop-in-done never arrives on this path)
         else if (m[0] == rb::xfer::kPkt) spec_on_xfer(from, m.data(), m.size());
     };
     if (a.spectate) h.set_limiter = [this](bool on) { ff = !on; next_deadline = 0; };   // far behind: fast-forward (no pacing, no audio, no video)
@@ -2751,7 +2802,7 @@ bool Frontend::setup_net() {
         spec_live_ok_ = !is_ps1 && !is_ps2 && !env_is("RETRORUN_NO_LIVE_SPECTATE");
     }
     if (!lockstep->start_barrier(30000)) { rlog("net: start barrier failed"); net_rc = lost_code(); return false; }
-    if (a.spectate && !ls_spectator_live_join()) { net_rc = lost_code(); return false; }
+    if (a.spectate && !ls_spectator_live_join()) { if (!join_refused_) net_rc = lost_code(); return false; }
     rlog("net: all %d players ready, starting", a.players);
     return true;
 }
@@ -2782,6 +2833,8 @@ bool Frontend::ls_spectator_live_join() {
                 }
                 cli.on_data(m.data(), m.size(), now0);
             } else if (m[0] == spectate::kPktNoLive && m.size() >= 3) {
+                if (join_refusal(m[2])) return false;   // the host runs another copy of the game / core
+                if (m[2] == joinfp::kRefuseOldPeer) { join_refused_ = true; net_fail(joinfp::old_text()); return false; }
                 if (jc.mode() == spectate::JoinClient::Mode::Knock) {
                     jc.on_nolive(m[2]);
                     rlog("spectate: the host has no live snapshot for us (reason %u): watching from the start, fast-forwarding to the live game", (unsigned)m[2]);
@@ -2803,7 +2856,7 @@ bool Frontend::ls_spectator_live_join() {
         }
         const uint32_t now = hubnet::now_ms();
         if (jc.playing()) return true;   // refused / old host: lockstep plays from sample 0 (and fast-forwards)
-        if (jc.want_knock(now)) { uint8_t k[3] = {spectate::kPktJoin, (uint8_t)a.slot, 1}; session.send(0, k, 3); }
+        if (jc.want_knock(now)) { std::vector<uint8_t> k = {spectate::kPktJoin, (uint8_t)a.slot, 1}; join_fp_trailer(k); session.send(0, k.data(), (int)k.size()); }
         if (jc.mode() == spectate::JoinClient::Mode::Download) {
             if (rcv.received() != dl_got) { dl_got = rcv.received(); dl_progress = now; }
             uint16_t nx; uint64_t bits;
@@ -3205,6 +3258,7 @@ void Frontend::dj_on_knock(int slot, const std::vector<uint8_t>& m) {
     const uint8_t caps = m.size() >= 4 ? m[3] : 0;
     std::string name;
     if (m.size() >= 5 && m.size() >= 5u + m[4]) name.assign((const char*)m.data() + 5, m[4]);
+    if (!join_gate(slot, m)) return;   // wrong game / core / version: refuse, the room plays on
     if (!dropin_ok_ || !spec_host_) { rlog("dropin: slot %d asked, but this game has no drop-in port plan", slot); uint8_t r[3] = {spectate::kPktNoLive, 0, kRefuseNoPort}; session.send(slot, r, 3); return; }
     if (!(caps & rb::kCapDropIn) || !rbe->peers_support_dropin()) { rlog("dropin: slot %d refused: a player's RetroHub is too old", slot); uint8_t r[3] = {spectate::kPktNoLive, 0, kRefuseOldPeer}; session.send(slot, r, 3); return; }
     if (rbe->free_port() < 0) { uint8_t r[3] = {spectate::kPktNoLive, 0, kRefuseNoPort}; session.send(slot, r, 3); return; }
@@ -3393,6 +3447,8 @@ int Frontend::run_rb_spectator() {
                 }
                 if (cli.on_data(m.data(), m.size(), now0)) last_rx_chk = now0;
             } else if (m[0] == spectate::kPktNoLive && m.size() >= 3) {
+                if (join_refusal(m[2])) { rc = 12; break; }   // the host runs another copy of the game / core
+                if (m[2] == joinfp::kRefuseOldPeer) { join_refused_ = true; net_fail(joinfp::old_text()); rc = 12; break; }
                 if (jc.mode() == spectate::JoinClient::Mode::Knock) {
                     jc.on_nolive(m[2]);
                     rlog("spectate: the host has no live snapshot for us (reason %u): watching from the start, fast-forwarding to the live game", (unsigned)m[2]);
@@ -3416,7 +3472,8 @@ int Frontend::run_rb_spectator() {
             }
         }
         const uint32_t now = hubnet::now_ms();
-        if (jc.want_knock(now)) { uint8_t k[3] = {spectate::kPktJoin, (uint8_t)a.slot, 1}; session.send(0, k, 3); }
+        if (join_refused_) break;
+        if (jc.want_knock(now)) { std::vector<uint8_t> k = {spectate::kPktJoin, (uint8_t)a.slot, 1}; join_fp_trailer(k); session.send(0, k.data(), (int)k.size()); }
         if (jc.mode() == spectate::JoinClient::Mode::Download) {
             if (rcv.received() != dl_got) { dl_got = rcv.received(); dl_progress = now; }
             uint16_t nx; uint64_t bits;
