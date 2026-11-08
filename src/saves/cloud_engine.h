@@ -92,6 +92,7 @@ bool cloud_game(const GameId& g, GameCloudInfo* out);
 bool cloud_pop_event(CloudEvent* out);
 
 /* ---- actions ---- */
+unsigned cloud_settings_rev();                               // counts pulls/merges of the synced game_settings.json / cheats.json: reload the stores when it changes
 void cloud_account_prefs_changed();                          // synced account prefs (favorites...) changed on this PC: queue a push
 void cloud_set_pin(const GameId& g, bool pinned);
 void cloud_set_local_only(const GameId& g, bool local_only);   // user "don't upload this game"

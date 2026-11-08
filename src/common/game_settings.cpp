@@ -3,9 +3,12 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#include <set>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <atomic>
 
 namespace fs = std::filesystem;
 
@@ -193,18 +196,39 @@ bool to_nested(const json::Value& v, std::map<std::string, Values>* o) {
 
 const char* sys_name(System s) { return system_short(s); }
 
-void put_group(std::string& o, const char* name, const std::map<std::string, Values>& m) {
+std::atomic<int64_t> g_clock{0};
+int64_t stamp_now() { int64_t c = g_clock.load(); return c ? c : (int64_t)std::time(nullptr); }
+
+void put_group(std::string& o, const char* name, const std::map<std::string, Values>& m, const std::map<std::string, int64_t>& st, const std::string& pfx) {
     o += "  "; jesc(o, name); o += ": {";
+    std::set<std::string> keys;
+    for (auto& kv : m) if (!kv.second.empty()) keys.insert(kv.first);
+    for (auto& kv : st) if (kv.first.compare(0, pfx.size(), pfx) == 0) keys.insert(kv.first.substr(pfx.size()));   // stamped but emptied: a tombstone
     bool first = true;
-    for (auto& kv : m) {
-        if (kv.second.empty()) continue;
+    static const Values none;
+    for (auto& k : keys) {
         o += first ? "\n    " : ",\n    "; first = false;
-        jesc(o, kv.first); o += ": {";
+        jesc(o, k); o += ": {";
         bool f2 = true;
-        for (auto& e : kv.second) { if (!f2) o += ", "; f2 = false; jesc(o, e.first); o += ": "; jesc(o, e.second); }
+        auto mi = m.find(k);
+        const Values& vals = mi == m.end() ? none : mi->second;
+        for (auto& e : vals) { if (!f2) o += ", "; f2 = false; jesc(o, e.first); o += ": "; jesc(o, e.second); }
+        auto si = st.find(pfx + k);
+        if (si != st.end()) { if (!f2) o += ", "; jesc(o, "_t"); o += ": "; jesc(o, std::to_string(si->second)); }
         o += "}";
     }
     o += first ? "}" : "\n  }";
+}
+
+/* "_t" (the entry's stamp) is taken out of the values before they are validated; older RetroHubs drop it as an unknown option. */
+void take_stamps(std::map<std::string, Values>* groups, const std::string& pfx, std::map<std::string, int64_t>* st) {
+    for (auto& kv : *groups) {
+        auto t = kv.second.find("_t");
+        if (t == kv.second.end()) continue;
+        int64_t v = std::strtoll(t->second.c_str(), nullptr, 10);
+        if (v > 0) (*st)[pfx + kv.first] = v;
+        kv.second.erase(t);
+    }
 }
 
 void keep_valid(Values* v) {
@@ -267,6 +291,7 @@ bool Store::set_system(System s, const std::string& key, const std::string& valu
     std::string n;
     if (!o || !(o->systems & sys_bit(s)) || !normalize(*o, value, &n)) return false;
     sys_[sys_name(s)][key] = n;
+    touch(std::string("s:") + sys_name(s));
     return true;
 }
 
@@ -275,22 +300,28 @@ bool Store::set_game(const std::string& game_key, System s, const std::string& k
     std::string n;
     if (game_key.empty() || !o || !(o->systems & sys_bit(s)) || !normalize(*o, value, &n)) return false;
     game_[game_key][key] = n;
+    touch("g:" + game_key);
     return true;
 }
 
 void Store::clear_system_key(System s, const std::string& key) {
     auto it = sys_.find(sys_name(s));
-    if (it != sys_.end()) { it->second.erase(key); if (it->second.empty()) sys_.erase(it); }
+    if (it != sys_.end()) { it->second.erase(key); if (it->second.empty()) sys_.erase(it); touch(std::string("s:") + sys_name(s)); }
 }
 
 void Store::clear_game_key(const std::string& g, const std::string& key) {
     auto it = game_.find(g);
-    if (it != game_.end()) { it->second.erase(key); if (it->second.empty()) game_.erase(it); }
+    if (it != game_.end()) { it->second.erase(key); if (it->second.empty()) game_.erase(it); touch("g:" + g); }
 }
 
-void Store::reset_game(const std::string& g) { game_.erase(g); }
-void Store::reset_system(System s) { sys_.erase(sys_name(s)); }
-void Store::reset_all() { sys_.clear(); game_.clear(); }
+void Store::touch(const std::string& k) { stamp_[k] = stamp_now(); }
+void Store::reset_game(const std::string& g) { if (game_.erase(g) || stamp_.count("g:" + g)) touch("g:" + g); }
+void Store::reset_system(System s) { if (sys_.erase(sys_name(s)) || stamp_.count(std::string("s:") + sys_name(s))) touch(std::string("s:") + sys_name(s)); }
+void Store::reset_all() {
+    for (auto& kv : sys_) touch("s:" + kv.first);
+    for (auto& kv : game_) touch("g:" + kv.first);
+    sys_.clear(); game_.clear();
+}
 bool Store::has_game_overrides(const std::string& g) const { auto it = game_.find(g); return it != game_.end() && !it->second.empty(); }
 
 Values Store::resolve(System s, const std::string& g) const {
@@ -322,9 +353,9 @@ int Store::source(System s, const std::string& g, const std::string& key) const 
 
 std::string Store::to_json() const {
     std::string o = "{\n  \"version\": \"1\",\n";
-    put_group(o, "systems", sys_);
+    put_group(o, "systems", sys_, stamp_, "s:");
     o += ",\n";
-    put_group(o, "games", game_);
+    put_group(o, "games", game_, stamp_, "g:");
     o += "\n}\n";
     return o;
 }
@@ -338,10 +369,14 @@ bool Store::from_json(const std::string& text) {
         else if (kv.first == "games") { if (!to_nested(kv.second, &game)) return false; }
         else if (kv.second.type != json::Value::String) return false;
     }
+    std::map<std::string, int64_t> st;
+    take_stamps(&sys, "s:", &st);
+    take_stamps(&game, "g:", &st);
     for (auto it = sys.begin(); it != sys.end();) { keep_valid(&it->second); it = it->second.empty() ? sys.erase(it) : std::next(it); }
     for (auto it = game.begin(); it != game.end();) { keep_valid(&it->second); it = it->second.empty() ? game.erase(it) : std::next(it); }
     sys_ = std::move(sys);
     game_ = std::move(game);
+    stamp_ = std::move(st);
     return true;
 }
 
@@ -355,18 +390,39 @@ void Store::merge_from(const Store& o) {
     for (auto& kv : o.game_) for (auto& e : kv.second) if (ok(e.first, e.second)) game_[kv.first][e.first] = e.second;
 }
 
-std::string Store::file_path(const std::string& vault_dir) {
-    return (fs::u8path(vault_dir) / "_settings" / "game_settings.json").u8string();
+std::mutex& files_mutex() { static std::mutex m; return m; }
+void set_stamp_clock(int64_t fixed_unix) { g_clock.store(fixed_unix); }
+
+void Store::merge_newest(const Store& o) {
+    auto ok = [](const std::string& key, const std::string& val) {
+        const Option* op = find_option(key);
+        std::string n;
+        return !op || normalize(*op, val, &n);
+    };
+    auto stamp_of = [](const Store& s, const std::string& k) { auto i = s.stamp_.find(k); return i == s.stamp_.end() ? (int64_t)0 : i->second; };
+    auto group = [&](std::map<std::string, Values>& mine, const std::map<std::string, Values>& theirs, const std::string& pfx) {
+        std::set<std::string> keys;
+        for (auto& kv : theirs) keys.insert(kv.first);
+        for (auto& kv : o.stamp_) if (kv.first.compare(0, pfx.size(), pfx) == 0) keys.insert(kv.first.substr(pfx.size()));
+        for (const std::string& k : keys) {
+            const int64_t ms = stamp_of(*this, pfx + k), ts = stamp_of(o, pfx + k);
+            auto ti = theirs.find(k);
+            if (ts > ms) {   // the other side changed this entry later: take it whole (an empty one is a reset)
+                Values nv;
+                if (ti != theirs.end()) for (auto& e : ti->second) if (ok(e.first, e.second)) nv[e.first] = e.second;
+                if (nv.empty()) mine.erase(k); else mine[k] = nv;
+                stamp_[pfx + k] = ts;
+            } else if (ts == ms && ti != theirs.end()) {   // same stamp (or both unstamped, an older file): keep both sides' keys, this side wins a clash
+                for (auto& e : ti->second) if (ok(e.first, e.second) && !mine[k].count(e.first)) mine[k][e.first] = e.second;
+                if (mine[k].empty()) mine.erase(k);
+            }
+        }
+    };
+    group(sys_, o.sys_, "s:");
+    group(game_, o.game_, "g:");
 }
 
-bool Store::load(const std::string& vault_dir) {
-    std::ifstream f(fs::u8path(file_path(vault_dir)), std::ios::binary);
-    if (!f) { reset_all(); return true; }
-    std::stringstream ss; ss << f.rdbuf();
-    return from_json(ss.str());
-}
-
-bool Store::save(const std::string& vault_dir) const {
+bool Store::write_file(const std::string& vault_dir, const std::string& text) {
     std::error_code ec;
     fs::path p = fs::u8path(file_path(vault_dir));
     fs::create_directories(p.parent_path(), ec);
@@ -374,12 +430,44 @@ bool Store::save(const std::string& vault_dir) const {
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) return false;
-        f << to_json();
+        f << text;
+        f.flush();
         if (!f) return false;
     }
     fs::rename(tmp, p, ec);
     if (ec) { fs::remove(p, ec); ec.clear(); fs::rename(tmp, p, ec); }
     return !ec;
+}
+
+bool merge_cloud_into_vault(const std::string& vault_dir, const std::string& cloud_json) {
+    Store cloud;
+    if (!cloud.from_json(cloud_json)) return false;
+    std::lock_guard<std::mutex> lk(files_mutex());
+    Store disk;
+    if (!disk.load(vault_dir)) disk.clear_unstamped();   // unreadable local file: the caller has already backed it up
+    disk.merge_newest(cloud);
+    return Store::write_file(vault_dir, disk.to_json());
+}
+
+std::string Store::file_path(const std::string& vault_dir) {
+    return (fs::u8path(vault_dir) / "_settings" / "game_settings.json").u8string();
+}
+
+bool Store::load(const std::string& vault_dir) {
+    std::ifstream f(fs::u8path(file_path(vault_dir)), std::ios::binary);
+    if (!f) { clear_unstamped(); return true; }
+    std::stringstream ss; ss << f.rdbuf();
+    return from_json(ss.str());
+}
+
+/* Merge-on-write: what is on disk (another save, or the cloud engine pulling another PC's choices) is merged in first, per game, newer stamp wins, so a
+ * store that was loaded long ago can never write stale data over a newer file. */
+bool Store::save(const std::string& vault_dir) const {
+    std::lock_guard<std::mutex> lk(files_mutex());
+    Store out = *this;
+    Store disk;
+    if (disk.load(vault_dir)) out.merge_newest(disk);   // a missing file loads as empty; a malformed one is simply replaced
+    return write_file(vault_dir, out.to_json());
 }
 
 // ---------------------------------------------------------------- online

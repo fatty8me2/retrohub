@@ -1,5 +1,6 @@
 #include "winutil.h"
 #include <cctype>
+#include <cstdlib>
 #include "emulators.h"
 #include "emu_http.h"
 #include "psp.h"
@@ -1877,15 +1878,45 @@ void sync_vault_to_emulator(SaveSession& s) {
     hub::SyncManifest man;
     hub::manifest_load(s.manifest_path, &man);
     int in = 0, kept = 0;
+    /* The user's own install: the newest save wins like everywhere else, but a file of theirs is only replaced after a copy of it sits in a local
+     * snapshot that RetroHub never prunes (%LOCALAPPDATA%\RetroHub\save-backups\<game>\<stamp>-before-<emulator>-launch). No snapshot, no overwrite. */
+    std::string snap_dir;
+    if (s.own_install) {
+        const char* la = std::getenv("LOCALAPPDATA");   // the same place nx_runner's default_save_backup_root() uses (not linked into every test that builds this file)
+        const std::string root = la && *la ? join(join(la, "RetroHub"), "save-backups") : std::string();
+        std::string label = S(P(s.battery).parent_path().filename());
+        for (char& c : label) if (!(std::isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.')) c = '_';   // same folder naming as nx_runner's safe_name
+        if (!root.empty() && !label.empty()) {
+            std::time_t t = std::time(nullptr);
+            std::tm tm{};
+            localtime_s(&tm, &t);
+            char b[48];
+            std::strftime(b, sizeof b, "%Y%m%d-%H%M%S", &tm);
+            const std::string base = join(join(root, label), std::string(b) + "-before-" + (s.snapshot_emu.empty() ? "emulator" : s.snapshot_emu) + "-launch");
+            snap_dir = base;
+            std::error_code ec;
+            for (int n = 2; fs::exists(P(snap_dir), ec) && n < 1000; ++n) snap_dir = base + "-" + std::to_string(n);   // never touch an earlier snapshot
+        }
+    }
     for (size_t ri = 0; ri < s.rels.size(); ++ri) {
         const std::string& rel = s.rels[ri];
         const std::string& vrel = ri < s.vault_rels.size() ? s.vault_rels[ri] : rel;
         std::string vsrc = join(s.battery, vrel), edst = join(s.emu_root, rel);
-        if (s.restore_only_if_missing && hub::tree_has_files(edst)) continue;
-        hub::TreeSyncReport r = hub::sync_tree_newest(vsrc, edst, join(join(s.backup_dir, "emulator"), vrel), tag, &man, vrel + "/");
+        std::string bk = join(join(s.backup_dir, "emulator"), vrel);
+        int keep = 10;
+        if (s.own_install) {
+            /* No snapshot, no overwrite: with nowhere to put the snapshot, a tree that already holds their files is left exactly as it is (an empty one can still be filled). */
+            if (snap_dir.empty()) {
+                if (hub::tree_has_files(edst)) {
+                    if (s.error.empty()) s.error = "Couldn't make a backup of your Cemu save first, so the save from your account was not applied. Your own save is untouched.";
+                    continue;
+                }
+            } else { bk = join(snap_dir, vrel); keep = 0; }
+        }
+        hub::TreeSyncReport r = hub::sync_tree_newest(vsrc, edst, bk, tag, &man, vrel + "/", keep);   // a file is only replaced after its copy was written to `bk`
         in += r.copied;
         kept += r.kept;
-        if (!r.ok && s.error.empty()) s.error = r.error;
+        if (!r.ok && s.error.empty()) s.error = s.own_install ? "Couldn't back up your Cemu save first, so some files from your account were not applied. Your own save is untouched. (" + r.error + ")" : r.error;
     }
     hub::manifest_save(s.manifest_path, man);
     s.summary = std::to_string(in) + " save file(s) restored from the vault, " + std::to_string(kept) + " kept (emulator copy newer)";
@@ -1947,7 +1978,8 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
             d = hub::cemu_dirs_for(inst.dir, env(L"APPDATA"), probe());
         }
         s.emu_root = d.mlc;
-        s.restore_only_if_missing = !inst.managed;   // the user's own install: never overwrite its saves
+        s.own_install = !inst.managed;   // the user's own install: newest save wins, but their copy is snapshotted before it is replaced
+        s.snapshot_emu = "cemu";
         s.wiiu_save_parent = join(d.mlc, "usr\\save\\00050000");
         if (!tid) {   // .wud/.wux: the title id is not readable without decrypting; reuse what an earlier session stored
             for (const char* hi : {"00050000", "0005000e"}) {
