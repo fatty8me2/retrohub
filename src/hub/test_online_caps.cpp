@@ -168,6 +168,50 @@ int main() {
     CHECK(hubrp::launch_is_remote("{\"kind\":\"launch\"" + hubrp::launch_fragment(3) + "}") && !hubrp::launch_is_remote("{\"kind\":\"launch\"}"));
     CHECK(hubrp::host_left_text("Ann") == "Ann left - the stream ended." && hubrp::host_left_text("").find("The host") == 0);
 
+    /* H5: the GameCube forwarder keeps ticking while any part of the session is alive, whatever the room/lobby state */
+    {
+        CHECK(!hubcaps::gc_session_alive(false, false));
+        CHECK(hubcaps::gc_session_alive(true, false) && hubcaps::gc_session_alive(false, true) && hubcaps::gc_session_alive(true, true));
+        CHECK(!hubcaps::gc_tick_needed_in_room(true) && hubcaps::gc_tick_needed_in_room(false));   // never pumped twice in one frame
+    }
+    /* M12: the host's core name is a bare, known core for that system */
+    {
+        struct Row { System s; const char* name; bool ok; };
+        const Row rows[] = {
+            {System::GB, "sameboy", true}, {System::GB, "sameboy_rb", true}, {System::GBC, "gambatte", true}, {System::GBA, "mgba", true},
+            {System::GB, "..\\..\\x", false}, {System::GB, "../x", false}, {System::GB, "sub\\sameboy", false}, {System::GB, "sameboy/", false},
+            {System::GB, "..", false}, {System::GB, ".", false}, {System::GB, "", false},
+            {System::GB, "C:\\evil\\sameboy", false}, {System::GB, "C:sameboy", false}, {System::GB, "\\\\server\\share\\sameboy", false},
+            {System::GB, "/etc/sameboy", false}, {System::GB, "sameboy.dll", false}, {System::GB, "sameboy_libretro", false}, {System::GB, " sameboy", false},
+            {System::GB, "unknowncore", false}, {System::GBC, "mgba", false}, {System::GB, "snes9x", false}, {System::GBA, "gambatte", false},
+            {System::NES, "nestopia", true}, {System::NES, "snes9x", false}, {System::SNES, "snes9x", true}, {System::N64, "sameboy", false},
+        };
+        for (const Row& r : rows) CHECK(hubcaps::core_from_host_ok(r.s, r.name) == r.ok);
+        CHECK(std::string(hubcaps::core_refused_text()).find("doesn't know") != std::string::npos);
+    }
+    /* M3: Azahar join helper result -> verdict -> message */
+    {
+        using V = hubcaps::JoinVerdict;
+        std::string d;
+        CHECK(hubcaps::join_verdict(true, true, "", 1000) == V::Pending);
+        CHECK(hubcaps::join_verdict(true, true, "stage:driver-start\r\nstage:connect-clicked\n", 5000) == V::Pending);
+        CHECK(hubcaps::join_verdict(true, true, "stage:x\njoined\n", 5000) == V::Joined);
+        CHECK(hubcaps::join_verdict(true, false, "joined\n", 5000) == V::Joined);   // helper exits after success
+        CHECK(hubcaps::join_verdict(true, true, "stage:x\nerror:no Multiplayer menu\n", 5000, 150000, &d) == V::Error && d == "no Multiplayer menu");
+        CHECK(hubcaps::join_verdict(true, false, "stage:driver-start\n", 5000) == V::HelperGone);   // died without an answer
+        CHECK(hubcaps::join_verdict(false, false, "", 0) == V::HelperGone);                       // never started
+        CHECK(hubcaps::join_verdict(true, true, "", 150001) == V::TimedOut && hubcaps::join_verdict(true, true, "", 150000) == V::Pending);
+        CHECK(hubcaps::join_failure_text(V::Pending).empty() && hubcaps::join_failure_text(V::Joined).empty());
+        for (V v : {V::Error, V::HelperGone, V::TimedOut}) {
+            std::string t = hubcaps::join_failure_text(v);
+            CHECK(!t.empty() && t.find("on its own") != std::string::npos && t.find("error:") == std::string::npos);
+        }
+        CHECK(hubcaps::join_failure_text(V::Error) != hubcaps::join_failure_text(V::TimedOut));
+    }
+    /* M10: the remote-play banner names the real host */
+    CHECK(hubcaps::remote_play_banner("Ann").find("Ann streams") == 0 && hubcaps::remote_play_banner("").find("The host streams") == 0);
+    CHECK(hubcaps::remote_play_banner("Ann").find("Mickey") == std::string::npos);
+
     std::printf(fails ? "FAILED (%d)\n" : "all ok\n", fails);
     return fails ? 1 : 0;
 }
