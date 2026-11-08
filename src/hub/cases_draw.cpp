@@ -128,7 +128,7 @@ struct Style {
     bool box = false, pale = false, nx2 = false, line = false, mixed = false;
     Media m = Media::Generic;
     Ban ban = Ban::Top;
-    ImU32 body = 0, spine = 0, band = 0, band2 = 0, band_text = 0, accent = 0, ink = 0, sink = 0, panel = 0;
+    ImU32 body = 0, spine = 0, band = 0, band_text = 0, accent = 0, ink = 0, sink = 0, panel = 0;
 };
 
 /* NTSC-U retail packaging per media: the plastic / card colour, the spine colour, the banner (colour and wordmark colour), a thin accent
@@ -144,9 +144,9 @@ Style style_of(const CaseDraw& d) {
         case Media::Ps2Case: set(rgba(16, 17, 22), rgba(14, 15, 20), rgba(9, 10, 14), rgba(246, 247, 252), rgba(40, 94, 216), rgba(13, 14, 19)); s.line = true; break;
         case Media::WiiUCase: set(rgba(26, 130, 202), rgba(22, 118, 188), rgba(0, 152, 208), rgba(255, 255, 255), rgba(214, 240, 252), rgba(22, 104, 166)); s.line = true; s.mixed = true; break;
         case Media::SwitchCase:
-            if (s.nx2) { set(rgba(178, 12, 26), rgba(160, 10, 24), rgba(232, 30, 46), rgba(255, 255, 255), rgba(255, 255, 255), rgba(232, 232, 236)); s.band2 = rgba(24, 26, 34); }
+            if (s.nx2) { set(rgba(178, 12, 26), rgba(160, 10, 24), rgba(228, 0, 18), rgba(255, 255, 255), rgba(255, 255, 255), rgba(232, 232, 236)); }   // Switch 2: one wide Nintendo-red band, white wordmark
             else set(rgba(204, 208, 218), rgba(202, 14, 28), rgba(234, 32, 48), rgba(255, 255, 255), rgba(255, 255, 255), rgba(232, 232, 236));   // Switch 1: clear plastic around a red-banded sleeve (Switch 2 is red-tinted)
-            s.line = true;
+            s.line = !s.nx2;   // the Switch 2 band has no white rule under it
             break;
         case Media::PspCase: set(rgba(94, 100, 114), rgba(18, 20, 28), rgba(12, 14, 20), rgba(246, 247, 252), rgba(72, 122, 232), rgba(20, 22, 30)); s.line = true; break;
         case Media::DsCase: set(rgba(24, 25, 31), rgba(24, 25, 31), rgba(228, 231, 238), rgba(34, 38, 50), rgba(58, 148, 214), rgba(236, 238, 242)); s.line = true; break;   // NTSC-U / NTSC-J DS cases are black plastic (Europe: clear)
@@ -287,7 +287,6 @@ void top_band(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, float u
     const float py = 1.f / f.H;
     const float bh = (v1 - v0) * f.H;
     v0 -= 1.5f * py;   // a hair over the cover's top edge, so no sliver of cover shows (a dashed light line) above the band
-    const float sp = u0 + (u1 - u0) * 0.66f;
     switch (st.m) {
         case Media::GbcCart: {   // the colourful band
             const ImU32 c[5] = {rgba(0, 168, 176), rgba(112, 72, 196), rgba(226, 64, 146), rgba(250, 150, 40), rgba(250, 206, 50)};
@@ -295,8 +294,7 @@ void top_band(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, float u
             break;
         }
         case Media::SwitchCase:
-            if (st.nx2) { quad(x, f, u0, v0, sp, v1, st.band); quad(x, f, sp, v0, u1, v1, st.band2); }   // Switch 2: a two-tone banner
-            else quad(x, f, u0, v0, u1, v1, st.band);
+            quad(x, f, u0, v0, u1, v1, st.band);   // (Switch 2 too: one red band, no second box)
             break;
         default: quad(x, f, u0, v0, u1, v1, st.band); break;
     }
@@ -307,11 +305,13 @@ void top_band(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, float u
     banner_name(name, sizeof name, d, st);
     const float vc = (v0 + v1) * 0.5f;
     if (st.m == Media::SwitchCase) {
-        if (st.nx2) { label_h(x, f, "NINTENDO SWITCH", u0, sp, vc, bh, st.band_text, 0, 0.62f); label_h(x, f, "2", sp, u1, vc, bh, st.band_text, 1, 0.85f); }
-        else label_h(x, f, name, u0, u1, vc, bh, st.band_text, 1, 0.66f);
+        label_h(x, f, name, u0, u1, vc, bh, st.band_text, 1, st.nx2 ? 0.42f : 0.66f);   // Switch 2: the whole wordmark, centred, in one white
     } else label_h(x, f, name, u0, u1, vc, bh, st.band_text, 0, 0.58f, st.m == Media::GbcCart);
     if (st.m == Media::Generic) console_mark(x, f, u1 - (u1 - u0) * 0.07f - bh * 0.3f / f.W, vc, bh * 0.46f, hash32(d.sys_short), st.band_text);
 }
+
+/* The Switch 2 red band is a wide strip across the top of the cover (Switch 1's is slim): ~12.5% of the cover on the front, less on the back (text room). */
+constexpr float kNx2BandFront = 0.125f, kNx2BandBack = 0.10f;
 
 struct Lay { float au0, av0, au1, av1, bu0, bv0, bu1, bv1, cv1; };   // the art window, the banner rect, the bottom of the cover
 Lay front_lay(const Style& st, const Face& f, float u0, float v0, float u1, float v1) {
@@ -320,7 +320,7 @@ Lay front_lay(const Style& st, const Face& f, float u0, float v0, float u1, floa
     switch (st.ban) {
         case Ban::Top: {
             float bv = std::max(0.05f, std::min(0.085f, 27.f * py));
-            if (st.m == Media::SwitchCase) bv = std::max(0.045f, std::min(0.07f, 22.f * py));
+            if (st.m == Media::SwitchCase) bv = st.nx2 ? kNx2BandFront : std::max(0.045f, std::min(0.07f, 22.f * py));
             else if (st.m == Media::GbcCart || st.m == Media::GbaCart) bv = std::max(0.07f, std::min(0.11f, 34.f * py));
             l.bv1 = v0 + bv; l.av0 = l.bv1;
             break;
@@ -430,42 +430,80 @@ ImU32 insert_col(const CaseDraw& d, const Style& st, bool letterbox) {
 }
 ImU32 on_color(ImU32 c) { return lum(c) > 0.55f ? rgba(28, 30, 40) : rgba(244, 245, 250); }
 
-/* A square scan (a Switch game's icon) on a portrait case: the red console banner, the icon large over a background made of its own colours
- * (the middle of the icon blown up into a soft blur, darkened), the title underneath. */
+/* The 8x8 blur colours (texel centres at (i+.5)/8, flat beyond the outer centres) sampled bilinearly at (su, sv) in 0..1. */
+ImU32 blur_at(const uint32_t* c, float su, float sv) {
+    auto axis = [](float s, int* i0, int* i1, float* t) {
+        const float g = std::max(0.f, std::min(7.f, s * 8.f - 0.5f));
+        *i0 = (int)g; *i1 = std::min(7, *i0 + 1); *t = g - (float)*i0;
+    };
+    int x0, x1, y0, y1; float tx, ty;
+    axis(su, &x0, &x1, &tx); axis(sv, &y0, &y1, &ty);
+    return lerpc(lerpc(c[y0 * 8 + x0], c[y0 * 8 + x1], tx), lerpc(c[y1 * 8 + x0], c[y1 * 8 + x1], tx), ty);
+}
+/* Fills [u0,u1] x [v0,v1] with the blur: sample v runs sv0 -> sv1 down the rect (sv0 > sv1 mirrors it), sample u runs 0 -> 1. The surface is a mesh
+ * with a vertex per texel centre and the colour interpolated per vertex (smooth in any renderer, no texture needed); alpha runs a0 -> a1 down it. */
+void blur_fill(Ctx& x, const Face& f, float u0, float v0, float u1, float v1, const uint32_t* c, float sv0, float sv1, float a0, float a1) {
+    float sv[10], su[10];
+    int nv = 0, nu = 0;
+    const float lo = std::min(sv0, sv1), hi = std::max(sv0, sv1);
+    sv[nv++] = lo;
+    for (int j = 0; j < 8; ++j) { const float t = ((float)j + 0.5f) / 8.f; if (t > lo + 1e-4f && t < hi - 1e-4f) sv[nv++] = t; }
+    sv[nv++] = hi;
+    for (int i = 0; i < 8; ++i) su[nu++] = ((float)i + 0.5f) / 8.f;
+    const float rng = sv1 - sv0;
+    auto vof = [&](float s) { return v0 + (v1 - v0) * ((s - sv0) / (std::fabs(rng) < 1e-6f ? 1e-6f : rng)); };
+    auto col = [&](float s_u, float s_v) { const float t = (s_v - sv0) / (std::fabs(rng) < 1e-6f ? 1e-6f : rng); ImU32 k = blur_at(c, s_u, s_v); return alpha(k, a0 + (a1 - a0) * t); };
+    float eu[10]; eu[0] = 0.f; for (int i = 0; i < 8; ++i) eu[i + 1] = su[i]; eu[9] = 1.f;
+    for (int r = 0; r + 1 < nv; ++r) {
+        const float sa = sv[r], sb = sv[r + 1];
+        float va = vof(sa), vb = vof(sb);
+        if (va > vb) std::swap(va, vb);
+        for (int q = 0; q < 9; ++q) {
+            const float ua = eu[q], ub = eu[q + 1];
+            if (ub - ua < 1e-5f) continue;
+            // corners: top of the rect is the sample end nearer sv0
+            const float st = (std::fabs(sa - sv0) <= std::fabs(sb - sv0)) ? sa : sb, sbm = (st == sa) ? sb : sa;
+            grad(x, f, u0 + (u1 - u0) * ua, std::min(va, vb), u0 + (u1 - u0) * ub, std::max(va, vb), col(ua, st), col(ub, st), col(ub, sbm), col(ua, sbm));
+        }
+    }
+}
+
+/* A square scan (a Switch game's icon) on a portrait case: the red console banner, the icon edge to edge directly under it, and below it a
+ * smooth blur of the icon's own colours (an 8x8 average of the art, mirrored so its last row continues the icon) that darkens toward the foot. */
 void front_square(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, const Src& s, const hubui::cases::UvRect& win) {
-    const float W = f.W, H = f.H, px = 1.f / W, py = 1.f / H;
-    const float bv = std::max(0.045f, std::min(0.07f, 22.f * py));
+    const float W = f.W, H = f.H, py = 1.f / H;
+    const float bv = st.nx2 ? kNx2BandFront : std::max(0.045f, std::min(0.07f, 22.f * py));
     const float u0 = win.u0, u1 = win.u1, v0 = win.v0 + bv, v1 = win.v1;
     const float AW = (u1 - u0) * W, AH = (v1 - v0) * H;
+    const float side = std::min(AW, AH), iv1 = v0 + side * py;   // icon rect: u0..u1 x v0..iv1
+    const float lowh = (v1 - iv1) * H;
     const ImU32 base = d.art_col ? d.art_col : seed_color(d.seed, 0.55f, 0.6f);
-    vgrad(x, f, u0, v0, u1, v1, shade(base, 0.95f), shade(base, 0.4f));
-    {   // the icon's own colours, extended: its top strip is stretched over the upper half, its bottom strip over the lower half (a soft blur of its edges)
-        const float vm = (v0 + v1) * 0.5f;
-        image_uv(x, f, u0, v0, u1, vm, s.tex, s.a, ImVec2(s.b.x, s.a.y + (s.b.y - s.a.y) * 0.1f), 0.8f);
-        image_uv(x, f, u0, vm, u1, v1, s.tex, ImVec2(s.a.x, s.a.y + (s.b.y - s.a.y) * 0.9f), s.b, 0.8f);
-        const ImU32 seam = shade(base, 0.55f);   // the two halves melt into each other
-        vgrad(x, f, u0, vm - (vm - v0) * 0.4f, u1, vm, alpha(seam, 0.f), alpha(seam, 0.85f));
-        vgrad(x, f, u0, vm, u1, vm + (v1 - vm) * 0.4f, alpha(seam, 0.85f), alpha(seam, 0.f));
-        vgrad(x, f, u0, v0, u1, v1, rgba(0, 0, 0, 60), rgba(0, 0, 0, 150));
+    const uint32_t* bl = d.art_blur;
+    if (lowh > 0.5f) {
+        if (bl) {   // the mirror: the sample runs from the icon's last row (1) back up the picture
+            const float k = std::min(1.f, lowh / std::max(1.f, side));
+            blur_fill(x, f, u0, iv1, u1, v1, bl, 1.f, 1.f - k, 1.f, 1.f);
+        } else vgrad(x, f, u0, iv1, u1, v1, shade(base, 0.9f), shade(base, 0.9f));
+        vgrad(x, f, u0, iv1, u1, v1, rgba(0, 0, 0, 20), rgba(0, 0, 0, 175));   // darker toward the foot
     }
-    const float side = std::min(AW * 0.84f, AH * 0.6f);
-    const float cxp = (u0 + u1) * 0.5f * W, iy = v0 * H + AH * 0.075f, ix = cxp - side * 0.5f;
-    const float sh = std::max(3.f, side * 0.03f);
-    quad(x, f, (ix + sh) * px, (iy + sh * 1.4f) * py, (ix + side + sh * 1.8f) * px, (iy + side + sh * 2.4f) * py, rgba(0, 0, 0, 110));
-    const float fr = std::max(2.f, side * 0.012f);
-    quad(x, f, (ix - fr) * px, (iy - fr) * py, (ix + side + fr) * px, (iy + side + fr) * py, rgba(250, 250, 252));
-    image_uv(x, f, ix * px, iy * py, (ix + side) * px, (iy + side) * py, s.tex, s.a, s.b);
-    vgrad(x, f, ix * px, iy * py, (ix + side) * px, (iy + side * 0.18f) * py, rgba(255, 255, 255, 46), rgba(255, 255, 255, 0));
-    ImFont* font = ui::F.bold ? ui::F.bold : ui::F.body;
-    const float size = std::max(7.f, std::min(std::min(W * 0.1f, AH * 0.085f), 34.f));
-    float ty = iy + side + AH * 0.055f;
-    if (x.detail && font && size >= 7.f) {
-        const std::vector<std::string>& ln = wrap_cached(font, size, d.title, AW * 0.86f, 3);
+    image_uv(x, f, u0, v0, u1, iv1, s.tex, s.a, s.b);
+    {   // a soft fade over the icon's bottom edge into the blur: no hard seam
+        const float fh = side * 0.16f, v_a = iv1 - fh * py;
+        if (bl) blur_fill(x, f, u0, v_a, u1, iv1, bl, 1.f - fh / std::max(1.f, side), 1.f, 0.f, 1.f);
+        else vgrad(x, f, u0, v_a, u1, iv1, alpha(shade(base, 0.9f), 0.f), shade(base, 0.9f));
+        vgrad(x, f, u0, v_a, u1, iv1, rgba(0, 0, 0, 0), rgba(0, 0, 0, 20));
+    }
+    vgrad(x, f, u0, v0, u1, v0 + side * 0.1f * py, rgba(0, 0, 0, 46), rgba(0, 0, 0, 0));   // the banner's shadow on the art
+    ImFont* font = ui::F.bold ? ui::F.bold : ui::F.body;   // a small, quiet title in the foot (the icon already shows the logo)
+    const float size = std::max(7.f, std::min(std::min(W * 0.052f, lowh * 0.2f), 17.f));
+    if (x.detail && font && lowh > size * 2.6f) {
+        const std::vector<std::string>& ln = wrap_cached(font, size, d.title, AW * 0.8f, 2);
+        const float th = size * 1.14f * (float)ln.size();
+        float ty = iv1 * H + (lowh - th) * 0.5f;
         for (const std::string& l : ln) {
-            if (ty + size > v1 * H - 3.f) break;
-            const float tw = text_w(font, size, l), lx = cxp - tw * 0.5f;
-            face_text(x, f, font, size, l.c_str(), lx + 1.4f, ty + 1.4f, rgba(0, 0, 0, 150), false);
-            face_text(x, f, font, size, l.c_str(), lx, ty, rgba(255, 255, 255, 250), false);
+            const float tw = text_w(font, size, l), lx = (u0 + u1) * 0.5f * W - tw * 0.5f;
+            face_text(x, f, font, size, l.c_str(), lx + 1.f, ty + 1.f, rgba(0, 0, 0, 120), false);
+            face_text(x, f, font, size, l.c_str(), lx, ty, rgba(255, 255, 255, 200), false);
             ty += size * 1.14f;
         }
     }
@@ -625,7 +663,7 @@ void paint_spine(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, Case
                 const ImU32 c[3] = {rgba(0, 168, 176), rgba(112, 72, 196), rgba(226, 64, 146)};
                 vgrad(x, f, 0.f, 0.f, 1.f, bv * 0.5f, c[0], c[1]); vgrad(x, f, 0.f, bv * 0.5f, 1.f, bv, c[1], c[2]);
             } else if (st.m == Media::SwitchCase && st.nx2) {
-                quad(x, f, 0.f, 0.f, 1.f, bv * 0.6f, st.band); quad(x, f, 0.f, bv * 0.6f, 1.f, bv, st.band2);
+                quad(x, f, 0.f, 0.f, 1.f, bv, st.band);
             } else quad(x, f, 0.f, 0.f, 1.f, bv, k.cap);
             vgrad(x, f, 0.f, 0.f, 1.f, bv, rgba(255, 255, 255, 54), rgba(0, 0, 0, 40));
             quad(x, f, 0.f, bv, 1.f, bv + 1.5f / H, st.line ? k.accent : rgba(0, 0, 0, 90));
@@ -775,7 +813,7 @@ void paint_back(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, CaseK
     const bool pp = lum(st.panel) > 0.55f;
     const ImU32 ink = st.ink;
     const ImU32 dim = pp ? rgba(70, 74, 90) : rgba(168, 174, 192);
-    const float hbv = std::max(0.05f, std::min(0.075f, 28.f * py));
+    const float hbv = st.nx2 ? kNx2BandBack : std::max(0.05f, std::min(0.075f, 28.f * py));
     top_band(x, f, d, st, u0, v0, u1, v0 + hbv);   // the console banner
     const float pad = W * 0.045f;
     const float lx = u0 * W + pad, pw = (u1 - u0) * W - pad * 2.f;

@@ -67,6 +67,7 @@ struct CasesState {
     float chip_font = 0.f;
     ImU32 sc_art0 = 0, sc_art1 = 0;             // the stage tint pair taken from the focused cover (0 = use the console colours)
     float hl_x0 = -1.f, hl_x1 = -1.f; ImU32 hl_col = 0;   // the tab bar's sliding highlight
+    std::unordered_map<SDL_Texture*, std::array<uint32_t, 64>> fake_blur;  // HUB_SHOT_ICON: its 8x8 blur colours (headless screenshots only)
     std::unordered_map<SDL_Texture*, uint32_t> fake_cols;  // HUB_SHOT_FAKE_ART textures: their colours are registered when they are made
 } CS;
 
@@ -76,6 +77,14 @@ uint32_t cases_art_rgb(SDL_Texture* t) {
     auto it = CS.fake_cols.find(t);
     if (it != CS.fake_cols.end()) return it->second;
     return hubart::average_color(t);
+}
+
+/* The 8x8 blur colours of a cover texture (null = none): the art cache keeps them per slot; the screenshot fake registers its own. */
+const uint32_t* cases_art_blur(SDL_Texture* t) {
+    if (!t) return nullptr;
+    auto it = CS.fake_blur.find(t);
+    if (it != CS.fake_blur.end()) return it->second.data();
+    return hubart::blur_colors(t);
 }
 
 bool cases_on() { return lib_layout() == LibLayout::Cases; }
@@ -176,6 +185,7 @@ SDL_Texture* cases_shot_icon(int* w, int* h) {
                 unsigned long long r = 0, g = 0, b = 0, n = 0;
                 for (int i = 0; i < iw * ih; ++i) if (px[i * 4 + 3] > 127) { r += px[i * 4]; g += px[i * 4 + 1]; b += px[i * 4 + 2]; ++n; }
                 if (n) CS.fake_cols[CS.shot_icon] = IM_COL32((int)(r / n), (int)(g / n), (int)(b / n), 255);
+                if (CS.shot_icon) hubart::blur8(px, iw, ih, (unsigned char*)CS.fake_blur[CS.shot_icon].data());
                 stbi_image_free(px);
             }
         }
@@ -942,6 +952,7 @@ void draw_cases(Disp& D) {
             const ArtRef art = art_of(idx);
             cd.art = art.tex; cd.art_w = art.w; cd.art_h = art.h;
             if (sy == hub::System::Switch) { int iw = 0, ih = 0; if (SDL_Texture* it = cases_shot_icon(&iw, &ih)) { cd.art = it; cd.art_w = iw; cd.art_h = ih; } }
+            if (cd.art && sy == hub::System::Switch) cd.art_blur = cases_art_blur(cd.art);   // only the square Switch icons use it
             if (cd.art) cd.art_col = cases_art_rgb(cd.art);   // the generated spine / insert colours follow the front art
             if (ad <= 2.5f && cases_has_full(sy)) {   // a full cover scan (back | spine | front): one texture, the faces are uv sub-rects of it
                 int fw = 0, fh = 0;

@@ -79,8 +79,9 @@ struct CaseDraw {
     ImU32 c0 = 0, c1 = 0;         // console colours
     SDL_Texture* art = nullptr;
     int art_w = 0, art_h = 0;
+    const uint32_t* art_blur = nullptr;   // 64 colours: an 8x8 average of `art` (owned by the art cache; null = none): the soft background under a square icon
     bool ghost = false, fav = false;
-    bool nx2 = false;             // a Switch 2 game (Media::SwitchCase with the two-tone "NINTENDO SWITCH 2" banner)
+    bool nx2 = false;             // a Switch 2 game (Media::SwitchCase with the wide red "NINTENDO SWITCH 2" banner)
     const CaseBack* back = nullptr;
     ImU32 art_col = 0;            // average colour of the front art (0 = unknown): the generated spine / insert colours follow it
     /* A full cover scan (BACK | SPINE | FRONT laid flat, hubart::Kind::FullCover): back / spine / front are uv sub-rects of this one texture,

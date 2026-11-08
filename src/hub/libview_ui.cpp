@@ -24,6 +24,7 @@
 #include "shelf_logic.h"
 
 #include <SDL.h>
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <ctime>

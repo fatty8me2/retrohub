@@ -69,6 +69,8 @@ struct Slot {
     SDL_Texture* tex = nullptr;
     int w = 0, h = 0;
     uint32_t avg = 0;   // average saturated colour (theme "Accent from cover"), 0 = none
+    bool has_blur = false;
+    uint32_t blur[64] = {};   // 8x8 box-averaged copy of the art (packed like IM_COL32; Cases view: the soft background under a square icon)
     long long retry_at = 0;   // Failed by a transient error (offline, HTTP 5xx): ask again from this unix second (0 = never; 404 / bad image stay final)
     int fails = 0;
     std::string name;         // the art name that loaded ("Super Mario 64 (USA)", "gametdb:ALZE01:US", "nupicon:<id>"); audit only
@@ -927,7 +929,39 @@ void pump() {
         SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
         s.tex = t; s.w = d.px.w; s.h = d.px.h; s.st = State::Ready; s.name = d.name; g_lru.touch(d.id);
         s.avg = hubtheme::average_saturated(d.px.rgba.data(), d.px.w, d.px.h, 4);
+        blur8(d.px.rgba.data(), d.px.w, d.px.h, (unsigned char*)s.blur);
+        s.has_blur = true;
     }
+}
+
+void blur8(const unsigned char* rgba, int w, int h, unsigned char out[8 * 8 * 4]) {
+    double tot[3] = {0, 0, 0}, totw = 0;
+    for (int cy = 0; cy < 8; ++cy)
+        for (int cx = 0; cx < 8; ++cx) {
+            const int x0 = cx * w / 8, x1 = std::max(x0 + 1, (cx + 1) * w / 8), y0 = cy * h / 8, y1 = std::max(y0 + 1, (cy + 1) * h / 8);
+            const int sx = std::max(1, (x1 - x0) / 16), sy = std::max(1, (y1 - y0) / 16);
+            double r = 0, g = 0, b = 0, wt = 0;
+            for (int y = y0; y < y1 && y < h; y += sy)
+                for (int x = x0; x < x1 && x < w; x += sx) {
+                    const unsigned char* p = rgba + ((size_t)y * w + x) * 4;
+                    const double a = p[3] / 255.0;
+                    r += p[0] * a; g += p[1] * a; b += p[2] * a; wt += a;
+                }
+            unsigned char* o = out + (cy * 8 + cx) * 4;
+            if (wt > 0.0) { o[0] = (unsigned char)(r / wt + 0.5); o[1] = (unsigned char)(g / wt + 0.5); o[2] = (unsigned char)(b / wt + 0.5); tot[0] += r; tot[1] += g; tot[2] += b; totw += wt; }
+            else { o[0] = o[1] = o[2] = 0; }
+            o[3] = wt > 0.0 ? 255 : 0;
+        }
+    for (int i = 0; i < 64; ++i) {   // transparent cells take the picture's mean colour, so no hole shows
+        unsigned char* o = out + i * 4;
+        if (o[3] == 0) { if (totw > 0.0) { o[0] = (unsigned char)(tot[0] / totw + 0.5); o[1] = (unsigned char)(tot[1] / totw + 0.5); o[2] = (unsigned char)(tot[2] / totw + 0.5); } o[3] = 255; }
+    }
+}
+
+const uint32_t* blur_colors(SDL_Texture* tex) {
+    if (!tex) return nullptr;
+    for (auto& kv : g_slots) if (kv.second.tex == tex) return kv.second.has_blur ? kv.second.blur : nullptr;
+    return nullptr;
 }
 
 uint32_t average_color(SDL_Texture* tex) {
