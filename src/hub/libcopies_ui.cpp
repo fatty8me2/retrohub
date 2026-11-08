@@ -2,6 +2,8 @@
 
 #include "resume_more.h"
 #include "prefs.h"
+#include "hidden_games.h"
+#include "hidden_ui.h"
 #include "library_scan_info.h"
 
 
@@ -67,11 +69,15 @@ void remove_here(const std::string& key, const std::string& title) {
     push_toast("Removed " + title + " from this PC's library. Your other PCs still show it.", ui::WARN, 10.0);
 }
 
+std::vector<hub::GameEntry> g_stash;   // the hidden games the last scan took out of the library (for "Show hidden")
+
 void hide_game(const std::string& key, const std::string& title) {
+    if (const hub::GameEntry* e = find_entry(key)) {
+        g_stash.erase(std::remove_if(g_stash.begin(), g_stash.end(), [&](const hub::GameEntry& g) { return g.key == key; }), g_stash.end());
+        g_stash.push_back(*e);   // copy before drop_from_lib() invalidates it
+    }
     hub::prefs::Prefs p = load_prefs();
-    std::vector<std::string> h = p.hidden;
-    h.push_back(key);
-    if (hub::prefs::set_hidden(&p, h)) store_prefs(p);
+    if (hub::hidden::hide(&p, key)) store_prefs(p);
     g_hidden_titles[key] = title;
     drop_from_lib(key);
     UNDO.key = key;
@@ -82,12 +88,15 @@ void hide_game(const std::string& key, const std::string& title) {
 
 void unhide_game(const std::string& key) {
     hub::prefs::Prefs p = load_prefs();
-    std::vector<std::string> h;
-    for (auto& k : p.hidden) if (k != key) h.push_back(k);
-    if (hub::prefs::set_hidden(&p, h)) store_prefs(p);
+    if (hub::hidden::unhide(&p, key)) store_prefs(p);
     hub::local_removed_set(key, false);
+    g_stash.erase(std::remove_if(g_stash.begin(), g_stash.end(), [&](const hub::GameEntry& g) { return g.key == key; }), g_stash.end());
     start_scan();   // the game comes back with the rescan
 }
+
+/* "Show hidden" is a per-PC choice (the hidden list itself syncs): a flag file in this PC's data folder. */
+std::string show_flag_path() { return hub::data_dir() + "show_hidden.flag"; }
+int g_show_hidden = -1;   // -1 = not read yet
 
 struct HiddenList {
     bool open = false, seen = false;
@@ -308,4 +317,68 @@ void dupes_details_section(const hub::GameEntry& e) {
         }
         ImGui::PopID();
     }
+}
+
+/* ---------- Hide game / Show hidden (library-12) ---------- */
+
+void hide_game_now(const std::string& key) {
+    const hub::GameEntry* e = find_entry(key);
+    if (!e || is_native(*e)) return;   // the bundled Smash entry is never hidden
+    hide_game(key, e->title);
+}
+
+void unhide_game_now(const std::string& key) {
+    std::string t;
+    for (const hub::GameEntry& g : g_stash) if (g.key == key) t = g.title;
+    unhide_game(key);
+    set_notice("Unhid " + (t.empty() ? hidden_label(key) : t) + ". Rescanning...", 4.0);
+    HL.loaded = -100;
+}
+
+void hidden_stash_set(std::vector<hub::GameEntry> hidden) {
+    g_stash = std::move(hidden);
+    std::sort(g_stash.begin(), g_stash.end(), [](const hub::GameEntry& a, const hub::GameEntry& b) { return a.title < b.title; });
+}
+
+size_t hidden_stash_count() { return g_stash.size(); }
+
+bool show_hidden_on() {
+    if (g_show_hidden < 0) {
+        std::error_code ec;
+        g_show_hidden = std::filesystem::exists(std::filesystem::u8path(show_flag_path()), ec) ? 1 : 0;
+    }
+    return g_show_hidden == 1;
+}
+
+void show_hidden_toggle() {
+    const bool on = !show_hidden_on();
+    g_show_hidden = on ? 1 : 0;
+    std::error_code ec;
+    const std::filesystem::path f = std::filesystem::u8path(show_flag_path());
+    if (on) { std::ofstream o(f, std::ios::binary); o << "1"; }
+    else std::filesystem::remove(f, ec);
+}
+
+/* The dimmed list under the filter chips: each hidden game with an Unhide button (a pad lands on the first one). */
+void hidden_strip_draw() {
+    if (!show_hidden_on()) return;
+    ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));
+    if (g_stash.empty()) { text_wrapped_disabled("Nothing is hidden."); return; }
+    text_wrapped_disabled(A.pad_mode ? "Hidden games, dimmed. Press A on Unhide to bring one back." : "Hidden games, dimmed. Unhide brings one back.");
+    const float h = std::min(ui::sp(26.f), (float)g_stash.size() * ui::sp(5.f) + ui::sp(1.f));
+    ImGui::BeginChild("##hiddenstrip", ImVec2(0, h), ImGuiChildFlags_NavFlattened);
+    std::string unhide;
+    for (size_t i = 0; i < g_stash.size(); ++i) {
+        const hub::GameEntry& g = g_stash[i];
+        ImGui::PushID((int)i);
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);   // dimmed
+        ImGui::Text("%s  -  %s", g.title.c_str(), hub::system_name(g.system));
+        ImGui::PopStyleColor();
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - ui::sp(10.f) + ImGui::GetCursorPosX());
+        if (button("Unhide", ImVec2(ui::sp(10.f), ui::sp(4.f)), false, true)) unhide = g.key;
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    if (!unhide.empty()) unhide_game_now(unhide);
 }
