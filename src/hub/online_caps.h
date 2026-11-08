@@ -1,5 +1,6 @@
 #pragma once
 /* Which systems can be played in a room. Pure (no UI state) so a console test can check it against launch_online.cpp's branches. */
+#include <map>
 #include <string>
 
 #include "games.h"
@@ -17,6 +18,16 @@ inline bool system_has_online_launch(hub::System s) {
             return true;
         default: return false;
     }
+}
+
+/* Version id in the room hello: "v:<catalog id>" -> the copy's content key. Only for the cartridge systems whose key follows the ROM content (GBA/NES/SNES CRC32, GB/GBC
+ * header checksum), so a USA and a Japanese copy differ. NDS: game code + ROM version + header CRC16 (catches region/revision, not a patched body). */
+constexpr const char* kVerPrefix = "v:";
+inline bool has_version_id(hub::System s) {
+    return s == hub::System::GB || s == hub::System::GBC || s == hub::System::GBA || s == hub::System::NES || s == hub::System::SNES || s == hub::System::NDS;
+}
+inline void add_version_id(std::map<std::string, std::string>* games, hub::System s, const std::string& catalog_id, const std::string& key) {
+    if (games && !catalog_id.empty() && !key.empty() && has_version_id(s)) games->emplace(std::string(kVerPrefix) + catalog_id, key);
 }
 
 /* Remote play: the host runs the emulator and streams video to guests (streamrun), guests send pad input back. Guests need no copy

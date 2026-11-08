@@ -110,6 +110,13 @@ struct Ghost {
 
 constexpr size_t kMaxGhosts = 5000;
 
+/* A game you hid stays hidden as a greyed ghost too: drops every ghost whose key is in `hidden`. */
+inline void drop_hidden(std::vector<Ghost>* ghosts, const std::set<std::string>& hidden)
+{
+    if (!ghosts || hidden.empty()) return;
+    ghosts->erase(std::remove_if(ghosts->begin(), ghosts->end(), [&](const Ghost& g) { return !g.key.empty() && hidden.count(g.key) > 0; }), ghosts->end());
+}
+
 /* Friends' games you do not own. `libs` = (friend uid, that friend's list) in friend order (callers drop blocked/removed
  * people). A game is yours when its identity or its key matches one of yours. Result sorted by title (case-insensitive),
  * then identity. Entries with an empty identity title are skipped. */

@@ -80,10 +80,33 @@ int main() {
     PeerInfo c{2, "Cy", true, {{"mp1", "BBB"}}, {"gba:abcd-1234"}};
     CHECK(game_selectable("mp1", 4, {a, b}, 0).ok);
     CHECK(game_selectable("smash64", 4, {a, b}, 0).reason == "Bob doesn't have this game");
-    CHECK(game_selectable("mp1", 4, {a, b, c}, 0).reason == "different ROM version (Cy)");
+    CHECK(game_selectable("mp1", 4, {a, b, c}, 0).reason == "Cy has a different version of this game (region or revision)");
     CHECK(game_selectable("gba:abcd-1234", 4, {a, b, c}, 0).ok);
     CHECK(game_selectable("gb:tetris-1", 4, {a, b}, 0).reason == "Ann doesn't have this game");
     CHECK(game_selectable("n64:aaa", 4, {a, b}, 0).ok);
+    {   /* GB/GBA/NES/SNES version ids ("v:<id>"): same id matches, different id refused, a missing id (older RetroHub) never blocks */
+        PeerInfo h{0, "Hal", true, {{"v:tetris", "gb:tetris-aaaa"}}, {"tetris"}};
+        PeerInfo same{1, "Sam", true, {{"v:tetris", "gb:tetris-aaaa"}}, {"tetris"}};
+        PeerInfo jp{2, "Mickey", true, {{"v:tetris", "gb:tetris-bbbb"}}, {"tetris"}};
+        PeerInfo old{3, "Olly", true, {}, {"tetris"}};
+        CHECK(game_selectable("tetris", 4, {h, same}, 0).ok);
+        CHECK(game_selectable("tetris", 4, {h, same, jp}, 0).reason == "Mickey has a different version of this game (region or revision)");
+        CHECK(game_selectable("tetris", 4, {h, same, old}, 0).ok);
+        CHECK(game_selectable("tetris", 4, {old, h}, 0).ok);   // old host: nothing to compare
+        CHECK(game_selectable("tetris", 4, {h, jp}, 0, true).ok);   // remote play: guests need no copy
+        PeerInfo jp2{3, "Nina", true, {{"v:tetris", "gb:tetris-bbbb"}}, {"tetris"}};
+        CHECK(game_selectable("tetris", 4, {h, jp, jp2}, 0).reason == "Hal has a different version of this game (region or revision)");   // the host is the odd one out
+        CHECK(game_selectable("tetris", 4, {h, same, jp, jp2}, 0).reason == "Mickey has a different version of this game (region or revision)");
+    }
+    {   /* a library of 2,000 games: every hello part stays under the server's text limit (4096) and nothing is lost */
+        std::map<std::string, std::string> big;
+        std::vector<std::string> bigk;
+        for (int i = 0; i < 2000; ++i) { big["v:game" + std::to_string(i)] = "gba:abcd-1234567" + std::to_string(i % 10); bigk.push_back("gba:game" + std::to_string(i) + "-12345678"); }
+        auto bm = hello_messages("2", big, bigk, 3000, "1.0.0");
+        PeerInfo bp; Json bj; bool fits = true;
+        for (auto& m : bm) { fits = fits && m.size() <= 3200 && json::parse(m, &bj) && parse_hello(bj, &bp); }
+        CHECK(fits && bp.games == big && bp.keys == bigk && bp.hello_complete());
+    }
     CHECK(game_selectable("gba:abcd-1234", 2, {a, b, c}, 0).reason.find("too many") == 0);
     PeerInfo d; d.slot = 3; d.name = "Di";
     CHECK(game_selectable("mp1", 4, {a, d}, 0).reason == "waiting for Di");
