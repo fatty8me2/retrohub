@@ -311,6 +311,9 @@ target_link_libraries(hub_dolphin_speed_live PRIVATE dsuserver hublogic hubcommo
 
 add_executable(hub_launchset_test test_launch_settings.cpp)
 target_link_libraries(hub_launchset_test PRIVATE hublogic hubcommon)
+# fw2-ci: launch decisions (which runner / core, title + save-stem quoting, resume rules, launch guard), pure
+add_executable(hub_launch_logic_test test_launch_logic.cpp)
+target_link_libraries(hub_launch_logic_test PRIVATE hublogic hubcommon)
 
 # Manual live driver for Kanto Together (hidden desktop, local relay). Not a ctest.
 add_executable(kanto_live kanto_live.cpp)

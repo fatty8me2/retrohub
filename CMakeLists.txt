@@ -119,6 +119,7 @@ add_test(NAME hub_friend_games_test COMMAND hub_friend_games_test)   # greyed-ou
 add_test(NAME hub_gamepack_test COMMAND hub_gamepack_test)           # GamePack: Drive listing HTML parse, entity decode, safe names (no network)
 add_test(NAME hub_discover_test COMMAND hub_discover_test ${CMAKE_SOURCE_DIR}/data/recommended.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv)   # Discover: recommended.json schema (13 consoles, fields, no dupes, no URLs) + library/pack status matching
 add_test(NAME pack_install_e2e COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/pack_install_e2e.ps1)   # pack install -> scan -> ghost dropped -> unpack, fake Drive on loopback
+set_tests_properties(pack_install_e2e PROPERTIES SKIP_RETURN_CODE 77)   # fw2-ci: the script exits 77 when qa_gamepack.exe or python is missing
 add_test(NAME hub_boot_art_test COMMAND hub_boot_art_test)   # boot-animation art: every System has console + media art
 add_test(NAME hub_theme_test COMMAND hub_theme_test)   # every theme preset defines every palette slot and meets text contrast
 add_test(NAME hub_picker_test COMMAND hub_picker_test)   # room game picker: search, chips, sections, virtual layout
@@ -186,13 +187,14 @@ add_test(NAME hub_qm_nav_test COMMAND hub_qm_nav_test)                # quick me
 # Headless end-to-end quick menu run: RetroHub.exe on SDL's dummy video driver, input only from an SDL virtual game controller (real pads are
 # never opened), 13 scenarios incl. the phantom press from quickmenu.log (src/hub/qm_e2e.cpp). No window, no audio.
 add_test(NAME hub_qm_e2e COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/qm_e2e.ps1 -Exe $<TARGET_FILE:RetroHub>)
-set_tests_properties(hub_qm_e2e PROPERTIES TIMEOUT 600)
+set_tests_properties(hub_qm_e2e PROPERTIES TIMEOUT 600 LABELS gui)   # gui: needs a desktop session; CI skips these (-LE "online|gui")
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
+add_test(NAME hub_launch_logic_test COMMAND hub_launch_logic_test)   # fw2-ci: runner/core choice, title + save-stem quoting, resume rules, launch guard (pure)
 add_test(NAME hub_dolphin_speed_test COMMAND hub_dolphin_speed_test)   # DSU speed pad: ini text, press sequencing, title parsing, loopback (offline)
 # Live: boots Dolphin 2509 (deps\dolphin) on a hidden desktop with a generated homebrew .dol, muted, throwaway user dir; drives speed via the DSU pad
 # and measures the achieved speed from the guest's PowerPC timebase (read from Dolphin's memory; Dolphin 2509 shows no speed in its title). Offline (loopback only) but slow (~1 min) and needs deps\dolphin: label `dolphin`; exclude with -LE dolphin. Skips (77) if absent.
 add_test(NAME hub_dolphin_speed_live COMMAND hub_dolphin_speed_live --dolphin ${CMAKE_SOURCE_DIR}/deps/dolphin --work ${CMAKE_BINARY_DIR}/dolphin_speed_work)
-set_tests_properties(hub_dolphin_speed_live PROPERTIES LABELS dolphin SKIP_RETURN_CODE 77 TIMEOUT 300)
+set_tests_properties(hub_dolphin_speed_live PROPERTIES LABELS "dolphin;gui" SKIP_RETURN_CODE 77 TIMEOUT 300)
 add_test(NAME hub_boot_anim_test COMMAND hub_boot_anim_test)           # start animation: media map, timeline, launch rules, state machine, settings
 add_test(NAME real_boot_test COMMAND real_boot_test)                       # real console startup: own IPL/BIOS detection, config edits, custom sound decode
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
@@ -262,6 +264,8 @@ add_test(NAME hub_gcfw_latency COMMAND hub_gcfw_latency)   # GC forwarder delay 
 set_tests_properties(hub_gcfw_latency PROPERTIES LABELS online)
 add_test(NAME hubnet_test COMMAND hubnet_test)                           # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hubattach_test COMMAND hubattach_test)                     # DM attachment round trip; server: $RETROHUB_TEST_SERVER at run time (local wrangler)
+add_test(NAME hubfriends_offline_test COMMAND hubfriends_test)   # fw2-ci: the offline half of test_friends.cpp (identity/parsing), no server needed
+set_tests_properties(hubfriends_offline_test PROPERTIES ENVIRONMENT "HUBFRIENDS_OFFLINE=1")
 add_test(NAME hubfriends_test COMMAND hubfriends_test)                   # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hubidbackup_test COMMAND hubidbackup_test)               # identity backup outside the install folder (offline, temp dirs)
 add_test(NAME hubws_close_test COMMAND hubws_close_test)   # WebSocket close never blocks (local loopback server only)
@@ -276,3 +280,5 @@ set_tests_properties(hubnet_test hublink_test n64run_save_sync_test n64run_locks
                      retrorun_rollback_test retrorun_rollback_stall_test retrorun_resync_test retrorun_dropin_test retrorun_dslink_test hub_bootsound_test PROPERTIES ENVIRONMENT "RETROHUB_QA=1")   # QA-only env switches (HUBNET_LOOPBACK, N64RUN_TEST_INPUT)
 add_test(NAME hub_updater_live_test COMMAND hub_updater_test)         # checks GitHub releases
 set_tests_properties(hubnet_test hubnet_blip_test hubfriends_test hubattach_test hub_updater_live_test PROPERTIES LABELS online)
+# fw2-ci: tests that need a real desktop session, windows, WinRT or Media Foundation encoders. Local runs keep them; CI runs ctest -LE "online|gui".
+set_tests_properties(hint_popup_test hub_toast_win_test clip_test PROPERTIES LABELS gui)
