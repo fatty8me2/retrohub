@@ -229,6 +229,7 @@ add_test(NAME hub_wiiu_test COMMAND hub_wiiu_test)               # offline Wii U
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
 add_test(NAME hub_ext_pads_test COMMAND hub_ext_pads_test)           # external emulators' pad configs for 1-4 fake pads (PCSX2 multitap, Dolphin ports, Cemu players, Azahar, PPSSPP)
 add_test(NAME hub_hookshot_test COMMAND hub_hookshot_test)           # Hookshot: ready/stamp, use_for + switch.runner, vault <-> Hookshot save session (temp dirs)
+add_test(NAME hub_nx_runner_test COMMAND hub_nx_runner_test)         # Fritchii runner: save sync across Lichii / Fritchii / vault (newest wins, backups), shader + key seed (temp dirs, no network)
 add_test(NAME hub_switch_test COMMAND hub_switch_test)               # Switch (Lichii): qt-config.ini merge, controls, profiles.dat, keys/firmware import, save session (no network)
 add_test(NAME hub_hookshot_saves_qa COMMAND hub_hookshot_saves_qa)   # QA: Hookshot <-> Lichii saves through one vault (temp dirs; qa\hookshot_saves.ps1)
 add_test(NAME hub_hookshot_build_test COMMAND hub_hookshot_build_test)   # Hookshot build: protocol parser, jobs, hashes, pins, requirement texts, folder swap keeps user\ (temp dirs, no network)

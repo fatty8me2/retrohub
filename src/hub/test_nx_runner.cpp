@@ -1,0 +1,381 @@
+// Fritchii runner (nx_runner.h): runner resolution, environment, settings pin, key + shader seed, and the save comparison across Lichii / Fritchii / the vault.
+// Temp folders only; nothing is launched, nothing touches the real data dir or %LOCALAPPDATA%\RetroHub (the backup root is a temp folder too).
+#include "nx_runner.h"
+
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "lichii.h"
+
+namespace fs = std::filesystem;
+using namespace hubemu;
+
+static int g_fail = 0, g_pass = 0;
+#define CHECK(cond)                                                     \
+    do {                                                                \
+        if (!(cond)) {                                                  \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
+            ++g_fail;                                                   \
+        } else {                                                        \
+            ++g_pass;                                                   \
+        }                                                               \
+    } while (0)
+
+static std::string U8(const fs::path& p) { auto u = p.u8string(); return std::string(u.begin(), u.end()); }
+static std::string rd(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+static void wr(const fs::path& p, const std::string& t, int age_minutes = 0) {   // age_minutes: how long ago it was last written
+    std::error_code ec;
+    fs::create_directories(p.parent_path(), ec);
+    {
+        std::ofstream f(p, std::ios::binary | std::ios::trunc);
+        f.write(t.data(), (std::streamsize)t.size());
+    }
+    fs::last_write_time(p, fs::file_time_type::clock::now() - std::chrono::minutes(age_minutes), ec);
+}
+static bool has(const std::vector<std::pair<std::string, std::string>>& env, const char* k, const char* v = nullptr) {
+    for (const auto& kv : env) if (kv.first == k && (!v || kv.second == v)) return true;
+    return false;
+}
+static int count_files(const fs::path& root) {
+    int n = 0;
+    std::error_code ec;
+    if (!fs::exists(root, ec)) return 0;
+    for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) if (it->is_regular_file(ec)) ++n;
+    return n;
+}
+// all files below root whose content is `text`
+static int files_with(const fs::path& root, const std::string& text) {
+    int n = 0;
+    std::error_code ec;
+    if (!fs::exists(root, ec)) return 0;
+    for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) if (it->is_regular_file(ec) && rd(it->path()) == text) ++n;
+    return n;
+}
+
+static const uint64_t kTid = 0x0400486024DEC000ull;
+static const char* kTidHex = "0400486024DEC000";
+
+static fs::path save_dir(const fs::path& install) {   // <install>\user\nand\user\save\0000000000000000\<uuid>\<TID>
+    return install / "user" / "nand" / "user" / "save" / "0000000000000000" / kLichiiUserUuid / kTidHex;
+}
+static fs::path vault_save(const fs::path& battery) { return battery / "save" / kTidHex; }
+
+struct World {
+    fs::path root, lichii, fritchii, battery, backups;
+    explicit World(const fs::path& r) : root(r), lichii(r / "lichii"), fritchii(r / "fritchii"), battery(r / "vault" / "switch" / "switch_0400486024dec000" / "battery"), backups(r / "save-backups") {
+        std::error_code ec;
+        fs::create_directories(r, ec);
+    }
+    NxSaveSync req(Kind k) const {
+        NxSaveSync s;
+        s.launching = k;
+        s.title_id = kTid;
+        s.lichii_dir = U8(lichii);
+        s.fritchii_dir = U8(fritchii);
+        s.battery = U8(battery);
+        s.game_label = "switch_0400486024dec000";
+        s.backup_root = U8(backups);
+        return s;
+    }
+    void install_dirs() {   // both emulators "installed": a user\ folder each
+        std::error_code ec;
+        fs::create_directories(lichii / "user", ec);
+        fs::create_directories(fritchii / "user", ec);
+    }
+};
+
+int main() {
+    const fs::path tmp = fs::temp_directory_path() / ("hub_nx_runner_test_" + std::to_string((unsigned long long)std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::error_code ec;
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp, ec);
+
+    // ---- runner resolution
+    {
+        hub::GameEntry sw;
+        sw.system = hub::System::Switch;
+        sw.key = "switch:0400486024dec000";
+        hub::GameEntry gc;
+        gc.system = hub::System::GC;
+        hub::gs::Values v;
+        CHECK(nx_runner_value(v) == NxRunner::Lichii);                  // nothing stored = Lichii
+        CHECK(!fritchii_selected(sw, v));
+        v["switch.runner"] = "fritchii";
+        CHECK(nx_runner_value(v) == NxRunner::Fritchii);
+        CHECK(fritchii_selected(sw, v));
+        CHECK(!fritchii_selected(gc, v));                               // only Switch games
+        v["switch.runner"] = "hookshot";
+        CHECK(nx_runner_value(v) == NxRunner::Hookshot);
+        CHECK(!fritchii_selected(sw, v));
+        v["switch.runner"] = "auto";                                    // the old v1.37.0 value
+        CHECK(nx_runner_value(v) == NxRunner::Lichii);
+        v["switch.runner"] = "FRITCHII";                                // exact match only
+        CHECK(nx_runner_value(v) == NxRunner::Lichii);
+        CHECK(is_nx(Kind::Lichii) && is_nx(Kind::Fritchii) && !is_nx(Kind::Dolphin));
+        CHECK(std::string(name(Kind::Fritchii)) == "Fritchii");
+        CHECK(std::string(nx_manifest_suffix(Kind::Lichii)).empty());
+        CHECK(std::string(nx_manifest_suffix(Kind::Fritchii)) == "-fritchii");
+    }
+
+    // ---- environment
+    {
+        const uint64_t GiB = 1ull << 30;
+        hub::gs::Values v;
+        v["switch.preload_shaders"] = "auto";
+        // Lichii: exactly lichii_env
+        CHECK(nx_env(Kind::Lichii, v, 32 * GiB) == lichii_env(v, 32 * GiB));
+        CHECK(has(nx_env(Kind::Lichii, v, 32 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"));
+        CHECK(nx_env(Kind::Lichii, v, 16 * GiB).empty());
+        CHECK(!has(nx_env(Kind::Lichii, v, 32 * GiB), "EDEN_UPDATE_URL"));
+        // Fritchii: "auto" never preloads (29k pipelines = ~13 GB), "all" does, "recent" does not; the updater URL is always pinned
+        CHECK(!has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+        CHECK(has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_UPDATE_URL", "http://127.0.0.1:9/x"));
+        v["switch.preload_shaders"] = "all";
+        CHECK(has(nx_env(Kind::Fritchii, v, 8 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"));
+        v["switch.preload_shaders"] = "recent";
+        CHECK(!has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+        CHECK(has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_UPDATE_URL"));
+        CHECK(nx_env(Kind::Fritchii, hub::gs::Values{}, 0).size() == 1);   // no setting at all: just the updater pin
+        // never these
+        for (const char* mode : {"auto", "all", "recent"}) {
+            v["switch.preload_shaders"] = mode;
+            for (Kind k : {Kind::Lichii, Kind::Fritchii}) {
+                auto e = nx_env(k, v, 64 * GiB);
+                CHECK(!has(e, "EDEN_NX2_DEBUG_SERVER") && !has(e, "EDEN_NX2_CRASH_DUMP"));
+            }
+        }
+        CHECK(nx_skip_keys(Kind::Lichii).empty());
+    }
+
+    // ---- qt-config pin and frizti.ini
+    {
+        const std::string q = fritchii_ini_pin("[Renderer]\nresolution_setup\\default=false\nresolution_setup=3\n");
+        CHECK(q.find("frizti_settings_revision\\default=false") != std::string::npos);
+        CHECK(q.find("frizti_settings_revision=999") != std::string::npos);
+        CHECK(q.find("oot_fps_asked\\default=false") != std::string::npos);
+        CHECK(q.find("oot_fps_asked=true") != std::string::npos);
+        CHECK(q.find("resolution_setup=3") != std::string::npos);        // RetroHub's other keys stay
+        CHECK(fritchii_ini_pin(q) == q);                                  // idempotent
+        const std::string old = "revision=3\nglobal.gpu_accuracy=1\nglobal.use_vsync=2\ngame.0400486024DEC000.resolution_setup=2\n# note\n";
+        const std::string n = frizti_ini_pin(old);
+        CHECK(n.find("revision=999") != std::string::npos);
+        CHECK(n.find("revision=3") == std::string::npos);
+        CHECK(n.find("global.") == std::string::npos);                    // every global line dropped
+        CHECK(n.find("game.0400486024DEC000.resolution_setup=2") != std::string::npos);   // game lines kept
+        CHECK(frizti_ini_pin(n) == n);
+        const std::string fresh = frizti_ini_pin("");                      // missing file
+        CHECK(fresh.find("revision=999") != std::string::npos && fresh.find("global.") == std::string::npos);
+        CHECK(frizti_ini_pin("revision = 7\r\nglobal.x=1\r\n").find("revision=999") != std::string::npos);
+        CHECK(frizti_ini_pin("revision = 7\r\nglobal.x=1\r\n").find("revision = 7") == std::string::npos);
+
+        const fs::path inst = tmp / "pin" / "fritchii";                    // prepare_fritchii: files on disk
+        CHECK(prepare_fritchii(U8(inst)).empty());
+        CHECK(fs::exists(inst / "user" / "config" / "frizti.ini"));        // created although it was missing
+        CHECK(rd(inst / "user" / "config" / "frizti.ini").find("revision=999") != std::string::npos);
+        CHECK(rd(inst / "user" / "config" / "qt-config.ini").find("frizti_settings_revision=999") != std::string::npos);
+        wr(inst / "user" / "config" / "frizti.ini", "revision=3\nglobal.use_vsync=2\ngame.x.y=1\n");
+        CHECK(prepare_fritchii(U8(inst)).empty());
+        const std::string after = rd(inst / "user" / "config" / "frizti.ini");
+        CHECK(after.find("global.") == std::string::npos && after.find("game.x.y=1") != std::string::npos && after.find("revision=999") != std::string::npos);
+        CHECK(!fs::exists(inst / "nx2_switches.txt") && !fs::exists(inst / "user" / "nx2_switches.txt"));   // RetroHub never writes one
+        // the skip list: a key named there is not written by lichii_ini_launch; the others are
+        hub::gs::Values v;
+        std::vector<std::string> skip = {"Renderer.use_vsync"};
+        const std::string t = lichii_ini_launch("", v, true, &skip);
+        CHECK(t.find("use_vsync") == std::string::npos && t.find("resolution_setup") != std::string::npos);
+        CHECK(lichii_ini_launch("", v, true).find("use_vsync") != std::string::npos);   // no list (Lichii) = all keys
+    }
+
+    // ---- keys + firmware copied from Lichii
+    {
+        World w(tmp / "keys");
+        wr(w.lichii / "user" / "keys" / "prod.keys", "header_key = 00112233445566778899aabbccddeeff\n");
+        wr(w.lichii / "user" / "keys" / "title.keys", "0123 = 4567\n");
+        wr(w.lichii / "user" / "nand" / "system" / "Contents" / "registered" / "aa.nca", "firmware-a");
+        wr(w.lichii / "user" / "nand" / "system" / "Contents" / "registered" / "bb.cnmt.nca", "firmware-b");
+        wr(w.lichii / "nx2_switches.txt", "EVIL=1\n");   // Lichii's own file: must NOT be carried over
+        fs::create_directories(w.fritchii / "user");
+        CHECK(nx_seed_setup_needed(U8(w.lichii), U8(w.fritchii)));
+        bool did = false;
+        CHECK(nx_seed_setup(U8(w.lichii), U8(w.fritchii), &did).empty());
+        CHECK(did);
+        CHECK(rd(w.fritchii / "user" / "keys" / "prod.keys") == rd(w.lichii / "user" / "keys" / "prod.keys"));
+        CHECK(fs::exists(w.fritchii / "user" / "keys" / "title.keys"));
+        CHECK(rd(w.fritchii / "user" / "nand" / "system" / "Contents" / "registered" / "aa.nca") == "firmware-a");
+        CHECK(fs::exists(w.lichii / "user" / "keys" / "prod.keys") && fs::exists(w.lichii / "user" / "nand" / "system" / "Contents" / "registered" / "aa.nca"));   // the source is untouched
+        CHECK(!fs::exists(w.fritchii / "nx2_switches.txt") && !fs::exists(w.fritchii / "user" / "nx2_switches.txt"));
+        CHECK(!nx_seed_setup_needed(U8(w.lichii), U8(w.fritchii)));
+        wr(w.fritchii / "user" / "keys" / "prod.keys", "header_key = ffeeddccbbaa99887766554433221100\n");   // the target's own keys are never replaced
+        CHECK(nx_seed_setup(U8(w.lichii), U8(w.fritchii), &did).empty() && !did);
+        CHECK(rd(w.fritchii / "user" / "keys" / "prod.keys").find("ffeedd") != std::string::npos);
+        CHECK(nx_seed_setup(U8(tmp / "none"), U8(w.fritchii), &did).empty() && !did);   // no Lichii: nothing to do
+    }
+
+    // ---- shader cache seed
+    {
+        World w(tmp / "shader");
+        const std::string big(300000, 'x');
+        auto src = [&](const char* f) { return w.lichii / "user" / "cache" / "shader" / "0400486024dec000" / f; };
+        auto dst = [&](const char* f) { return w.fritchii / "user" / "cache" / "shader" / "0400486024dec000" / f; };
+        wr(src("vulkan.fork-v53.bin"), big + "53", 120);
+        wr(src("vulkan.fork-v54.bin"), big + "54", 100);
+        wr(src("vulkan.fork-v52.bin"), "v52-not-seeded", 100);
+        auto plan = shader_seed_plan(U8(w.lichii), U8(w.fritchii), kTid);
+        CHECK(plan.size() == 2);
+        CHECK(shader_seed_plan(U8(w.lichii), U8(w.fritchii), 0x1234).empty());          // another title: nothing
+        CHECK(shader_seed_plan(U8(tmp / "nope"), U8(w.fritchii), kTid).empty());          // no Lichii install
+        uint64_t last_done = 0, last_total = 0;
+        CHECK(shader_seed_run(plan, [&](uint64_t d, uint64_t t) { last_done = d; last_total = t; }).empty());
+        CHECK(last_total == plan[0].size + plan[1].size && last_done == last_total);
+        CHECK(rd(dst("vulkan.fork-v53.bin")) == big + "53" && rd(dst("vulkan.fork-v54.bin")) == big + "54");
+        CHECK(!fs::exists(dst("vulkan.fork-v52.bin")));                                    // only v53 / v54
+        CHECK(fs::last_write_time(dst("vulkan.fork-v53.bin")) == fs::last_write_time(src("vulkan.fork-v53.bin")));   // same time: not "older" next time
+        CHECK(fs::hard_link_count(dst("vulkan.fork-v53.bin")) == 1 && fs::hard_link_count(src("vulkan.fork-v53.bin")) == 1);   // a copy, not a hardlink
+        CHECK(count_files(w.fritchii / "user" / "cache") == 2);                             // no .retrohub-part left over
+        CHECK(shader_seed_plan(U8(w.lichii), U8(w.fritchii), kTid).empty());                // up to date
+        wr(dst("vulkan.fork-v53.bin"), "own newer cache", 0);                                // destination newer: left alone
+        CHECK(shader_seed_plan(U8(w.lichii), U8(w.fritchii), kTid).empty());
+        wr(dst("vulkan.fork-v53.bin"), "own old cache", 500);                                // destination older: replaced
+        plan = shader_seed_plan(U8(w.lichii), U8(w.fritchii), kTid);
+        CHECK(plan.size() == 1);
+        CHECK(shader_seed_run(plan, nullptr).empty());
+        CHECK(rd(dst("vulkan.fork-v53.bin")) == big + "53");
+        CHECK(rd(src("vulkan.fork-v53.bin")) == big + "53");                                 // the source never changes
+        // cancel: nothing is left behind
+        World c(tmp / "shader2");
+        wr(c.lichii / "user" / "cache" / "shader" / "0400486024DEC000" / "vulkan.fork-v53.bin", big, 10);   // upper-case folder name
+        auto p2 = shader_seed_plan(U8(c.lichii), U8(c.fritchii), kTid);
+        CHECK(p2.size() == 1);
+        std::atomic<bool> cancel{true};
+        CHECK(shader_seed_run(p2, nullptr, &cancel) == "cancelled");
+        CHECK(count_files(c.fritchii) == 0);
+        CHECK(shader_seed_run(std::vector<ShaderSeedItem>{}, nullptr).empty());
+    }
+
+    // ---- saves
+    {
+        // a. Lichii holds the newest save, Fritchii an older one, the vault is empty: launching Fritchii brings it over, the replaced one is backed up
+        World w(tmp / "saves_a");
+        w.install_dirs();
+        wr(save_dir(w.lichii) / "slot.sav", "lichii-NEW", 10);
+        wr(save_dir(w.fritchii) / "slot.sav", "fritchii-old", 600);
+        wr(w.backups / "old-game" / "keep.me", "pre-existing backup");
+        NxSaveSyncReport r = nx_sync_saves_before_launch(w.req(Kind::Fritchii));
+        CHECK(r.ok && r.ran);
+        CHECK(rd(save_dir(w.fritchii) / "slot.sav") == "lichii-NEW");
+        CHECK(rd(vault_save(w.battery) / "slot.sav") == "lichii-NEW");        // the vault follows
+        CHECK(rd(save_dir(w.lichii) / "slot.sav") == "lichii-NEW");           // the other emulator is never changed by a launch of this one
+        CHECK(r.backups >= 1 && files_with(w.backups, "fritchii-old") == 1);  // the version that was replaced
+        CHECK(rd(w.backups / "old-game" / "keep.me") == "pre-existing backup");   // existing backups stay
+        CHECK(r.backup_dirs.size() == (size_t)r.backups);
+        // already in step: nothing copied, no new backup
+        const int files_before = count_files(w.backups);
+        NxSaveSyncReport r2 = nx_sync_saves_before_launch(w.req(Kind::Fritchii));
+        CHECK(r2.ok && r2.copied == 0 && r2.backups == 0 && count_files(w.backups) == files_before);
+
+        // b. the other direction: Fritchii played (session over: its save went to the vault), Lichii is launched and gets it
+        wr(save_dir(w.fritchii) / "slot.sav", "fritchii-NEWER", 100);
+        wr(save_dir(w.fritchii) / "slot2.sav", "second slot", 100);
+        NxSaveSyncReport r3 = nx_sync_saves_before_launch(w.req(Kind::Lichii));
+        CHECK(r3.ok && r3.ran);
+        CHECK(rd(save_dir(w.lichii) / "slot.sav") == "fritchii-NEWER" && rd(save_dir(w.lichii) / "slot2.sav") == "second slot");
+        CHECK(rd(vault_save(w.battery) / "slot.sav") == "fritchii-NEWER");
+        CHECK(files_with(w.backups, "lichii-NEW") >= 1);                       // what Lichii had is kept
+        // the manifests are separate per emulator
+        CHECK(fs::exists(w.root / "vault" / ".sync" / "emu-switch-switch_0400486024dec000.json"));
+        CHECK(fs::exists(w.root / "vault" / ".sync" / "emu-switch-switch_0400486024dec000-fritchii.json"));
+
+        // c. both changed since they last agreed: the newest wins and the other one is backed up
+        wr(save_dir(w.lichii) / "slot.sav", "lichii-edit", 30);
+        wr(save_dir(w.fritchii) / "slot.sav", "fritchii-edit-LATEST", 2);
+        NxSaveSyncReport r4 = nx_sync_saves_before_launch(w.req(Kind::Fritchii));
+        CHECK(r4.ok);
+        CHECK(rd(save_dir(w.fritchii) / "slot.sav") == "fritchii-edit-LATEST");   // the newest stays in the launching emulator
+        CHECK(files_with(w.backups, "lichii-edit") >= 1);                          // ...and the older edit is preserved under save-backups
+        CHECK(rd(save_dir(w.lichii) / "slot.sav") == "lichii-edit");               // (still intact in its own folder)
+        // and the same with the other one newest, launching Lichii
+        wr(save_dir(w.fritchii) / "slot.sav", "fritchii-edit-2", 40);
+        wr(save_dir(w.lichii) / "slot.sav", "lichii-edit-LATEST", 2);
+        NxSaveSyncReport r5 = nx_sync_saves_before_launch(w.req(Kind::Lichii));
+        CHECK(r5.ok && rd(save_dir(w.lichii) / "slot.sav") == "lichii-edit-LATEST");
+        CHECK(files_with(w.backups, "fritchii-edit-2") >= 1);
+
+        // d. the vault holds the newest (another PC synced it): both emulators get it, each backing up its own changes
+        wr(vault_save(w.battery) / "slot.sav", "vault-from-other-pc", 0);
+        NxSaveSyncReport r6 = nx_sync_saves_before_launch(w.req(Kind::Fritchii));
+        CHECK(r6.ok && rd(save_dir(w.fritchii) / "slot.sav") == "vault-from-other-pc");
+        CHECK(rd(vault_save(w.battery) / "slot.sav") == "vault-from-other-pc");
+        // nothing under save-backups was ever removed
+        CHECK(rd(w.backups / "old-game" / "keep.me") == "pre-existing backup");
+        CHECK(files_with(w.backups, "fritchii-old") == 1);
+    }
+    {
+        // e. missing folders on either side
+        World w(tmp / "saves_e");
+        // no other emulator at all: a no-op (the Lichii-only PC behaves as before)
+        fs::create_directories(w.lichii / "user");
+        wr(save_dir(w.lichii) / "slot.sav", "only-lichii", 5);
+        NxSaveSyncReport r = nx_sync_saves_before_launch(w.req(Kind::Lichii));
+        CHECK(r.ok && !r.ran && r.copied == 0 && !fs::exists(w.backups) && !fs::exists(w.battery));
+        // Fritchii installed but with no save yet, vault empty: the Lichii save comes over, no backup (nothing was replaced)
+        fs::create_directories(w.fritchii / "user");
+        r = nx_sync_saves_before_launch(w.req(Kind::Fritchii));
+        CHECK(r.ok && r.ran && r.backups == 0);
+        CHECK(rd(save_dir(w.fritchii) / "slot.sav") == "only-lichii" && rd(vault_save(w.battery) / "slot.sav") == "only-lichii");
+        CHECK(!fs::exists(w.backups) || count_files(w.backups) == 0);
+        // nobody has a save (and no vault folder): nothing happens, nothing fails
+        World n(tmp / "saves_n");
+        n.install_dirs();
+        r = nx_sync_saves_before_launch(n.req(Kind::Fritchii));
+        CHECK(r.ok && r.ran && r.copied == 0 && r.backups == 0 && count_files(n.fritchii / "user" / "nand" / "user") == 0);
+        // only the vault has a save, neither emulator does
+        World v(tmp / "saves_v");
+        v.install_dirs();
+        wr(vault_save(v.battery) / "slot.sav", "vault-only", 5);
+        r = nx_sync_saves_before_launch(v.req(Kind::Lichii));
+        CHECK(r.ok && rd(save_dir(v.lichii) / "slot.sav") == "vault-only" && r.backups == 0);
+        CHECK(!fs::exists(save_dir(v.fritchii) / "slot.sav"));                 // the other emulator is not touched by this launch
+        // no title id / no battery: nothing to do
+        NxSaveSync bad = v.req(Kind::Fritchii);
+        bad.title_id = 0;
+        CHECK(!nx_sync_saves_before_launch(bad).ran);
+        // a backup that cannot be written stops the step: no backup, no overwrite
+        World f(tmp / "saves_f");
+        f.install_dirs();
+        wr(save_dir(f.lichii) / "slot.sav", "lichii-new", 5);
+        wr(save_dir(f.fritchii) / "slot.sav", "fritchii-old", 500);
+        wr(f.root / "blocked", "a file where the backup folder should be");
+        NxSaveSync blocked = f.req(Kind::Fritchii);
+        blocked.backup_root = U8(f.root / "blocked");
+        r = nx_sync_saves_before_launch(blocked);
+        CHECK(!r.ok);
+        CHECK(rd(save_dir(f.fritchii) / "slot.sav") == "fritchii-old");        // not overwritten without a backup
+    }
+
+    // ---- update leftovers of Fritchii's own updater
+    {
+        const fs::path d = tmp / "left";
+        fs::create_directories(d / "user");
+        CHECK(update_leftovers(Kind::Fritchii, U8(d)).empty());
+        fs::create_directories(d / "update-staging");
+        CHECK(update_leftovers(Kind::Fritchii, U8(d)) == "update-staging");
+        CHECK(update_leftovers(Kind::Lichii, U8(d)).empty());                   // Lichii is never checked
+        fs::remove_all(d / "update-staging");
+        wr(d / ".update-lock", "x");
+        CHECK(!update_leftovers(Kind::Fritchii, U8(d)).empty());
+    }
+
+    fs::remove_all(tmp, ec);
+    std::printf("nx runner test: %d passed, %d failed\n", g_pass, g_fail);
+    return g_fail ? 1 : 0;
+}
