@@ -14,7 +14,8 @@ New-Item -ItemType Directory -Force -Path $out, $roms | Out-Null
 & python (Join-Path $PSScriptRoot 'make_gb_gba_roms.py') $roms | Out-Null
 $env:RETRORUN_MUTE = '1'; $env:SSB64_MUTE = '1'; $env:RETROHUB_START_HINT = '0'
 $cases = @(
-    @{ n = 'gambatte-gb';  core = "$cores\gambatte_libretro.dll"; rom = 'gb_test.gb';   sys = 'gb';  srm = 'gb_test.srm' },
+    # Gambatte keeps the MBC3 clock on wall time (not rollback-safe by design; netplay uses SameBoy), so it gets the clock-free ROM.
+    @{ n = 'gambatte-gb';  core = "$cores\gambatte_libretro.dll"; rom = 'gb_test_nortc.gb'; sys = 'gb';  srm = 'gb_test_nortc.srm' },
     @{ n = 'sameboy-gb';   core = "$cores\sameboy_libretro.dll";  rom = 'gb_test.gb';   sys = 'gb';  srm = 'gb_test.srm' },
     @{ n = 'sameboy_rb-gb'; core = "$bin\cores\sameboy_rb_libretro.dll"; rom = 'gb_test.gb'; sys = 'gb'; srm = 'gb_test.srm' },
     @{ n = 'mgba-gba';     core = "$cores\mgba_libretro.dll";     rom = 'gba_test.gba'; sys = 'gba'; srm = '' }
