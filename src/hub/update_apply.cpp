@@ -171,7 +171,25 @@ bool path_is_under(const std::wstring& dir, const std::wstring& path) {
     return p.compare(0, d.size(), d) == 0 && p[d.size()] == L'\\';
 }
 
-std::vector<std::wstring> list_staged(const std::wstring& staged) {
+bool is_smash_classic_file(const std::wstring& relIn) {
+    std::vector<std::wstring> parts = split(lower(norm(relIn)));
+    if (parts.empty()) return false;
+    const std::wstring& name = parts.back();
+    if (parts.size() > 1) {
+        const std::wstring& d = parts[0];
+        if (d == L"yamls" || d == L"assets" || d == L".tcc") return true;
+        if (d == L"licenses")
+            return name == L"libultraship-license.txt" || name == L"torch-license.txt" || name == L"readme.txt";
+        return false;
+    }
+    static const wchar_t* kRoot[] = {L"battleship.exe", L"battleship-jp.exe", L"battleship.pdb", L"battleship-jp.pdb", L"torch.exe",
+                                     L"f3d.o2r", L"config.yml", L"gamecontrollerdb.txt", L"battleship.ico", L"battleship-jp.ico",
+                                     L"license.txt"};
+    for (auto k : kRoot) if (name == k) return true;
+    return name.size() > 4 && name.compare(name.size() - 4, 4, L".o2r") == 0;
+}
+
+std::vector<std::wstring> list_staged(const std::wstring& staged, bool hub_only) {
     std::vector<std::wstring> out;
     std::error_code ec;
     std::wstring root = norm(staged);
@@ -184,6 +202,7 @@ std::vector<std::wstring> list_staged(const std::wstring& staged) {
         std::wstring rel = full.substr(root.size() + 1);
         for (auto& c : rel) if (c == L'/') c = L'\\';
         if (!is_safe_rel(rel) || is_excluded(rel)) continue;
+        if (hub_only && is_smash_classic_file(rel)) continue;
         out.push_back(rel);
     }
     std::sort(out.begin(), out.end());
@@ -380,11 +399,11 @@ Result apply_files(const Options& o) {
     Result r;
     std::wstring staged = norm(o.staged), install = norm(o.install);
     if (staged.empty() || install.empty()) { r.error = L"missing directories"; return r; }
-    if (!file_exists(staged + L"\\RetroHub.exe") || !file_exists(staged + L"\\BattleShip.exe")) {
-        r.error = L"the update is missing RetroHub.exe or BattleShip.exe";
+    if (!file_exists(staged + L"\\RetroHub.exe") || (!o.hub_only && !file_exists(staged + L"\\BattleShip.exe"))) {
+        r.error = o.hub_only ? L"the update is missing RetroHub.exe" : L"the update is missing RetroHub.exe or BattleShip.exe";
         return r;
     }
-    std::vector<std::wstring> files = list_staged(staged);
+    std::vector<std::wstring> files = list_staged(staged, o.hub_only);
     std::wstring backup = o.backup.empty() ? install + L"\\updates\\backup" : norm(o.backup);
     std::error_code ec;
     fs::create_directories(fs::path(backup), ec);
@@ -573,7 +592,7 @@ int run(const Options& o) {
                                FILE_ATTRIBUTE_NORMAL, nullptr);
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
     }
-    alog(L"start: staged=" + o.staged + L" install=" + o.install + L" version=" + o.version);
+    alog(L"start: staged=" + o.staged + L" install=" + o.install + L" version=" + o.version + (o.hub_only ? L" (RetroHub files only)" : L""));
     const std::wstring status_path = o.status_path.empty() ? default_status_path(install) : o.status_path;
 
     /* A game or emulator still running from the install folder is never closed to make room for an update. */
@@ -639,6 +658,7 @@ bool try_apply_mode(int* exit_code) {
             bool more = i + 1 < argc;
             if (a == L"--no-relaunch") o.relaunch = false;
             else if (a == L"--game-active") o.game_active = true;
+            else if (a == L"--hub-only") o.hub_only = true;
             else if (a == L"--version" && more) o.version = argv[++i];
             else if (a == L"--from" && more) o.from_version = argv[++i];
             else if (a == L"--retries" && more) o.retries = std::max(1, _wtoi(argv[++i]));

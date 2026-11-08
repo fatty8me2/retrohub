@@ -16,7 +16,7 @@
  * Never touched: userdata\, saves, BattleShip.o2r, logs, updates\ (see is_excluded()).
  *
  * Flags: --version <tag>  --from <tag>  --no-relaunch  --retries <n>  --retry-ms <ms>  --game-active
- *        --started-marker <file>  --backup-dir <dir>  --wait-secs <n>  --hub-wait-secs <n>
+ *        --started-marker <file>  --backup-dir <dir>  --wait-secs <n>  --hub-wait-secs <n>  --hub-only
  * Exit code: 0 applied, 1 failed (rolled back), 2 usage, 3 postponed (a game was still running; nothing changed). */
 
 #include <string>
@@ -32,6 +32,7 @@ struct Options {
     std::wstring from_version;               // the tag being replaced: recovery only restores a backup onto the version it came from
     std::wstring started_marker;             // created as soon as the applier is running
     bool relaunch = true;
+    bool hub_only = false;                   // --hub-only: the staged files are RetroHub's part (RetroHub-windows.zip); Smash Classic's files are never replaced
     bool game_active = false;                // --game-active: a game was running when the update started; relaunch RetroHub minimised (no focus)
     int retries = 10;                        // per-file copy attempts
     int retry_ms = 500;
@@ -59,7 +60,11 @@ struct Result {
 bool is_excluded(const std::wstring& rel);       // user data / logs / saves / BattleShip.o2r / updates
 bool is_safe_rel(const std::wstring& rel);       // no "..", no drive/rooted paths
 bool path_is_under(const std::wstring& dir, const std::wstring& path);   // case-insensitive
-std::vector<std::wstring> list_staged(const std::wstring& staged);       // relative, backslashes, exclusions applied, sorted
+/* Smash Classic's own files (BattleShip.exe, torch.exe, f3d.o2r, config.yml, yamls\, assets\, .tcc\, its licenses ...). A hub-only
+ * apply never replaces these, even if a zip carried them. RetroHub's own files (RetroHub.exe, n64run.exe, data\, cores\, emu\ ...) are not. */
+bool is_smash_classic_file(const std::wstring& rel);
+/* hub_only: also drops Smash Classic's files (see above). */
+std::vector<std::wstring> list_staged(const std::wstring& staged, bool hub_only = false);       // relative, backslashes, exclusions applied, sorted
 std::string plain_reason(unsigned long win_error);   // "a file was in use by another program", "the disk is full", ...
 
 /* ---- processes from the install folder (a game, an emulator ...) ---- */
