@@ -121,7 +121,10 @@ std::string server_reason_text(const std::string& reason)
     if (reason == "pending-approval") return "Waiting for the owner to approve this account. Online play switches on as soon as it is approved.";
     if (reason == "account-unavailable") return "This account can't use online rooms right now.";
     /* Strict rooms (the owner's switch): a seat that proves no approved account is closed (4013). */
-    if (reason == "ident-required") return "This room needs a RetroHub account. Update RetroHub to the latest version, then join again.";
+    if (reason == "ident-required") return "RetroHub couldn't confirm your account for this room. Update RetroHub to the latest version, then try joining again.";
+    /* Game rooms check the seat against the room's lobby (4015). */
+    if (reason == "not-in-lobby") return "You're not in this room's lobby, so you can't take a seat in its game.";
+    if (reason == "wrong-slot" || reason == "slot-not-yours") return "That seat belongs to someone else in this room.";
     /* The free Cloudflare plan's daily budget is used up (new rooms stop at 70%): nothing is wrong on this PC. */
     if (reason == "server-busy") return "The free server is busy right now, so it can't open new rooms. Try again in a little while.";
     /* Per-address limits: too many rooms or connections from this network within a minute. */
