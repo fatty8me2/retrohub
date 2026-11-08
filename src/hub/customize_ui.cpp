@@ -1,6 +1,7 @@
 ﻿#include "app.h"
 
 #include "customize_logic.h"
+#include "hidden_ui.h"
 #include "osk.h"
 #include "prefs.h"
 #include "progress_ui.h"
@@ -637,6 +638,18 @@ void draw_customize() {
         int n = hubui::cust::membership_count(CU.P.user_shelves, e.key);
         ImGui::TextDisabled(n ? "On %d of your shelves." : "Not on any of your shelves.", n);
         if (ui::button("Add to shelf...", ImVec2(0, sp(4.f)), false, true, ui::Icon::Plus)) { CU.pick.want = true; CU.pick.parent = LocCustomize; }
+    }
+
+    if (!is_native(e)) {   // Hide game (library-12): one press, then an Undo card; synced to all your PCs like the Hidden games list
+        sub_heading("Hide");
+        ImGui::TextDisabled("Takes it off your shelves and out of the library. Show hidden brings it back to look at.");
+        if (ui::button("Hide game", ImVec2(0, sp(4.f)), false, true, ui::Icon::Close)) {
+            const std::string hk = e.key;
+            hide_game_now(hk);   // e is gone from the library after this
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+            return;
+        }
     }
 
     ImGui::Dummy(ImVec2(0, sp(1.5f)));

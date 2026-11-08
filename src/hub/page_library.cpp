@@ -10,6 +10,8 @@
 #include "hookshot_ui.h"
 #include "continue_ui.h"
 #include "continue_logic.h"
+#include "hidden_games.h"
+#include "hidden_ui.h"
 
 #include <mutex>
 #include <thread>
@@ -595,6 +597,14 @@ void library_filter_chips() {
             if (chip(sl, !A.st.lib_cases_classic, COL_ACCENT)) { A.st.lib_cases_classic = !A.st.lib_cases_classic; mark_dirty(); }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carousel style: Coverflow (straight row, disc slides out) or the Classic shelf");
         }
+        {   // Show hidden (library-12): off by default, remembered on this PC. Only drawn when something is hidden (or it is on).
+            const std::string hl = hub::hidden::chip_label(show_hidden_on(), hidden_stash_count());
+            if (!hl.empty()) {
+                chip_same_line(hl.c_str(), -1.f);
+                if (chip(hl.c_str(), show_hidden_on(), COL_ACCENT)) show_hidden_toggle();
+                if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) ImGui::SetTooltip("Show the games you hid, dimmed, with an Unhide button");
+            }
+        }
         if (!cases_view) {
             chip_same_line(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", -1.f);
             if (chip(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", A.st.lib_group_genre, COL_ACCENT)) {
@@ -622,6 +632,7 @@ void library_filter_chips() {
     ImGui::PopItemFlag();
     ImGui::PopStyleVar();
     ImGui::EndChild();
+    hidden_strip_draw();   // "Show hidden" on: the hidden games, dimmed, each with Unhide (libcopies_ui.cpp)
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 }
 
@@ -1068,6 +1079,17 @@ void draw_details_modal() {
     if (hack_can_add(e)) {   // ROM hacks and translations (hack_ui.cpp): pick a patch file, RetroHub finds the base game and adds a new entry
         place(label_w("Add hack or translation", true));
         if (button("Add hack or translation", ImVec2(0, bh2), false, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); hack_add_open(e); }
+    }
+    if (!native) {   // Hide game (library-12): one press, Undo card after; synced like the Hidden games list
+        place(label_w("Hide game", true));
+        if (button("Hide game", ImVec2(0, bh2), false, true, ui::Icon::Close)) {
+            const std::string hk = e.key;
+            hide_game_now(hk);   // e is gone from the library after this: nothing below may use it
+            A.show_details = false;
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+            return;   // nothing after this touches the (now removed) entry
+        }
     }
     custom_draw(1);   // Customize / Add to shelf modals nest inside this one
     ImGui::EndPopup();
