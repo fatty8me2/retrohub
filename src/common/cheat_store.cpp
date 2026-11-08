@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <chrono>
 #include <fstream>
+#include <thread>
 #include <sstream>
 
 #include "json.h"
@@ -175,14 +177,18 @@ void Store::merge_from(const Store& other) {
         GameState& mine = it->second;
         const GameState& theirs = kv.second;
         std::string keep_backup = mine.backup.empty() ? theirs.backup : mine.backup;   // a backup record is never lost
-        if (theirs.updated > mine.updated) mine = theirs;
-        else if (theirs.updated == mine.updated) {   // tie: union, so neither PC loses a custom code
+        const bool both_stamped = mine.updated > 0 && theirs.updated > 0;
+        if (both_stamped && theirs.updated > mine.updated) mine = theirs;
+        else if (!both_stamped || theirs.updated == mine.updated) {   // a tie, or an older unstamped entry: union, so neither PC loses a cheat or custom code
+            const bool theirs_wins = theirs.updated > mine.updated;   // only when this side is the unstamped one
             for (auto& id : theirs.on) mine.on.insert(id);
             for (auto& c : theirs.custom) {
                 bool have = false;
-                for (auto& m : mine.custom) if (m.id == c.id) have = true;
+                for (auto& m : mine.custom) if (m.id == c.id) { have = true; if (theirs_wins) m = c; }
                 if (!have) mine.custom.push_back(c);
             }
+            for (auto& v : theirs.values) if (theirs_wins || !mine.values.count(v.first)) mine.values[v.first] = v.second;
+            mine.updated = std::max(mine.updated, theirs.updated);
         }
         if (mine.backup.empty()) mine.backup = keep_backup;
     }
@@ -195,24 +201,34 @@ bool merge_cloud_into_vault(const std::string& vault_dir, const std::string& clo
     if (!cloud.from_json(cloud_json)) return false;
     std::lock_guard<std::mutex> lk(hub::gs::files_mutex());
     Store disk;
-    if (!disk.load(vault_dir)) disk = Store();
+    if (!disk.load_unlocked(vault_dir)) {   // unreadable local file: keep a copy of it, then treat it as empty
+        if (!hub::gs::preserve_unreadable(Store::file_path(vault_dir), vault_dir)) return false;
+        disk = Store();
+    }
     disk.merge_from(cloud);
     return disk.save_unmerged(vault_dir);
 }
 
 bool Store::load(const std::string& vault_dir) {
+    std::lock_guard<std::mutex> lk(hub::gs::files_mutex());
+    return load_unlocked(vault_dir);
+}
+bool Store::load_unlocked(const std::string& vault_dir) {
     std::ifstream f(fs::u8path(file_path(vault_dir)), std::ios::binary);
     if (!f) { g_.clear(); return true; }
     std::stringstream ss;
     ss << f.rdbuf();
     return from_json(ss.str());
 }
-bool Store::save(const std::string& vault_dir) const {
+bool Store::save(const std::string& vault_dir) {
     std::lock_guard<std::mutex> lk(hub::gs::files_mutex());
     Store out = *this;
     Store disk;
-    if (disk.load(vault_dir)) out.merge_from(disk);   // merge-on-write: a game changed on disk since this store loaded (cloud pull) is not lost
-    return out.save_unmerged(vault_dir);
+    if (disk.load_unlocked(vault_dir)) out.merge_from(disk);   // merge-on-write: a game changed on disk since this store loaded (cloud pull) is not lost
+    else if (!hub::gs::preserve_unreadable(Store::file_path(vault_dir), vault_dir)) return false;   // a malformed file is only replaced after a copy was kept
+    if (!out.save_unmerged(vault_dir)) return false;
+    *this = out;   // the in-memory store now matches the file (it no longer lags behind a cloud merge)
+    return true;
 }
 bool Store::save_unmerged(const std::string& vault_dir) const {
     fs::path p = fs::u8path(file_path(vault_dir)), tmp = p;
@@ -225,8 +241,15 @@ bool Store::save_unmerged(const std::string& vault_dir) const {
         f << to_json();
         if (!f) return false;
     }
-    fs::rename(tmp, p, ec);
-    return !ec;
+    for (int attempt = 0; attempt < 8; ++attempt) {   // another program may hold the file for a moment
+        ec.clear();
+        fs::rename(tmp, p, ec);
+        if (!ec) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    }
+    std::error_code e2;
+    fs::remove(tmp, e2);
+    return false;
 }
 
 /* ---------------- rows ---------------- */

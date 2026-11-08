@@ -196,6 +196,29 @@ int main() {
         { std::ofstream f(Store::file_path(vd), std::ios::binary | std::ios::trunc); f << "{broken"; }
         CHECK(merge_cloud_into_vault(vd, pc2.to_json()) && back.load(vd) && back.has_game_overrides("n64:a"));
         // an older RetroHub's file has no stamps: still loads, and its keys are kept by a union
+        // an older, unstamped file next to a stamped entry: every key of both is kept, the stamped side wins a clash (this PC's pre-stamp choices never vanish)
+        {
+            fs::path v2 = fs::temp_directory_path() / "hub_gs_legacy_test";
+            fs::remove_all(v2, ec);
+            const std::string vd2 = v2.u8string();
+            Store old;
+            CHECK(old.from_json("{\"games\":{\"n64:z\":{\"fullscreen\":\"true\",\"n64.res\":\"2\"}}}") && old.save(vd2));
+            set_stamp_clock(500);
+            Store fresh;
+            fresh.set_game("n64:z", System::N64, "fullscreen", "false");
+            CHECK(merge_cloud_into_vault(vd2, fresh.to_json()));
+            Store got;
+            CHECK(got.load(vd2) && got.resolve(System::N64, "n64:z")["fullscreen"] == "false" && got.resolve(System::N64, "n64:z")["n64.res"] == "2");
+            // a malformed file on disk is copied to _conflicts before a save replaces it
+            { std::ofstream f(Store::file_path(vd2), std::ios::binary | std::ios::trunc); f << "{broken"; }
+            CHECK(got.save(vd2));
+            int kept = 0;
+            for (auto& de : fs::directory_iterator(v2 / "_conflicts" / "_settings", ec)) if (de.path().filename().string().rfind("game_settings.json.unreadable", 0) == 0) ++kept;
+            CHECK(kept == 1);
+            Store again;
+            CHECK(again.load(vd2) && again.resolve(System::N64, "n64:z")["n64.res"] == "2");
+            fs::remove_all(v2, ec);
+        }
         Store legacy;
         CHECK(legacy.from_json("{\"games\":{\"n64:z\":{\"fullscreen\":\"true\"}}}") && legacy.has_game_overrides("n64:z") && !legacy.empty());
         set_stamp_clock(0);
