@@ -1,6 +1,7 @@
 #include "winutil.h"
 #include <cctype>
 #include <cstdlib>
+#include <ctime>
 #include "emulators.h"
 #include "emu_http.h"
 #include "psp.h"

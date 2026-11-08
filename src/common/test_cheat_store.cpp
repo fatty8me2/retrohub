@@ -190,6 +190,20 @@ int main() {
         CHECK(a.save(vd));
         CHECK(m.load(vd) && !m.is_on("g1", "c1") && m.is_on("g2", "c2") && m.is_on("g3", "c3"));
         CHECK(!merge_cloud_into_vault(vd, "][") && m.load(vd) && m.is_on("g3", "c3"));
+        // an older, unstamped entry (updated 0) meets a stamped one: both sides' cheats are kept
+        Store old, fresh;
+        old.set_on("g4", "c1", true, 0);
+        fresh.set_on("g4", "c2", true, 50);
+        CHECK(old.save(vd) && merge_cloud_into_vault(vd, fresh.to_json()));
+        CHECK(m.load(vd) && m.is_on("g4", "c1") && m.is_on("g4", "c2"));
+        // a malformed file is copied to _conflicts before a save replaces it, and the saved store reflects the merged file
+        { std::ofstream f(Store::file_path(vd), std::ios::binary | std::ios::trunc); f << "{broken"; }
+        Store s2;
+        s2.set_on("g5", "c5", true, 60);
+        CHECK(s2.save(vd) && s2.is_on("g5", "c5"));
+        int kept = 0;
+        for (auto& de : fs::directory_iterator(v / "_conflicts" / "_settings", ec)) if (de.path().filename().string().rfind("cheats.json.unreadable", 0) == 0) ++kept;
+        CHECK(kept == 1);
     }
 
     fs::remove_all(root);

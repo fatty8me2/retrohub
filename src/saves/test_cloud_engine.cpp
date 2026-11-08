@@ -1021,6 +1021,17 @@ static void test_deleted_state_stays_deleted() {
     cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
     cloud_wake_queue(); pump();
     CHECK(fs::exists(pc1.game() / "states" / "slot1.state") && sha256_hex_file((pc1.game() / "states" / "slot1.state").u8string()) == s6);
+    /* an OLDER upload of a slot is still in the cloud (the newer local save never got pushed) and the player deletes the newer one: the older upload must not come back either */
+    put(pc1.game() / "states" / "slot3.state", rnd(40000, 7), now_unix() - 50);
+    play(); exit_game();
+    const str s7 = sha256_hex_file((pc1.game() / "states" / "slot3.state").u8string());
+    CHECK(g_srv->cur_sha(g_uid, GK, "states/slot3.state") == s7);
+    put(pc1.game() / "states" / "slot3.state", rnd(40000, 8), now_unix() - 10);   // saved again, not uploaded yet
+    delete_in_app(pc1, "slot3.state");                                              // the tombstone holds the NEWER file's identity
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    cloud_wake_queue(); pump();
+    CHECK(!fs::exists(pc1.game() / "states" / "slot3.state"));                     // the older cloud copy (the last agreed version) stays hidden
+    CHECK(g_srv->cur_sha(g_uid, GK, "states/slot3.state") == s7);
 }
 
 /* saves-F11: per-game settings and cheat choices follow the account, merged key by key. */
@@ -1058,6 +1069,26 @@ static void test_settings_cheats_sync() {
     cloud_sync_all_now(); pump(); pump();
     CHECK(gs_val(pc1, GB) == "true" && gs_val(pc1, GA) == "false");   // PC1 gets PC2's game and the newer value
     { cheatstore::Store cs; cs.load(pc1.vault.u8string()); CHECK(cs.is_on(GA, "c1") && cs.is_on(GB, "c9")); }
+    /* a PC with no files yet: the pull goes through the locked merge too (and the hub is told to reload) */
+    Pc pc3("gs3");
+    use(pc3);
+    unsigned rev1 = cloud_settings_rev();
+    cloud_sync_all_now(); pump(); pump();
+    CHECK(gs_val(pc3, GB) == "true" && gs_val(pc3, GA) == "false" && cloud_settings_rev() != rev1);
+    { cheatstore::Store cs; cs.load(pc3.vault.u8string()); CHECK(cs.is_on(GA, "c1") && cs.is_on(GB, "c9")); }
+    /* a read-only session merges as well */
+    Pc pc4("gs4");
+    use(pc4);
+    cloud_prelaunch(GameId{"_account", "_"}, SyncMode::ReadOnly);
+    pump();
+    CHECK(gs_val(pc4, GB) == "true");
+    /* the backup of the local file cannot be made: the local file is kept as it is, never replaced */
+    Pc pc5("gs5");
+    use(pc5);
+    gs_put(pc5, "n64:cccc", "true", now_unix() - 100);
+    { std::ofstream f(pc5.vault / "_conflicts", std::ios::binary); f << "not a folder"; }   // _conflicts\... cannot be created
+    cloud_account_prefs_changed(); cloud_sync_all_now(); pump(); pump();
+    { hub::gs::Store st; st.load(pc5.vault.u8string()); CHECK(st.has_game_overrides("n64:cccc") && !st.has_game_overrides(GB)); }
 }
 
 static void test_linked_pcs() {

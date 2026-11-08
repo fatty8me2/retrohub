@@ -79,12 +79,13 @@ public:
     /* Merge another PC's file: other's entries win per key (callers decide which is newer). */
     void merge_from(const Store& other);
 
-    bool load(const std::string& vault_dir);   // missing file = empty store, true
+    bool load(const std::string& vault_dir);   // missing file = empty store, true; takes files_mutex()
     bool save(const std::string& vault_dir) const;
     static std::string file_path(const std::string& vault_dir);
 
 private:
     friend bool merge_cloud_into_vault(const std::string&, const std::string&);
+    bool load_unlocked(const std::string& vault_dir);
     void touch(const std::string& stamp_key);      // "g:<game>" / "s:<system>"
     void clear_unstamped() { sys_.clear(); game_.clear(); stamp_.clear(); }
     void merge_newest(const Store& other);          // per entry: the newer stamp wins (equal / both unstamped: union, this side wins a key)
@@ -103,6 +104,9 @@ std::mutex& files_mutex();
  * A malformed or missing local file counts as empty (the caller backs the old file up first). */
 bool merge_cloud_into_vault(const std::string& vault_dir, const std::string& cloud_json);
 void set_stamp_clock(int64_t fixed_unix);   // tests: 0 = the real clock
+/* Before a file that cannot be parsed is replaced: copy it to <vault>\_conflicts\_settings\<name>.unreadable-<time>-<n>. True when there was nothing to copy or the
+ * copy was made; false = do NOT replace the file. */
+bool preserve_unreadable(const std::string& file_path, const std::string& vault_dir);
 
 /* ---- online ---------------------------------------------------------------------------------------------- */
 /* Only the Sync options of `resolved` (what the host puts in the launch spec). */
