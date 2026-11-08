@@ -13,6 +13,7 @@
  *
  * Clicking "Join" activates the protocol link retrohub://join/<CODE>: Windows starts RetroHub.exe with that URL, the
  * second launch hands the code to the running instance over the single-instance pipe (invite.h). */
+#include <cstdint>
 #include <string>
 
 namespace hubtoast {
@@ -40,6 +41,21 @@ bool notify_invite(INotifier& n, bool setting_on, bool game_running, const std::
 
 /* "<friend> came online" toast, same policy as the invite toast (only while a game runs, honours the in-game notification setting). */
 bool notify_online(INotifier& n, bool setting_on, bool game_running, const std::string& friend_name);
+
+/* Game night reminders for when RetroHub is CLOSED (Plan 4, social-F15): a Windows *scheduled* toast that Windows itself delivers.
+ * It is only pending while RetroHub is not running (RetroHub removes it shortly before it would fire and shows the reminder in the
+ * bell / runner OSD instead), and it is never scheduled while a game or session is up, so it cannot land over a game. Tests inject a mock IScheduler: no real toast is created. */
+std::string build_gamenight_xml(const std::string& game_title, const std::string& host_name, const std::string& night_id);
+struct IScheduler {
+    virtual ~IScheduler() = default;
+    virtual bool available() const = 0;                          // false in dev builds (AUMID not registered)
+    /* Replaces any scheduled toast with the same tag/group, then schedules this one for fire_unix_ms (must be in the future). */
+    virtual bool schedule(const std::string& toast_xml, const std::string& tag, const std::string& group, int64_t fire_unix_ms) = 0;
+    /* Removes the scheduled toast with that tag/group. Returns true when it is gone (also when it never existed). */
+    virtual bool cancel(const std::string& tag, const std::string& group) = 0;
+};
+/* The real scheduler (toast_win.cpp, same AUMID and Start-menu shortcut gate as system_notifier()). */
+IScheduler& system_scheduler();
 
 /* The real notifier (toast_win.cpp). Only usable when shell_registration_allowed() (the Start-menu shortcut that
  * carries the AUMID exists); otherwise available() is false and show() does nothing. */

@@ -90,6 +90,50 @@ bool invite_parse_url(const std::wstring& url_in, std::wstring* code) {
     return true;
 }
 
+bool invite_is_valid_night_id(const std::wstring& id) {
+    const size_t at = id.rfind(L'@');
+    if (at == std::wstring::npos || at == 0 || at > 60) return false;
+    for (size_t i = 0; i < at; ++i) {
+        wchar_t c = id[i];
+        if (!((c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || c == L'_' || c == L'.' || c == L'-')) return false;
+    }
+    const size_t nd = id.size() - at - 1;
+    if (nd < 1 || nd > 11) return false;
+    for (size_t i = at + 1; i < id.size(); ++i) if (id[i] < L'0' || id[i] > L'9') return false;
+    return true;
+}
+
+bool invite_parse_night_url(const std::wstring& url_in, std::wstring* id) {
+    std::wstring url = url_in;
+    while (!url.empty() && (url.front() == L'"' || url.front() == L'\'' || url.front() == L'<')) url.erase(url.begin());
+    while (!url.empty() && (url.back() == L'"' || url.back() == L'\'' || url.back() == L'>')) url.pop_back();
+    if (url.size() > 200 || !starts_with_ci(url, L"retrohub:")) return false;
+    std::wstring rest = url.substr(9);
+    size_t cut = rest.find_first_of(L"?#");
+    if (cut != std::wstring::npos) rest.erase(cut);
+    size_t b = 0;
+    while (b < rest.size() && rest[b] == L'/') ++b;
+    rest = url_unescape(rest.substr(b));
+    if (!starts_with_ci(rest, L"night/")) return false;
+    rest = rest.substr(6);
+    if (!rest.empty() && rest.back() == L'/') rest.pop_back();
+    if (!invite_is_valid_night_id(rest)) return false;
+    if (id) *id = rest;
+    return true;
+}
+
+bool invite_parse_night_command_line(const std::wstring& cmdline, std::wstring* id) {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(cmdline.c_str(), &argc);
+    if (!argv) return false;
+    bool found = false;
+    std::wstring result;
+    for (int i = 0; i < argc && !found; ++i) found = invite_parse_night_url(argv[i], &result);
+    LocalFree(argv);
+    if (found && id) *id = result;
+    return found;
+}
+
 bool invite_parse_command_line(const std::wstring& cmdline, std::wstring* code) {
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(cmdline.c_str(), &argc);
@@ -241,6 +285,10 @@ void InviteServer::run() {
                 std::string c;
                 if (hubnet::invite_valid(winutil::to_utf8(text.substr(5)))) { c = hubnet::invite_format(winutil::to_utf8(text.substr(5))); push(3, winutil::to_wide(c)); accepted = true; }
             }
+            else if (text.compare(0, 6, L"night:") == 0) {
+                std::wstring id = text.substr(6);
+                if (invite_is_valid_night_id(id)) { push(4, id); accepted = true; }
+            }
             else if (text.compare(0, 5, L"play:") == 0) {
                 std::wstring key = text.substr(5);
                 if (invite_is_valid_game_key(key)) { push(1, key); accepted = true; }
@@ -298,6 +346,7 @@ bool InviteServer::pop(int kind, std::wstring* text) {
 bool InviteServer::take(std::wstring* code) { return pop(0, code); }
 bool InviteServer::take_play(std::wstring* key) { return pop(1, key); }
 bool InviteServer::take_account(std::wstring* code) { return pop(3, code); }
+bool InviteServer::take_night(std::wstring* id) { return pop(4, id); }
 bool InviteServer::take_show() { return pop(2, nullptr); }
 
 bool invite_is_valid_game_key(const std::wstring& key) {
@@ -347,6 +396,9 @@ bool invite_send(const std::wstring& pipe_name, const std::wstring& code, DWORD 
 }
 bool invite_send_play(const std::wstring& pipe_name, const std::wstring& key, DWORD timeout_ms) {
     return invite_is_valid_game_key(key) && pipe_call(pipe_name, L"play:" + key, timeout_ms);
+}
+bool invite_send_night(const std::wstring& pipe_name, const std::wstring& id, DWORD timeout_ms) {
+    return invite_is_valid_night_id(id) && pipe_call(pipe_name, L"night:" + id, timeout_ms);
 }
 bool invite_send_show(const std::wstring& pipe_name, DWORD timeout_ms) {
     return pipe_call(pipe_name, L"show", timeout_ms);

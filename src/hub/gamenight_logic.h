@@ -7,7 +7,8 @@
  *   Game night: Mario Kart 64 on Fri 8:00 PM - open RetroHub to join  [RHGN1|<start unix seconds>|<game id>|<title>]
  *
  * The receiving client parses the tag and stores the plan locally (gamenights.json in the user-data dir; no server scheduler or
- * alarms). A reminder shows 10 minutes before the start, and at the start time a Host / Join card appears. Nothing here talks
+ * alarms). A reminder shows 10 minutes before the start (in RetroHub while it is open; as a Windows scheduled toast when it is closed, see
+ * gamenight_sched.h), and at the start time a Host / Join card appears. Nothing here talks
  * to the Worker, so it costs no REQ_BUDGET beyond the one DM per invited friend. */
 #include <algorithm>
 #include <cctype>
@@ -41,6 +42,7 @@ struct Night {
     bool reminded = false;               // reminder shown / put in the bell
     bool started = false;                // start card shown / put in the bell
     bool dismissed = false;
+    bool toast_sched = false;            // a Windows scheduled toast is pending for the reminder (gamenight_sched.h)
 };
 
 enum class Phase { Upcoming, Reminder, Live, Over };
@@ -180,7 +182,7 @@ inline std::string to_json(const Plans& p) {
         o << (first ? "" : ",") << "{\"id\":" << q_(n.id) << ",\"host_uid\":" << q_(n.host_uid) << ",\"host_name\":" << q_(n.host_name)
           << ",\"game_id\":" << q_(n.game_id) << ",\"title\":" << q_(n.game_title) << ",\"start\":" << n.start_ms
           << ",\"mine\":" << (n.mine ? "true" : "false") << ",\"reminded\":" << (n.reminded ? "true" : "false")
-          << ",\"started\":" << (n.started ? "true" : "false") << ",\"dismissed\":" << (n.dismissed ? "true" : "false") << ",\"invitees\":[";
+          << ",\"started\":" << (n.started ? "true" : "false") << ",\"dismissed\":" << (n.dismissed ? "true" : "false") << ",\"toast\":" << (n.toast_sched ? "true" : "false") << ",\"invitees\":[";
         for (size_t i = 0; i < n.invitees.size(); ++i) o << (i ? "," : "") << q_(n.invitees[i]);
         o << "]}";
         first = false;
@@ -200,7 +202,7 @@ inline bool from_json(const std::string& text, Plans* out) {
         n.game_id = clean_id(e.str("game_id")); n.game_title = clean(e.str("title"), 60);
         n.start_ms = (int64_t)e.num("start", 0);
         auto b = [&](const char* k) { const json::Value* x = e.get(k); return x && x->type == json::Value::Bool && x->b; };
-        n.mine = b("mine"); n.reminded = b("reminded"); n.started = b("started"); n.dismissed = b("dismissed");
+        n.mine = b("mine"); n.reminded = b("reminded"); n.started = b("started"); n.dismissed = b("dismissed"); n.toast_sched = b("toast");
         if (const json::Value* iv = e.get("invitees")) if (iv->type == json::Value::Array) for (auto& u : iv->a) if (u.type == json::Value::String && n.invitees.size() < kMaxInvitees) n.invitees.push_back(u.s);
         if (n.id.empty() || n.start_ms <= 0) continue;
         p.v.push_back(n);

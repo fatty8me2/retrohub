@@ -11,6 +11,7 @@
 
 #include <winrt/Windows.Data.Xml.Dom.h>
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.UI.Notifications.h>
 
 #include "popup_guard.h"
@@ -62,6 +63,27 @@ bool show_impl(const std::string& xml, const std::string& tag, std::string* err)
     return true;
 }
 
+bool cancel_impl(const std::string& tag, const std::string& group) {
+    using namespace winrt::Windows::UI::Notifications;
+    auto notifier = ToastNotificationManager::CreateToastNotifier(RETROHUB_APP_ID);
+    const winrt::hstring t = winrt::to_hstring(tag), g = winrt::to_hstring(group);
+    for (auto const& s : notifier.GetScheduledToastNotifications())
+        if (s.Tag() == t && s.Group() == g) notifier.RemoveFromSchedule(s);
+    return true;
+}
+
+bool schedule_impl(const std::string& xml, const std::string& tag, const std::string& group, int64_t fire_unix_ms, std::string* err) {
+    using namespace winrt::Windows::UI::Notifications;
+    winrt::Windows::Data::Xml::Dom::XmlDocument doc;
+    if (!load_xml(xml, doc, err)) return false;
+    cancel_impl(tag, group);   // one pending toast per tag
+    ScheduledToastNotification st(doc, winrt::clock::from_time_t((time_t)(fire_unix_ms / 1000)));
+    st.Tag(winrt::to_hstring(tag));
+    st.Group(winrt::to_hstring(group));
+    ToastNotificationManager::CreateToastNotifier(RETROHUB_APP_ID).AddToSchedule(st);
+    return true;
+}
+
 bool (*g_game_probe)() = nullptr;
 
 struct SystemNotifier : INotifier {
@@ -77,7 +99,26 @@ struct SystemNotifier : INotifier {
         return run_on_mta_thread([&](std::string* err) { return show_impl(xml, tag, err); });
     }
 };
+/* Scheduling shows nothing now: Windows delivers it later, so the caller only keeps it pending while no game or session is up. */
+struct SystemScheduler : IScheduler {
+    bool available() const override {
+        static const bool ok = shell_registration_allowed();
+        return ok;
+    }
+    bool schedule(const std::string& xml, const std::string& tag, const std::string& group, int64_t fire_unix_ms) override {
+        if (!available()) return false;
+        /* Same gate as show(): a toast Windows delivers later is still a toast, so never register one while a game runs. */
+        if (g_game_probe && !hubguard::may_windows_toast(g_game_probe())) return false;
+        return run_on_mta_thread([&](std::string* err) { return schedule_impl(xml, tag, group, fire_unix_ms, err); });
+    }
+    bool cancel(const std::string& tag, const std::string& group) override {
+        if (!available()) return true;   // nothing could have been scheduled
+        return run_on_mta_thread([&](std::string*) { return cancel_impl(tag, group); });
+    }
+};
 }  // namespace
+
+IScheduler& system_scheduler() { static SystemScheduler s; return s; }
 
 void set_game_probe(bool (*fn)()) { g_game_probe = fn; }
 
