@@ -514,3 +514,6 @@ void lobby_tick() {
 
 }
 
+
+/* The GameCube NetPlay Dolphin's process id while its session is live, else 0 (the game menu looks it up here; it is not A.proc). */
+unsigned long gc_netplay_dolphin_pid() { return (GCO.active && gc_process_alive()) ? (unsigned long)GCO.run.dolphin_pid : 0ul; }
