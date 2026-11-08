@@ -88,11 +88,13 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     }
     if (!hubui::launch_allowed(A.proc != nullptr, session_active(), /*system_launch=*/true)) { set_notice(hubui::launch_busy_reason(true)); return false; }   // rooms start their own game inside their own session: only A.proc refuses
     if (!file_exists(exe)) { set_notice("Cannot find " + file_name(exe) + " (" + exe + ")"); return false; }
+    std::vector<std::pair<std::string, std::string>> env_all = env;   // + the instant-replay switch for n64run (set below, cleared again after the spawn)
+    if (file_name(exe) == "n64run.exe") for (auto& kv : hubui::n64_clips_env(A.st.n64_clips)) env_all.push_back(kv);
     if (!A.st.start_hint) SetEnvironmentVariableW(L"RETROHUB_START_HINT", L"0");   // retrorun / n64run read it (inherited by the child)
     std::wstring cmd = L"\"" + W(exe) + L"\" " + W(args);
     std::vector<wchar_t> buf(cmd.begin(), cmd.end());
     buf.push_back(0);
-    for (auto& e : env) SetEnvironmentVariableW(W(e.first).c_str(), W(e.second).c_str());
+    for (auto& e : env_all) SetEnvironmentVariableW(W(e.first).c_str(), W(e.second).c_str());
     const std::string exe_name = file_name(exe);
     const bool own_runner = exe_name == "retrorun.exe" || exe_name == "n64run.exe" || exe_name == "streamrun.exe" || exe == smash_exe_path();   // our own processes that open /hub: they prove the account (strict rooms); emulators never get it
     if (own_runner) fr_ident_env(true);
@@ -104,7 +106,7 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
      * GUI emulators (Dolphin, PCSX2, Azahar, Cemu) ignore the flag. */
     BOOL ok = CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(cwd).c_str(), &si, &pi);
     DWORD err = GetLastError();
-    for (auto& e : env) SetEnvironmentVariableW(W(e.first).c_str(), nullptr);
+    for (auto& e : env_all) SetEnvironmentVariableW(W(e.first).c_str(), nullptr);
     if (own_runner) fr_ident_env(false);
     SetEnvironmentVariableW(L"RETROHUB_START_HINT", nullptr);
     if (!ok) { set_notice("Could not start " + file_name(exe) + " (error " + std::to_string(err) + ")"); return false; }
