@@ -523,6 +523,11 @@ static void test_config() {
     CHECK(ini.find("circle_pad = \"engine:sdl,api:controller,axis_x:0,axis_y:1") != std::string::npos);
     CHECK(ini.find("confirmClose = false") != std::string::npos && ini.find("check_for_update_on_start = false") != std::string::npos);
     CHECK(hubemu::azahar_config_patch(ini) == ini);   // idempotent
+    {   // UI language pinned to English (every launch, managed Azahar); other lines kept
+        const std::string l = hubemu::azahar_pin_language("[Paths]\nlanguage\\default=true\nlanguage=de\ngamedirs=x\n[UI]\nconfirmClose=false\n");
+        CHECK(hubui::ini_get(l, "Paths", "language") == "en" && hubui::ini_get(l, "Paths", "language\\default") == "false" && hubui::ini_get(l, "Paths", "gamedirs") == "x" && hubui::ini_get(l, "UI", "confirmClose") == "false" &&hubui::ini_get(l, "UI", "language").empty());
+        CHECK(hubemu::azahar_pin_language(l) == l && hubui::ini_get(hubemu::azahar_pin_language(""), "Paths", "language") == "en");
+    }
 
     std::string st = hubemu::cemu_default_settings_xml();
     CHECK(st.find("<content>") != std::string::npos && st.find("<check_update>false</check_update>") != std::string::npos);
@@ -650,15 +655,16 @@ static void test_prepare_and_find(const fs::path& dir) {
         std::string mine = hubemu::dolphin_hotkeys_ini("[Hotkeys]\nDevice = XInput/0/Gamepad\nStop = Escape\nIncrease Emulation Speed = F5\n");
         CHECK(hubui::ini_get(mine, "Hotkeys", "Stop") == "Escape" && hubui::ini_get(mine, "Hotkeys", "Device") == "XInput/0/Gamepad");   // pad Device: bare names are pad controls, kept
         CHECK(hubui::ini_get(hubemu::dolphin_hotkeys_ini("[Hotkeys]\nGeneral/Toggle Pause = F10\n[Other]\nX = Y\n"), "Other", "X") == "Y");   // other sections untouched
-        CHECK(hubui::ini_get(hubemu::dolphin_hotkeys_ini("[Hotkeys]\r\nGeneral/Toggle Pause = F10\r\n"), "Hotkeys", "General/Toggle Pause") == "");
+        CHECK(hubui::ini_get(hubemu::dolphin_hotkeys_ini("[Hotkeys]\r\nGeneral/Toggle Pause = F10\r\n"), "Hotkeys", "General/Toggle Pause") == "@(Ctrl+Shift+F15)");   // the user's F10 goes, our chord is bound
         {   // only keyboard bindings go; pad-only bindings (the user's own pad hotkeys) stay, with any default Device
             const std::string in = "[Hotkeys]\nDevice = DInput/0/Keyboard Mouse\nGeneral/Stop = Escape\nSave State/Save State Slot 1 = `XInput/0/Gamepad:Back` & `XInput/0/Gamepad:Button A`\n"
                                    "Load State/Load State Slot 1 = `SDL/0/Pro Controller:Button S` | `DInput/0/Keyboard Mouse:F1`\nGeneral/Toggle Pause = @(Ctrl+P)\nGeneral/Screenshot = toggle(`DSUClient/1/X:Cross`)\n";
             const std::string o = hubemu::dolphin_hotkeys_ini(in);
             CHECK(hubui::ini_get(o, "Hotkeys", "General/Stop") == "");
-            CHECK(hubui::ini_get(o, "Hotkeys", "Save State/Save State Slot 1") == "`XInput/0/Gamepad:Back` & `XInput/0/Gamepad:Button A`");
-            CHECK(hubui::ini_get(o, "Hotkeys", "Load State/Load State Slot 1") == "");   // mixed pad | keyboard: reads the keyboard -> dropped
-            CHECK(hubui::ini_get(o, "Hotkeys", "General/Toggle Pause") == "");
+            CHECK(hubui::ini_get(o, "Hotkeys", "Save State/Save State Slot 1") == "`XInput/0/Gamepad:Back` & `XInput/0/Gamepad:Button A` | @(Ctrl+F14+F15)");   // pad part kept, our chord added
+            CHECK(hubemu::dolphin_hotkeys_ini(o) == o);   // idempotent with a user pad binding
+            CHECK(hubui::ini_get(o, "Hotkeys", "Load State/Load State Slot 1") == "@(Shift+F14+F15)");   // mixed pad | keyboard: reads the keyboard -> dropped, our chord bound
+            CHECK(hubui::ini_get(o, "Hotkeys", "General/Toggle Pause") == "@(Ctrl+Shift+F15)");
             CHECK(hubui::ini_get(o, "Hotkeys", "General/Screenshot") == "toggle(`DSUClient/1/X:Cross`)");
             const std::string pad_dev = hubemu::dolphin_hotkeys_ini("[Hotkeys]\nDevice = XInput/0/Gamepad\nGeneral/Stop = Back & Start\n");
             CHECK(hubui::ini_get(pad_dev, "Hotkeys", "General/Stop") == "Back & Start");   // bare names on a pad Device are pad buttons: kept
@@ -670,6 +676,8 @@ static void test_prepare_and_find(const fs::path& dir) {
         }
         CHECK(hubui::ini_get(mine, "Hotkeys", "Emulation Speed/Increase Emulation Speed") == "`DSUClient/0/RHSpeed:Options` | @(Ctrl+Shift+F13)");
         CHECK(hubemu::dolphin_hotkeys_ini(mine) == mine);   // idempotent
+        CHECK(hubui::ini_get(mine, "Hotkeys", "General/Toggle Pause") == "@(Ctrl+Shift+F15)" && hubui::ini_get(mine, "Hotkeys", "Save State/Save State Slot 1") == "@(Ctrl+F14+F15)" && hubui::ini_get(mine, "Hotkeys", "Load State/Load State Slot 1") == "@(Shift+F14+F15)");
+        CHECK(hubui::ini_get(hubemu::dolphin_ini_ports("", hubemu::DolphinPads()), "Interface", "LanguageCode") == "en");   // UI language pinned every launch
     }
     {   /* PCSX2: fast boot on by default, off for real startup */
         std::string pi = hub::realboot::pcsx2_fast_boot("", true);

@@ -126,6 +126,54 @@ inline std::vector<DolphinKey> dolphin_plan(DolphinSpeed& s, int to) {
     return v;
 }
 
+/* ---- Dolphin pause / save state / load state (RetroHub's own Dolphin has every other hotkey unbound) ----
+ * Bound in Hotkeys.ini to key chords nobody presses, sent by the Game menu once the game window is in front. Dolphin evaluates
+ * `@(a+b+c)` as "all of these keys are down", so a chord also fires every hotkey whose keys are a SUBSET of it. The five chords
+ * are therefore pairwise non-nested (F13 / F14 speed: Ctrl+Shift+F13 / F14, see above):
+ *   Pause       Ctrl+Shift+F15
+ *   Save state  Ctrl+F14+F15      (no Shift: the F14 speed chord needs Shift)
+ *   Load state  Shift+F14+F15     (no Ctrl)
+ * F13..F15 are the keys DirectInput names (DIK_F13..F15). Only the quick slot 1 is used; states stay in Dolphin's User\StateSaves. */
+enum class DolphinAct { Pause, SaveState, LoadState };
+constexpr int kDolphinScanF15 = 0x66;
+inline std::vector<int> dolphin_act_scans(DolphinAct a) {   // scancodes pressed together, in press order
+    switch (a) {
+        case DolphinAct::Pause: return {kDolphinScanCtrl, kDolphinScanShift, kDolphinScanF15};
+        case DolphinAct::SaveState: return {kDolphinScanCtrl, 0x65, kDolphinScanF15};
+        default: return {kDolphinScanShift, 0x65, kDolphinScanF15};
+    }
+}
+inline const char* dolphin_act_hotkey_name(DolphinAct a) {   // Hotkeys.ini key: "<group>/<control>"
+    return a == DolphinAct::Pause ? "General/Toggle Pause" : a == DolphinAct::SaveState ? "Save State/Save State Slot 1" : "Load State/Load State Slot 1";
+}
+inline const char* dolphin_act_hotkey_expr(DolphinAct a) {
+    return a == DolphinAct::Pause ? "@(Ctrl+Shift+F15)" : a == DolphinAct::SaveState ? "@(Ctrl+F14+F15)" : "@(Shift+F14+F15)";
+}
+inline const std::vector<DolphinAct>& dolphin_acts() { static const std::vector<DolphinAct> v = {DolphinAct::Pause, DolphinAct::SaveState, DolphinAct::LoadState}; return v; }
+/* A Hotkeys.ini key RetroHub manages (never blanked): the two speed hotkeys and the three above. */
+inline bool dolphin_is_managed_hotkey(const std::string& key) {
+    if (key == dolphin_hotkey_name(DolphinKey::Increase) || key == dolphin_hotkey_name(DolphinKey::Decrease)) return true;
+    for (DolphinAct a : dolphin_acts()) if (key == dolphin_act_hotkey_name(a)) return true;
+    return false;
+}
+/* Scancodes of the speed chords (Ctrl+Shift+F13 / F14), for the "does chord X also fire hotkey Y" check. */
+inline std::vector<int> dolphin_speed_scans(DolphinKey k) { return {kDolphinScanCtrl, kDolphinScanShift, dolphin_scan(dolphin_vk(k))}; }
+/* What to send when the menu closes. `queued`: the Game menu's Pause / Save / Load buttons. `paused`: Dolphin is paused right now.
+ * A paused game that is resumed (Resume, B, or after a save / load) gets one more Toggle Pause, unless Pause itself was queued. */
+struct DolphinClosePlan { std::vector<DolphinAct> acts; };
+inline DolphinClosePlan dolphin_close_plan(const std::vector<DolphinAct>& queued, bool paused) {
+    DolphinClosePlan p;
+    p.acts = queued;
+    bool has_pause = false;
+    for (DolphinAct a : queued) has_pause = has_pause || a == DolphinAct::Pause;
+    if (paused && !has_pause) p.acts.push_back(DolphinAct::Pause);
+    return p;
+}
+/* GameCube NetPlay's Dolphin is not A.proc (that would change launch rules): the game menu finds it through a getter. A.proc wins. */
+inline unsigned long gc_menu_pid(bool has_proc, unsigned long netplay_pid) { return has_proc ? 0ul : netplay_pid; }
+/* The game menu treats a GameCube NetPlay game as online even though A.run.online is not set for it. */
+inline bool online_for_menu(bool run_online, unsigned long netplay_pid) { return run_online || netplay_pid != 0; }
+
 /* ---- quick menu open / close gating ---- */
 /* View+Y opens the menu once: one open per press (rising edge), never while it is open, never within `cooldown` ms of the menu
  * opening or closing (a held / bouncing combo or the closing B cannot reopen or re-close it). The combo must be released before it re-arms. */

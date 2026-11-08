@@ -10,6 +10,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <thread>
 
 #include "runner_ctl.h"
 #include "cloud_engine.h"
@@ -17,6 +18,7 @@
 #include "cheats_game.h"
 #include "qm_nav.h"
 #include "qm_pad.h"
+#include "exit_combo.h"
 #include "qm_party.h"
 #include "ext_media.h"
 #include "qm_card.h"
@@ -32,6 +34,7 @@
  * the runner acts once per seq and writes control_ack.json. Save states: <states>/slot<N>.state + .png thumbnail + .json sidecar.
  * Screenshots: <vault>/<system>/<game key>/shots/<yyyyMMdd-HHmmss>.png. */
 
+unsigned long gc_netplay_dolphin_pid();   // lobby.cpp: the GameCube NetPlay Dolphin (never A.proc), 0 when none
 static bool runner_has_ctl(const hub::GameEntry& e);   // defined below
 static std::atomic<bool> g_qm_showing{false};
 
@@ -138,6 +141,87 @@ int g_row_y = 0;               // next row's y while drawing
 bool g_sub_open = false;       // a popup over the menu (Invite friends picker) owns the input: ImGui nav drives it
 bool g_e2e = false;            // headless end-to-end test (qm_e2e.cpp): stand-in running game with a control file
 std::vector<std::string> g_e2e_cmds;
+
+/* ---- GameCube NetPlay + Dolphin pause / states ----
+ * GameCube NetPlay never sets A.proc (that would change launch rules); its Dolphin is found through gc_netplay_dolphin_pid (lobby.cpp). */
+unsigned long gc_pid() { return (g_e2e || g_shot_fake) ? 0ul : hubqm::gc_menu_pid(A.proc != nullptr, gc_netplay_dolphin_pid()); }
+bool qm_online() { return g_e2e ? false : hubqm::online_for_menu(A.run.online, gc_pid()); }
+const hub::GameEntry* cur_entry(const std::string& key) {
+    if (const hub::GameEntry* e = find_entry(key)) return e;
+    return (gc_pid() && GCO.entry.key == key) ? &GCO.entry : nullptr;
+}
+std::vector<unsigned long> game_pid_list() {
+    if (const unsigned long g = gc_pid()) return {g};
+    return running_game_pids();
+}
+HWND window_of_pid(DWORD pid) {   // largest visible, captioned top-level window of one process
+    struct Pick { DWORD pid; HWND best; long long area; } pk{pid, nullptr, 0};
+    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+        auto* p = (Pick*)lp;
+        DWORD q = 0;
+        GetWindowThreadProcessId(h, &q);
+        if (q != p->pid || !IsWindowVisible(h) || !(GetWindowLongW(h, GWL_STYLE) & WS_CAPTION)) return TRUE;
+        RECT r{};
+        GetWindowRect(h, &r);
+        const long long a = (long long)(r.right - r.left) * (r.bottom - r.top);
+        if (a > p->area) { p->area = a; p->best = h; }
+        return TRUE;
+    }, (LPARAM)&pk);
+    return pk.best;
+}
+/* Back to the game after the menu (every close path). GameCube NetPlay: raise its Dolphin; the hub is the foreground process
+ * here (the player just used the menu), so a plain SetForegroundWindow is allowed. Everything else: launch.cpp's focus_game. */
+void qm_focus_game() {
+    const unsigned long g = gc_pid();
+    if (!g) { focus_game(); return; }
+    if (g_headless) return;
+    hub_menu_topmost(false);
+    HWND h = window_of_pid((DWORD)g);
+    if (!h) return;
+    if (IsIconic(h)) ShowWindow(h, SW_RESTORE);   // popup-guard: ok (raises the GAME after the player's own View+Y menu)
+    SetForegroundWindow(h);   // popup-guard: ok (raises the GAME after the player's own View+Y menu)
+}
+/* Leave (menu "Quit", Back+Start held): ask Dolphin to close like the player closing it; gc_tick then sees it gone and runs gc_stop_all
+ * (forwarder, UI driver, room state). If Dolphin ignores the close for 20 s gc_tick ends it (GCO.close_deadline). */
+void gc_leave(const char* why) {
+    const unsigned long g = gc_pid();
+    if (!g) return;
+    qm_log(std::string("gc netplay: leaving (") + why + ")");
+    if (GCO.close_deadline) return;   // already closing
+    close_pid_windows(g);
+    GCO.close_deadline = GetTickCount64() + 20000;
+    set_notice("Leaving the game...", 6.0);
+}
+
+/* Dolphin's pause / save / load state hotkeys, as key chords (qm_logic.h) sent once the game window is in front. */
+std::vector<hubqm::DolphinAct> g_dol_queue;   // the menu's buttons since it opened
+std::atomic<bool> g_dol_paused{false};        // Dolphin is paused by us (toggled per chord that really went out)
+void dolphin_send_acts(std::vector<hubqm::DolphinAct> acts) {
+    if (acts.empty()) return;
+    if (g_headless || autotest_active()) { qm_log("dolphin: " + std::to_string(acts.size()) + " menu hotkey chord(s) not injected (headless / QA)"); return; }
+    std::vector<unsigned long> pids = game_pid_list();
+    std::thread([pids, acts]() {
+        auto game_fg = [&]() {
+            DWORD pid = 0;
+            GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+            for (unsigned long p : pids) if (p == pid) return !qm_is_open();
+            return false;
+        };
+        for (int i = 0; i < 60 && !game_fg(); ++i) Sleep(50);
+        if (!game_fg()) { qm_log("dolphin: game never became foreground, hotkey chord(s) not sent"); return; }
+        Sleep(250);
+        for (hubqm::DolphinAct a : acts) {
+            const std::vector<int> keys = hubqm::dolphin_act_scans(a);
+            const int n = hubqm::run_key_chord(keys, game_fg, [](int sc, bool up) {
+                INPUT in{}; in.type = INPUT_KEYBOARD; in.ki.wScan = (WORD)sc; in.ki.dwFlags = KEYEVENTF_SCANCODE | (up ? KEYEVENTF_KEYUP : 0); SendInput(1, &in, sizeof(INPUT));
+                Sleep(up ? 35 : 25);
+            });
+            qm_log("dolphin: hotkey chord " + std::string(hubqm::dolphin_act_hotkey_name(a)) + " " + std::to_string(n) + "/" + std::to_string(keys.size()));
+            if (n == (int)keys.size() && a == hubqm::DolphinAct::Pause) g_dol_paused = !g_dol_paused.load();
+            Sleep(150);
+        }
+    }).detach();
+}
 static const char* g_close_why = "other";
 bool g_pending_close = true;                   // close the menu and return to the game when the ack arrives
 int g_pending_slot = -2;
@@ -394,7 +478,7 @@ bool use_dsu() { return dolphin_speed_running() && !g_dsu_dead; }   // emergency
 
 /* Menu closed (or a retry is due): press the Dolphin hotkeys that take it to the chosen step (offline GameCube only). */
 void dolphin_apply_pending(const hub::GameEntry* e) {
-    if (!is_dolphin(e) || A.run.online || g_shot_fake || g_burst_state.load() != 0 || (qm_is_open() && !use_dsu())) return;   // the DSU pad needs no focus: applies live, menu open or not
+    if (!is_dolphin(e) || qm_online() || g_shot_fake || g_burst_state.load() != 0 || (qm_is_open() && !use_dsu())) return;   // the DSU pad needs no focus: applies live, menu open or not
     if (!hubqm::dolphin_needs_apply(g_dolphin, g_speed_idx)) { g_retry_n = 0; return; }
     if (GetTickCount64() < g_retry_at) return;
     g_burst_plan = hubqm::dolphin_plan_for(g_dolphin, g_speed_idx);
@@ -431,7 +515,7 @@ void dolphin_burst_poll() {
 
 void ext_apply(const hub::GameEntry* e) {
     int base = is_dolphin(e) ? g_launch_vol : 100;
-    g_ext_sessions = extmedia::set_audio(running_game_pids(), hubqm::ext_session_scalar(g_vol, base), g_mute);
+    g_ext_sessions = extmedia::set_audio(game_pid_list(), hubqm::ext_session_scalar(g_vol, base), g_mute);
     if (g_ext_sessions > 0) g_ext_dirty = false;
 }
 
@@ -532,7 +616,7 @@ bool nav_btn(const std::string& id, const char* label, ImVec2 sz, bool primary, 
 }
 
 void pad_page() {
-    const hub::GameEntry* e = g_shot_fake ? nullptr : find_entry(g_key);
+    const hub::GameEntry* e = g_shot_fake ? nullptr : cur_entry(g_key);
     if (!g_pad_loaded) pad_load(e);
     ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("How do I play");
@@ -650,7 +734,7 @@ void emote_send(const hubqm::Emote& em) {
     push_toast(std::string("Sent ") + em.label, COL_GOOD, 2.0);
     g_close_why = "Emote";
     ImGui::CloseCurrentPopup();
-    if (!g_shot_fake) focus_game();
+    if (!g_shot_fake) qm_focus_game();
 }
 
 void emote_page() {
@@ -719,7 +803,7 @@ void check_ack() {
         g_pending = 0;
         if (a.ok) {
             push_toast(g_pending_what, COL_GOOD, 3.0);
-            if (g_pending_close) { g_page = QPage::Main; g_close_why = "slot action"; ImGui::CloseCurrentPopup(); focus_game(); }
+            if (g_pending_close) { g_page = QPage::Main; g_close_why = "slot action"; ImGui::CloseCurrentPopup(); qm_focus_game(); }
         } else push_toast(a.msg.empty() ? std::string("That did not work.") : a.msg, COL_WARN, 5.0);
     } else if (ImGui::GetTime() - g_pending_at > 20.0) {
         g_pending = 0;
@@ -829,16 +913,18 @@ bool qm_is_open() { return g_qm_showing.load(); }   // thread-safe; set at the r
 
 
 void qm_open_live() {
-    if (!qm_game_live() || A.run.key.empty()) return;
+    const unsigned long gcp = gc_pid();
+    if (!qm_game_live() || (A.run.key.empty() && !gcp)) return;
     if (g_qm_showing.load()) { qm_log("open request ignored: menu already open"); return; }   // View+Y never re-opens / toggles an open menu
     g_retry_n = 0; g_retry_at = 0;   // a Dolphin speed change that gave up is tried again once the menu closes
     prefs_load();
     g_activity_ms = GetTickCount64();
     qm_log("open request (hub fg=" + std::string(hub_is_foreground() ? "yes" : "no") + " fg=" + qm_describe_window(GetForegroundWindow()) + ")");
-    const hub::GameEntry* e = g_e2e ? nullptr : find_entry(A.run.key);
-    g_sys = e ? sys_short(*e) : A.run.system_short;
-    g_key = A.run.key;
-    g_title = e ? e->title : A.run.title;
+    const std::string run_key = gcp ? GCO.entry.key : A.run.key;
+    const hub::GameEntry* e = g_e2e ? nullptr : cur_entry(run_key);
+    g_sys = e ? sys_short(*e) : gcp ? std::string("gc") : A.run.system_short;
+    g_key = run_key;
+    g_title = e ? e->title : gcp ? GCO.entry.title : A.run.title;
     g_page = QPage::Main;
     g_pending = 0;
     g_open_req = true;
@@ -851,13 +937,17 @@ static bool runner_has_ctl(const hub::GameEntry& e);   // below
 /* One game session = one (key, start tick): speed back to 1x, mute off, volume from the settings. External emulators get their
  * Windows audio session scaled (re-applied every 2 s until it exists, and whenever it is not at full volume). */
 static void qm_session_tick(const hub::GameEntry* e) {
-    if (!A.proc || A.run.key.empty()) { g_sess_key.clear(); return; }
-    if (g_sess_key != A.run.key || g_sess_tick != A.run.start_tick) {
-        g_sess_key = A.run.key; g_sess_tick = A.run.start_tick;
+    const unsigned long gcp = gc_pid();
+    const std::string& run_key = gcp ? GCO.entry.key : A.run.key;
+    if ((!A.proc && !gcp) || run_key.empty()) { g_sess_key.clear(); return; }
+    const ULONGLONG run_tick = gcp ? (ULONGLONG)gcp : A.run.start_tick;   // a new NetPlay Dolphin = a new session
+    if (g_sess_key != run_key || g_sess_tick != run_tick) {
+        g_sess_key = run_key; g_sess_tick = run_tick;
+        g_dol_queue.clear(); g_dol_paused = false;
         g_speed_idx = hubqm::kSpeedNormal;
         g_dolphin = hubqm::DolphinSpeed();
         g_retry_n = 0; g_retry_at = 0; g_burst_state = 0; g_dsu_dead = false;
-        qm_log("session start " + A.run.key);   // Dolphin.ini was written with EmulationSpeed = 1.0 at launch
+        qm_log("session start " + run_key);   // Dolphin.ini was written with EmulationSpeed = 1.0 at launch
         g_mute = false;
         g_vol = e ? hub::gs::volume_of(gs_values_for(*e)) : 100;
         g_launch_vol = g_vol;
@@ -878,6 +968,24 @@ static void qm_session_tick(const hub::GameEntry* e) {
     }
 }
 
+/* GameCube NetPlay (no A.proc, so launch.cpp's pad watches do not run for it): View+Y opens the game menu, Back+Start held leaves.
+ * Pads are read directly (qm_pad.cpp), so this works with the game in front. Only View+Y may bring the hub forward over the game. */
+static void gc_pad_watch() {
+    static hubqm::OpenGate gate;
+    static hubctl::ExitCombo leave;
+    const unsigned long gp = gc_pid();
+    if (!gp || g_headless) { leave.reset(); return; }
+    bool open_down = false, leave_down = false;
+    for (const uint32_t m : qm_pad_each()) {   // per pad: one player's View with another's Y is not the combo
+        auto has = [&](int b) { return ((m >> b) & 1u) != 0; };
+        if (has(SDL_CONTROLLER_BUTTON_BACK) && has(SDL_CONTROLLER_BUTTON_Y)) open_down = true;
+        if (has(SDL_CONTROLLER_BUTTON_BACK) && has(SDL_CONTROLLER_BUTTON_START)) leave_down = true;
+    }
+    const long long now = (long long)GetTickCount64();
+    if (gate.update(open_down, qm_is_open(), now)) { qm_log("gc netplay pad combo View+Y: open"); qm_open_live(); }
+    if (leave.update(leave_down, now)) gc_leave("Back + Start held");
+}
+
 void qm_tick() {
     {   // Plan 4 p4-social: friend challenges (challenge_ui.cpp): host callbacks into the command queue, then the per-frame tick
         static bool host_set = false;
@@ -893,7 +1001,7 @@ void qm_tick() {
     }
     {   // Plan 4: pause while the menu is open (offline only), resume on close; the queue writes one command at a time
         const bool menu = g_qm_showing.load() && !g_shot_fake;
-        const bool online_now = g_e2e ? false : A.run.online;
+        const bool online_now = qm_online();
         const bool can = qm_game_live() && ctl_ready();
         const bool want = menu && can && hubqm::pause_available(true, online_now) && g_pause_manual;
         if (want != g_pause_sent) { g_pause_sent = want; runctl::Command c; c.cmd = runctl::Cmd::Pause; c.value = want ? 1 : 0; send_quiet(c); }
@@ -922,6 +1030,8 @@ void qm_tick() {
         dolphin_apply_pending(find_entry(A.run.key));
     }
     if (A.proc) qm_session_tick(find_entry(A.run.key));
+    else if (gc_pid()) qm_session_tick(cur_entry(GCO.entry.key));
+    gc_pad_watch();
     {   // finished external-emulator window capture
         std::string m;
         int st = extmedia::capture_poll(&m);
@@ -980,7 +1090,7 @@ void qm_pre_newframe() {
     }
 }
 
-bool qm_game_live() { return A.proc != nullptr || g_e2e; }
+bool qm_game_live() { return A.proc != nullptr || g_e2e || gc_pid() != 0; }
 static hubqm::FocusRetry g_focus_retry;
 
 static void qm_body();
@@ -1006,7 +1116,7 @@ void draw_quick_menu() {
         g_in.open(bits | qm_keyboard_held_async());   // everything held right now (View+Y, A/B from the game, Enter...) is ignored until released
         g_nav.reset();
         g_sub_open = false;
-        g_pause_manual = hubqm::auto_pause_wanted(g_pause_auto, true, g_shot_fake ? !g_shot_ext : ctl_ready(), g_shot_fake ? g_shot_online : (g_e2e ? false : A.run.online));
+        g_pause_manual = hubqm::auto_pause_wanted(g_pause_auto, true, g_shot_fake ? !g_shot_ext : ctl_ready(), g_shot_fake ? g_shot_online : qm_online());
         g_emote_note_at = -100;
         if (!g_shot_fake) qm_log("menu opened (held at open: 0x" + [](uint32_t v) { char b[16]; std::snprintf(b, sizeof b, "%x", v); return std::string(b); }(raw) + ")");
     }
@@ -1017,6 +1127,11 @@ void draw_quick_menu() {
         g_sub_open = false;
         hub_menu_topmost(false);
         if (qm_game_live() && !g_e2e) dolphin_apply_pending(find_entry(g_key));   // closed this frame (Resume / B / pad combo)
+        {   // Dolphin menu hotkeys: the queued buttons, plus one Toggle Pause to carry on when it was paused
+            std::vector<hubqm::DolphinAct> q;
+            q.swap(g_dol_queue);
+            if (!g_shot_fake && !g_e2e && qm_game_live() && std::string(g_close_why) != "Quit") dolphin_send_acts(hubqm::dolphin_close_plan(q, g_dol_paused.load()).acts);
+        }
     }
     was_open = open;
     g_qm_showing = open && !g_shot_fake;
@@ -1070,7 +1185,7 @@ void challenge_page() {
         ImGui::SameLine();
         if (nav_btn("ch_post", "Send result", ImVec2(sp(11.f), ImGui::GetFrameHeight()), true, g_ch_buf[0] != 0, 1, g_row_y++)) {
             int64_t v = 0;
-            if (parse_score(g_ch_buf, &v)) { hubui::challenge_run_finish(true, g_ch_buf); g_page = QPage::Main; g_close_why = "challenge done"; ImGui::CloseCurrentPopup(); focus_game(); }
+            if (parse_score(g_ch_buf, &v)) { hubui::challenge_run_finish(true, g_ch_buf); g_page = QPage::Main; g_close_why = "challenge done"; ImGui::CloseCurrentPopup(); qm_focus_game(); }
             else push_toast("Type your score as a number.", COL_WARN, 4.0);
         }
         if (nav_btn("ch_back", "Back", ImVec2(sp(14.f), sp(5.5f)), false, true, 0, g_row_y++, true)) { g_nav.sel = "I did it"; g_page = QPage::Main; }
@@ -1165,16 +1280,16 @@ static void qm_body() {
         focus_hub();
     }
     const bool back = g_nav.back;
-    if (g_close_req.exchange(false)) { g_close_why = g_close_req_why; ImGui::CloseCurrentPopup(); focus_game(); return; }
+    if (g_close_req.exchange(false)) { g_close_why = g_close_req_why; ImGui::CloseCurrentPopup(); qm_focus_game(); return; }
     if (back) {
         if (g_page != QPage::Main) { g_nav.sel = g_page == QPage::Save ? "Save state" : g_page == QPage::Load ? "Load state" : g_page == QPage::Chat ? "Chat" : g_page == QPage::Emote ? "Emotes" : g_page == QPage::Pass ? "Pass controller" : g_page == QPage::Challenge ? "Challenge a friend from here" : "How do I play"; g_page = QPage::Main; }
-        else { g_close_why = "B"; ImGui::CloseCurrentPopup(); focus_game(); return; }
+        else { g_close_why = "B"; ImGui::CloseCurrentPopup(); qm_focus_game(); return; }
     }
     check_ack();
 
-    const bool online = g_shot_fake ? g_shot_online : A.run.online;
+    const bool online = g_shot_fake ? g_shot_online : qm_online();
     const bool ctl = g_shot_fake ? !g_shot_ext : ctl_ready();
-    const hub::GameEntry* e = g_shot_fake ? nullptr : find_entry(g_key);
+    const hub::GameEntry* e = g_shot_fake ? nullptr : cur_entry(g_key);
     const bool ext = g_shot_fake ? g_shot_ext : (e && !is_native(*e) && !runner_has_ctl(*e));
 
     if (g_page != QPage::Main) {
@@ -1198,7 +1313,7 @@ static void qm_body() {
         ImGui::TextUnformatted(rplay_status_line().c_str());
         ImGui::PopStyleColor();
     }
-    if (menu_button("Resume", true, ui::Icon::Play, true)) { g_close_why = "Resume"; ImGui::CloseCurrentPopup(); focus_game(); }
+    if (menu_button("Resume", true, ui::Icon::Play, true)) { g_close_why = "Resume"; ImGui::CloseCurrentPopup(); qm_focus_game(); }
     if (ctl || ext) {   // Speed (built-in runners, offline), Volume + Mute (everything; local only, so online too)
         const float fw = ImGui::GetContentRegionAvail().x;
         const bool can_speed = hubqm::speed_available(ctl, online);
@@ -1252,8 +1367,8 @@ static void qm_body() {
         if (ext && g_ext_sessions == 0 && !g_shot_fake) text_wrapped_disabled("The game has not started its sound yet.");
     }
     if (!ctl && !g_shot_fake && e && e->system == hub::System::PSP) {   // PPSSPP: its own quick save / load (F2 / F4), sent to the game window
-        if (menu_button("Save state", !online, ui::Icon::Check)) { ImGui::CloseCurrentPopup(); focus_game(); ppsspp_send_state(true); }
-        if (menu_button("Load state", !online, ui::Icon::Refresh)) { ImGui::CloseCurrentPopup(); focus_game(); ppsspp_send_state(false); }
+        if (menu_button("Save state", !online, ui::Icon::Check)) { ImGui::CloseCurrentPopup(); qm_focus_game(); ppsspp_send_state(true); }
+        if (menu_button("Load state", !online, ui::Icon::Refresh)) { ImGui::CloseCurrentPopup(); qm_focus_game(); ppsspp_send_state(false); }
     }
     if (ctl) {
         if (menu_button("Save state", !online, ui::Icon::Check)) { g_page = QPage::Save; g_nav.sel.clear(); }
@@ -1277,28 +1392,37 @@ static void qm_body() {
             }
             if (cr.did_it && menu_button("I did it", true, ui::Icon::Check, true)) {
                 if (hubui::challenge_goal_is_score()) { g_page = QPage::Challenge; g_nav.sel.clear(); g_ch_buf[0] = 0; }
-                else { hubui::challenge_run_finish(true, ""); g_close_why = "challenge done"; ImGui::CloseCurrentPopup(); focus_game(); }
+                else { hubui::challenge_run_finish(true, ""); g_close_why = "challenge done"; ImGui::CloseCurrentPopup(); qm_focus_game(); }
             }
-            if (cr.give_up && menu_button("Give up", true, ui::Icon::Close)) { hubui::challenge_run_finish(false, ""); g_close_why = "challenge gave up"; ImGui::CloseCurrentPopup(); focus_game(); }
+            if (cr.give_up && menu_button("Give up", true, ui::Icon::Close)) { hubui::challenge_run_finish(false, ""); g_close_why = "challenge gave up"; ImGui::CloseCurrentPopup(); qm_focus_game(); }
         }
     } else if (ext) {   // Dolphin, Cemu, Azahar, PCSX2: capture the emulator's window into the vault's shots folder
+        if (g_shot_fake ? g_shot_dolphin : is_dolphin(e)) {   // Dolphin: pause and quick slot 1, through the hotkeys RetroHub binds (qm_logic.h)
+            if (menu_button("Save state", !online, ui::Icon::Check)) { g_dol_queue.push_back(hubqm::DolphinAct::SaveState); g_close_why = "Dolphin save state"; ImGui::CloseCurrentPopup(); qm_focus_game(); }
+            if (menu_button("Load state", !online, ui::Icon::Refresh)) { g_dol_queue.push_back(hubqm::DolphinAct::LoadState); g_close_why = "Dolphin load state"; ImGui::CloseCurrentPopup(); qm_focus_game(); }
+            if (online) text_wrapped_disabled("Save states are off in online games: everyone has to stay in step.");
+            else {
+                if (!g_dol_paused.load() && menu_button("Pause game", true, ui::Icon::Play)) { g_dol_queue.push_back(hubqm::DolphinAct::Pause); g_close_why = "Dolphin pause"; ImGui::CloseCurrentPopup(); qm_focus_game(); }
+                text_wrapped_disabled(g_dol_paused.load() ? "The game is paused. Resume carries on." : "Uses Dolphin's quick slot 1.");
+            }
+        }
         if (menu_button("Screenshot", true, ui::Icon::Search)) {
             if (g_shot_fake) { push_toast("Screenshot saved", COL_GOOD, 3.0); }
             else if (e) {
                 std::string out = trim_sep(hub::saves::game_dir(sys_short(*e), e->key)) + "\\shots\\" + runctl::shot_name(std::time(nullptr));
-                if (extmedia::capture_start(running_game_hwnd(), out)) { ImGui::CloseCurrentPopup(); focus_game(); }
+                if (extmedia::capture_start(gc_pid() ? (void*)window_of_pid((DWORD)gc_pid()) : running_game_hwnd(), out)) { ImGui::CloseCurrentPopup(); qm_focus_game(); }
                 else push_toast("Could not find the game window.", COL_WARN, 4.0);
             }
         }
     }
-    if (e && cheats_supported(*e)) {
+    if (e && !gc_pid() && cheats_supported(*e)) {   // GameCube NetPlay: the codes were synced at launch
         if (menu_button("Cheats", true, ui::Icon::Bolt)) { hub::GameEntry c = *e; cheats_open_from_game(c); ImGui::CloseCurrentPopup(); }
     }
     if (g_shot_fake ? false : (e && e->system == hub::System::WiiU)) {   // Cemu: Ctrl+Tab = toggle pad screen (also View + RB held)
         if (menu_button("Swap GamePad / TV screen", true, ui::Icon::Refresh)) { ImGui::CloseCurrentPopup(); wiiu_toggle_gamepad_screen(); }
     }
     if (!g_shot_fake && e && e->system == hub::System::PS1 && ps1_swap_available(e->key)) {
-        if (menu_button("Swap disc", true, ui::Icon::Refresh)) { ps1_swap_disc(e->key); push_toast("Swapping to the next disc", COL_GOOD, 3.0); ImGui::CloseCurrentPopup(); focus_game(); }
+        if (menu_button("Swap disc", true, ui::Icon::Refresh)) { ps1_swap_disc(e->key); push_toast("Swapping to the next disc", COL_GOOD, 3.0); ImGui::CloseCurrentPopup(); qm_focus_game(); }
     }
     if (g_shot_fake || fr_in_my_room()) {   // the picker is a popup over the menu; while it is open ImGui's nav drives it (g_sub_open)
         const bool can = fr_in_my_room();
@@ -1325,7 +1449,7 @@ static void qm_body() {
         g_speed_idx = hubqm::dolphin_idx(g_dolphin);   // Dolphin: quitting never sends speed keys (a pending change is dropped); the next game starts at 1x anyway
         g_close_why = "Quit";
         if (g_e2e) g_e2e_cmds.push_back("quit");
-        else if (!g_shot_fake) { if (ctl_ready()) runctl::send_command(A.run.ctl_path, runctl::Cmd::Quit, 0); else request_game_close(); }
+        else if (!g_shot_fake) { if (gc_pid()) gc_leave("menu Quit"); else if (ctl_ready()) runctl::send_command(A.run.ctl_path, runctl::Cmd::Quit, 0); else request_game_close(); }
         ImGui::CloseCurrentPopup();
     }
     ImGui::PopStyleVar();

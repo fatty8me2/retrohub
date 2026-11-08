@@ -159,6 +159,7 @@ static void lint() {
     const std::map<std::string, int> known_hub = {
         {"tv_mode.cpp", 5},    // F11 / Settings checkbox with no game (may_enter_tv_mode) / leave / startup fullscreen (guarded by game_active) / post-exit re-fullscreen (hub already focused)
         {"launch.cpp", 6},     // hub_menu_topmost (View+Y menu open only, cleared on close), force_foreground (2: user's View+Y open / close only), focus_hub restore, focus_game restore, flash_taskbar (guarded by game_active), focus_game (raises the GAME), flash_taskbar (guarded by game_active)
+        {"quickmenu.cpp", 2},  // GameCube NetPlay Dolphin: restore + SetForegroundWindow of the GAME after the player closes their own View+Y menu (hub is the foreground process then)
         {"emu_live.cpp", 3},   // manual dev tool hub_emu_live, not part of RetroHub.exe
     };
     // src/common is shared by the hub and the runners: nothing there may raise, show or topmost a window. (The runners' own game
@@ -172,6 +173,7 @@ static void lint() {
         {{"launch.cpp", "keybd_event"}, 2},         // View+Y: the Alt tap that lets the menu / the game take the foreground (player pressed it)
         {{"launch.cpp", "AttachThreadInput"}, 2},  // View+Y: attach to the foreground thread's input for that call, detach after
         {{"launch.cpp", "SendInput"}, 2},          // Cemu pad-screen toggle + Dolphin speed hotkeys, only while the game window is already the foreground window
+        {{"quickmenu.cpp", "SendInput"}, 1},       // Dolphin pause / save / load state chords (F13-F15 + Ctrl/Shift), only while the game window is already the foreground window and the menu is closed
     };
 
     const fs::path hub_dir = fs::path(HUB_SRC_DIR);

@@ -514,3 +514,18 @@ void lobby_tick() {
 
 }
 
+
+/* The GameCube NetPlay Dolphin's process id while its session is live, else 0 (the game menu looks it up here; it is not A.proc).
+ * The liveness check (OpenProcess) is cached for 250 ms: the menu and its pad watch ask several times per frame. */
+unsigned long gc_netplay_dolphin_pid() {
+    static unsigned long cached_pid = 0, cached_for = 0;
+    static unsigned long long cached_at = 0;
+    if (!GCO.active || !GCO.run.dolphin_pid) { cached_pid = cached_for = 0; return 0ul; }
+    const unsigned long long now = GetTickCount64();
+    if (cached_for != (unsigned long)GCO.run.dolphin_pid || now - cached_at >= 250) {
+        cached_for = (unsigned long)GCO.run.dolphin_pid;
+        cached_pid = gc_process_alive() ? cached_for : 0ul;
+        cached_at = now;
+    }
+    return cached_pid;
+}
