@@ -43,8 +43,8 @@ bool notify_invite(INotifier& n, bool setting_on, bool game_running, const std::
 bool notify_online(INotifier& n, bool setting_on, bool game_running, const std::string& friend_name);
 
 /* Game night reminders for when RetroHub is CLOSED (Plan 4, social-F15): a Windows *scheduled* toast that Windows itself delivers.
- * It is only ever pending while RetroHub is not running (RetroHub removes it shortly before it would fire, and shows the reminder in
- * the bell / runner OSD instead), so it can never land over a game. Tests inject a mock IScheduler: no real toast is created. */
+ * It is only pending while RetroHub is not running (RetroHub removes it shortly before it would fire and shows the reminder in the
+ * bell / runner OSD instead), and it is never scheduled while a game or session is up, so it cannot land over a game. Tests inject a mock IScheduler: no real toast is created. */
 std::string build_gamenight_xml(const std::string& game_title, const std::string& host_name, const std::string& night_id);
 struct IScheduler {
     virtual ~IScheduler() = default;

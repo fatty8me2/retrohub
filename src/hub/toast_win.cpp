@@ -99,8 +99,7 @@ struct SystemNotifier : INotifier {
         return run_on_mta_thread([&](std::string* err) { return show_impl(xml, tag, err); });
     }
 };
-/* Scheduling shows nothing now: Windows delivers it later, and the caller only keeps it pending while RetroHub (and so any RetroHub game)
- * is not running. */
+/* Scheduling shows nothing now: Windows delivers it later, so the caller only keeps it pending while no game or session is up. */
 struct SystemScheduler : IScheduler {
     bool available() const override {
         static const bool ok = shell_registration_allowed();
@@ -108,6 +107,8 @@ struct SystemScheduler : IScheduler {
     }
     bool schedule(const std::string& xml, const std::string& tag, const std::string& group, int64_t fire_unix_ms) override {
         if (!available()) return false;
+        /* Same gate as show(): a toast Windows delivers later is still a toast, so never register one while a game runs. */
+        if (g_game_probe && !hubguard::may_windows_toast(g_game_probe())) return false;
         return run_on_mta_thread([&](std::string* err) { return schedule_impl(xml, tag, group, fire_unix_ms, err); });
     }
     bool cancel(const std::string& tag, const std::string& group) override {
