@@ -1,5 +1,6 @@
 // Console test: game night plans (S6): DM tag round trip, reminder/start timing, dedupe, persistence.
 #include "gamenight_logic.h"
+#include "gamenight_sched.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -46,6 +47,69 @@ int main() {
     Plans r; CHECK(load(path, &r) && r.v.size() == 2 && r.v[0].reminded && r.v[0].invitees.size() == 1 && r.v[1].id == "y@2");
     std::filesystem::remove_all(std::filesystem::path(path).parent_path());
     CHECK(!from_json("garbage", &r));
+    // ---- scheduled toast decisions (social-F15), mock scheduler: nothing real is created ----
+    struct Mock : hubtoast::IScheduler {
+        bool ok = true, fail = false;
+        int adds = 0, cancels = 0;
+        std::string last_xml, last_tag; int64_t last_fire = 0;
+        bool available() const override { return ok; }
+        bool schedule(const std::string& x, const std::string& t, const std::string&, int64_t f) override {
+            if (fail) return false; ++adds; last_xml = x; last_tag = t; last_fire = f; return true; }
+        bool cancel(const std::string&, const std::string&) override { if (fail) return false; ++cancels; return true; }
+    };
+    {
+        Night a = n; a.id = make_id("u1", a.start_ms); a.host_name = "Mia"; a.reminded = false; a.dismissed = false; a.toast_sched = false;
+        // 30 min ahead: schedule; with the setting off or no scheduler: skip
+        CHECK(toast_decide(a, now, true, true, false) == ToastAct::Schedule);
+        CHECK(toast_decide(a, now, false, true, false) == ToastAct::None && toast_decide(a, now, true, false, false) == ToastAct::None);
+        // too close: inside the guard window RetroHub itself does the reminder
+        CHECK(toast_decide(a, now + 20 * M - kToastGuardMs + 1000, true, true, false) == ToastAct::None);
+        CHECK(toast_decide(a, now + 20 * M - kToastGuardMs + 1000, true, true, true) == ToastAct::Schedule);   // closing: Windows takes over
+        CHECK(toast_decide(a, now + 20 * M - 5000, true, true, true) == ToastAct::None);                        // already due: no future time
+        a.toast_sched = true;
+        CHECK(toast_decide(a, now, true, true, false) == ToastAct::None);                                       // stays pending
+        CHECK(toast_decide(a, now + 20 * M - kToastGuardMs + 1000, true, true, false) == ToastAct::Remove);     // pulled before it fires
+        CHECK(toast_decide(a, now, false, true, false) == ToastAct::Remove);                                    // setting turned off
+        Night d = a; d.dismissed = true; CHECK(toast_decide(d, now, true, true, false) == ToastAct::Remove);    // declined / cancelled
+        Night o = a; CHECK(toast_decide(o, now + 3 * H, true, true, false) == ToastAct::Remove);                // night passed
+        Night rm = a; rm.reminded = true; CHECK(toast_decide(rm, now, true, true, false) == ToastAct::Remove);
+
+        // a game or session is up: never schedule (also at exit); removals still happen
+        CHECK(toast_decide(a, now, true, true, false, true) == ToastAct::Remove);   // a.toast_sched is true here
+        { Night u = a; u.toast_sched = false;
+          CHECK(toast_decide(u, now, true, true, false, true) == ToastAct::None);
+          CHECK(toast_decide(u, now + 20 * M - kToastGuardMs + 1000, true, true, true, true) == ToastAct::None);   // exit during a game
+          CHECK(toast_decide(u, now, true, true, true, false) == ToastAct::Schedule); }
+
+        Plans sp; sp.v.push_back(a); sp.v[0].toast_sched = false;
+        Mock m;
+        SyncResult r = sync_toasts(sp, now, true, m);
+        CHECK(r.changed && !r.failed && m.adds == 1 && sp.v[0].toast_sched && m.last_fire == a.start_ms - kReminderMs);
+        CHECK(m.last_xml.find("retrohub://night/") != std::string::npos && m.last_xml.find("Mario Kart 64") != std::string::npos);
+        CHECK(m.last_tag.size() <= 24 && m.last_tag == toast_tag(a));
+        r = sync_toasts(sp, now + 1000, true, m); CHECK(!r.changed && m.adds == 1 && m.cancels == 0);          // idempotent
+        r = sync_toasts(sp, now + 20 * M - kToastGuardMs + 1000, true, m);
+        CHECK(r.changed && m.cancels == 1 && !sp.v[0].toast_sched);                                            // RetroHub running: pulled
+        r = sync_toasts(sp, now + 20 * M - kToastGuardMs + 1000, true, m, true);
+        CHECK(r.changed && m.adds == 2 && sp.v[0].toast_sched);                                                // exit: handed back
+        {   // exit while a game runs: nothing is scheduled, the pending flag is not touched wrongly
+            Plans gp; Night g = a; g.toast_sched = false; gp.v.push_back(g);
+            int before = m.adds;
+            r = sync_toasts(gp, now, true, m, true, true);
+            CHECK(!r.changed && m.adds == before && !gp.v[0].toast_sched);
+            r = sync_toasts(gp, now, true, m, false, true); CHECK(!r.changed && m.adds == before);
+            gp.v[0].toast_sched = true;   // a pending toast is pulled once a game is up
+            r = sync_toasts(gp, now, true, m, false, true); CHECK(r.changed && !gp.v[0].toast_sched);
+        }
+        m.fail = true;
+        r = sync_toasts(sp, now + 20 * M - kToastGuardMs + 1000, true, m);
+        CHECK(r.failed && r.remove_failed && !r.changed && sp.v[0].toast_sched);                                                  // failed cancel keeps the flag for a retry
+        m.fail = false; m.ok = false;
+        r = sync_toasts(sp, now, true, m); CHECK(r.changed && !sp.v[0].toast_sched);                           // no scheduler: flag dropped, no calls
+        Plans q; Night s2 = a; s2.toast_sched = true; q.v.push_back(s2);
+        std::string pj = to_json(q); Plans q2; CHECK(from_json(pj, &q2) && q2.v[0].toast_sched);
+        CHECK(hubtoast::build_gamenight_xml("A&B", "", "x@1").find("A&amp;B") != std::string::npos);
+    }
     std::printf(fails ? "FAILED (%d)\n" : "gamenight tests passed\n", fails);
     return fails ? 1 : 0;
 }

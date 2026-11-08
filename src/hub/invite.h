@@ -25,6 +25,13 @@ bool invite_parse_account_url(const std::wstring& url, std::wstring* code);
 bool invite_parse_account_command_line(const std::wstring& cmdline, std::wstring* code);
 bool invite_send_account(const std::wstring& pipe_name, const std::wstring& code, DWORD timeout_ms = 3000);
 
+/* Game night reminder click: retrohub://night/<id>, id = "<uid>@<start seconds>" (see gamenight_logic.h make_id). Strictly validated:
+ * uid = 1..60 of [A-Za-z0-9_.-], '@', 1..11 digits. Anything else is refused (never used as a path or command). */
+bool invite_is_valid_night_id(const std::wstring& id);
+bool invite_parse_night_url(const std::wstring& url, std::wstring* id);
+bool invite_parse_night_command_line(const std::wstring& cmdline, std::wstring* id);
+bool invite_send_night(const std::wstring& pipe_name, const std::wstring& id, DWORD timeout_ms = 3000);
+
 /* One-click favorites: "RetroHub.exe --play <game key>" (library key: lowercase [a-z0-9._-], at most 120 chars). */
 bool invite_is_valid_game_key(const std::wstring& key);
 bool invite_parse_play(const std::wstring& cmdline, std::wstring* key);
@@ -67,6 +74,7 @@ public:
     bool take(std::wstring* code);        // pops the next queued join code (main thread, once per frame)
     bool take_play(std::wstring* key);    // pops the next queued --play game key
     bool take_account(std::wstring* code);   // pops the next queued account invite code ("ABCD-EFGH")
+    bool take_night(std::wstring* id);    // pops the next queued game night id (retrohub://night/<id>)
     bool take_show();                     // true once per "show yourself" request
 private:
     bool pop(int kind, std::wstring* text);

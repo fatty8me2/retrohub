@@ -127,12 +127,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     const bool has_play = invite_parse_play(GetCommandLineW(), &cmd_play);
     std::wstring cmd_acct;   // retrohub://invite/XXXX-XXXX or --invite XXXX-XXXX: an account invite code for the waiting screen
     const bool has_acct = invite_parse_account_command_line(GetCommandLineW(), &cmd_acct);
+    std::wstring cmd_night;   // retrohub://night/<id>: a game night reminder toast was clicked
+    const bool has_night = invite_parse_night_command_line(GetCommandLineW(), &cmd_night);
+    std::string pending_night;
     std::unique_ptr<InviteInstance> instance;
     InviteServer invite_srv;
     if (!shot_path && !autotest) {
         instance.reset(new InviteInstance(INVITE_MUTEX_NAME));
         if (!instance->is_primary()) {   // already running: hand the request over (or just ask it to show itself) and leave
-            bool sent = has_acct ? invite_send_account(INVITE_PIPE_NAME, cmd_acct) : has_join ? invite_send(INVITE_PIPE_NAME, cmd_join) : has_play ? invite_send_play(INVITE_PIPE_NAME, cmd_play) : invite_send_show(INVITE_PIPE_NAME);
+            bool sent = has_night ? invite_send_night(INVITE_PIPE_NAME, cmd_night) : has_acct ? invite_send_account(INVITE_PIPE_NAME, cmd_acct) : has_join ? invite_send(INVITE_PIPE_NAME, cmd_join) : has_play ? invite_send_play(INVITE_PIPE_NAME, cmd_play) : invite_send_show(INVITE_PIPE_NAME);
             if (sent) return 0;
         } else {
             invite_srv.start(INVITE_PIPE_NAME);
@@ -143,6 +146,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     bool told_need_name = false;
     if (has_play && !shot_path) A.pending_play = U(cmd_play);
     if (has_acct && !shot_path) lockout_invite_link(U(cmd_acct));
+    if (has_night && !shot_path) pending_night = U(cmd_night);
     if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }
     if (qm_e2e_active()) qm_e2e_boot();   // HUB_QM_E2E (needs HUB_SCREENSHOT): only the test's virtual joystick exists
     SDL_SetMainReady();
@@ -470,6 +474,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 fr_join_lobby(jc, "", "", "");
                 hub_surface();   // no-op while a game runs: the join is queued and starts after the game; nothing is shown or flashed
             }
+            while (invite_srv.take_night(&w)) { if (!launch_blocked("game night link")) pending_night = U(w); }
+            if (app_locked()) pending_night.clear();
+            if (!pending_night.empty() && !A.scanning) { gn_open_night(pending_night); pending_night.clear(); }   // the card / bell entry; nothing is raised
             while (invite_srv.take_play(&w)) { if (!launch_blocked("--play")) A.pending_play = U(w); }
             if (invite_srv.take_show()) hub_surface();   // a game is running: never pull RetroHub in front of it (refused inside)
             if (!A.pending_play.empty() && !A.scanning) {   // library is loaded: start the favorite (offline)
@@ -700,6 +707,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     gamepack_shutdown();
     if (A.dirty) hubui::save_settings(A.settings_path, A.st);
     invite_srv.stop();
+    gn_shutdown();   // hand the game night reminders back to Windows (scheduled toasts) now that RetroHub is closing
     A.lobby.stop();
     FR.cli.stop();
     cloud_gate_cancel();   // the gate thread may be waiting on a background cloud job: stop it before the joins
