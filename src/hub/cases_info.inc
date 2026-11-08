@@ -280,7 +280,7 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
         float bx = x0;
         const ImU32 ac = CFX.accent;
         struct B { const char* label; int kind; };
-        const B bs[4] = {{"Play", 0}, {"Details", 1}, {"Flip", 2}, {item_fav(idx) ? "Favourited" : "Favourite", 3}};
+        const B bs[4] = {{"Play", 0}, {"Details", 1}, {"Flip", 2}, {item_fav(idx) ? "Favorited" : "Favorite", 3}};   // the library's spelling (hint bar "F Favorite", "Favorites first")
         for (const B& b : bs) {
             if (ghost && b.kind == 2) continue;   // nothing to flip for a game you do not own
             const bool star = b.kind == 3;
