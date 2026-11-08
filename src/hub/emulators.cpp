@@ -855,7 +855,7 @@ std::string azahar_config_patch(const std::string& in, const hubctl::Profile& pr
 }
 /* The Qt UI language, English, so the 3DS link automation finds its menus by name on any Windows language. Only RetroHub's own Azahar. */
 std::string azahar_pin_language(const std::string& in) {
-    std::string t = hubui::ini_set(in, "UI", "language\default", "false");
+    std::string t = hubui::ini_set(in, "UI", "language\\default", "false");
     return hubui::ini_set(t, "UI", "language", "en");
 }
 std::string azahar_config_patch(const std::string& in, const hubctl::Profile& prof) { return azahar_config_patch(in, prof, AzPad()); }
