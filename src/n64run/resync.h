@@ -25,6 +25,7 @@ namespace resync {
 constexpr uint8_t kCapResync = 1;
 constexpr uint8_t kCapMaskedHash = 2;   // hash version 2: RDRAM hash without the framebuffers (fbmask.h)
 constexpr int kMaxResyncs = 3;
+constexpr uint32_t kReqWindowMs = 5000;   // the host honours one recovery request per guest in this window
 constexpr uint32_t kDefaultMargin = 90;   // samples between the proposal and S (the lead of a peer is at most the input delay; this covers the transit)
 
 enum Sub : uint8_t { Req = 0, Propose = 1, PropAck = 2, Abort = 3 };
@@ -102,10 +103,17 @@ class Ctl {
     Msg req_msg(uint32_t hash_sample) const { Msg m; m.sub = Req; m.from = (uint8_t)my_; m.s = hash_sample; return m; }
 
     /* A control message from `from`; cur = my last polled sample. If it needs an answer, *reply is filled. */
-    Act on_msg(const Msg& m, uint32_t cur, Msg* reply) {
+    Act on_msg(const Msg& m, uint32_t cur, Msg* reply, uint32_t now = 0) {
         if (!enabled_ || (failed_ && !(host() && m.sub == PropAck))) return Act::None;
         if (host()) {
             if (!(guests() >> m.from & 1u)) return Act::None;
+            if (m.sub == Req && !active_ && !stale(m.s) && now) {   // a Req that would start a recovery: one per sender per kReqWindowMs
+                if (last_start_[m.from] && now - last_start_[m.from] < kReqWindowMs) {
+                    if (!(throttle_noted_ >> m.from & 1u)) { throttle_noted_ |= 1u << m.from; throttle_note_ = true; }
+                    return Act::None;
+                }
+                last_start_[m.from] = now;
+            }
             if (m.sub == Req) { if (!active_ && !stale(m.s) && count_ < max_) start(cur); else if (!active_ && !stale(m.s) && count_ >= max_) failed_ = true; }
             else if (m.sub == PropAck) {
                 if (active_ && m.seq == seq_) acked_ |= 1u << m.from;
@@ -126,6 +134,8 @@ class Ctl {
         if (m.sub == Abort && active_ && m.seq == seq_) { abort(); failed_ = true; return Act::Fallback; }
         return Act::None;
     }
+    /* host: true once after a sender's recovery request was refused for coming too soon after its last one (log it once per sender). */
+    bool take_throttle_note() { bool r = throttle_note_; throttle_note_ = false; return r; }
     /* The recovery at S is complete on this peer. */
     void complete() { count_++; floor_ = s_; active_ = false; want_req_ = false; acked_ = 0; }
     /* Give the attempt up (timeout, save/transfer failure, a guest passed S): the match continues as before and recovery stays off. */
@@ -147,6 +157,8 @@ class Ctl {
     Msg ack() const { Msg a; a.sub = PropAck; a.from = (uint8_t)my_; a.seq = seq_; a.s = s_; return a; }
     int my_ = 0, count_ = 0, max_ = kMaxResyncs;
     uint32_t mask_ = 1, margin_ = kDefaultMargin, s_ = 0, floor_ = 0, acked_ = 0, last_req_ = 0, last_prop_ = 0;
+    uint32_t last_start_[8] = {0, 0, 0, 0, 0, 0, 0, 0}, throttle_noted_ = 0;
+    bool throttle_note_ = false;
     uint8_t seq_ = 0;
     bool enabled_ = false, failed_ = false, active_ = false, have_seq_ = false, want_req_ = false, saved_ = false;
 };
