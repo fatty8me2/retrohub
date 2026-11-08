@@ -233,8 +233,16 @@ inline bool bye_becomes_drop(int from, int my_slot, uint32_t slot_mask, uint32_t
     return false;
 }
 
-// A drop message names a player to drop. Only the host may make a peer start a drop on its say-so; a guest's
-// message counts only for a drop this peer already began itself (it saw that player go silent too).
-inline bool drop_msg_allowed(int from, bool already_begun) { return already_begun || from == 0; }
+// A drop message names a player to drop. The host may always make a peer start a drop. A guest's message counts when
+// this peer already began that drop, or when this peer itself has not heard the named player for half the silence
+// limit (so a guest that lost the victim while the host still hears it cannot stall the match, but nobody can
+// kick a player this peer can hear). silent_ms = time since this peer last heard the victim (0 = never/unknown).
+inline bool drop_msg_allowed(int from, bool already_begun, uint32_t silent_ms, uint32_t drop_silence_ms) {
+    if (already_begun || from == 0) return true;
+    return drop_silence_ms != 0 && silent_ms != 0 && silent_ms >= drop_silence_ms / 2;
+}
+
+// A Ready announcement names its slot in byte 1; it must be the slot the packet really came from.
+inline bool ready_slot_ok(int from, const uint8_t* msg, size_t n) { return n >= 2 && msg[1] < 8 && (int)msg[1] == from; }
 
 }  // namespace n64run
