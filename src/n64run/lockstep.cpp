@@ -328,7 +328,8 @@ void Lockstep::rs_on_ctl(int from, const std::vector<uint8_t>& msg) {
         static int lost = 0;
         if (lost < std::atoi(std::getenv("N64RUN_QA_LOSE_ABORTS"))) { lost++; if (hooks_.log) hooks_.log("resync: QA dropped an Abort"); return; }
     }
-    resync::Act a = rs_.on_msg(m, sample_ < 0 ? 0u : (uint32_t)sample_, &reply);
+    resync::Act a = rs_.on_msg(m, sample_ < 0 ? 0u : (uint32_t)sample_, &reply, hubnet::now_ms() ? hubnet::now_ms() : 1);
+    if (rs_.take_throttle_note() && hooks_.log) hooks_.log("resync: ignoring repeated recovery requests from slot " + std::to_string(from) + " (one per " + std::to_string(resync::kReqWindowMs / 1000) + " s)");
     if (a == resync::Act::Reply) {
         rs_send(from, reply);
         if (reply.sub == resync::Abort && opt_.my_slot != 0) { if (hooks_.log) hooks_.log("resync: we already passed the proposed sample; recovery off"); desync_unrecovered("this PC was already past the repair point"); if (opt_.strict_sync && hooks_.request_stop) hooks_.request_stop(); }
