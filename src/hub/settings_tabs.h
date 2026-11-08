@@ -44,7 +44,7 @@ inline const SettingsCtl* settings_controls(int* n) {
         {"cloud_summary", kPageSaves}, {"saves_page_link", kPageSaves}, {"pause_cloud", kPageSaves}, {"backup_shots", kPageSaves},
         {"cloud_states", kPageSaves}, {"sync_folder", kPageSaves}, {"sync_folder_stop", kPageSaves}, {"sync_auto", kPageSaves}, {"sync_copy_now", kPageSaves},
         {"controllers_page_link", kPageControllers}, {"cemu_manage_controls", kPageControllers}, {"cemu_restore_controls", kPageControllers},
-        {"gb_core", ST_Video}, {"fullscreen", ST_Video}, {"start_hint", ST_Video},
+        {"gb_core", ST_Video}, {"fullscreen", ST_Video}, {"start_hint", ST_Video}, {"n64_clips", ST_Video},
         {"boot_anim", ST_Video}, {"boot_sounds", ST_Video}, {"boot_volume", ST_Video}, {"boot_short", ST_Video}, {"boot_skip_online", ST_Video}, {"dolphin_status", ST_Video}, {"pcsx2_status", ST_Video},
         {"ps2_bios_dir", ST_Video}, {"ps2_bios_auto", ST_Video}, {"ps1_bios", ST_Video}, {"ps1_openbios", ST_Video},
         {"azahar_status", ST_Video}, {"cemu_exe", ST_Video}, {"cemu_exe_auto", ST_Video}, {"game_defaults", ST_Video},
