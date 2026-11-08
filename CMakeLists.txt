@@ -112,6 +112,8 @@ add_test(NAME nes_snes_test COMMAND nes_snes_test)                 # NES/SNES he
 add_test(NAME runner_speed_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/speed_headless.ps1)   # retrorun --headless --realtime: quick-menu speed steps 0.25x..Max, 1x restore, rapid changes, input off (skips without retrorun)
 set_tests_properties(runner_speed_headless PROPERTIES TIMEOUT 900)
 add_test(NAME nes_snes_smoke COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/nes_snes_synctest.ps1)   # Nestopia + Snes9x headless run, .srm write, rollback SyncTest (skips without the cores)
+add_test(NAME gb_gba_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/gb_gba_synctest.ps1)   # Gambatte/SameBoy/mGBA headless run, .srm write, rollback SyncTest on generated homebrew ROMs (skips without the cores)
+set_tests_properties(gb_gba_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
 add_test(NAME findgames_test COMMAND findgames_test)                   # Find my games: collapse/rank + scratch-tree scan
 add_test(NAME hub_friend_games_test COMMAND hub_friend_games_test)   # greyed-out friend games: identity, ghosts, badge text, publish hash/debounce
 add_test(NAME hub_gamepack_test COMMAND hub_gamepack_test)           # GamePack: Drive listing HTML parse, entity decode, safe names (no network)

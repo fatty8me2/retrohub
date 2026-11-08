@@ -42,6 +42,7 @@ namespace slot2 = retrorun::slot2;
 #include "link_sync.h"
 #include "ps1_input.h"
 #include "port_plan.h"
+#include "save_companion.h"
 #include "rollback.h"
 #include "lockstep.h"
 #include "perf_overlay.h"
@@ -730,6 +731,7 @@ class Frontend {
     void ra_start();
     void cheats_apply(const cheats::CheatSet& set);
     void cheats_poll();
+    bool ra_settled_ = false;   // RA sign-in/game answer handled once (cheats re-applied if hardcore ended up off; audit M7a)
     /* ---- multi-disc (libretro disk control). Offline a swap applies at once; with rollback netplay it travels as a one-shot event in the
      * input stream (ps1_input.h) and every PC applies it on the same simulated frame. ---- */
     cheats::FileWatch disc_watch;
@@ -773,7 +775,13 @@ void Frontend::ra_start() {
     h.mmap = core.memory_map();
     h.core_memory = [this](unsigned id, uint8_t** d, size_t* n) { size_t sz = 0; void* m = core.memory(id, &sz); *d = (uint8_t*)m; *n = m ? sz : 0; };
     h.log = [](const std::string& m) { rlog("%s", m.c_str()); };
-    ra_.start(p, h);
+    if (!ra_.start(p, h)) return;
+    // Hardcore is "on" until RA answers. When something would be refused meanwhile (resume, --load-state, cheats), give the answer a
+    // short head start so a failed sign-in does not cost the player their resume point / cheats (audit M7a). Bounded: never hangs a launch.
+    if (a.resume || !a.load_state_path.empty() || !a.cheats.empty()) {
+        for (int i = 0; i < 150 && !ra_.resolved(); i++) { ra_.idle(); SDL_Delay(20); }   // up to 3 s
+        if (!ra_.resolved()) rlog("cheevos: no answer yet; hardcore stays on until it arrives");
+    }
 }
 
 void Frontend::cheats_init() {
@@ -813,6 +821,13 @@ void Frontend::cheats_apply(const cheats::CheatSet& set) {
 }
 
 void Frontend::cheats_poll() {
+    if (!ra_settled_ && ra_.resolved()) {   // RA answered after cheats_init was refused: if hardcore ended up off, load them now
+        ra_settled_ = true;
+        if (cheats_on && !ra_.hardcore() && a.net.empty()) {
+            cheats::CheatSet set; std::string err;
+            if (cheats::load_file(a.cheats, &set, &err)) cheats_apply(set);
+        }
+    }
     if (!cheats_on) return;
     uint64_t now = SDL_GetTicks64();
     if (now < cheat_next_poll) return;
@@ -941,6 +956,23 @@ bool Frontend::setup_paths() {
             rlog("save: no %s.srm for this file name; using the save here: %s", rom_stem.c_str(), only.c_str());
             srm_path = only;
         }
+    }
+    if (vault_battery) {   // companion files follow the save name (audit saves-F12): copy and keep, never move or overwrite
+        std::error_code cec;
+        std::vector<std::string> names;
+        for (auto& de : fs::directory_iterator(fs::u8path(a.save_dir), cec))
+            if (!cec && de.is_regular_file(cec)) names.push_back(de.path().filename().u8string());
+        const std::string srm_stem = fs::u8path(srm_path).stem().u8string();
+        auto adopt = [&](const std::string& target_stem, const std::string& primary_stem, const char* ext) {
+            std::string from = retrorun::companion_source(names, target_stem, primary_stem, ext);
+            if (from.empty()) return;
+            fs::path dst = fs::u8path(a.save_dir) / fs::u8path(target_stem + ext);
+            std::error_code e2;
+            fs::copy_file(fs::u8path(a.save_dir) / fs::u8path(from), dst, fs::copy_options::skip_existing, e2);
+            rlog("save: %s -> %s (%s); the original is kept", from.c_str(), dst.filename().u8string().c_str(), e2 ? "copy failed" : "copied");
+        };
+        adopt(srm_stem, "", ".rtc");   // rtc_path() = <srm stem>.rtc
+        if (is_ps1) adopt(fs::u8path(a.rom).stem().u8string(), srm_stem, ".1.mcr");   // Beetle names card 2 after the ROM file
     }
 
     // Option overrides: ini next to the parent of the save dir, then in the save dir, then --ini, then --opt.
