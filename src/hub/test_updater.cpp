@@ -160,6 +160,56 @@ int main(int argc, char** argv) {
     CHECK(rs.has_asset && rs.sums_url.size() && rs.sums_url.find("SHA256SUMS.txt") != std::string::npos);
     CHECK(parse_release(R"({"tag_name":"v1.18.0","assets":[{"name":"SHA256SUMS.txt","size":1,"browser_download_url":"https://evil.example/SHA256SUMS.txt"}]})").sums_url.empty());
 
+
+    // --- eng-2.1: the RetroHub-only payload (RetroHub-windows.zip) ---
+    {
+        const std::string RP = "https://github.com/fatty8me2/retrohub/releases/download/v1.40.0/";
+        const std::string HUBMARK = "# retrohub-only\n";
+        Release both = parse_release(R"({"tag_name":"v1.40.0","assets":[
+            {"name":"SHA256SUMS.txt","size":10,"browser_download_url":"https://github.com/fatty8me2/retrohub/releases/download/v1.40.0/SHA256SUMS.txt"},
+            {"name":"BattleShip-windows.zip","size":500,"digest":"sha256:aa","browser_download_url":"https://github.com/fatty8me2/retrohub/releases/download/v1.40.0/BattleShip-windows.zip"},
+            {"name":"RetroHub-windows.zip","size":50,"digest":"sha256:bb","browser_download_url":"https://github.com/fatty8me2/retrohub/releases/download/v1.40.0/RetroHub-windows.zip"}]})");
+        CHECK(both.ok && both.has_asset && both.has_hub_asset);
+        CHECK(both.url == RP + "BattleShip-windows.zip" && both.size == 500 && both.digest == "sha256:aa");
+        CHECK(both.hub_url == RP + "RetroHub-windows.zip" && both.hub_size == 50 && both.hub_digest == "sha256:bb");
+        Release hubOnly = parse_release(R"({"tag_name":"v1.40.0","assets":[
+            {"name":"RetroHub-windows.zip","size":50,"browser_download_url":"https://github.com/fatty8me2/retrohub/releases/download/v1.40.0/RetroHub-windows.zip"}]})");
+        CHECK(hubOnly.ok && !hubOnly.has_asset && hubOnly.has_hub_asset);
+        Release evil = parse_release(R"({"tag_name":"v1.40.0","assets":[
+            {"name":"RetroHub-windows.zip","size":50,"browser_download_url":"https://evil.example.com/RetroHub-windows.zip"},
+            {"name":"BattleShip-windows.zip","size":5,"browser_download_url":"https://github.com/fatty8me2/retrohub/releases/download/v1.40.0/BattleShip-windows.zip"}]})");
+        CHECK(!evil.has_hub_asset && evil.has_asset);                                        // untrusted host: the hub zip is ignored
+        Release zero = parse_release(R"({"tag_name":"v1.40.0","assets":[
+            {"name":"RetroHub-windows.zip","size":0,"browser_download_url":"https://github.com/fatty8me2/retrohub/releases/download/v1.40.0/RetroHub-windows.zip"}]})");
+        CHECK(!zero.has_hub_asset);
+        CHECK(!parse_release(kSample).has_hub_asset && parse_release(kSample).has_asset);   // an old-style release: exactly as before
+
+        // which payload: the full zip unless the release says "hub-only" (or has nothing else)
+        const std::string H = std::string(64, 'a');
+        const std::string plain = H + "  BattleShip-windows.zip\n" + H + "  RetroHub-windows.zip\n";
+        CHECK(!sums_mark_hub_only(plain) && sums_mark_hub_only(HUBMARK + plain) && sums_mark_hub_only(plain + HUBMARK));
+        CHECK(sums_mark_hub_only("\xEF\xBB\xBF# retrohub-only\r\n" + plain) && !sums_mark_hub_only("# retrohub-only-not\n" + plain) && !sums_mark_hub_only(""));
+        CHECK(choose_payload(both, plain) == Payload::Full);                                  // both zips, no marker: Smash Classic's files are updated too
+        CHECK(choose_payload(both, HUBMARK + plain) == Payload::HubOnly);
+        CHECK(choose_payload(both, "") == Payload::Full);
+        CHECK(choose_payload(hubOnly, plain) == Payload::HubOnly);                            // the only payload there is
+        CHECK(choose_payload(parse_release(kSample), plain) == Payload::Full);
+        CHECK(choose_payload(Release(), plain) == Payload::None);
+        CHECK(sums_are_trusted("v1.40.0", plain, nullptr));                                   // the M2 hook (no signing yet)
+
+        // each zip is verified under its own name; a missing SHA line or a wrong hash fails
+        const std::string A = std::string(64, 'a'), B = std::string(64, 'b');
+        const std::string sums2 = A + "  BattleShip-windows.zip\n" + B + "  RetroHub-windows.zip\n";
+        CHECK(verify_hashes("v1.40.0", B, &sums2, "", kHubAssetName) == Verdict::Ok);
+        CHECK(verify_hashes("v1.40.0", A, &sums2, "", kHubAssetName) == Verdict::ZipMismatch);   // the full zip's hash is not the hub zip's
+        CHECK(verify_hashes("v1.40.0", A, &sums2, "") == Verdict::Ok);                           // default name unchanged
+        const std::string noHub = A + "  BattleShip-windows.zip\n";
+        CHECK(verify_hashes("v1.40.0", B, &noHub, "", kHubAssetName) == Verdict::BadSums);       // missing SHA line
+        const std::string dup = B + "  RetroHub-windows.zip\n" + A + "  RetroHub-windows.zip\n";
+        CHECK(verify_hashes("v1.40.0", B, &dup, "", kHubAssetName) == Verdict::BadSums);         // poisoned (two different hashes)
+        CHECK(verify_hashes("v1.40.0", B, nullptr, "", kHubAssetName) == Verdict::NoSums);
+    }
+
     // --- H1: the hand-off to the installer waits for the game(s) to close (pure state machine, time injected) ---
     {
         Gate g;
@@ -223,6 +273,18 @@ int main(int argc, char** argv) {
         CHECK(parse_staged_manifest(staged_manifest_json(si), &pi) && pi.version == "v1.30.0" && pi.files == 3 && pi.bytes == 113);
         CHECK(!parse_staged_manifest("not json", &pi) && !parse_staged_manifest("{\"version\":\"\",\"files\":3,\"bytes\":1}", &pi) &&
               !parse_staged_manifest("{\"version\":\"v1\",\"files\":0,\"bytes\":0}", &pi));
+        // a hub-only payload: no BattleShip.exe needed, and the kind round-trips through the manifest
+        put(d / "staged" / "sub" / "x.dat", std::string(100, 'x'));
+        bool kind = true;
+        CHECK(write_staged_manifest(ud, "v1.40.0", true));
+        CHECK(staged_reusable(ud, "v1.40.0", &kind) && kind);
+        CHECK(write_staged_manifest(ud, "v1.40.0", false));
+        CHECK(!staged_reusable(ud, "v1.40.0", &kind));                                  // the same files recorded as a full payload need BattleShip.exe
+        StagedInfo hi = scan_staged(ud + "\\staged"); hi.version = "v1.40.0"; hi.hub_only = true;
+        StagedInfo hp;
+        CHECK(parse_staged_manifest(staged_manifest_json(hi), &hp) && hp.hub_only);
+        hi.hub_only = false;
+        CHECK(parse_staged_manifest(staged_manifest_json(hi), &hp) && !hp.hub_only && staged_manifest_json(hi).find("payload") == std::string::npos);   // older manifests stay as they were
         std::filesystem::remove_all(d, ec);
     }
 
@@ -262,6 +324,21 @@ int main(int argc, char** argv) {
         CHECK(!run("v1.17.0", "", "sha256:" + std::string(64, 'f'), N) && !exists(zipPath));   // legacy but API digest wrong
         CHECK(!run("v1.17.0", "bad.txt", "", N) && !exists(zipPath));                  // legacy WITH sums: sums enforced
         CHECK(!run("v1.18.0", "good.txt", "", N + 1) && !exists(zipPath));             // size mismatch
+        // the RetroHub-only zip: verified under its own name; tampered body, missing line, sums_text preset
+        srv.routes["/RetroHub-windows.zip"] = zipBody;
+        srv.routes["/hubgood.txt"] = std::string(64, '2') + "  BattleShip-windows.zip\n" + real + "  RetroHub-windows.zip\n";
+        srv.routes["/hubmissing.txt"] = real + "  BattleShip-windows.zip\n";
+        srv.routes["/hubbad.txt"] = real + "  BattleShip-windows.zip\n" + std::string(64, '0') + "  RetroHub-windows.zip\n";
+        f.zip_url = base + "RetroHub-windows.zip"; f.asset_name = kHubAssetName;
+        CHECK(run("v1.40.0", "hubgood.txt", "", N) && exists(zipPath));                // hub zip matches ITS line (the full zip's line differs)
+        CHECK(!run("v1.40.0", "hubmissing.txt", "", N) && !exists(zipPath));           // no SHA line for the hub zip: refused, file deleted
+        CHECK(!run("v1.40.0", "hubbad.txt", "", N) && !exists(zipPath) && err.find("checksum") != std::string::npos);   // tampered: refused, file deleted
+        CHECK(!run("v1.40.0", "good.txt", "", N) && !exists(zipPath));                 // sums that only list the full zip
+        f.sums_text = std::string(64, '2') + "  BattleShip-windows.zip\n" + real + "  RetroHub-windows.zip\n";
+        CHECK(run("v1.40.0", "", "", N) && exists(zipPath));                           // sums already fetched (and trusted): no second fetch
+        f.sums_text = real + "  BattleShip-windows.zip\n";
+        CHECK(!run("v1.40.0", "", "", N) && !exists(zipPath));
+        f.sums_text.clear(); f.asset_name.clear(); f.zip_url = base + "BattleShip-windows.zip";
         std::filesystem::remove_all(dir, ec);
     }
 

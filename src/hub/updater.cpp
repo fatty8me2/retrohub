@@ -45,6 +45,7 @@ constexpr const char* kLatestReleaseApi = "https://api.github.com/repos/fatty8me
 constexpr const char* kDownloadPrefix = "https://github.com/fatty8me2/retrohub/releases/download/";
 constexpr const char* kLegacyDownloadPrefix = "https://github.com/fatty8me2/smash-classic/releases/download/";
 constexpr const char* kPlatformAssetName = "BattleShip-windows.zip";
+constexpr const char* kHubAssetNameC = "RetroHub-windows.zip";
 constexpr const char* kSumsAssetName = "SHA256SUMS.txt";
 constexpr const char* kManualUrl = "https://github.com/fatty8me2/retrohub/releases/latest";
 
@@ -66,6 +67,7 @@ std::atomic<bool> s_quit{false};
 struct Pending {
     std::wstring apply_exe, apply_dir, staged, exe_dir, marker;
     std::string version;
+    bool hub_only = false;   // the staged files are RetroHub's part only: the applier gets --hub-only
 };
 Pending s_pending;            // guarded by s_mu
 detail::Gate s_gate;          // UI thread only (tick)
@@ -78,7 +80,8 @@ std::atomic<bool> s_startup_done{false};
 std::vector<std::string> s_startup_notes;   // guarded by s_mu
 
 std::string s_latest, s_notes, s_url, s_digest, s_sums_url, s_status;
-long long s_size = 0;
+std::string s_hub_url, s_hub_digest;   // RetroHub-windows.zip of the latest release ("" => the release has none)
+long long s_size = 0, s_hub_size = 0;
 std::mutex s_mu;
 
 /* Every path crosses the Win32 boundary as UTF-16 (the *W APIs and wide
@@ -284,13 +287,16 @@ Release parse_release(const std::string& json) {
             const JV* url = a.get("browser_download_url");
             if (name && name->type == JV::String && name->s == kSumsAssetName && url && url->type == JV::String &&
                 is_trusted_download_url(url->s)) { r.sums_url = url->s; continue; }
-            if (!name || name->type != JV::String || name->s != kPlatformAssetName || !url || url->type != JV::String) continue;
+            if (!name || name->type != JV::String || !url || url->type != JV::String) continue;
+            const bool isFull = name->s == kPlatformAssetName, isHub = name->s == kHubAssetNameC;
+            if (!isFull && !isHub) continue;
             const JV* size = a.get("size");
             long long sz = (size && size->type == JV::Number) ? (long long)size->n : 0;
             if (!is_trusted_download_url(url->s) || sz <= 0) continue;
-            r.has_asset = true; r.url = url->s; r.size = sz;
             const JV* d = a.get("digest");
-            if (d && d->type == JV::String) r.digest = d->s;
+            std::string dg = (d && d->type == JV::String) ? d->s : std::string();
+            if (isFull) { r.has_asset = true; r.url = url->s; r.size = sz; r.digest = dg; }
+            else { r.has_hub_asset = true; r.hub_url = url->s; r.hub_size = sz; r.hub_digest = dg; }
         }
     }
     return r;
@@ -331,13 +337,39 @@ std::map<std::string, std::string> parse_sha256sums(const std::string& text) {
     return m;
 }
 
-Verdict verify_hashes(const std::string& tag, const std::string& actual, const std::string* sums, const std::string& api_digest) {
+const char* const kFullAssetName = kPlatformAssetName;
+const char* const kHubAssetName = kHubAssetNameC;
+const char* const kHubOnlyMarker = "# retrohub-only";
+
+bool sums_mark_hub_only(const std::string& text) {
+    std::istringstream in(text);
+    std::string line;
+    bool first = true;
+    while (std::getline(in, line)) {
+        if (first && line.rfind("\xEF\xBB\xBF", 0) == 0) line = line.substr(3);
+        first = false;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line == kHubOnlyMarker) return true;
+    }
+    return false;
+}
+
+Payload choose_payload(const Release& r, const std::string& sums_text) {
+    if (r.has_hub_asset && (!r.has_asset || sums_mark_hub_only(sums_text))) return Payload::HubOnly;
+    return r.has_asset ? Payload::Full : Payload::None;
+}
+
+/* M2 (release signing) hook: every fetched SHA256SUMS.txt passes through here before any hash in it is believed. */
+bool sums_are_trusted(const std::string&, const std::string&, std::string*) { return true; }
+
+Verdict verify_hashes(const std::string& tag, const std::string& actual, const std::string* sums, const std::string& api_digest,
+                      const std::string& asset_name) {
     std::string a = lower(actual);
     if (!is_hex64(a)) return Verdict::BadSums;
     if (api_digest.rfind("sha256:", 0) == 0 && lower(api_digest.substr(7)) != a) return Verdict::DigestMismatch;
     if (!sums) return checksums_required(tag) ? Verdict::NoSums : Verdict::OkLegacy;
     auto m = parse_sha256sums(*sums);
-    auto it = m.find(kPlatformAssetName);
+    auto it = m.find(asset_name.empty() ? std::string(kPlatformAssetName) : asset_name);
     if (it == m.end() || !is_hex64(it->second)) return Verdict::BadSums;
     return it->second == a ? Verdict::Ok : Verdict::ZipMismatch;
 }
@@ -355,23 +387,37 @@ const char* verdict_message(Verdict v) {
 
 std::string sha256_file_hex(const std::string& path) { return sha256_file(path); }
 
+bool fetch_sums(const std::string& sumsUrl, const std::string& scratch, std::string* text, std::string* err) {
+    std::string sp = scratch + ".sums";
+    rm_file(sp);
+    std::string sums;
+    int c = run_capture("curl -fLsS -m 30 --max-filesize 262144 -o \"" + sp + "\" \"" + sumsUrl + "\"", [](const std::string&) {});
+    if (c == 0) {
+        std::ifstream in(P(sp), std::ios::binary);
+        std::stringstream ss; ss << in.rdbuf();
+        sums = ss.str();
+    }
+    rm_file(sp);
+    if (sums.empty()) { if (err) *err = "could not download SHA256SUMS.txt to verify the update."; return false; }
+    if (text) *text = sums;
+    return true;
+}
+
 bool download_verified(const FetchSpec& f, const std::string& zipPath, std::string* err,
                        const std::function<void(const std::string&)>& onLine) {
     auto bad = [&](const std::string& m) { rm_file(zipPath); if (err) *err = m; return false; };
     std::string sums; bool haveSums = false;
-    if (f.sums_url.empty() && checksums_required(f.tag)) return bad(verdict_message(Verdict::NoSums));
-    if (!f.sums_url.empty()) {
-        std::string sp = zipPath + ".sums";
-        rm_file(sp);
-        int c = run_capture("curl -fLsS -m 30 --max-filesize 262144 -o \"" + sp + "\" \"" + f.sums_url + "\"", [](const std::string&) {});
-        if (c == 0) {
-            std::ifstream in(P(sp), std::ios::binary);
-            std::stringstream ss; ss << in.rdbuf();
-            sums = ss.str(); haveSums = !sums.empty();
-        }
-        rm_file(sp);
+    if (f.sums_url.empty() && f.sums_text.empty() && checksums_required(f.tag)) return bad(verdict_message(Verdict::NoSums));
+    if (!f.sums_text.empty()) { sums = f.sums_text; haveSums = true; }
+    else if (!f.sums_url.empty()) {
         /* A listed-but-unfetchable checksum file is never treated as "legacy". */
-        if (!haveSums) return bad("could not download SHA256SUMS.txt to verify the update.");
+        std::string e;
+        if (!fetch_sums(f.sums_url, zipPath, &sums, &e)) return bad(e);
+        haveSums = true;
+    }
+    if (haveSums) {
+        std::string why;
+        if (!sums_are_trusted(f.tag, sums, &why)) return bad(why.empty() ? std::string("the release checksum file could not be trusted.") : why);
     }
     rm_file(zipPath);
     if (run_capture("curl -fL -# -m 600 -o \"" + zipPath + "\" \"" + f.zip_url + "\"", onLine) != 0) return bad("download failed.");
@@ -379,7 +425,7 @@ bool download_verified(const FetchSpec& f, const std::string& zipPath, std::stri
     long long actual = in ? (long long)in.tellg() : -1;
     in.close();
     if (actual != f.size) return bad("download was incomplete.");
-    Verdict v = verify_hashes(f.tag, sha256_file(zipPath), haveSums ? &sums : nullptr, f.digest);
+    Verdict v = verify_hashes(f.tag, sha256_file(zipPath), haveSums ? &sums : nullptr, f.digest, f.asset_name);
     if (v != Verdict::Ok && v != Verdict::OkLegacy) return bad(verdict_message(v));
     if (v == Verdict::OkLegacy) ulog("release %s predates SHA256SUMS.txt; accepted on TLS + size (+ API digest if present)", f.tag.c_str());
     return true;
@@ -415,6 +461,7 @@ std::string staged_manifest_json(const StagedInfo& s) {
     o.o.push_back({"version", json::make_string(s.version)});
     o.o.push_back({"files", json::make_int(s.files)});
     o.o.push_back({"bytes", json::make_int(s.bytes)});
+    if (s.hub_only) o.o.push_back({"payload", json::make_string("hub")});   // absent => full (older manifests)
     return json::stringify(o) + "\n";
 }
 
@@ -423,27 +470,33 @@ bool parse_staged_manifest(const std::string& text, StagedInfo* out) {
     if (!json_parse(text, &v)) return false;
     StagedInfo s;
     s.version = v.str("version"); s.files = v.i64("files"); s.bytes = v.i64("bytes");
+    s.hub_only = v.str("payload") == "hub";
     if (s.version.empty() || s.files <= 0 || s.bytes < 0) return false;
     if (out) *out = s;
     return true;
 }
 
-bool staged_reusable(const std::string& updates_dir, const std::string& version) {
+bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only) {
     std::ifstream in(P(updates_dir + "\\staged.json"), std::ios::binary);
     if (!in || version.empty()) return false;
     std::stringstream ss; ss << in.rdbuf();
     StagedInfo m;
     if (!parse_staged_manifest(ss.str(), &m) || m.version != version) return false;
     const std::string staged = updates_dir + "\\staged";
-    for (const char* req : {"RetroHub.exe", "BattleShip.exe"})
+    for (const char* req : {"RetroHub.exe", "BattleShip.exe"}) {
+        if (m.hub_only && std::strcmp(req, "BattleShip.exe") == 0) continue;   // a hub-only payload carries none of Smash Classic's files
         if (GetFileAttributesW(W(staged + "\\" + req).c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+    }
     StagedInfo now = scan_staged(staged);
-    return now.files == m.files && now.bytes == m.bytes;   // anything missing or changed since it was unpacked: download again
+    if (now.files != m.files || now.bytes != m.bytes) return false;
+    if (hub_only) *hub_only = m.hub_only;
+    return true;   // anything missing or changed since it was unpacked: download again
 }
 
-bool write_staged_manifest(const std::string& updates_dir, const std::string& version) {
+bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only) {
     StagedInfo s = scan_staged(updates_dir + "\\staged");
     s.version = version;
+    s.hub_only = hub_only;
     if (s.files <= 0 || version.empty()) return false;
     return winutil::write_file_atomic(updates_dir + "\\staged.json", staged_manifest_json(s));
 }
@@ -506,15 +559,17 @@ void check_async(bool force) {
             s_latest = rel.tag;
             s_notes = detail::strip_markdown(rel.body);
             s_url.clear(); s_digest.clear(); s_sums_url.clear(); s_size = 0;
+            s_hub_url.clear(); s_hub_digest.clear(); s_hub_size = 0;
         }
         std::string cur = current_version();
         if (detail::compare_versions(rel.tag, cur) <= 0) {
             set_status("Up to date (" + cur + ").");
             ulog("up to date: have %s, latest %s", cur.c_str(), rel.tag.c_str());
-        } else if (rel.has_asset) {
+        } else if (rel.has_asset || rel.has_hub_asset) {
             {
                 std::lock_guard<std::mutex> l(s_mu);
                 s_url = rel.url; s_size = rel.size; s_digest = rel.digest; s_sums_url = rel.sums_url;
+                s_hub_url = rel.hub_url; s_hub_size = rel.hub_size; s_hub_digest = rel.hub_digest;
             }
             s_available.store(true);
             set_status("");
@@ -543,12 +598,13 @@ void start_update() {
     s_handing.store(false);
     s_deferred.store(false);
 
-    std::string url, digest, sumsUrl, version; long long size;
+    std::string url, digest, sumsUrl, version, hubUrl, hubDigest; long long size, hubSize;
     {
         std::lock_guard<std::mutex> l(s_mu);
         url = s_url; digest = s_digest; sumsUrl = s_sums_url; version = s_latest; size = s_size;
+        hubUrl = s_hub_url; hubDigest = s_hub_digest; hubSize = s_hub_size;
     }
-    if (url.empty()) {
+    if (url.empty() && hubUrl.empty()) {
         set_status("Error: No update download available.");
         s_downloading.store(false);
         return;
@@ -556,7 +612,7 @@ void start_update() {
     const bool gaming = s_session_probe && s_session_probe();   // read here, on the UI thread
     set_status(gaming ? "Starting download (it installs when you finish playing)..." : "Starting download...");
 
-    std::thread([url, digest, sumsUrl, version, size]() {
+    std::thread([url, digest, sumsUrl, version, size, hubUrl, hubDigest, hubSize]() {
         auto fail = [](const std::string& m) {
             ulog("update failed: %s", m.c_str());
             set_status("Error: " + m);
@@ -587,7 +643,8 @@ void start_update() {
                 set_status(t);
             }
         };
-        if (detail::staged_reusable(updatesDir, version)) {
+        bool hubOnly = false;
+        if (detail::staged_reusable(updatesDir, version, &hubOnly)) {
             /* An earlier try (a postponed or failed install, or RetroHub closed while the update waited for a game) already unpacked this
              * exact release: nothing to download. */
             ulog("reusing the unpacked update %s from updates\\staged (no download)", version.c_str());
@@ -595,8 +652,23 @@ void start_update() {
             s_progress.store(1.0f);
         } else {
             rm_file(zipPath);
-            ulog("downloading %s", url.c_str());
-            detail::FetchSpec spec; spec.zip_url = url; spec.sums_url = sumsUrl; spec.tag = version; spec.digest = digest; spec.size = size;
+            /* Which payload: needs SHA256SUMS.txt (the hub-only marker lives there), so fetch it first. Without one the full zip is the
+             * only choice (and download_verified then refuses a release that must have sums). */
+            std::string sumsText;
+            if (!sumsUrl.empty()) {
+                std::string serr;
+                if (!detail::fetch_sums(sumsUrl, zipPath, &sumsText, &serr)) { fail(serr + " Download manually: " + kManualUrl); return; }
+                std::string why;
+                if (!detail::sums_are_trusted(version, sumsText, &why)) { fail((why.empty() ? std::string("the release checksum file could not be trusted.") : why) + " Download manually: " + kManualUrl); return; }
+            }
+            detail::Release rel; rel.has_asset = !url.empty(); rel.has_hub_asset = !hubUrl.empty();
+            const detail::Payload pick = detail::choose_payload(rel, sumsText);
+            if (pick == detail::Payload::None) { fail("this release has no update for this platform."); return; }
+            hubOnly = pick == detail::Payload::HubOnly;
+            ulog("downloading %s (%s)", hubOnly ? hubUrl.c_str() : url.c_str(), hubOnly ? "RetroHub files only" : "full package");
+            detail::FetchSpec spec; spec.tag = version; spec.sums_url = sumsUrl; spec.sums_text = sumsText;
+            if (hubOnly) { spec.zip_url = hubUrl; spec.digest = hubDigest; spec.size = hubSize; spec.asset_name = detail::kHubAssetName; }
+            else { spec.zip_url = url; spec.digest = digest; spec.size = size; }
             std::string verr;
             if (!detail::download_verified(spec, zipPath, &verr, onLine)) {
                 fail(verr + " Download manually: " + kManualUrl);
@@ -619,13 +691,15 @@ void start_update() {
             int tarCode = run_capture(tarCmd, [](const std::string&) {});
             rm_file(zipPath);
             if (tarCode != 0) { std::filesystem::remove_all(P(staged), fec); fail("could not unpack the update."); return; }
-            for (const char* req : {"RetroHub.exe", "BattleShip.exe"})
+            for (const char* req : {"RetroHub.exe", "BattleShip.exe"}) {
+                if (hubOnly && std::strcmp(req, "BattleShip.exe") == 0) continue;
                 if (GetFileAttributesW(W(staged + "\\" + req).c_str()) == INVALID_FILE_ATTRIBUTES) {
                     std::filesystem::remove_all(P(staged), fec);
                     fail(std::string("the update is missing ") + req);
                     return;
                 }
-            detail::write_staged_manifest(updatesDir, version);   // the unpacked files are kept for a retry until an install succeeds
+            }
+            detail::write_staged_manifest(updatesDir, version, hubOnly);   // the unpacked files are kept for a retry until an install succeeds
         }
 
         /* TEMP copy of this exe (+ its DLLs) so the install's RetroHub.exe is not locked. */
@@ -655,6 +729,7 @@ void start_update() {
             s_pending.staged = W(staged); s_pending.exe_dir = W(exeDir);
             s_pending.marker = W(updatesDir + "\\apply.started");
             s_pending.version = version;
+            s_pending.hub_only = hubOnly;
         }
         s_progress.store(1.0f);
         set_status("Update ready.");
@@ -681,7 +756,7 @@ static void begin_handoff(const Pending& p, bool game_active) {
         DeleteFileW(marker.c_str());
         std::wstring wcmd = L"\"" + p.apply_exe + L"\" --apply-update \"" + p.staged + L"\" \"" + p.exe_dir + L"\" " +
                             std::to_wstring(GetCurrentProcessId()) + L" --version \"" + W(p.version) + L"\" --from \"" + W(current_version()) +
-                            L"\" --started-marker \"" + marker + L"\"" + (game_active ? L" --game-active" : L"");
+                            L"\" --started-marker \"" + marker + L"\"" + (game_active ? L" --game-active" : L"") + (p.hub_only ? L" --hub-only" : L"");
         STARTUPINFOW si{}; si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
         std::wstring cmdBreakaway = wcmd;
