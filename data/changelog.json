@@ -1,6 +1,19 @@
 {
   "versions": [
     {
+      "version": "1.39.0",
+      "date": "2026-11-08",
+      "title": "Fritchii for Ocarina of Time",
+      "new": [
+        "Switch games can now play with Fritchii, Frizti's Ocarina of Time version of Lichii. Pick it in Settings › Switch (\"Switch games play with\") or for one game in its Settings tab. Lichii stays the default",
+        "RetroHub downloads a copy of Fritchii built by GitHub from Frizti's published source and keeps it in its own folder. Your keys, firmware and shader cache are copied over from Lichii the first time you play with it"
+      ],
+      "improved": [
+        "Your Switch saves follow you between Lichii and Fritchii: before a game starts, RetroHub brings over the newest save and backs up the one it replaces first"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.38.0",
       "date": "2026-11-07",
       "title": "A new carousel",
