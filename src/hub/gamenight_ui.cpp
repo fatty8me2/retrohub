@@ -1,11 +1,14 @@
 /* Game night (Plan 3 S6): "Plan a session" in a friend's chat, the stored plans, the reminder and the Host / Join card.
  * Logic and the DM format are in gamenight_logic.h. No server scheduler: plans travel as ordinary DMs and every client checks its own
  * clock once per frame. While a game runs nothing pops up: the reminder and the start notice go to the bell only. */
+#include <cstdlib>
 #include <ctime>
 
 #include "app.h"
 #include "friends_ui.h"
 #include "gamenight_logic.h"
+#include "gamenight_sched.h"
+#include "toast.h"
 #include "group_ui.h"
 #include "ui_sound.h"
 
@@ -57,6 +60,23 @@ void note_bell(const Night& n, const std::string& text) {
     group_note(hubui::group::Kind::Info, n.host_uid, n.host_name, n.game_id, n.game_title, "", text, 0);
 }
 
+/* Windows scheduled toast for when RetroHub is closed (gamenight_sched.h). Throttled: toasts change rarely, and a failing call is not
+ * retried every frame. Nothing is scheduled in headless / screenshot runs or with the Windows-notification setting off. */
+double g_sched_next = 0;
+bool g_exit_hooked = false;
+void toast_sync(bool force, bool for_exit = false) {
+    if (g_headless) return;
+    const double t = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0;
+    if (!force && !for_exit && t < g_sched_next) return;
+    SyncResult r = sync_toasts(GN.plans, wall_ms(), A.st.notify_in_game, hubtoast::system_scheduler(), for_exit);
+    if (r.changed) persist();
+    g_sched_next = t + (r.failed ? 60.0 : 5.0);
+    if (!g_exit_hooked) {
+        g_exit_hooked = true;
+        std::atexit([] { try { toast_sync(true, true); } catch (...) {} });   // closing RetroHub: hand the reminders back to Windows
+    }
+}
+
 std::string who(const Night& n) { return n.mine ? std::string("You") : (n.host_name.empty() ? std::string("A friend") : n.host_name); }
 
 }  // namespace
@@ -70,6 +90,7 @@ bool gn_on_message(const std::string& uid, const std::string& name, const std::s
     n.host_uid = uid; n.host_name = name; n.id = make_id(uid, n.start_ms);
     if (GN.plans.add(n, wall_ms())) {
         persist();
+        toast_sync(true);
         std::string t = name + " planned a game night: " + (n.game_title.empty() ? std::string("a session") : n.game_title) + " on " + local_label(n.start_ms);
         if (quiet()) note_bell(n, t); else { ui_sound::play(ui_sound::Sfx::Notify); push_toast(t, ui::ACCENT, 8.0); }
     }
@@ -93,6 +114,7 @@ void gn_tick() {
         }
     }
     if (dirty) persist();
+    toast_sync(dirty);
     if (!GN.pending_invite.empty()) {   // we hosted from the card: invite once the room is up
         if (A.in_room && room_connected()) { fr_invite_uids(GN.pending_invite); GN.pending_invite.clear(); }
         else if (ImGui::GetTime() - GN.pending_at > 20.0) GN.pending_invite.clear();
@@ -131,7 +153,7 @@ void gn_card_action(const std::string& id) {
 
 void gn_card_dismiss(const std::string& id) {
     load_once();
-    if (Night* n = GN.plans.find(id)) { n->dismissed = true; persist(); }
+    if (Night* n = GN.plans.find(id)) { n->dismissed = true; persist(); toast_sync(true); }
 }
 
 /* Chat header button + popup. `cx`/`cy` = top-right corner of the header area. */
@@ -213,7 +235,7 @@ void gn_plan_popup() {
             std::string text = encode(n, local_label(n.start_ms));
             for (auto& u : n.invitees) fr_send_text(u, text);
             n.reminded = false;
-            if (GN.plans.add(n, wall_ms())) persist();
+            if (GN.plans.add(n, wall_ms())) { persist(); toast_sync(true); }
             set_toast("Game night sent to " + std::to_string(n.invitees.size()) + (n.invitees.size() == 1 ? " friend." : " friends."));
             GN.open = false;
             ImGui::CloseCurrentPopup();
