@@ -952,7 +952,7 @@ void draw_cases(Disp& D) {
             const ArtRef art = art_of(idx);
             cd.art = art.tex; cd.art_w = art.w; cd.art_h = art.h;
             if (sy == hub::System::Switch) { int iw = 0, ih = 0; if (SDL_Texture* it = cases_shot_icon(&iw, &ih)) { cd.art = it; cd.art_w = iw; cd.art_h = ih; } }
-            if (cd.art && sy == hub::System::Switch) cd.art_blur = cases_art_blur(cd.art);   // only the square Switch icons use it
+            if (cd.art && sy == hub::System::Switch && hubui::cases::is_square_art(cd.art_w, cd.art_h)) cd.art_blur = cases_art_blur(cd.art);   // only the square Switch icons use it
             if (cd.art) cd.art_col = cases_art_rgb(cd.art);   // the generated spine / insert colours follow the front art
             if (ad <= 2.5f && cases_has_full(sy)) {   // a full cover scan (back | spine | front): one texture, the faces are uv sub-rects of it
                 int fw = 0, fh = 0;
