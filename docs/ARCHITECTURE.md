@@ -55,11 +55,14 @@ The build is C++17, x64, with MSVC flags `/W3 /permissive- /utf-8`.
 ```
 RetroHub/
   RetroHub.exe
+  BattleShip.exe  Smash Classic; the updater requires it next to RetroHub.exe
   n64run.exe
+  retrorun.exe    libretro runner (cores/ holds its cores)
+  streamrun.exe   remote play
   emu/        mupen64plus.dll, mupen64plus-rsp-hle.dll, mupen64plus-audio-sdl.dll,
               mupen64plus-video-GLideN64.dll, SDL2.dll, data files
-  games/      (optional) native ports, e.g. smashClassic/BattleShip.exe
-  hub.json    user settings: name, ROM folder, server URL, controller
+  userdata/   hub.json (user settings: name, ROM folder, server URL, controller) and the rest of the hub's data
+  games/      (dev layout only) smashClassic/BattleShip.exe; a packaged install finds BattleShip.exe beside RetroHub.exe
 ```
 
 ## Runner control, OSD and prefs (hub <-> runners)
