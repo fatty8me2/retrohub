@@ -929,12 +929,11 @@ void pump() {
         SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
         s.tex = t; s.w = d.px.w; s.h = d.px.h; s.st = State::Ready; s.name = d.name; g_lru.touch(d.id);
         s.avg = hubtheme::average_saturated(d.px.rgba.data(), d.px.w, d.px.h, 4);
-        blur8(d.px.rgba.data(), d.px.w, d.px.h, (unsigned char*)s.blur);
-        s.has_blur = true;
+        s.has_blur = blur8(d.px.rgba.data(), d.px.w, d.px.h, (unsigned char*)s.blur);   // false = no visible pixel: no blur
     }
 }
 
-void blur8(const unsigned char* rgba, int w, int h, unsigned char out[8 * 8 * 4]) {
+bool blur8(const unsigned char* rgba, int w, int h, unsigned char out[8 * 8 * 4]) {
     double tot[3] = {0, 0, 0}, totw = 0;
     for (int cy = 0; cy < 8; ++cy)
         for (int cx = 0; cx < 8; ++cx) {
@@ -952,10 +951,12 @@ void blur8(const unsigned char* rgba, int w, int h, unsigned char out[8 * 8 * 4]
             else { o[0] = o[1] = o[2] = 0; }
             o[3] = wt > 0.0 ? 255 : 0;
         }
+    if (totw <= 0.0) return false;
     for (int i = 0; i < 64; ++i) {   // transparent cells take the picture's mean colour, so no hole shows
         unsigned char* o = out + i * 4;
         if (o[3] == 0) { if (totw > 0.0) { o[0] = (unsigned char)(tot[0] / totw + 0.5); o[1] = (unsigned char)(tot[1] / totw + 0.5); o[2] = (unsigned char)(tot[2] / totw + 0.5); } o[3] = 255; }
     }
+    return true;
 }
 
 const uint32_t* blur_colors(SDL_Texture* tex) {

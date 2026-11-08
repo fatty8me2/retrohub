@@ -511,9 +511,56 @@ void front_square(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, con
     top_band(x, f, d, st, u0, win.v0, u1, v0);
 }
 
+/* The classic square-art front, kept as it was for every non-Switch portrait case (GameCube, PS2, Wii U, PSP): a square scan (a Switch game's icon) on a portrait case: the red console banner, the icon large over a background made of its own colours
+ * (the middle of the icon blown up into a soft blur, darkened), the title underneath. */
+void front_square_classic(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, const Src& s, const hubui::cases::UvRect& win) {
+    const float W = f.W, H = f.H, px = 1.f / W, py = 1.f / H;
+    const float bv = std::max(0.045f, std::min(0.07f, 22.f * py));
+    const float u0 = win.u0, u1 = win.u1, v0 = win.v0 + bv, v1 = win.v1;
+    const float AW = (u1 - u0) * W, AH = (v1 - v0) * H;
+    const ImU32 base = d.art_col ? d.art_col : seed_color(d.seed, 0.55f, 0.6f);
+    vgrad(x, f, u0, v0, u1, v1, shade(base, 0.95f), shade(base, 0.4f));
+    {   // the icon's own colours, extended: its top strip is stretched over the upper half, its bottom strip over the lower half (a soft blur of its edges)
+        const float vm = (v0 + v1) * 0.5f;
+        image_uv(x, f, u0, v0, u1, vm, s.tex, s.a, ImVec2(s.b.x, s.a.y + (s.b.y - s.a.y) * 0.1f), 0.8f);
+        image_uv(x, f, u0, vm, u1, v1, s.tex, ImVec2(s.a.x, s.a.y + (s.b.y - s.a.y) * 0.9f), s.b, 0.8f);
+        const ImU32 seam = shade(base, 0.55f);   // the two halves melt into each other
+        vgrad(x, f, u0, vm - (vm - v0) * 0.4f, u1, vm, alpha(seam, 0.f), alpha(seam, 0.85f));
+        vgrad(x, f, u0, vm, u1, vm + (v1 - vm) * 0.4f, alpha(seam, 0.85f), alpha(seam, 0.f));
+        vgrad(x, f, u0, v0, u1, v1, rgba(0, 0, 0, 60), rgba(0, 0, 0, 150));
+    }
+    const float side = std::min(AW * 0.84f, AH * 0.6f);
+    const float cxp = (u0 + u1) * 0.5f * W, iy = v0 * H + AH * 0.075f, ix = cxp - side * 0.5f;
+    const float sh = std::max(3.f, side * 0.03f);
+    quad(x, f, (ix + sh) * px, (iy + sh * 1.4f) * py, (ix + side + sh * 1.8f) * px, (iy + side + sh * 2.4f) * py, rgba(0, 0, 0, 110));
+    const float fr = std::max(2.f, side * 0.012f);
+    quad(x, f, (ix - fr) * px, (iy - fr) * py, (ix + side + fr) * px, (iy + side + fr) * py, rgba(250, 250, 252));
+    image_uv(x, f, ix * px, iy * py, (ix + side) * px, (iy + side) * py, s.tex, s.a, s.b);
+    vgrad(x, f, ix * px, iy * py, (ix + side) * px, (iy + side * 0.18f) * py, rgba(255, 255, 255, 46), rgba(255, 255, 255, 0));
+    ImFont* font = ui::F.bold ? ui::F.bold : ui::F.body;
+    const float size = std::max(7.f, std::min(std::min(W * 0.1f, AH * 0.085f), 34.f));
+    float ty = iy + side + AH * 0.055f;
+    if (x.detail && font && size >= 7.f) {
+        const std::vector<std::string>& ln = wrap_cached(font, size, d.title, AW * 0.86f, 3);
+        for (const std::string& l : ln) {
+            if (ty + size > v1 * H - 3.f) break;
+            const float tw = text_w(font, size, l), lx = cxp - tw * 0.5f;
+            face_text(x, f, font, size, l.c_str(), lx + 1.4f, ty + 1.4f, rgba(0, 0, 0, 150), false);
+            face_text(x, f, font, size, l.c_str(), lx, ty, rgba(255, 255, 255, 250), false);
+            ty += size * 1.14f;
+        }
+    }
+    quad(x, f, u0, v1 - 4.f * py, u1, v1, alpha(st.band, 0.9f));
+    top_band(x, f, d, st, u0, win.v0, u1, v0);
+}
+
 /* The cover scan, whole: never cropped, no drawn banner or overlay. */
 void front_art(Ctx& x, const Face& f, const CaseDraw& d, const Style& st, const Src& s, const hubui::cases::UvRect& win) {
-    if (hubui::cases::is_square_art(s.w, s.h) && hubui::cases::is_portrait_case(d.media)) { front_square(x, f, d, st, s, win); return; }
+    if (hubui::cases::is_square_art(s.w, s.h) && hubui::cases::is_portrait_case(d.media)) {
+        if (d.media == Media::SwitchCase) front_square(x, f, d, st, s, win);   // Switch 1 and 2: the full-bleed icon over its own blur
+        else front_square_classic(x, f, d, st, s, win);
+        return;
+    }
     const float wu = win.u1 - win.u0, wv = win.v1 - win.v0;
     const float wa = (wu * f.W) / std::max(1.f, wv * f.H);
     const hubui::cases::CaseArtFit ft = hubui::cases::fit_art(wa, (float)s.w / (float)std::max(1, s.h), hubui::cases::nominal_cover_aspect(d.media));
