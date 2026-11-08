@@ -50,6 +50,8 @@ class Session {
     bool allow_speed(double speed);
     /* Test/inspection. */
     bool game_ready() const;
+    /* True once sign-in and game load have answered (either way). Until then hardcore() is the safe default (on, if chosen). */
+    bool resolved() const;
     unsigned unlocked() const;
     const GameCache& cache() const;
 

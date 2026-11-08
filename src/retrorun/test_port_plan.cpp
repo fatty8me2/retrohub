@@ -1,8 +1,10 @@
 /* Console test for port_plan.h: which libretro device each port needs per system, when the 4-pad adapter is on, and how many local ports an offline run drives. */
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include "port_plan.h"
+#include "save_companion.h"
 
 using namespace retrorun;
 
@@ -143,6 +145,24 @@ int main() {
         CHECK(plan_signature(four).find("tap=1") != std::string::npos && plan_signature(two).find("tap=0") != std::string::npos);
         CHECK(plan_signature(plan_ports(in(Sys::NES, 0, 1, -1, -1, 2))) != plan_signature(plan_ports(in(Sys::NES, 0, 1, 2, -1, 3))));
         CHECK(plan_signature(plan_ports(in(Sys::GBA, 0, -1, -1, -1, 1))) == plan_signature(plan_ports(in(Sys::GBA, 0, 1, 2, 3, 4))));
+    }
+
+    /* ---- companion save files follow the save name (audit saves-F12) ---- */
+    {
+        using V = std::vector<std::string>;
+        // PC B's ROM is "Other.gbc": the vault holds Orig.srm + Orig.rtc. The clock is found under the .srm's stem.
+        CHECK(companion_source(V{"Orig.srm", "Orig.rtc"}, "Orig", "", ".rtc").empty());                  // already there: leave it
+        CHECK(companion_source(V{"Orig.srm", "Orig.rtc"}, "Other", "", ".rtc") == "Orig.rtc");           // lone clock: copy
+        CHECK(companion_source(V{"Orig.srm", "Orig.RTC"}, "Other", "Orig", ".rtc") == "Orig.RTC");        // case-insensitive
+        CHECK(companion_source(V{"Orig.srm", "A.rtc", "B.rtc"}, "Other", "", ".rtc").empty());           // two clocks: do not guess
+        CHECK(companion_source(V{"Orig.srm", "A.rtc", "B.rtc"}, "Other", "B", ".rtc") == "B.rtc");       // ...unless the .srm's stem names one
+        CHECK(companion_source(V{"Other.rtc", "A.rtc"}, "Other", "A", ".rtc").empty());                  // own file wins, never overwritten
+        CHECK(companion_source(V{"Orig.srm"}, "Other", "Orig", ".rtc").empty());                         // no clock at all
+        // PS1 card 2: the core names it after the ROM file.
+        CHECK(companion_source(V{"Orig.srm", "Orig.1.mcr"}, "Disc (USA)", "Orig", ".1.mcr") == "Orig.1.mcr");
+        CHECK(companion_source(V{"Orig.srm", "Orig.1.mcr", "Disc (USA).1.mcr"}, "Disc (USA)", "Orig", ".1.mcr").empty());
+        CHECK(companion_source(V{"Orig.srm", "Orig.1.mcr", "Old.1.mcr"}, "New", "", ".1.mcr").empty());
+        CHECK(!sc_has_ext("x.1.mcr", ".rtc") && sc_has_ext("X.1.MCR", ".1.mcr") && !sc_has_ext(".rtc", ".rtc"));
     }
 
     if (g_fail) { printf("%d FAILED\n", g_fail); return 1; }
