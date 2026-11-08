@@ -79,6 +79,7 @@ void rebuild_ghosts() {
         std::vector<hubui::fg::Ghost> pk = hubgp::pack_only_ghosts(mine, A.ghosts, hubgp::index_games(), hubui::fg::kMaxGhosts - A.ghosts.size());
         A.ghosts.insert(A.ghosts.end(), pk.begin(), pk.end());
     }
+    hubui::fg::drop_hidden(&A.ghosts, hidden_game_keys());   // a game you hid has no greyed ghost either
     {   /* a ghost whose title is a catalog game you own is that game (catalog id, whatever the spelling): "The Legend of Zelda Ocarina of Time Master Quest" */
         std::set<std::string> own_cid;
         for (const hub::GameEntry& e : A.lib) if (!e.catalog_id.empty() && e.hack_patch.empty()) own_cid.insert(sys_short(e) + "|" + e.catalog_id);

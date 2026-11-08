@@ -47,6 +47,16 @@ int main()
     for (int i = 0; i < 6000; ++i) big.push_back({"n64", "k" + std::to_string(i), "", "T" + std::to_string(i)});
     CHECK(build_ghosts({}, {{"u1", &big}}).size() == kMaxGhosts);
 
+    {   // a hidden key produces no ghost
+        std::vector<LibGame> hl = {{"n64", "n64:hid", "", "Hidden One"}, {"n64", "n64:vis", "", "Visible One"}};
+        auto hg = build_ghosts({}, {{"u1", &hl}});
+        CHECK(hg.size() == 2);
+        drop_hidden(&hg, {"n64:hid"});
+        CHECK(hg.size() == 1 && hg[0].key == "n64:vis");
+        drop_hidden(&hg, {});
+        CHECK(hg.size() == 1);
+    }
+
     CHECK(badge_text({}) == "In a shared pack");
     CHECK(badge_text({"Mickey"}) == "Mickey has this");
     CHECK(badge_text({"Mickey", "camer"}) == "Mickey, camer have this");
