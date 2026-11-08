@@ -64,11 +64,44 @@ std::string strip_markdown(const std::string& md);
 struct Release {
     bool ok = false;
     std::string tag, body;
-    bool has_asset = false;     // the platform asset was found and passed the trust/size checks
+    bool has_asset = false;     // the platform asset (BattleShip-windows.zip) was found and passed the trust/size checks
     std::string url, digest;
     std::string sums_url;       // SHA256SUMS.txt asset of the same release ("" when the release has none)
     long long size = 0;
+    std::string sig_url;        // SHA256SUMS.txt.sig of the same release ("" when the release has none: it is refused)
+    bool has_hub_asset = false; // RetroHub-windows.zip (RetroHub's files only) was found and passed the same checks
+    std::string hub_url, hub_digest;
+    long long hub_size = 0;
 };
+extern const char* const kFullAssetName;   // "BattleShip-windows.zip": the whole install (every release ships it; old clients only know it)
+extern const char* const kHubAssetName;    // "RetroHub-windows.zip": RetroHub's part only
+extern const char* const kHubOnlyMarker;   // "# retrohub-only": a comment line in SHA256SUMS.txt (which is signed)
+/* The marker line is `# retrohub-only smash-sha256 <sha256 of BattleShip.exe> smash-since vX.Y.Z`: this release's RetroHub files assume
+ * exactly that Smash Classic build. valid is false for a missing, repeated or malformed marker (a bare "# retrohub-only" is malformed). */
+struct HubOnlyMarker { bool valid = false; std::string smash_sha256, smash_since; };
+HubOnlyMarker parse_hub_only_marker(const std::string& sums_text);
+/* Which payload to install. The small RetroHub-only zip is used ONLY when the release has it AND its marker names the BattleShip.exe that is
+ * installed right now (installed_smash_sha256, "" when it could not be read => never a match). Anyone else (an older Smash Classic, a
+ * missing or unreadable BattleShip.exe, a bad marker) gets the full BattleShip-windows.zip, exactly as before; a release that has only the
+ * hub zip and no match has no usable payload (None). */
+enum class Payload { None, Full, HubOnly };
+Payload choose_payload(const Release& r, const std::string& sums_text, const std::string& installed_smash_sha256);
+/* ---- release signing (shell-M2) ----
+ * Every update must carry SHA256SUMS.txt.sig: an ECDSA P-256 / SHA-256 signature (DER) over the exact bytes of SHA256SUMS.txt, made with the
+ * publisher's private key (kept off-line; the packager signs, see package-windows.ps1). Only a list that verifies is believed, and only then
+ * is the zip checked against it. Windows CNG does the maths; the public key is built in. */
+extern const char* const kSigAssetName;       // "SHA256SUMS.txt.sig"
+extern const char* const kReleasePubKeyHex;   // the publisher's public key, raw X||Y (64 bytes) as 128 hex digits
+extern const char* const kUnsignedMessage;    // "This update isn't signed by RetroHub's publisher, so it wasn't installed."
+/* Strict DER SEQUENCE{INTEGER r, INTEGER s} -> 64-byte r||s (each left-padded to 32). false for anything malformed: truncated, trailing
+ * bytes, wrong or overlong or non-minimal lengths, negative or zero r/s, r/s wider than 32 bytes. */
+bool der_to_raw_rs(const void* der, size_t len, unsigned char out[64]);
+/* ECDSA P-256 verify: pub = raw X||Y (64 bytes), SHA-256 of msg, sig = DER. */
+bool verify_ecdsa_p256(const unsigned char pub[64], const void* msg, size_t msg_len, const void* sig_der, size_t sig_len);
+/* Tests only: replace the built-in public key (nullptr restores it). */
+void set_pubkey_for_test(const unsigned char pub[64]);
+/* Is this SHA256SUMS.txt authentic? (the ONE gate: no signature, a malformed one or a wrong one => false and *why_not = kUnsignedMessage) */
+bool sums_are_trusted(const std::string& tag, const std::string& sums_text, const std::string& sig_bytes, std::string* why_not);
 Release parse_release(const std::string& json);
 
 /* ---- integrity verification (SHA256SUMS.txt + GitHub's asset digest) ---- */
@@ -82,14 +115,22 @@ enum class Verdict { Ok, OkLegacy, NoSums, BadSums, ZipMismatch, DigestMismatch 
 /* sums == nullptr means the release has no (or an unreadable) SHA256SUMS.txt. api_digest is GitHub's
  * "sha256:..." (may be empty). actual_hex is the SHA-256 of the downloaded zip. */
 Verdict verify_hashes(const std::string& tag, const std::string& actual_hex,
-                      const std::string* sums, const std::string& api_digest);
+                      const std::string* sums, const std::string& api_digest, const std::string& asset_name = "BattleShip-windows.zip");
 const char* verdict_message(Verdict v);
 std::string sha256_file_hex(const std::string& path);   // "" on error
 
 struct FetchSpec {
     std::string zip_url, sums_url, tag, digest;
     long long size = 0;
+    std::string asset_name;    // the name SHA256SUMS.txt lists the zip under ("" => BattleShip-windows.zip)
+    std::string sums_text;     // when set, the sums were already fetched (and trusted): not fetched again
+    std::string sig_url;       // SHA256SUMS.txt.sig
+    std::string sig_bytes;     // when sums_text is set: its signature (already fetched)
 };
+/* Fetches SHA256SUMS.txt from sums_url into *text (curl, size-capped). false + *err when it cannot be had. */
+bool fetch_sums(const std::string& sums_url, const std::string& scratch_path, std::string* text, std::string* err);
+/* The signature file (tiny, size-capped). false + *err = kUnsignedMessage when it cannot be had. */
+bool fetch_sig(const std::string& sig_url, const std::string& scratch_path, std::string* bytes, std::string* err);
 /* Downloads (curl) + verifies the zip into zip_path. Caller must have vetted the URLs. On failure the file
  * is deleted and *err says why. Used by start_update(); tests drive it against a 127.0.0.1 server. */
 bool download_verified(const FetchSpec& f, const std::string& zip_path, std::string* err,
@@ -115,13 +156,15 @@ GateState gate_step(Gate& g, bool ready, bool session_busy, bool install_busy, u
 struct StagedInfo {
     std::string version;
     long long files = 0, bytes = 0;
+    bool hub_only = false;   // unpacked from RetroHub-windows.zip (no Smash Classic files); manifests without "payload" are full
 };
 StagedInfo scan_staged(const std::string& staged_dir);                       // counts the regular files under the dir
 std::string staged_manifest_json(const StagedInfo& s);
 bool parse_staged_manifest(const std::string& text, StagedInfo* out);
-/* The manifest names `version`, matches what is on disk, and both required exes are there: the download can be skipped. */
-bool staged_reusable(const std::string& updates_dir, const std::string& version);
-bool write_staged_manifest(const std::string& updates_dir, const std::string& version);
+/* The manifest names `version`, matches what is on disk, and the required exes are there (RetroHub.exe, plus BattleShip.exe for a
+ * full payload): the download can be skipped. *hub_only (optional) says which kind is staged. */
+bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only = nullptr);
+bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only = false);
 }
 
 } // namespace hubupdate

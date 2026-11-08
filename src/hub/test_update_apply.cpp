@@ -159,6 +159,61 @@ static bool lock_a_then_fail_b(const std::wstring& from, const std::wstring& to)
     return CopyFileW(from.c_str(), to.c_str(), FALSE) != FALSE;
 }
 
+
+/* ---- hub-only payload (RetroHub-windows.zip): RetroHub's files only; Smash Classic's files are never touched ---- */
+static const char* const kSmashFiles[] = {"BattleShip.exe", "torch.exe", "f3d.o2r", "config.yml", "gamecontrollerdb.txt", "yamls\\us\\a.yml",
+                                          "assets\\custom\\fonts\\f.ttf", "licenses\\README.txt", "licenses\\torch-LICENSE.txt", "LICENSE.txt",
+                                          ".tcc\\include\\x.h", "BattleShip.ico"};
+static void hub_scene(const fs::path& root, fs::path* staged, fs::path* install, bool hostile) {
+    std::error_code ec; fs::remove_all(root, ec);
+    *staged = root / L"staged"; *install = root / L"RetroHub";
+    // the hub zip: RetroHub's part only
+    put(*staged / L"RetroHub.exe", "new-hub");
+    put(*staged / L"n64run.exe", "new-n64");
+    put(*staged / L"SDL2.dll", "new-sdl");
+    put(*staged / L"data\\changelog.json", "new-log");
+    put(*staged / L"cores\\mgba_libretro.dll", "new-core");
+    put(*staged / L"emu\\m64p.dll", "new-emu");
+    put(*staged / L"licenses\\emulator-README.txt", "new-emu-readme");
+    if (hostile) for (const char* f : kSmashFiles) put(*staged / fs::path(f), std::string("EVIL-") + f);   // a bad zip carrying Smash Classic's files
+    // the install: old everything + the user's data
+    put(*install / L"RetroHub.exe", "old-hub");
+    put(*install / L"n64run.exe", "old-n64");
+    put(*install / L"SDL2.dll", "old-sdl");
+    put(*install / L"data\\changelog.json", "old-log");
+    put(*install / L"cores\\mgba_libretro.dll", "old-core");
+    put(*install / L"licenses\\emulator-README.txt", "old-emu-readme");
+    for (const char* f : kSmashFiles) put(*install / fs::path(f), std::string("smash-") + f);
+    put(*install / L"BattleShip.o2r", "user-o2r");
+    put(*install / L"userdata\\hub.json", "user-settings");
+    put(*install / L"userdata\\saves\\mario.sav", "user-save");
+    age_files(*install);
+}
+static void check_smash_untouched(const fs::path& install) {
+    for (const char* f : kSmashFiles) CHECK(get(install / fs::path(f)) == std::string("smash-") + f);
+    CHECK(get(install / L"BattleShip.o2r") == "user-o2r");
+    CHECK(get(install / L"userdata\\hub.json") == "user-settings");
+    CHECK(get(install / L"userdata\\saves\\mario.sav") == "user-save");
+}
+static void check_hub_new(const fs::path& install) {
+    CHECK(get(install / L"RetroHub.exe") == "new-hub");
+    CHECK(get(install / L"n64run.exe") == "new-n64");
+    CHECK(get(install / L"SDL2.dll") == "new-sdl");
+    CHECK(get(install / L"data\\changelog.json") == "new-log");
+    CHECK(get(install / L"cores\\mgba_libretro.dll") == "new-core");
+    CHECK(get(install / L"emu\\m64p.dll") == "new-emu");
+    CHECK(get(install / L"licenses\\emulator-README.txt") == "new-emu-readme");
+}
+static void check_hub_old(const fs::path& install) {
+    CHECK(get(install / L"RetroHub.exe") == "old-hub");
+    CHECK(get(install / L"n64run.exe") == "old-n64");
+    CHECK(get(install / L"SDL2.dll") == "old-sdl");
+    CHECK(get(install / L"data\\changelog.json") == "old-log");
+    CHECK(get(install / L"cores\\mgba_libretro.dll") == "old-core");
+    CHECK(!has(install / L"emu\\m64p.dll"));
+    CHECK(get(install / L"licenses\\emulator-README.txt") == "old-emu-readme");
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && std::strcmp(argv[1], "--sleep") == 0) { Sleep((DWORD)std::atoi(argv[2])); return 0; }   // fake game mode
     // ---- pure helpers ----
@@ -245,6 +300,80 @@ int main(int argc, char** argv) {
     o.staged = staged.wstring(); o.install = install.wstring(); o.backup.clear();
     r = apply_files(o);
     CHECK(!r.ok); CHECK(get(install / L"RetroHub.exe") == "old-hub");
+
+    // ---- hub-only payload: pure helpers ----
+    CHECK(is_smash_classic_file(L"BattleShip.exe") && is_smash_classic_file(L"battleship-jp.exe") && is_smash_classic_file(L"torch.exe"));
+    CHECK(is_smash_classic_file(L"F3D.O2R") && is_smash_classic_file(L"config.yml") && is_smash_classic_file(L"gamecontrollerdb.txt"));
+    CHECK(is_smash_classic_file(L"yamls\\us\\a.yml") && is_smash_classic_file(L"assets/custom/fonts/f.ttf") && is_smash_classic_file(L".tcc\\x.h"));
+    CHECK(is_smash_classic_file(L"licenses\\README.txt") && is_smash_classic_file(L"licenses\\libultraship-LICENSE.txt") && is_smash_classic_file(L"LICENSE.txt"));
+    CHECK(!is_smash_classic_file(L"RetroHub.exe") && !is_smash_classic_file(L"n64run.exe") && !is_smash_classic_file(L"retrorun.exe"));
+    CHECK(!is_smash_classic_file(L"SDL2.dll") && !is_smash_classic_file(L"msvcp140.dll") && !is_smash_classic_file(L"rh-helper.exe"));
+    CHECK(!is_smash_classic_file(L"data\\changelog.json") && !is_smash_classic_file(L"cores\\mgba_libretro.dll") && !is_smash_classic_file(L"emu\\mupen64plus.dll"));
+    CHECK(!is_smash_classic_file(L"licenses\\emulator-README.txt") && !is_smash_classic_file(L"licenses\\mupen64plus-LICENSES.txt"));
+    CHECK(!is_smash_classic_file(L"data\\yamls.txt") && !is_smash_classic_file(L""));
+
+    // ---- hub-only apply: RetroHub's files replaced, Smash Classic's byte-identical ----
+    {
+        hub_scene(root / L"hub_ok", &staged, &install, false);
+        auto fl = list_staged(staged.wstring(), true);
+        CHECK(fl.size() == 7);
+        Options ho; ho.staged = staged.wstring(); ho.install = install.wstring(); ho.backup = (root / L"hub_ok" / L"bk").wstring(); ho.hub_only = true;
+        Result hr = apply_files(ho);
+        CHECK(hr.ok); CHECK(hr.copied == 7);
+        check_hub_new(install); check_smash_untouched(install);
+        CHECK(!has(root / L"hub_ok" / L"bk"));
+        // the same zip run as a full apply is refused (no BattleShip.exe): an old-style apply never takes a partial payload
+        hub_scene(root / L"hub_full", &staged, &install, false);
+        Options fo; fo.staged = staged.wstring(); fo.install = install.wstring(); fo.backup.clear();
+        hr = apply_files(fo);
+        CHECK(!hr.ok); check_hub_old(install); check_smash_untouched(install);
+        // a hostile zip that carries Smash Classic's files: ignored in hub-only mode
+        hub_scene(root / L"hub_evil", &staged, &install, true);
+        CHECK(list_staged(staged.wstring(), true).size() == 7);
+        CHECK(list_staged(staged.wstring(), false).size() == 7 + sizeof(kSmashFiles) / sizeof(kSmashFiles[0]));   // ... while a full apply takes them all
+        ho.staged = staged.wstring(); ho.install = install.wstring(); ho.backup = (root / L"hub_evil" / L"bk").wstring();
+        hr = apply_files(ho);
+        CHECK(hr.ok && hr.copied == 7);
+        check_hub_new(install); check_smash_untouched(install);
+        // hub-only still requires RetroHub.exe
+        hub_scene(root / L"hub_noexe", &staged, &install, false);
+        fs::remove(staged / L"RetroHub.exe");
+        ho.staged = staged.wstring(); ho.install = install.wstring(); ho.backup.clear();
+        hr = apply_files(ho);
+        CHECK(!hr.ok); check_hub_old(install); check_smash_untouched(install);
+        // a locked hub file: full rollback, Smash Classic still untouched, user data untouched
+        hub_scene(root / L"hub_lock", &staged, &install, false);
+        ho.staged = staged.wstring(); ho.install = install.wstring(); ho.backup = (root / L"hub_lock" / L"bk").wstring(); ho.retries = 1; ho.retry_ms = 0;
+        HANDLE hl = CreateFileW((install / L"data\\changelog.json").c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(hl != INVALID_HANDLE_VALUE);
+        hr = apply_files(ho);
+        CHECK(!hr.ok && hr.rolled_back);
+        CloseHandle(hl);
+        check_hub_old(install); check_smash_untouched(install);
+        // a partial extraction (the zip was cut short: the tail files never arrived, and one is a stub): the apply stops, nothing half-applied
+        hub_scene(root / L"hub_partial", &staged, &install, false);
+        fs::remove(staged / L"emu\\m64p.dll"); fs::remove(staged / L"cores\\mgba_libretro.dll");
+        ho.backup = (root / L"hub_partial" / L"bk").wstring();
+        ho.staged = staged.wstring(); ho.install = install.wstring();
+        ho.copy_hook = [](const std::wstring& from, const std::wstring& to) -> bool {
+            if (to.size() >= 8 && to.compare(to.size() - 8, 8, L"SDL2.dll") == 0) {
+                std::ofstream t(fs::path(to), std::ios::binary | std::ios::trunc); t << "TRUNC";   // dies mid-copy
+                return false;
+            }
+            return CopyFileW(from.c_str(), to.c_str(), FALSE) != FALSE;
+        };
+        hr = apply_files(ho);
+        ho.copy_hook = nullptr;
+        CHECK(!hr.ok && hr.rolled_back);
+        CHECK(get(install / L"SDL2.dll") == "old-sdl" && get(install / L"RetroHub.exe") == "old-hub" && get(install / L"n64run.exe") == "old-n64");
+        CHECK(get(install / L"cores\\mgba_libretro.dll") == "old-core");
+        check_smash_untouched(install);
+        // full apply still works exactly as before (same scene as the existing cases)
+        make_scene(root / L"hub_fullok", &staged, &install);
+        Options fo2; fo2.staged = staged.wstring(); fo2.install = install.wstring(); fo2.backup = (root / L"hub_fullok" / L"bk").wstring();
+        hr = apply_files(fo2);
+        CHECK(hr.ok && hr.copied == 7); check_new(install); check_untouched(install);
+    }
 
     // ---- plain-language reasons and the status note (shown once in the bell on the next start) ----
     CHECK(plain_reason(32) == "a file was in use by another program" && plain_reason(33) == plain_reason(32));
@@ -448,6 +577,20 @@ int main(int argc, char** argv) {
             CHECK(!has(install / L"userdata\\update_status.json"));    // a success clears the old failure note
             CHECK(!has(staged));
             kill_spawned();
+        }
+        // hub-only through the real applier (--hub-only): RetroHub's files replaced, Smash Classic's untouched, staged cleaned up
+        {
+            hub_scene(root / L"i_hub", &staged, &install, true);
+            rc = run_hidden(cmdFor(staged, install, 0, L"--version v9.9.9 --from v1.0.0 --hub-only --tmp-root \"" + (root / L"i_hub" / L"tmp").wstring() + L"\""));
+            CHECK(rc == 0);
+            check_hub_new(install); check_smash_untouched(install);
+            CHECK(!has(staged));
+            // without --hub-only the very same staged files (no BattleShip.exe) are refused and nothing changes
+            hub_scene(root / L"i_hub2", &staged, &install, false);
+            rc = run_hidden(cmdFor(staged, install, 0, L"--version v9.9.9 --from v1.0.0 --tmp-root \"" + (root / L"i_hub2" / L"tmp").wstring() + L"\""));
+            CHECK(rc == 1);
+            check_hub_old(install); check_smash_untouched(install);
+            CHECK(has(staged));   // kept for a retry
         }
         // usage error
         CHECK(run_hidden(L"\"" + exe + L"\" --apply-update onlyone") == 2);
