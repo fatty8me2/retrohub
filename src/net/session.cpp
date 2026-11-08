@@ -66,6 +66,14 @@ struct Peer {
     uint32_t last_rx = 0;
     uint32_t last_hello = 0, last_relay_hello = 0, last_ping = 0, last_roster = 0;
     bool relay_active = false;
+    /* Proof of who is sending over direct UDP. A peer sends us a random token over the relay (frames there carry the server's own sender stamp, so only that
+     * peer can have sent it, and only we received it). Its direct hello / ack / ping / pong frames carry the token; the source address of a frame that proves it
+     * becomes the peer's bound address, and data from that peer must then come from it. A peer that never sends a token (an older RetroHub) keeps the old rules. */
+    bool tok_known = false;
+    uint32_t tok = 0;
+    bool has_bound = false;
+    Addr bound;
+    uint32_t tok_sends = 0, last_tok_send = 0;
     int ping = -1;
     int ring[32] = {0};       // recent RTT samples (ms)
     int ring_n = 0, ring_i = 0;
@@ -133,6 +141,9 @@ struct Session::Impl {
     uint32_t relay_busy_at = 0;    // ... and when it first said so
 
     Peer peers[kMaxSlots];
+    uint32_t spoof_dropped = 0;    // frames dropped because their sender byte did not match where they came from
+    uint32_t unproven_seen = 0;    // direct frames accepted from a peer whose token we do not have yet (older RetroHub, or its token is still on the way)
+    uint32_t my_tok = 0;           // this session's random token, sent privately to each peer over the relay
     std::deque<std::pair<int, std::vector<uint8_t>>> inbox;
     unsigned roster_mask = 0;      // client: last roster from host; host: computed
     uint32_t ping_every = kPingMs;
@@ -294,7 +305,7 @@ struct Session::Impl {
     }
     void send_ctl(int s, char type, uint32_t now, const uint8_t* extra = nullptr, int extra_len = 0)
     {
-        uint8_t pkt[16];
+        uint8_t pkt[24];
         pkt[0] = (uint8_t)type;
         pkt[1] = (uint8_t)slot;
         if (extra_len > 0) memcpy(pkt + 2, extra, extra_len);
@@ -302,6 +313,29 @@ struct Session::Impl {
     }
 
     /* ---- receiving ---- */
+    /* Host: is another player (not a spectator, not `except`) still in the room and has not said bye? */
+    bool other_player_remains(int except) const
+    {
+        for (int s = 1; s < kMaxSlots; s++)
+            if (s != except && s != slot && peers[s].present && !bye_from[s] && !(spec_mask >> s & 1u)) return true;
+        return false;
+    }
+    bool tokens_on() const { return !no_relay && my_tok != 0; }
+    void send_token(int s, uint32_t now)
+    {
+        Peer& p = peers[s];
+        uint8_t t[6] = {'T', (uint8_t)slot};
+        put32(t + 2, my_tok);
+        p.last_tok_send = now;
+        p.tok_sends++;
+        send_relay(s, t, 6);
+    }
+    void note_spoof(char type, int claimed, const char* how)
+    {
+        spoof_dropped++;
+        if (spoof_dropped <= 10 || spoof_dropped % 1000 == 0)
+            net_log("Session %d: dropped a '%c' frame claiming to be slot %d that did not come from it (%s, %u so far)", slot, type, claimed, how, spoof_dropped);
+    }
     void deliver(int from, const uint8_t* payload, int len)
     {
         if (inbox.size() >= kMaxQueue) inbox.pop_front();
@@ -326,6 +360,34 @@ struct Session::Impl {
         }
         if (via_relay) path = relay_from;
         if (!talks_to(path)) return;
+        /* Who really sent this frame? The sender byte inside it is only a claim. Relay: the server rewrites the first byte of every
+         * frame to the sender's real slot (relay_from), so the claim must match it. The one exception is a guest hearing the host:
+         * the host forwards other guests' data unchanged, and it checked the sender itself. Direct UDP: the datagram must come from
+         * the address that slot announced to the server (or the one we already verified). */
+        const bool host_forward = via_relay ? (!is_host() && relay_from == 0 && type == 'D')
+                                            : (!is_host() && type == 'D' && from != 0);
+        if (via_relay) {
+            if (from != relay_from && !host_forward) { note_spoof(type, from, "relay"); return; }
+        } else if (type == 'T') {
+            return;   // tokens are only accepted over the relay
+        } else {
+            Peer& pp = peers[path];
+            if (pp.tok_known) {
+                if (type == 'H' || type == 'A' || type == 'P' || type == 'Q') {   // a direct handshake frame must carry the sender's token; it binds the address
+                    const int off = (type == 'P' || type == 'Q') ? 6 : 2;
+                    if (n < off + 4 || get32(d + off) != pp.tok) { note_spoof(type, from, "udp, wrong or missing token"); return; }
+                    if (!pp.has_bound || !(pp.bound == addr)) net_log("Session %d: slot %d is now bound to %s", slot, path, addr.str().c_str());
+                    pp.has_bound = true;
+                    pp.bound = addr;
+                } else if (!(pp.has_bound && pp.bound == addr)) {   // data / roster / bye: only from the address that proved itself
+                    note_spoof(type, from, "udp, not from the slot's proven address");
+                    return;
+                }
+            } else if (tokens_on()) {
+                /* No token from this slot (yet): honest frames from an older RetroHub, or ahead of the token. Accepted as before, but counted. */
+                if (unproven_seen++ < 5) net_log("Session %d: direct '%c' frame from slot %d before its token is known (not announced yet or an older RetroHub)", slot, type, from);
+            }
+        }
         Peer& p = peers[path];
         p.last_rx = now;
         if (via_relay) {
@@ -336,13 +398,23 @@ struct Session::Impl {
         case 'B':
             bye_from[path] = true;
             if (departing && path == 0) end_clean(0);
-            else if (is_host() && !(spec_mask >> path & 1u) && !cfg.keep_on_guest_bye) end_clean(path);   // a guest signed off: the room session is over
+            else if (is_host() && !(spec_mask >> path & 1u) && !cfg.keep_on_guest_bye && !other_player_remains(path)) end_clean(path);   // the last guest signed off: the room session is over (3-4 players: the others play on)
+            break;
+        case 'T':
+            if (via_relay && n >= 6) {
+                p.tok = get32(d + 2);
+                p.tok_known = p.tok != 0;
+                p.has_bound = false;
+                if (tokens_on() && now - p.last_tok_send >= 500) send_token(path, now);
+            }
             break;
         case 'H':
             if (via_relay) send_relay(path, reply('A'), 2);
             else {
-                uint8_t a[2] = {'A', (uint8_t)slot};
-                out_udp(addr, a, 2);
+                uint8_t a[6] = {'A', (uint8_t)slot};
+                int al = 2;
+                if (tokens_on()) { put32(a + 2, my_tok); al = 6; }
+                out_udp(addr, a, al);
             }
             break;
         case 'A':
@@ -355,9 +427,10 @@ struct Session::Impl {
             break;
         case 'P': {
             if (n < 6) break;
-            uint8_t q[6] = {'Q', (uint8_t)slot};
+            uint8_t q[10] = {'Q', (uint8_t)slot};
             memcpy(q + 2, d + 2, 4);
             if (via_relay) send_relay(path, q, 6);
+            else if (tokens_on()) { put32(q + 6, my_tok); out_udp(addr, q, 10); }
             else out_udp(addr, q, 6);
             break;
         }
@@ -445,6 +518,7 @@ struct Session::Impl {
                 if (seen[s]) peers[s].ws_gone_at = 0;
                 if (seen[s] && !peers[s].present) {
                     peers[s].present = true;
+                    bye_from[s] = false;   // a new occupant of the slot (drop-in): an old bye does not count
                     peers[s].since = now;
                     net_log("Session %d: slot %d joined", slot, s);
                 } else if (!seen[s] && peers[s].present) {
@@ -614,9 +688,11 @@ struct Session::Impl {
             uint32_t every = (now - p.since < kRelayAfterMs) ? 100 : 500;
             if (now - p.last_hello >= every) {
                 p.last_hello = now;
-                uint8_t h[2] = {'H', (uint8_t)slot};
-                if (p.pub.valid()) out_udp(p.pub, h, 2);
-                if (p.loc.valid() && !(p.loc == p.pub)) out_udp(p.loc, h, 2);
+                uint8_t h[6] = {'H', (uint8_t)slot};
+                int hl = 2;
+                if (tokens_on()) { put32(h + 2, my_tok); hl = 6; }
+                if (p.pub.valid()) out_udp(p.pub, h, hl);
+                if (p.loc.valid() && !(p.loc == p.pub)) out_udp(p.loc, h, hl);
             }
         }
         // relay handshake
@@ -625,12 +701,16 @@ struct Session::Impl {
             uint8_t h[2] = {'H', (uint8_t)slot};
             send_relay(s, h, 2);
         }
+        // private token for the direct-path proof (relay only; a few tries, then it is up to the peer to answer)
+        if (tokens_on() && welcomed && ws.state() == WsState::Open && !p.tok_known && p.tok_sends < 6 && now - p.last_tok_send >= 1000) send_token(s, now);
         // ping
         if ((direct_ok || p.relay_active) && now - p.last_ping >= ping_every) {
             p.last_ping = now;
-            uint8_t t[4];
+            uint8_t t[8];
             put32(t, now);
-            send_ctl(s, 'P', now, t, 4);
+            int tl = 4;
+            if (tokens_on()) { put32(t + 4, my_tok); tl = 8; }
+            send_ctl(s, 'P', now, t, tl);
         }
     }
 
@@ -736,6 +816,9 @@ bool Session::start(const SessionConfig& cfg)
     const char* fr = getenv("HUBNET_FORCE_RELAY");
     d.force_relay = fr && fr[0] && fr[0] != '0' && !d.no_relay;
     d.sim_init(d.slot);
+    d.spoof_dropped = d.unproven_seen = 0;
+    d.my_tok = std::random_device()();
+    if (!d.my_tok) d.my_tok = 0x5eed0001u;
     d.start_ms = now_ms();
     d.last_ws_keepalive = d.start_ms;
     d.status = "contacting server";
@@ -812,6 +895,46 @@ uint16_t Session::local_port() const { return impl_->udp.local_port(); }
 void Session::set_wake_event(void* event) {
     impl_->ws.set_wake(event);
     if (impl_->udp.is_open()) WSAEventSelect((SOCKET)impl_->udp.handle(), (WSAEVENT)event, event ? FD_READ : 0);
+}
+uint32_t Session::spoofed_frames() const { return impl_->spoof_dropped; }
+uint32_t Session::unproven_frames() const { return impl_->unproven_seen; }
+bool Session::qa_offline(const SessionConfig& cfg)
+{
+    stop();
+    Impl& d = *impl_;
+    d.cfg = cfg;
+    if (cfg.slot < 0 || cfg.slot >= kMaxSlots) return false;
+    d.slot = cfg.slot;
+    d.spectator = false;
+    d.spec_mask = 0;
+    d.failed = d.ended = d.departing = false;
+    d.ready_ever = true;
+    d.inbox.clear();
+    for (bool& b : d.bye_from) b = false;
+    for (Peer& p : d.peers) p = Peer();
+    d.spoof_dropped = d.unproven_seen = 0;
+    d.no_relay = false;
+    d.my_tok = 0xA5A5A5A5u;
+    d.started = true;   // never update()d: only qa_inject feeds it
+    return true;
+}
+void Session::qa_peer(int slot, bool present, const std::string& pub, const std::string& loc, bool spectator)
+{
+    Impl& d = *impl_;
+    if (slot < 0 || slot >= kMaxSlots) return;
+    Peer& p = d.peers[slot];
+    p.present = present;
+    Addr a;
+    p.pub = parse_addr(pub, &a) ? a : Addr();
+    p.loc = parse_addr(loc, &a) ? a : Addr();
+    p.has_cand = p.pub.valid() || p.loc.valid();
+    if (spectator) d.spec_mask |= 1u << slot; else d.spec_mask &= ~(1u << slot);
+}
+void Session::qa_inject(bool via_relay, int relay_from, const std::string& from_addr, const void* data, int len)
+{
+    Addr a;
+    if (!via_relay) parse_addr(from_addr, &a);
+    impl_->handle_packet(via_relay, relay_from, a, (const uint8_t*)data, len, now_ms());
 }
 void Session::qa_drop_ws() { impl_->ws.drop_abruptly(); }
 void Session::set_no_relay(bool v) { impl_->no_relay = v; }
