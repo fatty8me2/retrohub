@@ -294,19 +294,8 @@ bool link_keep_code(const std::string& server, const Identity& id, std::string* 
 {
     std::string c = random_account_code();
     if (c.empty()) { *err = "could not make a code"; return false; }
-    /* The code seals its OWN secret (made by the server for account codes), not this PC's, so signing this PC out later never breaks the
-     * code. An older server has no such route: the code then seals this PC's secret, exactly as before. */
-    Identity sealed = id;
-    {
-        HttpResult rr;
-        std::string e0;
-        Json jr;
-        if (http_post(server, "/link/recovery", "{\"uid\":\"" + id.user_id + "\",\"secret\":\"" + id.secret + "\"}", &rr, &e0) && rr.status == 200 &&
-            json_parse(rr.body, &jr) && is_b32(jr.str("secret"), 52)) sealed.secret = jr.str("secret");
-        else if (rr.status == 429) { *err = "Too many new codes. Try again in a while."; return false; }
-    }
     LinkEnvelope env;
-    if (!link_seal(c, sealed, &env)) { *err = "could not encrypt the identity"; return false; }
+    if (!link_seal(c, id, &env)) { *err = "could not encrypt the identity"; return false; }
     std::string body = "{\"uid\":\"" + id.user_id + "\",\"secret\":\"" + id.secret + "\",\"box\":\"" + sha256_hex(c) + "\",\"salt\":\"" +
                        env.salt + "\",\"iv\":\"" + env.iv + "\",\"ct\":\"" + env.ct + "\"}";
     HttpResult r;
