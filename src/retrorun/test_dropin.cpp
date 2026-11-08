@@ -392,9 +392,18 @@ int main() {
         joinfp::Fp unk = a; unk.content = 0;
         CHECK(joinfp::check(a, true, unk) == joinfp::Verdict::Rom && joinfp::check(unk, true, a) == joinfp::Verdict::Rom && joinfp::check(unk, true, unk) == joinfp::Verdict::Ok, "an unknown game id only matches another unknown one");
         CHECK(joinfp::trailer_offset(k) == 8 && joinfp::trailer_offset(sp) == 3 && joinfp::trailer_offset({spectate::kPktJoin, 4, 9}) == 3, "trailer offsets");
-        CHECK(joinfp::gate(a, k).pass && joinfp::gate(a, sp).pass && !joinfp::gate(a, plain).pass && joinfp::gate(a, plain).reason == joinfp::kRefuseOldPeer, "gate: both knock layouts, no trailer");
+        CHECK(joinfp::gate(a, k).pass && joinfp::gate(a, sp).pass, "gate: both knock layouts with a matching trailer");
+        CHECK(joinfp::gate(a, plain).pass && joinfp::gate(a, plain).reason == 0, "gate: a spectator with no trailer (a v1.39 spectator) is admitted and streamed to");
+        std::vector<uint8_t> dnt = {spectate::kPktJoin, 2, 2, rb::kCapDropIn, 3, 'a', 'b', 'c'};   // a v1.39 drop-in knock: no trailer
+        CHECK(!joinfp::gate(a, dnt).pass && joinfp::gate(a, dnt).reason == joinfp::kRefuseOldPeer, "gate: a drop-in joiner with no trailer gets the old-version refusal");
+        joinfp::Fp ob = a; ob.content ^= 1;
+        std::vector<uint8_t> spb = {spectate::kPktJoin, 4, 1}; joinfp::append(spb, ob);
+        CHECK(!joinfp::gate(a, spb).pass && joinfp::gate(a, spb).reason == joinfp::kRefuseMismatch, "gate: a spectator with another game is refused");
+        joinfp::Fp op = a; op.proto++;
+        std::vector<uint8_t> spp = {spectate::kPktJoin, 4, 1}; joinfp::append(spp, op);
+        CHECK(!joinfp::gate(a, spp).pass && joinfp::gate(a, spp).reason == joinfp::kRefuseOldPeer, "gate: a spectator on another netcode version is refused");
         std::vector<uint8_t> nine = {spectate::kPktJoin, 4, 9};
-        CHECK(!joinfp::gate(a, nine).pass && !joinfp::gate(a, {spectate::kPktJoin}).pass, "gate: short / drop-in-done knocks are not let through");
+        CHECK(!joinfp::gate(a, nine).pass && joinfp::gate(a, nine).reason == 0 && !joinfp::gate(a, {spectate::kPktJoin}).pass, "gate: short / drop-in-done knocks are dropped");
         joinfp::Fp oc = a; oc.core ^= 1;
         std::vector<uint8_t> kc = {spectate::kPktJoin, 4, 1}; joinfp::append(kc, oc);
         CHECK(joinfp::gate(a, kc).reason == joinfp::kRefuseCore, "core mismatch has its own reason");
