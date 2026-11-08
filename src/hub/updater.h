@@ -98,8 +98,10 @@ extern const char* const kUnsignedMessage;    // "This update isn't signed by Re
 bool der_to_raw_rs(const void* der, size_t len, unsigned char out[64]);
 /* ECDSA P-256 verify: pub = raw X||Y (64 bytes), SHA-256 of msg, sig = DER. */
 bool verify_ecdsa_p256(const unsigned char pub[64], const void* msg, size_t msg_len, const void* sig_der, size_t sig_len);
+#ifdef RETROHUB_UPDATER_TESTING   // defined only on the hub_updater_test target: the shipping RetroHub.exe has no way to change the trusted key
 /* Tests only: replace the built-in public key (nullptr restores it). */
 void set_pubkey_for_test(const unsigned char pub[64]);
+#endif
 /* Is this SHA256SUMS.txt authentic? (the ONE gate: no signature, a malformed one or a wrong one => false and *why_not = kUnsignedMessage) */
 bool sums_are_trusted(const std::string& tag, const std::string& sums_text, const std::string& sig_bytes, std::string* why_not);
 Release parse_release(const std::string& json);
@@ -157,14 +159,16 @@ struct StagedInfo {
     std::string version;
     long long files = 0, bytes = 0;
     bool hub_only = false;   // unpacked from RetroHub-windows.zip (no Smash Classic files); manifests without "payload" are full
+    std::string smash_sha256; // hub-only: the BattleShip.exe hash the (signed) marker named; the applier re-checks the installed exe against it
 };
 StagedInfo scan_staged(const std::string& staged_dir);                       // counts the regular files under the dir
 std::string staged_manifest_json(const StagedInfo& s);
 bool parse_staged_manifest(const std::string& text, StagedInfo* out);
 /* The manifest names `version`, matches what is on disk, and the required exes are there (RetroHub.exe, plus BattleShip.exe for a
  * full payload): the download can be skipped. *hub_only (optional) says which kind is staged. */
-bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only = nullptr);
-bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only = false);
+bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only = nullptr, std::string* smash_sha256 = nullptr);
+/* A hub-only manifest without a valid smash_sha256 is not reusable (the hand-off could not re-check the installed Smash Classic). */
+bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only = false, const std::string& smash_sha256 = std::string());
 }
 
 } // namespace hubupdate
