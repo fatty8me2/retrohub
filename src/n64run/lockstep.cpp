@@ -150,7 +150,7 @@ void Lockstep::pump() {
         } else if (msg[0] == kPktCheats) {
             // handshake leftovers: ignore
         } else if (msg[0] == kPktReady) {
-            if (msg.size() >= 2 && msg[1] < 8) { ready_mask_ |= 1u << msg[1]; if (msg.size() >= 3) caps_[msg[1]] = msg[2]; rsv_[msg[1]] = msg.size() >= 4 ? msg[3] : 0; }   // 4th byte: the ports it plugs in for drop-in
+            if (ready_slot_ok(from, msg.data(), msg.size())) { ready_mask_ |= 1u << msg[1]; if (msg.size() >= 3) caps_[msg[1]] = msg[2]; rsv_[msg[1]] = msg.size() >= 4 ? msg[3] : 0; }   // 4th byte: the ports it plugs in for drop-in
         } else {
             core_.on_packet(from, msg.data(), msg.size());
         }
@@ -240,10 +240,10 @@ void Lockstep::drop_on_msg(int from, const std::vector<uint8_t>& msg, uint32_t n
     if (!netdrop::decode(kPktDrop, msg.data(), msg.size(), &m) || m.from != from || from >= kPorts || m.dead >= kPorts) return;
     if (m.dead == opt_.my_slot || m.dead == 0 || !(core_.slot_mask() >> m.dead & 1u)) return;
     if (core_.drop_done(m.dead) && !drops_.count(m.dead)) return;
-    if (!drop_msg_allowed(from, drops_.count(m.dead) || core_.drop_begun(m.dead))) {   // a guest cannot make me drop someone I still hear
-        static uint32_t logged = 0;   // one line per (sender, target): the sender repeats every 100 ms
-        const uint32_t bit = 1u << (from * kPorts + m.dead);
-        if (hooks_.log && !(logged & bit)) { logged |= bit; hooks_.log("drop: ignored a request from slot " + std::to_string(from) + " to drop slot " + std::to_string((int)m.dead) + " (only the host can)"); }
+    const uint32_t silent = last_rx_[m.dead] ? now - last_rx_[m.dead] : 0u;
+    if (!drop_msg_allowed(from, drops_.count(m.dead) || core_.drop_begun(m.dead), silent, opt_.drop_silence_ms)) {   // a guest cannot make me drop someone I still hear
+        const uint32_t bit = 1u << (from * kPorts + m.dead);   // one log line per (sender, target): the sender repeats every 100 ms
+        if (hooks_.log && !(drop_ignored_logged_ & bit)) { drop_ignored_logged_ |= bit; hooks_.log("drop: ignored a request from slot " + std::to_string(from) + " to drop slot " + std::to_string((int)m.dead) + " (only the host can)"); }
         return;
     }
     if (!drops_.count(m.dead)) drop_begin(m.dead, now);

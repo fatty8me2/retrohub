@@ -29,6 +29,7 @@ namespace netdrop {
 
 constexpr int kWindow = 32;           // indices of input per port that travel with a message
 constexpr int kMaxPorts = 4;
+constexpr uint32_t kMaxAhead = 2 * kWindow;   // a received proposal may exceed the receiver's own by at most this
 
 struct PortWin { uint8_t port = 0; std::vector<uint64_t> vals; };   // vals[i] = input index first + i
 
@@ -96,6 +97,11 @@ class Agreement {
 
     void on_msg(int from, uint32_t proposal, uint8_t heard) {
         if (from < 0 || from >= 8 || from == me_ || !(survivors_ >> from & 1u)) return;
+        // A proposal further ahead than a window of input can carry is not a real one (the window is how a survivor gets
+        // the missing inputs): clamp it, so a forged huge value cannot push the cutoff far out and freeze the port.
+        uint32_t cap = prop_[me_] + kMaxAhead;
+        if (cap < prop_[me_]) cap = 0xFFFFFFFFu;
+        if (proposal > cap) proposal = cap;
         if (!(have_ >> from & 1u)) { have_ |= 1u << from; prop_[from] = proposal; }
         heard_[from] = heard;
     }

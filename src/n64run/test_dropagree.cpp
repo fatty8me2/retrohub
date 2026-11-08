@@ -128,9 +128,52 @@ static void test_policy() {
     // never about myself
     CHECK(!bye_becomes_drop(1, 1, 0b111, 0));
     // kick: host's request starts a drop; a guest's only joins one already begun
-    CHECK(drop_msg_allowed(0, false));
-    CHECK(!drop_msg_allowed(2, false));
-    CHECK(drop_msg_allowed(2, true));
+    CHECK(drop_msg_allowed(0, false, 0, 3000));        // host kick works even if I hear the victim
+    CHECK(drop_msg_allowed(0, false, 10, 3000));
+    CHECK(!drop_msg_allowed(2, false, 0, 3000));       // guest kick of someone I never lost: ignored
+    CHECK(!drop_msg_allowed(2, false, 100, 3000));     // ... or hear fine
+    CHECK(!drop_msg_allowed(2, false, 1499, 3000));
+    CHECK(drop_msg_allowed(2, false, 1500, 3000));     // I have not heard the victim for half the limit: join the drop
+    CHECK(drop_msg_allowed(2, true, 0, 3000));         // a drop I already began
+    CHECK(!drop_msg_allowed(2, false, 5000, 0));       // silence drops switched off: a guest cannot start one
+    // forged Ready: the slot in the packet must be the sender's
+    const uint8_t rd[4] = {kPktReady, 2, 0, 0};
+    CHECK(ready_slot_ok(2, rd, 4));
+    CHECK(!ready_slot_ok(1, rd, 4));
+    CHECK(!ready_slot_ok(-1, rd, 4));
+    CHECK(!ready_slot_ok(2, rd, 1));
+}
+
+// A guest proposes a huge cutoff for a victim an honest peer is already dropping: it is clamped.
+static void test_clamp() {
+    netdrop::Agreement a(1, 0b101, 0, 100);
+    a.on_msg(2, 0xFFFFFFFFu, 0b101);
+    CHECK(a.decided() && a.cutoff() == 100 + netdrop::kMaxAhead);
+    netdrop::Agreement b(1, 0b101, 0, 100);   // an honest proposal inside the bound is untouched
+    b.on_msg(2, 120, 0b101);
+    CHECK(b.cutoff() == 120);
+    netdrop::Agreement c(1, 0b101, 0, 0xFFFFFFF0u);   // no wrap-around near the top
+    c.on_msg(2, 0xFFFFFFFFu, 0b101);
+    CHECK(c.cutoff() == 0xFFFFFFFFu);
+}
+
+// "One survivor still hears the victim": guest 2 lost slot 1, host 0 still hears it. The host starts nothing on
+// its own; it must accept guest 2's request once its own silence timer is half-way, and then both agree one cutoff.
+static void test_partial_loss() {
+    const uint32_t silence = 3000;
+    CHECK(!drop_msg_allowed(2, false, 40, silence));      // host hears slot 1 right now: a kick is refused
+    CHECK(drop_msg_allowed(2, false, 1600, silence));     // slot 1 really went quiet for the host too: join
+    LockstepCore::Config cfg;
+    cfg.owner[0] = 0; cfg.owner[1] = 1; cfg.owner[2] = 2; cfg.num_slots = 3; cfg.delay = 2;
+    LockstepCore::Config c0 = cfg, c2 = cfg; c0.my_slot = 0; c2.my_slot = 2;
+    LockstepCore p0(c0), p2(c2);
+    uint32_t pr2 = p2.begin_drop(1);   // guest 2 began first
+    netdrop::Agreement a2(1, 0b101, 2, pr2);
+    uint32_t pr0 = p0.begin_drop(1);   // host joined on guest 2's message
+    netdrop::Agreement a0(1, 0b101, 0, pr0);
+    a0.on_msg(2, a2.my_proposal(), a2.heard_mask());
+    a2.on_msg(0, a0.my_proposal(), a0.heard_mask());
+    CHECK(a0.decided() && a2.decided() && a0.cutoff() == a2.cutoff());
 }
 
 // Simulated mesh: N players play K samples; the `leavers` stop (their last packet reaches everybody); the others
@@ -152,7 +195,7 @@ static void sim_leave(int n, uint32_t leavers) {
             for (int j = 0; j < n; j++) if (j != i) p[j]->on_packet(i, pk, pn);
         }
     }
-    uint32_t gone = 0, all = (1u << n) - 1;
+    uint32_t all = (1u << n) - 1;
     std::vector<int> surv;
     for (int i = 0; i < n; i++) if (!(leavers >> i & 1u)) surv.push_back(i);
     // every survivor processes the byes (in slot order) through the policy
@@ -171,7 +214,6 @@ static void sim_leave(int n, uint32_t leavers) {
             g |= 1u << l;
         }
     }
-    (void)gone;
     bool host_left = leavers & 1u;
     CHECK(ends == (host_left || surv.size() < 2));
     if (ends) return;   // the match ends (host left / nobody else): the old behaviour, checked by test_policy
@@ -220,6 +262,8 @@ static void test_sims() {
 
 int main() {
     test_policy();
+    test_clamp();
+    test_partial_loss();
     test_sims();
     test_agreement();
     test_core_drop(false);
