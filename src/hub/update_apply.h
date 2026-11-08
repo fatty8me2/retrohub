@@ -16,7 +16,7 @@
  * Never touched: userdata\, saves, BattleShip.o2r, logs, updates\ (see is_excluded()).
  *
  * Flags: --version <tag>  --from <tag>  --no-relaunch  --retries <n>  --retry-ms <ms>  --game-active
- *        --started-marker <file>  --backup-dir <dir>  --wait-secs <n>  --hub-wait-secs <n>  --hub-only
+ *        --started-marker <file>  --backup-dir <dir>  --wait-secs <n>  --hub-wait-secs <n>  --hub-only --smash-sha256 <hex>
  * Exit code: 0 applied, 1 failed (rolled back), 2 usage, 3 postponed (a game was still running; nothing changed). */
 
 #include <string>
@@ -32,6 +32,7 @@ struct Options {
     std::wstring from_version;               // the tag being replaced: recovery only restores a backup onto the version it came from
     std::wstring started_marker;             // created as soon as the applier is running
     bool relaunch = true;
+    std::wstring smash_sha256;               // --smash-sha256: with hub_only, the SHA-256 the installed BattleShip.exe must still have (else the apply is refused untouched)
     bool hub_only = false;                   // --hub-only: the staged files are RetroHub's part (RetroHub-windows.zip); Smash Classic's files are never replaced
     bool game_active = false;                // --game-active: a game was running when the update started; relaunch RetroHub minimised (no focus)
     int retries = 10;                        // per-file copy attempts
@@ -51,6 +52,7 @@ struct Result {
     bool backup_kept = false;                // a restore failed: the backup dir holds the only good copy of unrestored[]
     std::wstring backup_dir;
     std::vector<std::wstring> unrestored;    // relative paths whose restore failed
+    bool smash_changed = false;              // hub-only apply refused: the installed BattleShip.exe is not the one the update was made for (nothing touched)
     int copied = 0;
     unsigned long err = 0;                   // Windows error of the failing step
     std::wstring error;
@@ -65,6 +67,7 @@ bool path_is_under(const std::wstring& dir, const std::wstring& path);   // case
 bool is_smash_classic_file(const std::wstring& rel);
 /* hub_only: also drops Smash Classic's files (see above). */
 std::vector<std::wstring> list_staged(const std::wstring& staged, bool hub_only = false);       // relative, backslashes, exclusions applied, sorted
+std::string sha256_file_hex(const std::wstring& path);   // lowercase hex, "" when the file cannot be read
 std::string plain_reason(unsigned long win_error);   // "a file was in use by another program", "the disk is full", ...
 
 /* ---- processes from the install folder (a game, an emulator ...) ---- */

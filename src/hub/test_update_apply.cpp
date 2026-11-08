@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -195,6 +196,10 @@ static void check_smash_untouched(const fs::path& install) {
     CHECK(get(install / L"userdata\\hub.json") == "user-settings");
     CHECK(get(install / L"userdata\\saves\\mario.sav") == "user-save");
 }
+static std::wstring bs_hash(const fs::path& install) {
+    std::string h = sha256_file_hex((install / L"BattleShip.exe").wstring());
+    return std::wstring(h.begin(), h.end());
+}
 static void check_hub_new(const fs::path& install) {
     CHECK(get(install / L"RetroHub.exe") == "new-hub");
     CHECK(get(install / L"n64run.exe") == "new-n64");
@@ -318,6 +323,9 @@ int main(int argc, char** argv) {
         auto fl = list_staged(staged.wstring(), true);
         CHECK(fl.size() == 7);
         Options ho; ho.staged = staged.wstring(); ho.install = install.wstring(); ho.backup = (root / L"hub_ok" / L"bk").wstring(); ho.hub_only = true;
+        const std::wstring BSH = bs_hash(install);   // every hub scene has the same BattleShip.exe bytes
+        CHECK(BSH.size() == 64);
+        ho.smash_sha256 = BSH;
         Result hr = apply_files(ho);
         CHECK(hr.ok); CHECK(hr.copied == 7);
         check_hub_new(install); check_smash_untouched(install);
@@ -341,6 +349,28 @@ int main(int argc, char** argv) {
         ho.staged = staged.wstring(); ho.install = install.wstring(); ho.backup.clear();
         hr = apply_files(ho);
         CHECK(!hr.ok); check_hub_old(install); check_smash_untouched(install);
+        // the installed BattleShip.exe is not the build the update was made for (a reinstall / another update landed since it was staged):
+        // refused before any file is touched, backup never created, Smash Classic untouched
+        hub_scene(root / L"hub_changed", &staged, &install, false);
+        put(install / L"BattleShip.exe", "smash-BattleShip.exe-DIFFERENT"); age_files(install);
+        ho.staged = staged.wstring(); ho.install = install.wstring(); ho.backup = (root / L"hub_changed" / L"bk").wstring();
+        hr = apply_files(ho);
+        CHECK(!hr.ok && hr.smash_changed && !hr.error.empty() && hr.copied == 0);
+        check_hub_old(install);
+        CHECK(get(install / L"BattleShip.exe") == "smash-BattleShip.exe-DIFFERENT");
+        CHECK(!has(root / L"hub_changed" / L"bk"));
+        // missing BattleShip.exe, no hash, a wrong-length hash: all refused untouched
+        hub_scene(root / L"hub_nobs", &staged, &install, false);
+        fs::remove(install / L"BattleShip.exe");
+        ho.staged = staged.wstring(); ho.install = install.wstring(); ho.backup.clear();
+        hr = apply_files(ho);
+        CHECK(!hr.ok && hr.smash_changed); check_hub_old(install);
+        hub_scene(root / L"hub_nohash", &staged, &install, false);
+        ho.staged = staged.wstring(); ho.install = install.wstring();
+        { Options n = ho; n.smash_sha256.clear(); hr = apply_files(n); CHECK(!hr.ok && hr.smash_changed); check_hub_old(install); check_smash_untouched(install); }
+        { Options n = ho; n.smash_sha256 = L"abc"; hr = apply_files(n); CHECK(!hr.ok && hr.smash_changed); check_hub_old(install); check_smash_untouched(install); }
+        { Options n = ho; n.smash_sha256 = BSH; for (auto& c : n.smash_sha256) c = (wchar_t)towupper(c); n.backup = (root / L"hub_nohash" / L"bk").wstring();
+          hr = apply_files(n); CHECK(hr.ok); check_hub_new(install); check_smash_untouched(install); }   // hex case does not matter
         // a locked hub file: full rollback, Smash Classic still untouched, user data untouched
         hub_scene(root / L"hub_lock", &staged, &install, false);
         ho.staged = staged.wstring(); ho.install = install.wstring(); ho.backup = (root / L"hub_lock" / L"bk").wstring(); ho.retries = 1; ho.retry_ms = 0;
@@ -581,10 +611,22 @@ int main(int argc, char** argv) {
         // hub-only through the real applier (--hub-only): RetroHub's files replaced, Smash Classic's untouched, staged cleaned up
         {
             hub_scene(root / L"i_hub", &staged, &install, true);
-            rc = run_hidden(cmdFor(staged, install, 0, L"--version v9.9.9 --from v1.0.0 --hub-only --tmp-root \"" + (root / L"i_hub" / L"tmp").wstring() + L"\""));
+            rc = run_hidden(cmdFor(staged, install, 0, L"--version v9.9.9 --from v1.0.0 --hub-only --smash-sha256 " + bs_hash(install) + L" --tmp-root \"" + (root / L"i_hub" / L"tmp").wstring() + L"\""));
             CHECK(rc == 0);
             check_hub_new(install); check_smash_untouched(install);
             CHECK(!has(staged));
+            // the installed BattleShip.exe no longer matches the hash handed over: refused, nothing changed, staged files dropped, a note for the bell
+            hub_scene(root / L"i_hub3", &staged, &install, false);
+            rc = run_hidden(cmdFor(staged, install, 0, L"--version v9.9.9 --from v1.0.0 --hub-only --smash-sha256 " + std::wstring(64, L'a') + L" --tmp-root \"" + (root / L"i_hub3" / L"tmp").wstring() + L"\""));
+            CHECK(rc == 1);
+            check_hub_old(install); check_smash_untouched(install);
+            CHECK(!has(staged));
+            { Status st; CHECK(read_status(default_status_path(install.wstring()), &st) && st.result == "failed" && st.reason == "Smash Classic changed" && status_line(st).size() <= 40); }
+            // --hub-only with no hash at all is refused too
+            hub_scene(root / L"i_hub4", &staged, &install, false);
+            rc = run_hidden(cmdFor(staged, install, 0, L"--version v9.9.9 --from v1.0.0 --hub-only --tmp-root \"" + (root / L"i_hub4" / L"tmp").wstring() + L"\""));
+            CHECK(rc == 1); check_hub_old(install); check_smash_untouched(install);
+            hub_scene(root / L"i_hub", &staged, &install, true);
             // without --hub-only the very same staged files (no BattleShip.exe) are refused and nothing changes
             hub_scene(root / L"i_hub2", &staged, &install, false);
             rc = run_hidden(cmdFor(staged, install, 0, L"--version v9.9.9 --from v1.0.0 --tmp-root \"" + (root / L"i_hub2" / L"tmp").wstring() + L"\""));
