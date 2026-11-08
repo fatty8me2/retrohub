@@ -34,7 +34,11 @@ struct Plan {
 /* ",\"np_3ds\":{...}" (leading comma) ready to append to the launch message body. */
 std::string plan_json_fragment(const Plan& p);
 bool parse_plan(const hubui::Json& launch_msg, Plan* out);   // false when the key is absent or malformed
-std::string random_password(unsigned seed);                    // 12 alphanumeric chars
+std::string random_password(unsigned seed);                    // 12 alphanumeric chars (deterministic per seed; tests)
+std::string new_room_password();                                // onlineflow-M6: 12 chars from the OS random source, one per launch
+/* The host's page makes the password, puts it in the launch message and hands the same one to launch_online_3ds() through here. */
+void set_pending_host_password(const std::string& pw);
+std::string take_pending_host_password();                      // "" when none was set; cleared by the call
 
 /* Azahar nickname rules: 4..20 chars of [A-Za-z0-9 ._-]. Made unique per room by the slot suffix. */
 std::string nickname(const std::string& player_name, int slot);

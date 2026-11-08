@@ -2,6 +2,7 @@
 #include "../net/username.h"
 #include <fstream>
 #include <iterator>
+#include <random>
 
 namespace hubnp3ds {
 
@@ -36,6 +37,18 @@ std::string random_password(unsigned seed) {
     }
     return s;
 }
+
+std::string new_room_password() {
+    static const char a[] = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    std::random_device rd;   // not the launch seed (that one travels in the clear to every member and spectator)
+    std::string s;
+    for (int i = 0; i < 12; ++i) s += a[rd() % (sizeof a - 1)];
+    return s;
+}
+
+static std::string g_pending_host_pw;
+void set_pending_host_password(const std::string& pw) { g_pending_host_pw = pw; }
+std::string take_pending_host_password() { std::string p; p.swap(g_pending_host_pw); return p; }
 
 std::string nickname(const std::string& player_name, int slot) {
     /* Names may hold spaces, symbols and Latin-1 letters: accents fold to base letters, spaces become _, everything else is dropped. */

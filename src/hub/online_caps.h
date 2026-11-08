@@ -19,6 +19,26 @@ inline bool system_has_online_launch(hub::System s) {
     }
 }
 
+/* "Use host's save" (onlineflow-M11): the systems whose launch_online() branch copies the host's battery save / memory card into the
+ * throwaway session dir and passes --share-host-save (guests' own saves are never touched; nobody writes into a vault). KEEP IN SYNC with
+ * those branches in launch_online.cpp. Kanto Together and the link-cable/DS/GC/3DS/Wii U paths have their own save rules. */
+inline bool share_host_save_supported(hub::System s) {
+    switch (s) {
+        case hub::System::N64: case hub::System::GBA: case hub::System::GB: case hub::System::GBC:
+        case hub::System::NES: case hub::System::SNES: case hub::System::PS1: case hub::System::PS2:
+            return true;
+        default: return false;
+    }
+}
+inline bool share_host_save_is_card(hub::System s) { return s == hub::System::PS1 || s == hub::System::PS2; }
+inline const char* share_host_save_label(hub::System s) {
+    return share_host_save_is_card(s) ? "Use host's memory card (saved games)" : "Use host's save (unlocked characters/boards)";
+}
+inline const char* share_host_save_state_text(hub::System s, bool on) {
+    if (share_host_save_is_card(s)) return on ? "Using the host's memory card (saved games)." : "Starting from a blank memory card.";
+    return on ? "Using the host's save (unlocked characters/boards)." : "Starting from an empty save.";
+}
+
 /* Remote play: the host runs the emulator and streams video to guests (streamrun), guests send pad input back. Guests need no copy
  * of the game. Today: Wii U (Cemu) only. */
 inline bool remote_play_system(hub::System s) { return s == hub::System::WiiU; }
