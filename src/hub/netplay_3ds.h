@@ -36,6 +36,12 @@ std::string plan_json_fragment(const Plan& p);
 bool parse_plan(const hubui::Json& launch_msg, Plan* out);   // false when the key is absent or malformed
 std::string random_password(unsigned seed);                    // 12 alphanumeric chars (deterministic per seed; tests)
 std::string new_room_password();                                // onlineflow-M6: 12 chars from the OS random source, one per launch
+/* A room password is set ONLY when every seated member runs a RetroHub that fills Azahar's password box (older builds join with an empty one and
+ * would be locked out). `apps` = each seated member's hello version string (the host's included); "" or not yet announced = not capable. */
+constexpr const char* kPasswordMinApp = "1.39.1";   // first release whose Direct Connect helper passes the room password
+bool room_password_supported(const std::vector<std::string>& apps);
+/* Security note: the password is visible on the azahar-room and join-helper command lines of this PC only (local processes); it never leaves
+ * the room's members except through the launch message (see docs: watchers of a 3DS room are refused by the client). */
 /* The host's page makes the password, puts it in the launch message and hands the same one to launch_online_3ds() through here. */
 void set_pending_host_password(const std::string& pw);
 std::string take_pending_host_password();                      // "" when none was set; cleared by the call

@@ -428,7 +428,7 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
         plan.expected = (int)A.lobby.members().size();
         plan.port = hubnp3ds::kDefaultRoomPort;
         plan.password = hubnp3ds::take_pending_host_password();   // onlineflow-M6: the one the launch message carries; members only
-        if (plan.password.empty()) plan.password = hubnp3ds::new_room_password();
+        // empty = a mixed-version room: no password, exactly as before
         std::string room = hubnp3ds::room_exe_for(inst.exe);
         std::string wd = no_slash(hub::data_dir()) + "\\netplay\\3ds";
         make_dirs(wd);

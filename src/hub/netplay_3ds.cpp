@@ -46,6 +46,16 @@ std::string new_room_password() {
     return s;
 }
 
+bool room_password_supported(const std::vector<std::string>& apps) {
+    if (apps.empty()) return false;
+    for (const std::string& a : apps) {
+        if (a.empty()) return false;
+        int c = hubui::compare_app_versions(a, kPasswordMinApp);
+        if (c == 2 || c < 0) return false;   // unparsable or older than the first password-aware release
+    }
+    return true;
+}
+
 static std::string g_pending_host_pw;
 void set_pending_host_password(const std::string& pw) { g_pending_host_pw = pw; }
 std::string take_pending_host_password() { std::string p; p.swap(g_pending_host_pw); return p; }
@@ -67,6 +77,7 @@ std::string nickname(const std::string& player_name, int slot) {
 
 static std::string q(const std::string& s) { return "\"" + s + "\""; }
 
+/* The password is on this PC's azahar-room / join-helper command lines: visible to local processes only, which is accepted. */
 std::string room_args(int port, const std::string& pw, int max_members, const std::string& log_file, const std::string& ban_file) {
     std::string a = "--port " + std::to_string(port) + " --room-name RetroHub --max_members " + std::to_string(max_members) +
                     " --preferred-app RetroHub --preferred-app-id 0";
