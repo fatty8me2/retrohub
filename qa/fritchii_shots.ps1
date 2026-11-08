@@ -1,6 +1,6 @@
 # Headless UI shots for the Fritchii runner (a Lichii fork, opt-in): Settings > Switch block (runner choice + Install/Update Fritchii), the Play prompt to
 # install Fritchii, the game's Settings tab "Plays with" row and the Hookshot card with three runners.
-# The Fritchii pin is still a placeholder, so HUB_SHOT_FRITCHII_PIN=1 / HUB_SHOT_EMU=fritchii make the shot build pretend it has a real one; HUB_SHOT_EMU=fritchiiunpublished shows the real placeholder state.
+# The shots use the REAL Fritchii pin (set HUB_SHOT_FRITCHII_PIN=1 yourself to fake one).
 # Every run is hidden, muted, no network (HUB_SCREENSHOT mode) and killed by PID if it overruns. The library is copied (small top-level files + art) into a temp folder; -DataFrom is only read.
 # Usage: qa\fritchii_shots.ps1 [-DataFrom <userdata dir>] [-Build <bin\Release>] [-Out <dir>] [-Sizes 1280x800] [-Secs 12]
 param([string]$DataFrom = "C:\Users\fatty\Desktop\smashClassic\userdata", [string]$Build = "", [string]$Out = "",
@@ -17,7 +17,7 @@ if (-not [System.IO.Path]::IsPathRooted($Out)) { $Out = Join-Path (Get-Location)
 New-Item -ItemType Directory -Force $Out | Out-Null
 $Sizes = @($Sizes | ForEach-Object { "$_" -split "," } | Where-Object { $_ })
 Add-Type -AssemblyName System.Drawing
-$FakeSha = "1111111111111111111111111111111111111111111111111111111111111111"
+$FakeSha = "068fb4c66b2e32447ac7690393039043854de4b189aa7e95b34c4bf0d2a4080e"   # the real Fritchii v4.1 pin: a current install
 
 function New-Copy([string]$tag, [bool]$lichii, [bool]$fritchii, [string]$gameSettingsJson = "") {
     $run = Join-Path $env:TEMP ("rh_frit_" + $tag + "_" + [guid]::NewGuid().ToString("N").Substring(0, 6))
@@ -98,11 +98,10 @@ try {
     $both = New-Copy "both" $true $true $frJson;  $copies += $both       # both installed, OoT set to Fritchii
     Write-Host "copies: $lonly | $both"
     foreach ($s in $Sizes) {
-        foreach ($t in 20, 23) { Shot "settings-switch-fritchii-not-installed-scroll$t" $lonly $s @{ HUB_SHOT_PAGE = "settings:2"; HUB_SHOT_FRITCHII_PIN = "1" } $t }
-        foreach ($t in 20, 23) { Shot "settings-switch-fritchii-installed-scroll$t" $both $s @{ HUB_SHOT_PAGE = "settings:2"; HUB_SHOT_FRITCHII_PIN = "1" } $t }
+        foreach ($t in 20, 23) { Shot "settings-switch-fritchii-not-installed-scroll$t" $lonly $s @{ HUB_SHOT_PAGE = "settings:2" } $t }
+        foreach ($t in 20, 23) { Shot "settings-switch-fritchii-installed-scroll$t" $both $s @{ HUB_SHOT_PAGE = "settings:2" } $t }
         Shot "play-prompt-install-fritchii" $lonly $s @{ HUB_SHOT_EMU = "fritchii" }
-        Shot "play-prompt-fritchii-unpublished" $lonly $s @{ HUB_SHOT_EMU = "fritchiiunpublished" }
-        Shot "game-settings-plays-with" $both $s @{ HUB_SHOT_FAKE_LIB = "2"; HUB_SHOT_HOOKSHOT = "done_fritchii"; HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "3"; HUB_SHOT_FRITCHII_PIN = "1" } 12
+        Shot "game-settings-plays-with" $both $s @{ HUB_SHOT_FAKE_LIB = "2"; HUB_SHOT_HOOKSHOT = "done_fritchii"; HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "3" } 12
         Shot "card-three-runners" $both $s @{ HUB_SHOT_FAKE_LIB = "2"; HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "0"; HUB_SHOT_HOOKSHOT = "done_fritchii" } 30
     }
 }

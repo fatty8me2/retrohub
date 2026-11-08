@@ -1331,12 +1331,25 @@ static void test_fritchii_install(const fs::path& root) {
     CHECK(hubemu::managed_dir(K, root.string()) != hubemu::managed_dir(hubemu::Kind::Lichii, root.string()));
     CHECK(fs::u8path(hubemu::managed_dir(K, root.string())).filename() == "fritchii");
     CHECK(std::wstring(hubemu::release(K).exe) == L"lichii.exe" && std::string(hubemu::release(K).license) == "GPL-3.0" && std::string(hubemu::release(K).version) == "v4.1");
-    // the placeholder pin: nothing to download yet, the install refuses with a plain message and creates nothing
-    CHECK(hubemu::release_is_placeholder(K) && !hubemu::release_is_placeholder(hubemu::Kind::Lichii));
+    // the real pin (GitHub Actions build, artifact 13607057841)
     {
+        const hubemu::Release& r = hubemu::release(K);
+        CHECK(!hubemu::release_is_placeholder(K) && !hubemu::release_is_placeholder(hubemu::Kind::Lichii));
+        CHECK(std::wstring(r.host) == L"github.com" && std::wstring(r.path) == L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v4.1/Fritchii-v4.1-RetroHub-windows-x64.zip");
+        CHECK(r.size == 119612370ull && std::string(r.sha256) == "068fb4c66b2e32447ac7690393039043854de4b189aa7e95b34c4bf0d2a4080e");
+    }
+    // a placeholder pin (all-zero sha) still refuses with a plain message and creates nothing
+    {
+        const hubemu::Release ph = {"v0", L"github.com", L"/x/y.zip", 0, "0000000000000000000000000000000000000000000000000000000000000000", L"lichii.exe", "GPL-3.0"};
+        hubemu::InstallTestHooks hp;
+        hp.kind = K;
+        hp.release = &ph;
+        hubemu::set_install_test_hooks(&hp);
+        CHECK(hubemu::release_is_placeholder(K));
         std::string err;
         CHECK(!hubemu::install_blocking(K, root.string(), &err, nullptr) && err.find("not published") != std::string::npos);
         CHECK(hubemu::find(K, "", "", root.string()).exe.empty());
+        hubemu::set_install_test_hooks(nullptr);
     }
     auto v1 = make_rel(root / "zips" / "f1.zip", "v4.1", {{"lichii.exe", "FEXE-1"}, {"eden-cli.exe", "cli"}, {"lichii.pdb", "pdb"}, {"vc_redist.x64.exe", "vc"}, {"Qt6Core.dll", "qt"}});
     hubemu::InstallTestHooks hk;
