@@ -97,6 +97,19 @@ bool gn_on_message(const std::string& uid, const std::string& name, const std::s
     return true;
 }
 
+void gn_open_night(const std::string& id) {
+    load_once();
+    Night* n = GN.plans.find(id);
+    if (!n || phase_of(*n, wall_ms()) == Phase::Over) { if (!quiet()) set_notice("That game night is over or is not on your list."); return; }
+    if (quiet()) note_bell(*n, "Game night: " + n->game_title + " " + when_text(*n, wall_ms()) + ".");
+    else fr_notify_night(n->id, n->mine ? "You" : n->host_name);
+}
+
+void gn_shutdown() {
+    if (!GN.loaded) return;
+    try { toast_sync(true, true); } catch (...) {}
+}
+
 void gn_tick() {
     load_once();
     long long now = wall_ms();

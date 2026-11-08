@@ -136,6 +136,27 @@ static void single_instance_tests() {
     server.stop();
 }
 
+static void night_tests() {
+    std::wstring id;
+    check(invite_parse_night_url(L"retrohub://night/abc123@1700000000", &id) && id == L"abc123@1700000000", "night link parses");
+    check(invite_parse_night_url(L"RETROHUB://night/me@1700000000/", &id) && id == L"me@1700000000", "night link: case, trailing slash");
+    check(invite_parse_night_url(L"\"retrohub://night/u-1.x_y@1700000000?x=1\"", &id) && id == L"u-1.x_y@1700000000", "night link: quotes and query");
+    check(invite_parse_night_url(L"retrohub://night/a%40123", &id) && id == L"a@123", "night link: %-encoded @");
+    check(invite_parse_night_command_line(L"\"C:\\x\\RetroHub.exe\" retrohub://night/u1@1700000000", &id) && id == L"u1@1700000000", "night command line");
+    check(!invite_parse_night_url(L"retrohub://night/", &id) && !invite_parse_night_url(L"retrohub://night/@123", &id), "night: empty id / empty uid rejected");
+    check(!invite_parse_night_url(L"retrohub://night/u1@", &id) && !invite_parse_night_url(L"retrohub://night/u1@12x", &id), "night: bad seconds rejected");
+    check(!invite_parse_night_url(L"retrohub://night/u1@123456789012", &id), "night: 12-digit seconds rejected");
+    check(!invite_parse_night_url(L"retrohub://night/u1", &id) && !invite_parse_night_url(L"retrohub://night/..\\evil@1", &id), "night: no @ / path chars rejected");
+    check(!invite_parse_night_url(L"retrohub://night/a b@1", &id) && !invite_parse_night_url(L"retrohub://night/a;b@1", &id), "night: odd chars rejected");
+    check(!invite_parse_night_url(L"retrohub://night/" + std::wstring(61, L'a') + L"@1", &id), "night: 61-char uid rejected");
+    check(invite_parse_night_url(L"retrohub://night/" + std::wstring(60, L'a') + L"@1", &id), "night: 60-char uid accepted");
+    check(!invite_parse_night_url(L"retrohub://night/" + std::wstring(5000, L'a') + L"@1", &id), "night: over-long link rejected");
+    check(!invite_parse_night_url(L"retrohub://join/ABC234", &id) && !invite_parse_night_url(L"retrohub://nightx/u@1", &id), "night: other links are not night links");
+    std::wstring code;
+    check(!invite_parse_url(L"retrohub://night/u1@1700000000", &code), "a night link is never a join code");
+    check(invite_is_valid_night_id(L"u1@1700000000") && !invite_is_valid_night_id(L"") && !invite_is_valid_night_id(L"@"), "night id validator");
+}
+
 static void play_tests() {
     std::wstring k;
     check(invite_parse_play(L"\"C:\\x\\RetroHub.exe\" --play n64-abc123", &k) && k == L"n64-abc123", "--play <key> parses");
@@ -159,6 +180,7 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 3 && std::wstring(argv[1]) == L"--sendshow") return invite_send_show(argv[2], 3000) ? 0 : 1;
     parsing_tests();
     play_tests();
+    night_tests();
     link_tests();
     single_instance_tests();
     std::printf("%s\n", g_fail ? "FAILED" : "all passed");
