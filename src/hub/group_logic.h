@@ -23,6 +23,17 @@ constexpr size_t kMaxGroups = 5;
 constexpr size_t kMaxNotifs = 50;
 constexpr int64_t kDayMs = 24LL * 60 * 60 * 1000;
 
+/* Where an invite / "came online" event goes. The bell entry always happens. The opt-in Windows toast is only ever allowed when NO game
+ * or session runs (never over a game, even if opted in). While a game or session runs the runner's on-screen display carries an
+ * INVITE (only if the runner has a control channel); "came online" goes to the bell only. Nothing is replayed later. */
+struct EventRoute { bool bell = true; bool windows_toast = false; bool osd = false; };
+inline EventRoute route_event(bool game_active, bool session_active, bool runner_has_osd, bool headless) {
+    EventRoute r;
+    r.windows_toast = !game_active && !session_active && !headless;
+    r.osd = (game_active || session_active) && runner_has_osd && !headless;
+    return r;
+}
+
 /* "just now", "5 min ago", "3 hours ago", "yesterday", "2 days ago", "3 weeks ago", "5 months ago". */
 inline std::string ago_text(int64_t at, int64_t now) {
     if (at <= 0) return "";

@@ -241,7 +241,7 @@ void global_input() {
         }
     }
     if (A.page == Page::Library && (!A.lib.empty() || !A.ghosts.empty()) && ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false) && A.view != LibView::All) cycle_sort(1);   // All Games: RT pages (main.cpp), the Sort chip cycles the order
-    const bool nav_modal = lib_cases_active() && lib_cases_nav_blocking();   // typing in the Cases quick-jump must not favourite / open details
+    const bool nav_modal = FR.panel_focused || (lib_cases_active() && lib_cases_nav_blocking());   // friends panel focused: X/Y/I/F/S belong to it, not the library   // typing in the Cases quick-jump must not favourite / open details
     if (!nav_modal && A.page == Page::Library && A.sel_game.empty() && find_ghost(A.sel_ghost) &&
         (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (ImGui::IsKeyPressed(ImGuiKey_I, false) && !io.KeyCtrl))) A.show_ghost = true;
     if (!nav_modal && A.page == Page::Library && !A.lib.empty() && find_entry(A.sel_game)) {
