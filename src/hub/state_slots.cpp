@@ -1,8 +1,10 @@
 #include "state_slots.h"
 
 #include "json.h"
+#include "state_tombstones.h"
 
 #include <chrono>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -75,6 +77,16 @@ int count_states(const std::vector<StateSlot>& v, bool include_auto) {
 bool delete_state(const std::string& dir, int slot) {
     std::string b = base_name(slot);
     std::error_code ec;
+    /* cloud saves cannot delete one file: remember WHAT was deleted on this PC (size + SHA-256) so the sync does not bring that file back (saves-F15).
+     * Only this PC: other PCs keep their own copy. */
+    for (const char* ext : {".png", ".json", ".state"}) {
+        std::string vault, key;
+        hub::saves::tomb::Entry en;
+        if (hub::saves::tomb::key_for_state_file(dir, b + ext, &vault, &key) && hub::saves::tomb::identity_of_file(join(dir, b + ext), &en)) {
+            en.when = (int64_t)std::time(nullptr);
+            hub::saves::tomb::add(vault, key, en);
+        }
+    }
     fs::remove(fs::u8path(join(dir, b + ".png")), ec);
     fs::remove(fs::u8path(join(dir, b + ".json")), ec);
     fs::remove(fs::u8path(join(dir, b + ".state")), ec);

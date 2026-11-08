@@ -8,6 +8,9 @@
 #include "prefs.h"
 #include "library.h"
 #include "json.h"
+#include "game_settings.h"
+#include "cheat_store.h"
+#include "state_tombstones.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -970,6 +973,93 @@ static void test_account_prefs_two_pcs() {
     hub::library_set_data_dir("");
 }
 
+/* saves-F15: cloud saves has no per-file delete, so a state deleted on this PC is remembered here and never downloaded again (or pushed). */
+static void test_deleted_state_stays_deleted() {
+    printf(" deleted save states: not downloaded again; a newer save (here or on another PC) is live again\n");
+    Pc pc1("ds1"), pc2("ds2");
+    use(pc1);
+    put(pc1.game() / "battery" / "d.sra", rnd(500, 1), now_unix() - 1000);
+    put(pc1.game() / "states" / "slot1.state", rnd(40000, 2), now_unix() - 1000);
+    put(pc1.game() / "states" / "slot1.png", rnd(3000, 3), now_unix() - 1000);
+    put(pc1.game() / "states" / "slot2.state", rnd(40000, 4), now_unix() - 1000);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    CHECK(!g_srv->cur_sha(g_uid, GK, "states/slot1.state").empty() && !g_srv->cur_sha(g_uid, GK, "states/slot2.state").empty());
+    const str vault = pc1.vault.u8string();
+    /* control: deleted WITHOUT a tombstone (e.g. by hand) heals back from the cloud, as documented */
+    fs::remove(pc1.game() / "states" / "slot2.state");
+    /* the player deletes slot 1 in the app (state_slots.cpp delete_state records WHAT was deleted: size + SHA-256) */
+    auto delete_in_app = [&](const Pc& pc, const char* name) {
+        hub::saves::tomb::Entry e;
+        CHECK(hub::saves::tomb::identity_of_file((pc.game() / "states" / name).u8string(), &e));
+        e.when = now_unix();
+        hub::saves::tomb::add(pc.vault.u8string(), GK + "/states/" + name, e);
+        fs::remove(pc.game() / "states" / name);
+    };
+    delete_in_app(pc1, "slot1.state");
+    delete_in_app(pc1, "slot1.png");
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    cloud_wake_queue(); pump();
+    CHECK(!fs::exists(pc1.game() / "states" / "slot1.state") && !fs::exists(pc1.game() / "states" / "slot1.png"));   // stays deleted
+    CHECK(fs::exists(pc1.game() / "states" / "slot2.state"));                                                          // not recorded as deleted: healed
+    CHECK(!g_srv->cur_sha(g_uid, GK, "states/slot1.state").empty());                                                   // the cloud copy is untouched (other PCs keep theirs)
+    /* the player saves slot 1 again: a different file, so it is live again, uploaded, and the record is gone */
+    put(pc1.game() / "states" / "slot1.state", rnd(40000, 5), now_unix() - 5);   // (an OLDER clock reading changes nothing: no clocks are used)
+    const str s5 = sha256_hex_file((pc1.game() / "states" / "slot1.state").u8string());
+    play(); exit_game();
+    CHECK(g_srv->cur_sha(g_uid, GK, "states/slot1.state") == s5);
+    CHECK(!hub::saves::tomb::load(vault).count(GK + "/states/slot1.state"));
+    /* delete it again; another PC then uploads a different slot 1: that one is taken, only the exact deleted file is hidden */
+    delete_in_app(pc1, "slot1.state");
+    use(pc2);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    cloud_wake_queue(); pump();
+    put(pc2.game() / "states" / "slot1.state", rnd(40000, 6), now_unix() - 20);   // an older mtime than the deletion on PC1: still taken
+    play(); exit_game();
+    const str s6 = sha256_hex_file((pc2.game() / "states" / "slot1.state").u8string());
+    CHECK(g_srv->cur_sha(g_uid, GK, "states/slot1.state") == s6);
+    use(pc1);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    cloud_wake_queue(); pump();
+    CHECK(fs::exists(pc1.game() / "states" / "slot1.state") && sha256_hex_file((pc1.game() / "states" / "slot1.state").u8string()) == s6);
+}
+
+/* saves-F11: per-game settings and cheat choices follow the account, merged key by key. */
+static void test_settings_cheats_sync() {
+    printf(" per-game settings and cheats sync between PCs and merge\n");
+    Pc pc1("gs1"), pc2("gs2");
+    const str GA = "n64:aaaa", GB = "n64:bbbb";
+    auto gs_put = [](const Pc& pc, const str& game, const str& val, int64_t mtime) {
+        hub::gs::Store st; st.load(pc.vault.u8string());
+        hub::gs::set_stamp_clock(mtime);   // the entry's stamp = when this PC changed it
+        CHECK(st.set_game(game, hub::System::N64, "fullscreen", val));
+        hub::gs::set_stamp_clock(0);
+        CHECK(st.save(pc.vault.u8string()));
+    };
+    auto gs_val = [](const Pc& pc, const str& game) { hub::gs::Store st; st.load(pc.vault.u8string()); return st.resolve(hub::System::N64, game)["fullscreen"]; };
+    use(pc1);
+    cloud_account_prefs_changed(); pump();
+    CHECK(g_srv->cur_sha(g_uid, "_account/_", "_account/game_settings.json").empty());   // nothing customised: no file in the cloud
+    gs_put(pc1, GA, "true", now_unix() - 600);
+    { cheatstore::Store cs; cs.load(pc1.vault.u8string()); cs.set_on(GA, "c1", true, now_unix() - 600); CHECK(cs.save(pc1.vault.u8string())); }
+    cloud_account_prefs_changed(); pump();
+    CHECK(!g_srv->cur_sha(g_uid, "_account/_", "_account/game_settings.json").empty());
+    CHECK(!g_srv->cur_sha(g_uid, "_account/_", "_account/cheats.json").empty());
+    /* PC2 has its own choices for another game (and the same game, set later): everything is kept, the newer value wins */
+    use(pc2);
+    gs_put(pc2, GB, "true", now_unix() - 300);
+    gs_put(pc2, GA, "false", now_unix() - 300);
+    { cheatstore::Store cs; cs.load(pc2.vault.u8string()); cs.set_on(GB, "c9", true, now_unix() - 300); CHECK(cs.save(pc2.vault.u8string())); }
+    unsigned rev0 = cloud_settings_rev();
+    cloud_account_prefs_changed(); cloud_sync_all_now(); pump(); pump();
+    CHECK(gs_val(pc2, GB) == "true" && gs_val(pc2, GA) == "false");   // newer local value kept, nothing lost
+    { cheatstore::Store cs; cs.load(pc2.vault.u8string()); CHECK(cs.is_on(GA, "c1") && cs.is_on(GB, "c9")); }
+    CHECK(cloud_settings_rev() != rev0);
+    use(pc1);
+    cloud_sync_all_now(); pump(); pump();
+    CHECK(gs_val(pc1, GB) == "true" && gs_val(pc1, GA) == "false");   // PC1 gets PC2's game and the newer value
+    { cheatstore::Store cs; cs.load(pc1.vault.u8string()); CHECK(cs.is_on(GA, "c1") && cs.is_on(GB, "c9")); }
+}
+
 static void test_linked_pcs() {
     printf(" linked PCs: list, revoke, signed-out PC, sign in again\n");
     Pc pc1("pc1"), pc2("pc2");
@@ -1447,6 +1537,8 @@ int main(int argc, char** argv) {
     RUN_SCENARIO(test_plain_conflict_surfaces);
     RUN_SCENARIO(test_states_switch);
     RUN_SCENARIO(test_states_never_prompt);
+    RUN_SCENARIO(test_deleted_state_stays_deleted);
+    RUN_SCENARIO(test_settings_cheats_sync);
     RUN_SCENARIO(test_quota);
     RUN_SCENARIO(test_lease_and_readonly);
     RUN_SCENARIO(test_local_flags);

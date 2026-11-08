@@ -435,7 +435,11 @@ static void test_sessions(const fs::path& dir) {
     hubemu::end_session(s);
     CHECK(read_text(vb / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav") == "ZELDA1");
 
-    /* ---- Wii U in the user's own install: restore only into an empty save folder, never overwrite ---- */
+    /* ---- Wii U in the user's own install: the newest save wins; their copy is snapshotted (never pruned) before it is replaced ---- */
+    _putenv_s("LOCALAPPDATA", (dir / "localappdata").string().c_str());   // where the snapshots go (save-backups)
+    const fs::path snaps = dir / "localappdata" / "RetroHub" / "save-backups";
+    auto snap_files = [&]() { int n = 0; std::error_code ec; for (fs::recursive_directory_iterator it(snaps, ec), end; !ec && it != end; it.increment(ec)) if (it->is_regular_file(ec)) ++n; return n; };
+    auto snap_has = [&](const char* text) { std::error_code ec; for (fs::recursive_directory_iterator it(snaps, ec), end; !ec && it != end; it.increment(ec)) if (it->is_regular_file(ec) && read_text(it->path()) == text) return true; return false; };
     fs::path user_inst = dir / "usercemu";
     fs::create_directories(user_inst / "portable");   // portable user data inside their install
     hubemu::Install ui;
@@ -443,16 +447,56 @@ static void test_sessions(const fs::path& dir) {
     ui.exe = (user_inst / "Cemu.exe").string();
     ui.managed = false;
     fs::path usave = user_inst / "portable" / "mlc01" / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav";
-    s = hubemu::begin_session(w, ui, vb.string(), vault.string());   // empty: restored from the vault
-    CHECK(s.restore_only_if_missing && read_text(usave) == "ZELDA1");
+    fs::path vslot = vb / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav";
+    s = hubemu::begin_session(w, ui, vb.string(), vault.string());   // empty: restored from the vault, nothing of theirs to snapshot
+    CHECK(s.own_install && read_text(usave) == "ZELDA1" && snap_files() == 0);
     write_text(usave, "THEIR-OWN");   // now "their" newer progress exists
-    set_mtime(vb / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav", 300);
+    set_mtime(vslot, 300);
     hubemu::end_session(s);
     CHECK(read_text(usave) == "THEIR-OWN");   // their save untouched
-    CHECK(read_text(vb / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav") == "THEIR-OWN");   // backed up into the vault
+    CHECK(read_text(vslot) == "THEIR-OWN");   // copied into the vault
+    /* the install is the newer side: it is left alone, no snapshot is needed */
     s = hubemu::begin_session(w, ui, vb.string(), vault.string());
-    write_text(vb / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav", "VAULT-DIFFERENT");
-    CHECK(read_text(usave) == "THEIR-OWN");   // a non-empty emulator folder is never overwritten before launch
+    CHECK(read_text(usave) == "THEIR-OWN" && snap_files() == 0);
+    hubemu::end_session(s);
+    /* the vault holds a newer save (pulled from another PC): it is applied, and their copy is snapshotted first */
+    write_text(vslot, "FROM-OTHER-PC");
+    set_mtime(vslot, 0);
+    set_mtime(usave, 600);
+    s = hubemu::begin_session(w, ui, vb.string(), vault.string());
+    CHECK(read_text(usave) == "FROM-OTHER-PC");
+    CHECK(snap_files() == 1 && snap_has("THEIR-OWN"));   // <save-backups>\<game>\<stamp>-before-cemu-launch\...
+    hubemu::end_session(s);
+    CHECK(read_text(vslot) == "FROM-OTHER-PC");
+    /* a later local edit is newer than the vault again: kept, and the earlier snapshot is still there */
+    write_text(usave, "NEWER-LOCAL");
+    set_mtime(vslot, 900);
+    s = hubemu::begin_session(w, ui, vb.string(), vault.string());
+    CHECK(read_text(usave) == "NEWER-LOCAL" && snap_files() == 1 && snap_has("THEIR-OWN"));
+    hubemu::end_session(s);
+    CHECK(read_text(vslot) == "NEWER-LOCAL");
+
+    /* no snapshot, no overwrite: when the snapshot cannot be made, their save is left exactly as it is */
+    write_text(vslot, "VAULT-X");
+    set_mtime(vslot, 0);
+    set_mtime(usave, 700);
+    _putenv_s("LOCALAPPDATA", "");   // removes the variable: nowhere to put a snapshot
+    s = hubemu::begin_session(w, ui, vb.string(), vault.string());
+    CHECK(read_text(usave) == "NEWER-LOCAL" && !s.error.empty() && snap_files() == 1);
+    hubemu::end_session(s);
+    write_text(vslot, "VAULT-X");
+    set_mtime(vslot, 0);
+    fs::create_directories(dir / "blocked");
+    write_text(dir / "blocked" / "RetroHub", "i am a file, so RetroHub\save-backups cannot be created");
+    _putenv_s("LOCALAPPDATA", (dir / "blocked").string().c_str());
+    s = hubemu::begin_session(w, ui, vb.string(), vault.string());
+    CHECK(read_text(usave) == "NEWER-LOCAL" && !s.error.empty());   // the snapshot copy failed: not overwritten
+    hubemu::end_session(s);
+    write_text(vslot, "VAULT-X");
+    set_mtime(vslot, 0);
+    _putenv_s("LOCALAPPDATA", (dir / "localappdata").string().c_str());
+    s = hubemu::begin_session(w, ui, vb.string(), vault.string());   // a snapshot is possible again: applied, with the old copy saved first
+    CHECK(read_text(usave) == "VAULT-X" && s.error.empty() && snap_has("NEWER-LOCAL"));
     hubemu::end_session(s);
 
     /* ---- wud/wux: no readable title id; the changed folder during the session is picked up ---- */

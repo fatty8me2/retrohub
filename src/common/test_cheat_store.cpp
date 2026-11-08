@@ -171,6 +171,27 @@ int main() {
         CHECK(a.value_of("g", "vc", &got) && got == 2);
     }
 
+    {   // saves-F11: cloud merge per game (newer entry wins), merge-on-write, garbage never wins
+        fs::path v = root / "cloud_merge";
+        std::error_code ec;
+        fs::remove_all(v, ec);
+        const std::string vd = v.u8string();
+        Store a, b;
+        a.set_on("g1", "c1", true, 10);
+        b.set_on("g2", "c2", true, 20);
+        b.set_on("g1", "c1", false, 30);
+        CHECK(!a.empty() && Store().empty());
+        CHECK(a.save(vd));
+        CHECK(merge_cloud_into_vault(vd, b.to_json()));
+        Store m;
+        CHECK(m.load(vd) && !m.is_on("g1", "c1") && m.is_on("g2", "c2"));
+        // a stale store (still has g1/c1 on at time 10) saves: the newer disk entry survives, its own other game is kept
+        a.set_on("g3", "c3", true, 40);
+        CHECK(a.save(vd));
+        CHECK(m.load(vd) && !m.is_on("g1", "c1") && m.is_on("g2", "c2") && m.is_on("g3", "c3"));
+        CHECK(!merge_cloud_into_vault(vd, "][") && m.load(vd) && m.is_on("g3", "c3"));
+    }
+
     fs::remove_all(root);
     std::printf(g_fail ? "FAILED (%d)\n" : "cheat_store: all passed\n", g_fail);
     return g_fail ? 1 : 0;

@@ -14,7 +14,9 @@
  *   n64run   : --gfx Key=t:value (GLideN64 config, t = i|b|s)  + --fullscreen
  *   retrorun : --opt key=value (core options), --filter, --integer-scale, --fx, --bezel, --fullscreen
  * Dolphin / Azahar / Cemu config writers live in src/hub/emulators.{h,cpp} (dolphin_gfx_apply etc.). */
+#include <cstdint>
 #include <map>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -65,6 +67,7 @@ public:
     void reset_system(System s);                    // drops the system defaults (games keep their own overrides)
     void reset_all();
     bool has_game_overrides(const std::string& game_key) const;
+    bool empty() const { return sys_.empty() && game_.empty() && stamp_.empty(); }   // never customised (a reset game keeps a stamped tombstone, which does sync)
 
     /* Option defaults <- system defaults <- game overrides; only options that apply to `s`. */
     Values resolve(System s, const std::string& game_key) const;
@@ -81,9 +84,25 @@ public:
     static std::string file_path(const std::string& vault_dir);
 
 private:
+    friend bool merge_cloud_into_vault(const std::string&, const std::string&);
+    void touch(const std::string& stamp_key);      // "g:<game>" / "s:<system>"
+    void clear_unstamped() { sys_.clear(); game_.clear(); stamp_.clear(); }
+    void merge_newest(const Store& other);          // per entry: the newer stamp wins (equal / both unstamped: union, this side wins a key)
+    static bool write_file(const std::string& vault_dir, const std::string& text);
     std::map<std::string, Values> sys_;    // system_short -> overrides
     std::map<std::string, Values> game_;   // game key -> overrides
+    std::map<std::string, int64_t> stamp_; // "g:<game>" / "s:<system>" -> unix seconds of the last change (kept for emptied entries: tombstones)
 };
+
+/* Cloud sync (saves-F11). Every game (and every system default) carries a modification stamp in the file ("_t" inside its entry), and two copies merge
+ * game by game, the newer stamp winning the whole entry. A reset or clear writes a stamped EMPTY entry (a tombstone), so a union never undoes it.
+ * One mutex covers every read-modify-write of game_settings.json / cheats.json: Store::save() (which merges what is on disk first, so a stale in-memory
+ * store can never clobber a newer file) and the cloud engine's merge below. */
+std::mutex& files_mutex();
+/* Merge the cloud copy of game_settings.json into the file in `vault_dir` and write it atomically. False (nothing written) when the cloud text is malformed.
+ * A malformed or missing local file counts as empty (the caller backs the old file up first). */
+bool merge_cloud_into_vault(const std::string& vault_dir, const std::string& cloud_json);
+void set_stamp_clock(int64_t fixed_unix);   // tests: 0 = the real clock
 
 /* ---- online ---------------------------------------------------------------------------------------------- */
 /* Only the Sync options of `resolved` (what the host puts in the launch spec). */

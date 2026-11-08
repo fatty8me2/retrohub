@@ -198,6 +198,7 @@ void draw_state_strip(const hub::GameEntry& e) {
             A.state_confirm = cur->slot;
         }
     }
+    if (confirm) ImGui::SameLine(0, sp(1.5f)), text_wrapped_disabled("Your other PCs keep their own copy.");
     if (!idle) ImGui::SameLine(0, sp(1.5f)), text_wrapped_disabled("Resuming needs the running game closed first.");
 }
 
