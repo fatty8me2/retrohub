@@ -207,17 +207,29 @@ inline float ease(float t) {
     }
     return 3.f * s * (1.f - s) + s * s * s;
 }
-struct EaseState { float from = 0, to = 0, t = 1e9f, out = 0; };
-/* Moves x toward target; true while moving. A change of x from outside (a jump) restarts the glide from the new place. reduced snaps. */
+constexpr float kEaseSlope0 = 4.5454545f;   // ease'(0) = 3 / (3 * 0.22): how much faster than average the curve starts
+struct EaseState { float from = 0, to = 0, t = 1e9f, out = 0, vel = 0, v0 = 0; };
+/* Moves x toward target; true while moving. A retarget in mid-glide starts the new segment at the speed the carousel already has (a correction term that
+ * dies out with zero slope at the end), so held keys glide instead of kicking at every press; from rest the curve's own fast start is kept. A change of x
+ * from outside (a jump) restarts from the new place. reduced snaps. */
 inline bool ease_step(float& x, EaseState& e, float target, float dt, bool reduced, float dur = kMoveSecs) {
-    if (reduced || !(dur > 0.f)) { x = target; e.from = e.to = e.out = target; e.t = 1e9f; return false; }
-    if (x != e.out) { e.from = x; e.to = target; e.t = 0.f; }
-    if (target != e.to) { e.from = x; e.to = target; e.t = 0.f; }
-    if (e.t >= dur) { x = e.out = e.to; return false; }
-    e.t += std::max(0.f, std::min(dt, 0.1f));
-    if (e.t >= dur) { x = e.out = e.to; return false; }
-    x = e.from + (e.to - e.from) * ease(e.t / dur);
-    e.out = x;
+    if (reduced || !(dur > 0.f)) { x = target; e.from = e.to = e.out = target; e.t = 1e9f; e.vel = 0.f; return false; }
+    const bool was_moving = e.t < dur;
+    if (x != e.out) { e.from = x; e.to = target; e.t = 0.f; e.v0 = (target - x) * kEaseSlope0 / dur; e.vel = 0.f; }
+    else if (target != e.to) {
+        e.from = x; e.to = target; e.t = 0.f;
+        e.v0 = was_moving ? e.vel : (target - x) * kEaseSlope0 / dur;
+    }
+    if (e.t >= dur) { x = e.out = e.to; e.vel = 0.f; return false; }
+    if (!(dt > 0.f)) return true;
+    const float h = std::min(dt, 0.1f);
+    e.t += h;
+    if (e.t >= dur) { x = e.out = e.to; e.vel = 0.f; return false; }
+    const float D = e.to - e.from, tt = e.t / dur, k = 1.f - tt;
+    float xn = e.from + D * ease(tt) + (e.v0 - D * kEaseSlope0 / dur) * e.t * k * k;
+    if (D > 0.f) xn = std::min(xn, e.to); else if (D < 0.f) xn = std::max(xn, e.to);   // never past the target
+    e.vel = (xn - x) / h;
+    x = e.out = xn;
     return true;
 }
 
@@ -249,13 +261,6 @@ inline float neighbour_extra(const CaseDims& c, float cs, const CaseDims& n, flo
     }
     return std::max(0.f, need - nb_x(1));
 }
-/* The screen x (units of U) of the first right neighbour's inner edge: the limit for the media's reach. */
-inline float first_edge(const CaseDims& n, float ns, float extra) {
-    float l, r;
-    screen_extent(n, kNbScale * ns, kNbYaw, nb_x(1) + extra, nb_z(1), &l, &r);
-    return l;
-}
-
 /* ---- the disc / cartridge that slides out from behind the selected case ---- */
 enum class MediaKind { None, Disc, Card };
 struct MediaSpec {
@@ -291,15 +296,17 @@ struct MediaOffset { float out = 0, up = 0; };
 inline MediaOffset media_offset(const MediaSpec& s, const CaseDims& c, float scale, float mw, float mh, float case_x, float far_limit) {
     MediaOffset o;
     const float W = c.w * scale, H = c.h * scale;
-    o.out = std::min(s.slide * W, far_limit - case_x - 0.5f * mw * std::cos(s.yaw));
-    o.out = std::max(o.out, 0.25f * W);
+    const float reach = far_limit - case_x - 0.5f * mw * std::cos(s.yaw);   // the most the media may sit right of the case centre
+    o.out = std::min(s.slide * W, reach);
+    o.out = std::max(o.out, std::min(0.25f * W, reach));   // some of it always shows, but never into the next case
+    o.out = std::max(o.out, 0.f);
     o.up = s.kind == MediaKind::Disc ? std::max(s.rise * H, 0.5f * (mh - H)) : s.rise * H;
     return o;
 }
 /* Who has their media out: the selected case after a 420 ms dwell (cancelled when the selection moves on), slid back in over 0.85 s on leaving. */
 struct MediaSlot { int idx = -1; float dwell = 0, x = 0; EaseState es; };
 struct MediaReveal {
-    static constexpr int kN = 4;
+    static constexpr int kN = 6;
     MediaSlot s[kN];   // s[0]: the selected case; the others: cases whose media is still sliding back in
     void reset() { for (MediaSlot& m : s) m = MediaSlot(); }
     void step(int focus, bool show, float dt, bool reduced) {
@@ -312,8 +319,12 @@ struct MediaReveal {
         if (s[0].idx != focus) {
             MediaSlot back;
             bool had = false;
-            for (int k = 1; k < kN; ++k) if (s[k].idx == focus && focus >= 0) { back = s[k]; had = true; for (int j = k; j + 1 < kN; ++j) s[j] = s[j + 1]; s[kN - 1] = MediaSlot(); break; }
-            if (s[0].idx >= 0 && s[0].x > 0.002f) { for (int k = kN - 1; k >= 2; --k) s[k] = s[k - 1]; s[1] = s[0]; }
+            for (int k = 1; k < kN; ++k) if (s[k].idx == focus && focus >= 0) { back = s[k]; had = true; s[k] = MediaSlot(); break; }
+            if (s[0].idx >= 0 && s[0].x > 0.002f) {   // the old selection's media slides back: it takes a free slot, or evicts the one least out (never one that is further out)
+                int worst = 1;
+                for (int k = 1; k < kN; ++k) { if (s[k].idx < 0) { worst = k; break; } if (s[k].x < s[worst].x) worst = k; }
+                if (s[worst].idx < 0 || s[worst].x <= s[0].x) s[worst] = s[0];
+            }
             s[0] = had ? back : MediaSlot();
             s[0].idx = focus; s[0].dwell = 0.f;
         }
@@ -327,6 +338,11 @@ struct MediaReveal {
     }
     float amount(int idx) const { for (const MediaSlot& m : s) if (m.idx == idx && idx >= 0) return m.x; return 0.f; }
     bool any() const { for (const MediaSlot& m : s) if (m.idx >= 0 && m.x > 0.001f) return true; return false; }
+};
+/* What the info panel was built for: the text is rebuilt when any of it changes (the game actually shown, not only the carousel's focus). */
+struct InfoKey {
+    int focus = -2, idx = -2, tick = -1; uint64_t sig = ~0ull, gen = ~0ull; float w = 0, fs = 0; bool tight = false;
+    bool same(const InfoKey& o) const { return focus == o.focus && idx == o.idx && tick == o.tick && sig == o.sig && gen == o.gen && std::fabs(w - o.w) <= 2.f && fs == o.fs && tight == o.tight; }
 };
 /* The selected-case text block: fades in with a 12 px rise over 0.45 s on every new selection (t = seconds since the selection). */
 inline float info_alpha(float t) { return std::max(0.f, std::min(1.f, t / 0.45f)); }

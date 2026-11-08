@@ -12,7 +12,8 @@ struct CfState {
     float bg_t = 1.f; bool bg_init = false, bg_art = false; int bg_idx = -2; uint64_t bg_sig = ~0ull;
     ImU32 bg_tint = 0;
     // the info panel
-    int info_focus = -2; uint64_t info_sig = ~0ull, info_gen = ~0ull; int info_tick = -1; float info_w = 0.f, info_fs = 0.f; bool info_tight = false;
+    hubui::cases::cf::InfoKey key;            // what the strings were built for (the game actually shown, the width, the description generation)
+    std::vector<float> eb_x, chip_x; float eb_w = 0.f, chip_w = 0.f;   // glyph offsets of the eyebrow and the media chip, measured once per rebuild
     float info_t = 100.f;                     // seconds since the selection changed (drives the fade / rise)
     std::string eyebrow, chip, meta, title;
     std::vector<std::string> title_lines, desc_lines;
@@ -62,29 +63,29 @@ void cf_bg_update(int n, int cur_idx, uint64_t sig, ImU32 t0, ImU32 t1, bool no_
     for (int i = 0; i < 64; ++i) CFX.bg_cur[i] = ui::mix(CFX.bg_from[i], CFX.bg_to[i], k);
 }
 
-/* ---- text with letter spacing (the eyebrow) ---- */
-float cf_spaced_w(ImFont* f, float fs, const char* s, float spx) {
-    float w = 0.f;
+/* ---- text with letter spacing (the eyebrow): the glyph offsets are measured when the text changes, drawing only places them ---- */
+float cf_spaced_layout(ImFont* f, float fs, const char* s, float spx, std::vector<float>& xs) {
+    xs.clear();
+    float x = 0.f;
     const char* end = s + std::strlen(s);
     for (const char* p = s; p < end;) {
         unsigned int c = 0; const int len = ImTextCharFromUtf8(&c, p, end);
         char tmp[8] = {}; std::memcpy(tmp, p, (size_t)std::min(len, 4));
-        w += f->CalcTextSizeA(fs, FLT_MAX, 0.f, tmp).x + spx;
-        p += std::max(1, len);
-    }
-    return std::max(0.f, w - spx);
-}
-float cf_spaced(ImDrawList* dl, ImFont* f, float fs, ImVec2 pos, ImU32 col, const char* s, float spx) {
-    const char* end = s + std::strlen(s);
-    float x = pos.x;
-    for (const char* p = s; p < end;) {
-        unsigned int c = 0; const int len = ImTextCharFromUtf8(&c, p, end);
-        char tmp[8] = {}; std::memcpy(tmp, p, (size_t)std::min(len, 4));
-        dl->AddText(f, fs, ImVec2(x, pos.y), col, tmp);
+        xs.push_back(x);
         x += f->CalcTextSizeA(fs, FLT_MAX, 0.f, tmp).x + spx;
         p += std::max(1, len);
     }
-    return x - pos.x - spx;
+    return std::max(0.f, x - spx);
+}
+void cf_spaced_draw(ImDrawList* dl, ImFont* f, float fs, ImVec2 pos, ImU32 col, const char* s, const std::vector<float>& xs) {
+    const char* end = s + std::strlen(s);
+    size_t i = 0;
+    for (const char* p = s; p < end && i < xs.size(); ++i) {
+        unsigned int c = 0; const int len = ImTextCharFromUtf8(&c, p, end);
+        char tmp[8] = {}; std::memcpy(tmp, p, (size_t)std::min(len, 4));
+        dl->AddText(f, fs, ImVec2(pos.x + xs[i], pos.y), col, tmp);
+        p += std::max(1, len);
+    }
 }
 void cf_upper(std::string& s) { for (char& c : s) if ((unsigned char)c < 128) c = (char)std::toupper((unsigned char)c); }
 
@@ -142,12 +143,14 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
     const hub::System sy = sys_of(idx);
     // the screenshot (the game's own title screen / in-game picture; the player's own pictures are on the back of the case)
     SDL_Texture* pic = nullptr; int pw = 0, ph = 0;
-    if (!ghost && !CS.no_art) {
+    const bool dwelled = CFX.key.focus == CS.focus && CFX.key.idx == idx && CFX.info_t >= cf::kMediaDwell;   // the 420 ms dwell of the disc: scrolling past does not request pictures
+    const float pic_a = reduced ? 1.f : std::max(0.f, std::min(1.f, (CFX.info_t - cf::kMediaDwell) / 0.3f));
+    if (!ghost && !CS.no_art && dwelled) {
         const hub::GameEntry& e = A.lib[(size_t)idx];
         pic = hubart::get(e, hubart::Kind::Snap, &pw, &ph);
         if (!pic) pic = hubart::get(e, hubart::Kind::Title, &pw, &ph);
     }
-    if (!pic && g_headless && cases_fake_lib() && !CS.no_art) {   // headless screenshots of the synthetic shelves: a made-up picture
+    if (!pic && g_headless && cases_fake_lib() && !CS.no_art && (dwelled || !CFX.fake_tried)) {   // headless screenshots of the synthetic shelves: a made-up picture
         if (!CFX.fake_tried) { CFX.fake_tried = true; CFX.fake_pic = cases_fake_pic(1, &CFX.fake_w, &CFX.fake_h); }
         pic = CFX.fake_pic; pw = CFX.fake_w; ph = CFX.fake_h;
     }
@@ -158,9 +161,11 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
     const float text_w = std::max(sp(12.f), (shot_w > 0.f ? x1 - shot_w - gap : x1) - x0);
     // ---- the strings (when the selection, the width or the description changes) ----
     const int tick = (int)(CS.clock / 5.f);
-    if (CFX.info_focus != CS.focus || CFX.info_sig != sig || std::fabs(CFX.info_w - text_w) > 2.f || CFX.info_fs != tsz || CFX.info_gen != gameinfo_generation() || CFX.info_tick != tick || CFX.info_tight != tight) {
-        if (CFX.info_focus != CS.focus) CFX.info_t = reduced ? 100.f : 0.f;
-        CFX.info_focus = CS.focus; CFX.info_sig = sig; CFX.info_w = text_w; CFX.info_fs = tsz; CFX.info_gen = gameinfo_generation(); CFX.info_tick = tick; CFX.info_tight = tight;
+    cf::InfoKey nk;
+    nk.focus = CS.focus; nk.idx = idx; nk.tick = tick; nk.sig = sig; nk.gen = gameinfo_generation(); nk.w = text_w; nk.fs = tsz; nk.tight = tight;
+    if (!CFX.key.same(nk)) {
+        if (CFX.key.focus != CS.focus || CFX.key.idx != idx) CFX.info_t = reduced ? 100.f : 0.f;   // a new game: the block fades in again
+        CFX.key = nk;
         int year = 0, players = item_players(idx);
         std::string genre, maker, desc;
         if (!ghost) {
@@ -185,6 +190,8 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
             const cf::MediaSpec ms = cf::media_spec(CS.media[(size_t)CS.focus]);
             CFX.chip = ms.kind == cf::MediaKind::Card ? "CARTRIDGE" : "DISC";
         }
+        CFX.eb_w = cf_spaced_layout(bf, cfs, CFX.eyebrow.c_str(), cfs * 0.2f, CFX.eb_x);
+        CFX.chip_w = cf_spaced_layout(bf, cfs * 0.82f, CFX.chip.c_str(), cfs * 0.82f * 0.14f, CFX.chip_x);
         std::string m;
         const std::string dot = "  \xC2\xB7  ";
         auto add = [&](const std::string& s) { if (!s.empty()) { if (!m.empty()) m += dot; m += s; } };
@@ -224,7 +231,7 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
     int t_lines = std::min(tl, 2);
     const float eyebrow_h = cfs * 1.5f, title_lh = tsz * 1.1f, meta_h = cfs * 1.55f, desc_lh = cfs * 1.42f;
     auto need = [&](int tn, int dn, bool btn) { return eyebrow_h + title_lh * (float)tn + (CFX.meta.empty() ? 0.f : meta_h) + desc_lh * (float)dn + (dn > 0 ? sp(0.3f) : 0.f) + (btn ? bh + sp(0.8f) : 0.f); };
-    const float room = H - sp(0.9f);
+    const float room = H - sp(0.9f) - 12.f * ui::S;   // the entrance rise (12 px) is part of the budget: the buttons never slide over the scrubber
     bool btn = true;
     while (need(t_lines, dl_lines, btn) > room) {
         if (dl_lines > 1) --dl_lines; else if (dl_lines > 0) dl_lines = 0; else if (t_lines > 1) t_lines = 1; else if (btn) btn = false; else break;
@@ -240,13 +247,13 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
     y += sp(0.35f);
     // eyebrow + media chip
     {
-        const float spx = cfs * 0.2f;
-        const float ew = cf_spaced(dl, bf, cfs, ImVec2(x0, y), ui::scale_alpha(CFX.accent, a), CFX.eyebrow.c_str(), spx);
-        const float chs = cfs * 0.82f, cpad = cfs * 0.55f, cw = cf_spaced_w(bf, chs, CFX.chip.c_str(), chs * 0.14f) + cpad * 2.f, ch = chs * 1.5f;
+        cf_spaced_draw(dl, bf, cfs, ImVec2(x0, y), ui::scale_alpha(CFX.accent, a), CFX.eyebrow.c_str(), CFX.eb_x);
+        const float ew = CFX.eb_w;
+        const float chs = cfs * 0.82f, cpad = cfs * 0.55f, cw = CFX.chip_w + cpad * 2.f, ch = chs * 1.5f;
         const ImVec2 c0(x0 + ew + cfs * 1.1f, y + (cfs - ch) * 0.5f + cfs * 0.12f);
         if (c0.x + cw < x0 + text_w) {
             dl->AddRect(c0, ImVec2(c0.x + cw, c0.y + ch), ui::scale_alpha(IM_COL32(255, 255, 255, 70), a), 3.f, 0, 1.f);
-            cf_spaced(dl, bf, chs, ImVec2(c0.x + cpad, c0.y + (ch - chs) * 0.5f), ui::scale_alpha(ui::TEXT2, a), CFX.chip.c_str(), chs * 0.14f);
+            cf_spaced_draw(dl, bf, chs, ImVec2(c0.x + cpad, c0.y + (ch - chs) * 0.5f), ui::scale_alpha(ui::TEXT2, a), CFX.chip.c_str(), CFX.chip_x);
         }
         y += eyebrow_h;
     }
@@ -286,8 +293,8 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
             const bool star = b.kind == 3;
             const float w = cf_button_w(b.label, star, bh);
             if (bx + w > x0 + text_w + sp(1.f) && b.kind != 0) break;
-            const bool en = !(ghost && (b.kind == 1 || b.kind == 3));
             if (ghost && (b.kind == 1 || b.kind == 3)) continue;
+            const bool en = b.kind != 0 || CS.mode == Mode::Browse;   // Play acts exactly like Enter on the centre case: only while browsing
             if (cf_button(dl, b.label, ImVec2(bx, y), ImVec2(bx + w, y + bh), b.label, ac, b.kind == 0, star, star && item_fav(idx), a, live && en)) {
                 if (b.kind == 0) { TileResult r; r.activated = true; r.focused = true; deliver(idx, r); }
                 else if (b.kind == 1 && !ghost) { TileResult r; r.details = true; r.clicked = true; deliver(idx, r); }
@@ -309,16 +316,15 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
     if (shot_w > 0.f) {
         const float sh = shot_w * 0.625f;
         const float sx1 = x1, sx0 = sx1 - shot_w;
-        const float sy1 = y1 - sp(0.7f) + rise * 0.5f, sy0 = std::max(y0 + sp(0.9f), sy1 - sh);
+        const float sy1 = y1 - sp(0.7f);
         const float rr = 14.f * ui::S;
         const ImVec2 q0(sx0, sy1 - sh), q1(sx1, sy1);
-        (void)sy0;
-        for (int i = 3; i >= 1; --i) dl->AddRectFilled(ImVec2(q0.x - 2.f * (float)i, q0.y + 6.f * (float)i), ImVec2(q1.x + 2.f * (float)i, q1.y + 8.f * (float)i), IM_COL32(0, 0, 0, (int)(26.f * a)), rr + 3.f * (float)i);
+        for (int i = 3; i >= 1; --i) dl->AddRectFilled(ImVec2(q0.x - 2.f * (float)i, q0.y + 6.f * (float)i), ImVec2(q1.x + 2.f * (float)i, q1.y + 8.f * (float)i), IM_COL32(0, 0, 0, (int)(26.f * a * pic_a)), rr + 3.f * (float)i);
         // crop to 16:10 from the middle
         const float ta_ = 1.6f, asp = (float)pw / (float)ph;
         float u0 = 0.f, v0 = 0.f, u1 = 1.f, v1 = 1.f;
         if (asp > ta_) { const float k = ta_ / asp; u0 = (1.f - k) * 0.5f; u1 = u0 + k; } else { const float k = asp / ta_; v0 = (1.f - k) * 0.5f; v1 = v0 + k; }
-        dl->AddImageRounded((ImTextureID)pic, q0, q1, ImVec2(u0, v0), ImVec2(u1, v1), ui::scale_alpha(IM_COL32_WHITE, a), rr);
-        dl->AddRect(q0, q1, ui::scale_alpha(IM_COL32(255, 255, 255, 46), a), rr, 0, 1.f);
+        dl->AddImageRounded((ImTextureID)pic, q0, q1, ImVec2(u0, v0), ImVec2(u1, v1), ui::scale_alpha(IM_COL32_WHITE, a * pic_a), rr);
+        dl->AddRect(q0, q1, ui::scale_alpha(IM_COL32(255, 255, 255, 46), a * pic_a), rr, 0, 1.f);
     }
 }
