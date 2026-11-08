@@ -1,6 +1,49 @@
 {
   "versions": [
     {
+      "version": "1.40.0",
+      "date": "2026-11-08",
+      "title": "Signed updates, safer saves and smoother online play",
+      "new": [
+        "Updates are now signed: RetroHub checks every update against the publisher's signature before it installs anything",
+        "Smaller updates: when only RetroHub changed, it updates without downloading Smash Classic again",
+        "Hide a game from Customize or its details. A new Show hidden filter lists hidden games, dimmed, with an Unhide button",
+        "Game night reminders arrive as a Windows notification 10 minutes before the start, even when RetroHub is closed (turn on Windows notifications in Settings; never shown while you play)",
+        "The game menu (View + Y) now works in GameCube online games: volume, screenshot and leave (or hold Back + Start)",
+        "Dolphin's game menu can pause the game and quick-save or quick-load (slot 1) in offline games",
+        "Use host's save now also works in NES, SNES, PlayStation and PlayStation 2 rooms. It's off unless the host ticks it",
+        "3DS online rooms are password-protected when everyone in the room has this version",
+        "Instant replay for N64 games can be turned off in Settings"
+      ],
+      "improved": [
+        "Your per-game settings and cheat choices now follow you to your other PCs",
+        "If you use your own Cemu, a newer Wii U save from your other PC is now applied, and your current save is backed up first",
+        "Rooms stop you before the game starts if a friend has a different region or version of the same Game Boy, GBA, NES, SNES or DS game",
+        "If a friend's copy of the game or emulator differs from the host's, they get a clear message instead of joining and breaking the match",
+        "In 3 and 4 player online games, one player leaving no longer cuts everyone else off, and N64 matches keep going for the others",
+        "Play and Play Online are greyed out with a short reason while any game or online session is running",
+        "Dolphin and Azahar always run in English, so online setup works on any Windows language",
+        "Controllers page: hold B for a second to cancel \"press a button\"",
+        "You can react to chat messages with a controller",
+        "If RetroAchievements sign-in fails, your cheats and resume point still work, and the game tells you hardcore is off",
+        "A second PC with a differently named game file keeps the game's clock and PlayStation memory card 2"
+      ],
+      "fixed": [
+        "Save states you delete no longer come back from the cloud",
+        "A Wi-Fi blip or leaving the room page no longer freezes a GameCube online match",
+        "A room host can no longer make your PC load an emulator file from somewhere else on disk",
+        "If Azahar can't join a 3DS room you get a clear message instead of silently playing offline",
+        "Joining a room with a moved game file now says it can't find the file",
+        "The Wii U remote play banner shows the real host's name, and every guest's controller connects even if someone left before the start",
+        "Online games ignore packets that pretend to come from another player or the host, and one player can no longer kick others from an N64 match",
+        "Closing Cheats from the in-game menu returns you to your game",
+        "Windows notifications for invites never appear over a running game",
+        "A game you hid no longer shows up greyed out as a friend's game",
+        "Turning every cheat off for a game now sticks and syncs",
+        "Very big libraries no longer risk a room join message that is too large"
+      ]
+    },
+    {
       "version": "1.39.0",
       "date": "2026-11-08",
       "title": "Fritchii for Ocarina of Time",
