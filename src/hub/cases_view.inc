@@ -758,6 +758,18 @@ void draw_cases(Disp& D) {
         CS.spin.pitch += (0.f - CS.spin.pitch) * k;
     }
     const bool cfm = cases_flow_on();   // Coverflow (default) or the Classic shelf
+    {   // switching style at run time starts the other one clean: glide state, media timers, idle loop, background, info text, the settle bounce
+        static int prev_style = -1;
+        if (prev_style != (cfm ? 1 : 0)) {
+            if (prev_style >= 0) {
+                CFX.media.reset(); CFX.pos_es = hubui::cases::cf::EaseState(); CFX.pos_es.out = CS.pos.x; CFX.pos_es.to = CS.pos.x;
+                CFX.idle_t = 0.0; CFX.idle_w = 0.f; CFX.idle_rest = false; CFX.bg_init = false; CFX.key = hubui::cases::cf::InfoKey();
+                CS.pos.v = 0.f; CS.settle = hubui::shelf::Spring(); CS.was_moving = false; CS.tl_a = 1.f; CS.tl_slide = 0.f; CS.text_focus = -2;
+            }
+            prev_style = cfm ? 1 : 0;
+        }
+        if (cfm) CS.pos.v = 0.f;   // the glide has its own state; the spring's velocity is not carried
+    }
     if (cfm) hubui::cases::cf::ease_step(CS.pos.x, CFX.pos_es, (float)std::max(0, CS.focus), dt, reduced); else pos_step(CS.pos, (float)std::max(0, CS.focus), dt, reduced);
     pos_step(CS.flip, ModeState{CS.mode}.flip_target(), dt, reduced);
     pos_step(CS.insp, CS.mode == Mode::Inspect ? 1.f : 0.f, dt, reduced);
@@ -785,7 +797,10 @@ void draw_cases(Disp& D) {
         CFX.idle_rest = at_rest;
         CFX.idle_t += (double)dt;
         ui::anim(CFX.idle_w, at_rest ? 1.f : 0.f, at_rest ? 3.f : 9.f);
-        CFX.media.step(n ? CS.focus : -1, CS.mode == Mode::Browse && !CS.menu_open, dt, reduced);
+        // Headless screenshots are taken on a wall-clock timer, but a software-rendered frame can take longer than the 0.1 s step cap, so the 420 ms dwell + 0.85 s slide
+        // would still be running when the picture is taken (the library finishing its scan also restarts it): in screenshot mode the media is simply out.
+        static const bool shot_media_out = g_headless && std::getenv("HUB_SHOT_CASES") != nullptr;
+        CFX.media.step(n ? CS.focus : -1, CS.mode == Mode::Browse && !CS.menu_open, dt, reduced || shot_media_out);
     }
     // ---- stage ----
     const bool tight = H < sp(44.f);   // a big UI size in a small window: a smaller title and hint bar so the cases keep their room
@@ -808,8 +823,8 @@ void draw_cases(Disp& D) {
         info_y1 = strip_y - sp(0.2f);
         const float info_h = std::min(sp(tight ? 12.5f : 21.f), H * 0.27f);
         info_y0 = info_y1 - info_h;
-        const float stage_h = std::max(sp(12.f), info_y0 - avail_top);
-        Hc = std::max(sp(10.f), std::min(stage_h / 1.40f, W * 0.26f));
+        const float stage_h = std::max(sp(1.f), info_y0 - avail_top);   // never padded out: on a very short window the cases get smaller, not lower
+        Hc = std::max(sp(1.f), std::min(stage_h / 1.40f, W * 0.26f));
         const float cy = avail_top + std::max(0.f, stage_h - Hc * 1.36f) * 0.5f + Hc * 0.58f;   // the screen y of the case centres at the centre depth
         f0 = cy + cf::kPivot * Hc;
     }
@@ -854,7 +869,7 @@ void draw_cases(Disp& D) {
     const ImVec2 p0 = org, p1(org.x + W, org.y + H);
     dl->PushClipRect(p0, p1, true);
     if (cfm) {   // Coverflow: the selected cover's colours, blurred, with a heavy vignette (cross-fades 1.1 s)
-        cf_bg_update(n, cur_idx, D.sig, CS.tint0 ? CS.tint0 : ui::ACCENT, CS.tint1 ? CS.tint1 : ui::ACCENT, CS.no_art, dt, reduced);
+        cf_bg_update(n, n ? D.flat[(size_t)CS.focus] : -1, D.sig, CS.tint0 ? CS.tint0 : ui::ACCENT, CS.tint1 ? CS.tint1 : ui::ACCENT, CS.no_art, dt, reduced);
         shelfdraw::flow_background(sc, p0, p1, CFX.bg_cur, CS.tint0 ? CS.tint0 : ui::ACCENT, 1.f);
     } else shelfdraw::cases_stage_back(sc, p0, p1, CS.tint0, CS.tint1);
 
@@ -1060,7 +1075,14 @@ void draw_cases(Disp& D) {
         int a0 = -1;
         for (int k = 0; k < ns; ++k) if (slots[k].i == ic) a0 = k;
         float xs[2 * kWindow + 5];
-        const float fy = f0 + Hc * 0.04f, ty = f0 - Hc * (cfm ? 1.25f : 1.08f);
+        float fy = f0 + Hc * 0.04f, ty = f0 - Hc * (cfm ? 1.25f : 1.08f);
+        if (cfm) {   // the tab row, the menu button and the add banner keep their clicks, the info panel keeps its buttons
+            float top = tab_y + tab_h + sp(0.4f);
+            if (cases_own_empty() && A.sys_filter.empty() && !A.search_buf[0] && CS.insp.x < 0.05f && CS.flip.x < 0.05f) top = tab_y + tab_h + sp(1.5f) + sp(5.2f) + sp(0.4f);   // the banner is up
+            ty = std::max(ty, top);
+            fy = std::min(fy, info_y0 - sp(0.2f));
+            if (fy < ty + sp(1.f)) fy = ty + sp(1.f);
+        }
         for (int k = 0; k < ns; ++k) xs[k] = 0.5f * (slots[k].mn.x + slots[k].mx.x);
         float bd[2 * kWindow + 5];   // boundary k sits between slot k-1 and slot k
         bd[0] = xs[0] - sc.U * 0.1f;
@@ -1139,7 +1161,7 @@ void draw_cases(Disp& D) {
 
     // ---- the title block under the centre case: title + favourite star, a console chip with the facts, and the play history ----
     if (n && cfm) {
-        cf_info_panel(dl, org, W, info_y0, info_y1, tight, cur_idx, can, ins, dt, reduced, n, D.sig);
+        cf_info_panel(dl, org, W, info_y0, info_y1, tight, D.flat[(size_t)CS.focus], can, ins, dt, reduced, n, D.sig);
     } else if (n) {
         const int idx = cur_idx;
         const float maxw = W * 0.78f;

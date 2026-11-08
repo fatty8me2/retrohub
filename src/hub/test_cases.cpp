@@ -1,6 +1,7 @@
 #include "cases_logic.h"
 #include "cases_stage.h"
 #include "logic.h"
+#include "idle_logic.h"
 
 #include <cmath>
 #include <cstdio>
@@ -558,6 +559,104 @@ int main() {
         }
         // the info block's entrance: 12 px rise and fade over 0.45 s
         CHECK(cf::info_alpha(0.f) == 0.f && cf::info_alpha(0.45f) == 1.f && cf::info_alpha(1.f) == 1.f && std::fabs(cf::info_rise(0.f) - 12.f) < 1e-5f && cf::info_rise(0.45f) == 0.f && cf::info_rise(0.2f) < 12.f);
+    }
+
+    /* ---- review fixes: Classic pinned, velocity-continuous glide, media limits, info key ---- */
+    {
+        namespace cf = hubui::cases::cf;
+        using shelf::Media;
+        // Classic slot_pose golden values (the shelf of turned cases must never change under the Coverflow work)
+        struct G { float d, x, yaw, z, scale, alpha; };
+        const G golden[] = {{0.f, 0.f, 0.f, 0.f, 1.f, 1.f}, {0.5f, 0.43500f, 0.42841f, 0.41250f, 0.91f, 1.f}, {1.f, 0.66f, 0.72286f, 0.55f, 0.82f, 1.f},
+                            {2.f, 0.82f, 1.06431f, 0.66f, 0.805f, 1.f}, {5.f, 1.30f, 1.33778f, 0.99f, 0.76f, 1.f}, {-3.f, -0.98f, -1.22560f, 0.77f, 0.79f, 1.f},
+                            {10.f, 2.10f, 1.36924f, 1.54f, 0.73f, 0.66392f}};
+        for (const G& g : golden) {
+            const SlotPose p = slot_pose(g.d);
+            CHECK(std::fabs(p.x - g.x) < 2e-4f && std::fabs(p.yaw - g.yaw) < 2e-4f && std::fabs(p.z - g.z) < 2e-4f && std::fabs(p.scale - g.scale) < 2e-4f && std::fabs(p.alpha - g.alpha) < 2e-3f);
+        }
+        // a retarget in mid-glide keeps the speed (no kick): the velocity just after the new target is within a small step of the velocity just before it
+        {
+            const float dt = 1.f / 600.f;
+            float x = 0.f; cf::EaseState es;
+            float prev = x, v_before = 0.f;
+            for (int i = 0; i < 120; ++i) { cf::ease_step(x, es, 5.f, dt, false); v_before = (x - prev) / dt; prev = x; }   // 0.2 s in: still fast
+            cf::ease_step(x, es, 6.f, dt, false);
+            const float v_after = (x - prev) / dt;
+            CHECK(v_before > 1.f && std::fabs(v_after - v_before) < 0.08f * v_before + 0.05f);
+            // ...and a rapid sequence (a held key) never jumps in speed, never goes backwards, never passes the target
+            x = 0.f; es = cf::EaseState(); prev = x;
+            float vprev = 0.f, worst_jump = 0.f; float target = 0.f;
+            for (int i = 0; i < 2400; ++i) {
+                if (i % 30 == 0 && i < 1500) target += 1.f;   // a press every 50 ms
+                cf::ease_step(x, es, target, dt, false);
+                const float v = (x - prev) / dt;
+                if (i > 10) worst_jump = std::max(worst_jump, std::fabs(v - vprev));
+                CHECK(x >= prev - 1e-5f && x <= target + 1e-4f);
+                prev = x; vprev = v;
+            }
+            CHECK(x == target && worst_jump < 1.0f);   // an uncorrected restart would jump by about 4.5x the average speed (several cases / s) on every press
+            // a stationary start keeps the curve's own fast start
+            x = 0.f; es = cf::EaseState();
+            cf::ease_step(x, es, 1.f, dt, false);
+            CHECK((x - 0.f) / dt > 3.f);
+        }
+        // media reach: the 25% floor never beats the next case
+        {
+            const CaseDims keep = case_dims(Media::Ps2Case);
+            const cf::MediaSpec dvd = cf::media_spec(Media::Ps2Case);
+            const float dia = cf::disc_dia(dvd, keep);
+            const float lim = cf::kHeroX + 0.5f * dia * std::cos(dvd.yaw) + 0.05f;   // room for only 0.05 of reach
+            const cf::MediaOffset o = cf::media_offset(dvd, keep, 1.f, dia, dia, cf::kHeroX, lim);
+            CHECK(o.out >= 0.f && std::fabs(o.out - 0.05f) < 1e-4f && o.out < 0.25f * keep.w);
+            const cf::MediaOffset none = cf::media_offset(dvd, keep, 1.f, dia, dia, cf::kHeroX, -5.f);
+            CHECK(none.out == 0.f);
+        }
+        // a media that is still sliding back is never evicted by browsing on: six cases in under 0.85 s keep it
+        {
+            cf::MediaReveal r;
+            const float dt = 1.f / 60.f;
+            for (int i = 0; i < 90; ++i) r.step(1, true, dt, false);   // case 1 fully out
+            CHECK(r.amount(1) > 0.99f);
+            for (int c = 2; c <= 6; ++c) { r.step(c, true, dt, false); for (int i = 0; i < 3; ++i) r.step(c, true, dt, false); }
+            CHECK(r.amount(1) > 0.f);   // still on its way in, not vanished
+            for (int i = 0; i < 90; ++i) r.step(6, true, dt, false);
+            CHECK(r.amount(1) == 0.f && r.amount(6) > 0.99f);
+        }
+        // the info panel's cache key follows the game actually shown (a stale index with the same focus must rebuild)
+        {
+            cf::InfoKey a, b;
+            a.focus = b.focus = 4; a.idx = 10; b.idx = 11; a.sig = b.sig = 7; a.w = b.w = 500.f; a.fs = b.fs = 30.f;
+            CHECK(!a.same(b));
+            b.idx = 10;
+            CHECK(a.same(b));
+            b.w = 501.f; CHECK(a.same(b));
+            b.w = 540.f; CHECK(!a.same(b));
+            b.w = 500.f; b.tick = 3; CHECK(!a.same(b));
+        }
+    }
+
+    /* ---- the media reveal needs frames, not input ---- */
+    {
+        namespace cf = hubui::cases::cf;
+        // the idle throttle (a hub in the background, nothing changing) still draws at least every ~100 ms: timers advance without any input
+        unsigned long long last = 0, worst = 0;
+        hubidle::Inputs in;
+        in.background = true; in.last_activity_ms = 0;
+        for (unsigned long long t = 0; t < 6000; ++t) {
+            in.now_ms = t; in.last_render_ms = last;
+            if (hubidle::decide(in).render) { worst = std::max(worst, t - last); last = t; }
+        }
+        CHECK(worst <= (unsigned long long)hubidle::kIdleGapMs + 1);
+        // ...and at that cadence (the step is capped at 0.1 s) the disc comes out about 1.4 s after the selection settles, with no other event
+        cf::MediaReveal r;
+        int frames = 0;
+        while (r.amount(4) < 0.99f && frames < 100) { r.step(4, true, 0.1f, false); ++frames; }
+        CHECK(frames <= 18 && r.amount(4) >= 0.99f);
+        // a slow renderer (0.25 s frames, step capped at 0.1 s) still gets there, just later
+        cf::MediaReveal r2;
+        frames = 0;
+        while (r2.amount(4) < 0.99f && frames < 200) { r2.step(4, true, 0.25f, false); ++frames; }
+        CHECK(frames < 200 && r2.amount(4) >= 0.99f);
     }
 
     if (fails) { std::printf("%d FAILED\n", fails); return 1; }
