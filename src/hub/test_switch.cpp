@@ -5,6 +5,7 @@
 #include "emulators.h"
 #include "library.h"
 #include "lichii.h"
+#include "nx_runner.h"
 #include "miniz.h"
 
 #include <chrono>
@@ -471,6 +472,43 @@ static void test_env() {
     CHECK(set(v, 32 * G) && !set(v, 8 * G));
 }
 
+/* switch.runner: three choices, per-game overrides, and what Fritchii gets in its environment. */
+static void test_runner() {
+    const hub::gs::Option* o = hub::gs::find_option("switch.runner");
+    CHECK(o && o->def == "lichii" && o->choices.size() == 3);
+    CHECK(o && o->choices[1].value == "fritchii" && o->choices[1].label == "Fritchii (Ocarina fork)" && o->choices[0].label == "Lichii (emulator)" && o->choices[2].label == "Hookshot (native)");
+    const std::string oot = "switch:0400486024dec000", other = "switch:0100abcd12340000";
+    hub::gs::Store st;
+    CHECK(st.resolve(hub::System::Switch, oot)["switch.runner"] == "lichii");   // Lichii stays the default
+    CHECK(st.set_game(oot, hub::System::Switch, "switch.runner", "fritchii"));
+    CHECK(st.resolve(hub::System::Switch, oot)["switch.runner"] == "fritchii");
+    CHECK(st.resolve(hub::System::Switch, other)["switch.runner"] == "lichii");  // a per-game override does not leak
+    CHECK(st.set_system(hub::System::Switch, "switch.runner", "fritchii"));
+    CHECK(st.resolve(hub::System::Switch, other)["switch.runner"] == "fritchii");   // the system default applies to games without an override
+    CHECK(st.set_game(oot, hub::System::Switch, "switch.runner", "lichii"));
+    CHECK(st.resolve(hub::System::Switch, oot)["switch.runner"] == "lichii");       // ...and a game can go back
+    CHECK(!st.set_game(oot, hub::System::Switch, "switch.runner", "auto"));          // old / unknown values are still refused
+    {   // saved and loaded again
+        hub::gs::Store b;
+        CHECK(b.from_json(st.to_json()));
+        CHECK(b.resolve(hub::System::Switch, other)["switch.runner"] == "fritchii" && b.resolve(hub::System::Switch, oot)["switch.runner"] == "lichii");
+    }
+    hub::GameEntry e;
+    e.system = hub::System::Switch;
+    e.key = other;
+    CHECK(hubemu::fritchii_selected(e, st.resolve(hub::System::Switch, other)) && !hubemu::fritchii_selected(e, st.resolve(hub::System::Switch, oot)));
+    // environment: Lichii as before; Fritchii pins the updater and does not preload in "auto"
+    hub::gs::Values v;
+    v["switch.preload_shaders"] = "auto";
+    const uint64_t G = 1ull << 30;
+    CHECK(hubemu::nx_env(hubemu::Kind::Lichii, v, 32 * G) == hubemu::lichii_env(v, 32 * G));
+    auto envhas = [](const std::vector<std::pair<std::string, std::string>>& e2, const char* k) { for (auto& kv : e2) if (kv.first == k) return true; return false; };
+    CHECK(envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 32 * G), "EDEN_UPDATE_URL") && !envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 32 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+    v["switch.preload_shaders"] = "all";
+    CHECK(envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 8 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+    CHECK(!envhas(hubemu::nx_env(hubemu::Kind::Lichii, v, 8 * G), "EDEN_UPDATE_URL"));   // Lichii's environment never gets it
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--download") {
         setvbuf(stdout, nullptr, _IONBF, 0);
@@ -491,6 +529,7 @@ int main(int argc, char** argv) {
     test_prepare_nopad(d);
     test_saves(d);
     test_env();
+    test_runner();
     std::error_code ec;
     fs::remove_all(d, ec);
     std::printf(g_fail ? "hub_switch_test: %d FAILED\n" : "hub_switch_test: all passed\n", g_fail);

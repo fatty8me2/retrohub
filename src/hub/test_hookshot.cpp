@@ -127,8 +127,10 @@ int main() {
         CHECK(hookshot::use_for(oot, v));    // built and chosen
         CHECK(!hookshot::use_for(other, v));
         const hub::gs::Option* o = hub::gs::find_option("switch.runner");
-        CHECK(o && o->def == "lichii" && o->scope == hub::gs::Scope::Visual && o->choices.size() == 2);
-        CHECK(o && o->choices[0].value == "lichii" && o->choices[1].value == "hookshot");
+        CHECK(o && o->def == "lichii" && o->scope == hub::gs::Scope::Visual && o->choices.size() == 3);
+        CHECK(o && o->choices[0].value == "lichii" && o->choices[1].value == "fritchii" && o->choices[2].value == "hookshot");
+        v["switch.runner"] = "fritchii";
+        CHECK(!hookshot::use_for(oot, v));   // Fritchii is not Hookshot: use_for stays false (the launch picks the emulator)
         hub::gs::Values dv = hub::gs::defaults_for(hub::System::Switch);
         CHECK(dv["switch.runner"] == "lichii");
         CHECK(!hookshot::use_for(oot, dv));

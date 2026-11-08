@@ -155,11 +155,12 @@ std::vector<Option> build() {
     // 32 GB of RAM or more." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Read by the launch only, never written to Lichii's ini.
     v.push_back(mk("switch.preload_shaders", "Shaders at start", "Video", SWITCH, K::Choice, S::Visual, "auto",
                    {{"auto", "Auto"}, {"all", "All cached shaders"}, {"recent", "Recently used"}}));
-    // Which program plays Ocarina of Time (Switch 2): Lichii (default) or Hookshot (experimental native PC build RetroHub makes from the player's own game).
+    // Which program plays a Switch game: Lichii (default), Fritchii (Frizti's Ocarina-of-Time fork of Lichii, opt-in, RetroHub's own download) or Hookshot (experimental native
+    // PC build RetroHub makes from the player's own Ocarina of Time; that game only, falls back to Lichii otherwise).
     // Shown ONLY for that game (settings_games_ui.cpp); offline only, ignored by online / sync code.
     // v1.37.0 stored "auto" (= Hookshot); it is no longer a choice, so loading / merging / resolving drops it and the default (Lichii) applies.
     v.push_back(mk("switch.runner", "Plays with", "Emulation", SWITCH, K::Choice, S::Visual, "lichii",
-                   {{"lichii", "Lichii (emulator)"}, {"hookshot", "Hookshot (native)"}}));
+                   {{"lichii", "Lichii (emulator)"}, {"fritchii", "Fritchii (Ocarina fork)"}, {"hookshot", "Hookshot (native)"}}));
     return v;
 }
 

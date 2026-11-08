@@ -317,7 +317,7 @@ add_executable(kanto_live kanto_live.cpp)
 target_link_libraries(kanto_live PRIVATE hubcommon hubminiz)
 
 # PlayStation 2 via PCSX2 (docs/PS2.md): BIOS discovery, PCSX2.ini writers, pad bindings, card session; library scan of PS2 images
-target_sources(RetroHub PRIVATE pcsx2.cpp ppsspp.cpp lichii.cpp switch_ui.cpp)
+target_sources(RetroHub PRIVATE pcsx2.cpp ppsspp.cpp lichii.cpp switch_ui.cpp nx_runner.cpp nx_prep_ui.cpp)   # nx_runner: Fritchii (Lichii fork) runner choice, save sync, shader seed; nx_prep_ui: the launch-time prep job
 target_sources(RetroHub PRIVATE hookshot.cpp hookshot_run_ui.cpp)   # Hookshot: native Ocarina of Time (Switch 2) build, runner + saves (hookshot.h)
 target_sources(RetroHub PRIVATE hookshot_build.cpp hookshot_ui.cpp)   # Hookshot build pipeline (kit download, make_game.py run, swap) + the game-page card (hookshot_build.h)
 target_link_libraries(RetroHub PRIVATE mfplat mfuuid)   # Hookshot: the AV1 decoder check (Media Foundation)
@@ -326,9 +326,14 @@ target_include_directories(hub_ps2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../c
 target_link_libraries(hub_ps2_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # Nintendo Switch via Lichii (docs/EMULATORS.md): qt-config.ini merge, controls, profiles.dat, keys/firmware import, save session
-add_executable(hub_switch_test test_switch.cpp emulators.cpp lichii.cpp)
+add_executable(hub_switch_test test_switch.cpp emulators.cpp lichii.cpp nx_runner.cpp)
 target_include_directories(hub_switch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_switch_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+
+# Fritchii runner (nx_runner.h): runner resolution, env, save sync across Lichii / Fritchii / vault, key + shader seed (temp dirs only)
+add_executable(hub_nx_runner_test test_nx_runner.cpp nx_runner.cpp emulators.cpp lichii.cpp)
+target_include_directories(hub_nx_runner_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_nx_runner_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # Hookshot build pipeline (hookshot_build.h): protocol lines, RX_JOBS, hashes, pins, requirement texts, folder swap (temp folders; no downloads, no builds)
 add_executable(hub_hookshot_build_test test_hookshot_build.cpp hookshot_build.cpp hookshot.cpp emulators.cpp lichii.cpp)
