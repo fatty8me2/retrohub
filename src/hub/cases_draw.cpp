@@ -1127,6 +1127,7 @@ void cases_case(const CaseScene& sc, const CaseDraw& d, const CasePose& ps, bool
             xf2.detail = x.detail && face_ratio(f) > 0.5f;   // a cover turned nearly side-on: no squashed text
             paint_front(xf2, f, d, st, kind, 0.5f + ps.yaw * 0.42f);
             shade_face(f, n);
+            if (ps.dim > 0.004f) sc.dl->AddQuadFilled(f.q[0], f.q[1], f.q[2], f.q[3], IM_COL32(8, 11, 21, (int)(85.f * std::min(1.f, ps.dim) * (reflection ? a : 1.f))));   // Coverflow: a flat dark tint on the cases that are not selected
         }
     }
 }

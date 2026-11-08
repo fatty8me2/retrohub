@@ -586,6 +586,12 @@ void library_filter_chips() {
         chip_same_line(gl.c_str(), -1.f);
         if (chip(gl.c_str(), !A.st.lib_genre.empty(), COL_ACCENT)) ImGui::OpenPopup("##genre_pick");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show one genre only");
+        if (cases_view) {   // Cases: Coverflow (default) or the Classic shelf of turned cases
+            const char* sl = A.st.lib_cases_classic ? "Style: Classic shelf" : "Style: Coverflow";
+            chip_same_line(sl, -1.f);
+            if (chip(sl, !A.st.lib_cases_classic, COL_ACCENT)) { A.st.lib_cases_classic = !A.st.lib_cases_classic; mark_dirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carousel style: Coverflow (straight row, disc slides out) or the Classic shelf");
+        }
         if (!cases_view) {
             chip_same_line(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", -1.f);
             if (chip(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", A.st.lib_group_genre, COL_ACCENT)) {
