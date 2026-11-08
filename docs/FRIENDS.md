@@ -99,7 +99,7 @@ Invite  = {lobby_code, game_id, game_title, system, expires_at}
 - Blocking: the blocker's pending requests are resolved to the other side as `declined` (incoming) / `cancelled` (outgoing); a blocked user's `add_friend` to the blocker looks successful (pending) but is silently dropped. The blocked user does see `friend_removed` if they were friends.
 - Offline-device behaviour: a socket sending `state:"offline"` is treated as offline and does not count for the effective status; a second device that is online still shows the user online.
 - Messages to an online user are pushed and not stored in the inbox; if they have no socket they go to the inbox. Inbox messages are re-sent on every connect until acked.
-- Cross-user fan-out is one subrequest per friend (200 max); this exceeds the Workers Free subrequest limit (50) for users with many friends, so use a paid plan.
+- A friends list holds 200 people (the admin account 5000). A presence event reaches at most 40 online friends (`PRESENCE_FANOUT_CAP`, one subrequest each: the Workers Free plan allows 50 per invocation). The friends it skipped come first on the next event, so everybody is reached in turn, and a friend always sees the right state when they connect. No paid plan is needed.
 
 ## One entry per person (dedupe)
 - Lists are keyed by uid. The client runs `dedupe_friends` / `dedupe_requests` on welcome and before drawing: a person is never both a friend and a request, never both an incoming and outgoing request (incoming wins), and never in two list sections.

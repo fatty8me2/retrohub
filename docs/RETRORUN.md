@@ -142,7 +142,7 @@ Windowed code paths can be smoke-tested with `SDL_VIDEODRIVER=dummy SDL_AUDIODRI
 
 ## On-screen display, volume and speed
 - Every status message (state saved/loaded, slot, screenshot, disc, ...) is shown as an OSD toast (`src/common/osd.h`) as well as in the window title. `--osd-msg TEXT` plus `RETRORUN_OSD_SHOT=1` with `--screenshot` composites it into a QA picture. See RUNNER_CTL.md for the layer details.
-- RetroHub steers a running retrorun through `control.json` (`src/common/runner_ctl.h`): `volume` (0-100), `mute`, `speed` (0.25 0.5 1 1.5 2 3 5 8 or max; shows "Speed 2x" on the OSD), `ff`, `osd_msg`. All but `osd_msg`, `screenshot` and `quit` are refused in online sessions. `rewind` (value 1/0) is implemented, `shader`, `overlay` and `clip` are reserved and answer `unsupported`. Full table: RUNNER_CTL.md.
+- RetroHub steers a running retrorun through `control.json` (`src/common/runner_ctl.h`): `volume` (0-100), `mute`, `speed` (0.25 0.5 1 1.5 2 3 5 8 or max; shows "Speed 2x" on the OSD), `ff`, `osd_msg`. Only `speed`, `ff`, `rewind`, `shader`, `pause` and the state and disc commands are refused in online sessions; `volume`, `mute`, `clip`, `overlay`, `osd_corner`, `input`, `handoff` and `reload_controls` are allowed online. `rewind` (value 1/0), `shader`, `overlay`, `clip`, `pause` and `osd_corner` are implemented; `handoff` needs `--handoff` and a rollback game (see "Controller hand-off"). `rewind` and `shader` are offline only; `overlay` and `clip` work online. Full table: RUNNER_CTL.md.
 
 ## Limitations
 
