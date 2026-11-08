@@ -79,6 +79,26 @@ int main() {
     CHECK(dolphin_scan(0x7C) == 0x64 && dolphin_scan(0x7D) == 0x65);   // DIK_F13 / DIK_F14
     CHECK(std::string(dolphin_hotkey_name(DolphinKey::Increase)) == "Emulation Speed/Increase Emulation Speed" && std::string(dolphin_hotkey_name(DolphinKey::Decrease)) == "Emulation Speed/Decrease Emulation Speed");
     CHECK(std::string(dolphin_hotkey_expr(DolphinKey::Increase)) == "@(Ctrl+Shift+F13)" && std::string(dolphin_hotkey_expr(DolphinKey::Decrease)) == "@(Ctrl+Shift+F14)");
+    {   // Dolphin pause / save / load chords: pairwise non-nested with each other and with the two speed chords (a chord fires every hotkey whose keys it contains)
+        std::vector<std::vector<int>> all = {dolphin_speed_scans(DolphinKey::Increase), dolphin_speed_scans(DolphinKey::Decrease)};
+        for (DolphinAct a : dolphin_acts()) all.push_back(dolphin_act_scans(a));
+        auto subset = [](const std::vector<int>& x, const std::vector<int>& y) { for (int k : x) if (std::find(y.begin(), y.end(), k) == y.end()) return false; return true; };
+        for (size_t i = 0; i < all.size(); ++i) for (size_t j = 0; j < all.size(); ++j) if (i != j) CHECK(!subset(all[i], all[j]));
+        for (auto& c : all) for (int sc : c) CHECK(sc == kDolphinScanCtrl || sc == kDolphinScanShift || sc == 0x64 || sc == 0x65 || sc == 0x66);   // only DIK_F13..F15 and the modifiers
+        CHECK(std::string(dolphin_act_hotkey_name(DolphinAct::Pause)) == "General/Toggle Pause" && std::string(dolphin_act_hotkey_expr(DolphinAct::Pause)) == "@(Ctrl+Shift+F15)");
+        CHECK(std::string(dolphin_act_hotkey_name(DolphinAct::SaveState)) == "Save State/Save State Slot 1" && std::string(dolphin_act_hotkey_expr(DolphinAct::SaveState)) == "@(Ctrl+F14+F15)");
+        CHECK(std::string(dolphin_act_hotkey_name(DolphinAct::LoadState)) == "Load State/Load State Slot 1" && std::string(dolphin_act_hotkey_expr(DolphinAct::LoadState)) == "@(Shift+F14+F15)");
+        CHECK(dolphin_is_managed_hotkey("General/Toggle Pause") && dolphin_is_managed_hotkey("Emulation Speed/Increase Emulation Speed") && !dolphin_is_managed_hotkey("General/Stop"));
+        // close plan: queued buttons go out; a paused game that is resumed gets one more Toggle Pause
+        CHECK(dolphin_close_plan({}, false).acts.empty());
+        CHECK(dolphin_close_plan({}, true).acts == std::vector<DolphinAct>{DolphinAct::Pause});
+        CHECK(dolphin_close_plan({DolphinAct::Pause}, false).acts == std::vector<DolphinAct>{DolphinAct::Pause});
+        CHECK((dolphin_close_plan({DolphinAct::SaveState}, true).acts == std::vector<DolphinAct>{DolphinAct::SaveState, DolphinAct::Pause}));
+        CHECK(dolphin_close_plan({DolphinAct::SaveState}, false).acts == std::vector<DolphinAct>{DolphinAct::SaveState});
+        // GameCube NetPlay lookup: A.proc wins; otherwise the NetPlay Dolphin; online even though A.run.online is unset
+        CHECK(gc_menu_pid(true, 1234) == 0 && gc_menu_pid(false, 1234) == 1234 && gc_menu_pid(false, 0) == 0);
+        CHECK(online_for_menu(false, 1234) && online_for_menu(true, 0) && !online_for_menu(false, 0));
+    }
     CHECK(speed_row(true, false, false, false) == SpeedRow::Enabled && speed_row(true, false, true, false) == SpeedRow::Online);
     CHECK(speed_row(false, true, false, true) == SpeedRow::Enabled && speed_row(false, true, true, true) == SpeedRow::Online);
     CHECK(speed_row(false, false, false, true) == SpeedRow::Unsupported && speed_row(false, false, true, true) == SpeedRow::Unsupported);

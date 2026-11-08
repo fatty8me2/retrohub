@@ -119,6 +119,7 @@ void prepare_azahar(const std::string& install_dir);   // profile = the stored 3
 void prepare_azahar(const std::string& install_dir, const hubctl::Profile& profile);
 std::string azahar_config_patch(const std::string& qt_config_ini, const hubctl::Profile& profile);
 std::string azahar_config_patch(const std::string& qt_config_ini);   // pure: the text transform
+std::string azahar_pin_language(const std::string& qt_config_ini);   // pure: [Paths] language = en (every launch, RetroHub's own Azahar)
 /* Cemu (RetroHub's own download only): <dir>\portable, settings.xml (skips the Getting Started dialog, no update
  * check), controllerProfiles\controller0.xml = Wii U GamePad on XInput pad 0. An existing install is never touched. */
 void prepare_cemu_managed(const std::string& install_dir);   // profile = the stored wiiu profile
