@@ -659,6 +659,66 @@ int main() {
         CHECK(frames < 200 && r2.amount(4) >= 0.99f);
     }
 
+    /* ---- polish: returning to a case, analytic velocity, eviction choice ---- */
+    {
+        namespace cf = hubui::cases::cf;
+        // A fully out, B for 0.3 s, back to A: A's extension never drops below its value at the moment of return, and it never waits another dwell
+        {
+            cf::MediaReveal r;
+            const float dt = 1.f / 60.f;
+            for (int i = 0; i < 90; ++i) r.step(1, true, dt, false);
+            CHECK(r.amount(1) > 0.99f);
+            for (int i = 0; i < 18; ++i) r.step(2, true, dt, false);   // 0.3 s on B: A is partway back in
+            const float at_return = r.amount(1);
+            CHECK(at_return > 0.02f && at_return < 0.99f);
+            float lowest = at_return, prev = at_return;
+            bool never_down = true;
+            for (int i = 0; i < 120; ++i) {
+                r.step(1, true, dt, false);
+                const float a = r.amount(1);
+                lowest = std::min(lowest, a);
+                if (a < prev - 1e-5f) never_down = false;
+                prev = a;
+            }
+            CHECK(lowest >= at_return - 1e-5f && never_down && r.amount(1) > 0.99f);
+            // the same with a long wait away: A has gone in completely, so it waits its dwell again (a fresh reveal)
+            for (int i = 0; i < 120; ++i) r.step(2, true, dt, false);
+            CHECK(r.amount(1) == 0.f);
+            r.step(1, true, dt, false);
+            CHECK(r.amount(1) == 0.f);
+        }
+        // the carried velocity is the curve's derivative at the end of the step: continuous even with the 0.1 s step cap of a throttled hub
+        {
+            float x = 0.f; cf::EaseState es;
+            for (int i = 0; i < 3; ++i) cf::ease_step(x, es, 5.f, 0.1f, false);   // 0.3 s in
+            const float v_ref = es.vel;
+            CHECK(v_ref > 1.f);
+            const float before = x;
+            cf::ease_step(x, es, 6.f, 0.001f, false);
+            const float v_after = (x - before) / 0.001f;
+            CHECK(std::fabs(v_after - v_ref) < 0.1f * v_ref + 0.05f);
+            // the slope helper agrees with a finite difference of ease()
+            for (float t = 0.05f; t < 0.95f; t += 0.1f) CHECK(std::fabs(cf::ease_slope(t) - (cf::ease(t + 0.001f) - cf::ease(t - 0.001f)) / 0.002f) < 0.02f * cf::ease_slope(t) + 0.01f);
+        }
+        // eviction picks the least-extended slot, and drops the departing media when it is the least extended of all
+        {
+            auto fill = [](cf::MediaReveal& r, float hero_x) {
+                r.reset();
+                const float xs[5] = {0.9f, 0.2f, 0.8f, 0.7f, 0.6f};
+                for (int k = 1; k <= 5; ++k) { r.s[k].idx = 10 + k; r.s[k].x = xs[k - 1]; r.s[k].es.out = xs[k - 1]; r.s[k].es.to = 0.f; r.s[k].es.from = xs[k - 1]; r.s[k].es.t = 0.f; }
+                r.s[0].idx = 7; r.s[0].x = hero_x; r.s[0].es.out = hero_x; r.s[0].es.to = hero_x; r.s[0].es.t = 1e9f;
+            };
+            cf::MediaReveal a;
+            fill(a, 0.5f);
+            a.step(8, true, 1e-5f, false);   // 7 leaves with 0.5: the slot holding 0.2 (case 12) goes, everything else stays
+            CHECK(a.amount(12) == 0.f && a.amount(7) > 0.45f && a.amount(11) > 0.85f && a.amount(13) > 0.75f && a.amount(14) > 0.65f && a.amount(15) > 0.55f);
+            cf::MediaReveal b;
+            fill(b, 0.1f);
+            b.step(8, true, 1e-5f, false);   // 7 leaves with 0.1, less out than all: it is dropped, nobody else is
+            CHECK(b.amount(7) == 0.f && b.amount(11) > 0.85f && b.amount(12) > 0.15f && b.amount(13) > 0.75f && b.amount(14) > 0.65f && b.amount(15) > 0.55f);
+        }
+    }
+
     if (fails) { std::printf("%d FAILED\n", fails); return 1; }
     std::printf("hub_cases_test: all ok\n");
     return 0;

@@ -208,6 +208,19 @@ inline float ease(float t) {
     return 3.f * s * (1.f - s) + s * s * s;
 }
 constexpr float kEaseSlope0 = 4.5454545f;   // ease'(0) = 3 / (3 * 0.22): how much faster than average the curve starts
+/* The slope of ease() at t: dy/dx at the bezier parameter s with x(s) = t. */
+inline float ease_slope(float t) {
+    t = std::max(0.f, std::min(1.f, t));
+    float lo = 0.f, hi = 1.f, s = t;
+    for (int i = 0; i < 22; ++i) {
+        const float u = 1.f - s, x = 0.66f * s * u * u + 1.08f * s * s * u + s * s * s;
+        if (x < t) lo = s; else hi = s;
+        s = 0.5f * (lo + hi);
+    }
+    const float u = 1.f - s;
+    const float dx = 0.66f * (u * u - 2.f * s * u) + 1.08f * (2.f * s * u - s * s) + 3.f * s * s;
+    return 3.f * u * u / std::max(1e-4f, dx);
+}
 struct EaseState { float from = 0, to = 0, t = 1e9f, out = 0, vel = 0, v0 = 0; };
 /* Moves x toward target; true while moving. A retarget in mid-glide starts the new segment at the speed the carousel already has (a correction term that
  * dies out with zero slope at the end), so held keys glide instead of kicking at every press; from rest the curve's own fast start is kept. A change of x
@@ -219,6 +232,7 @@ inline bool ease_step(float& x, EaseState& e, float target, float dt, bool reduc
     else if (target != e.to) {
         e.from = x; e.to = target; e.t = 0.f;
         e.v0 = was_moving ? e.vel : (target - x) * kEaseSlope0 / dur;
+        if (was_moving && e.v0 * (target - x) < 0.f) e.v0 = 0.f;   // turning round: no momentum backwards (the media never dips on its way back out)
     }
     if (e.t >= dur) { x = e.out = e.to; e.vel = 0.f; return false; }
     if (!(dt > 0.f)) return true;
@@ -227,8 +241,10 @@ inline bool ease_step(float& x, EaseState& e, float target, float dt, bool reduc
     if (e.t >= dur) { x = e.out = e.to; e.vel = 0.f; return false; }
     const float D = e.to - e.from, tt = e.t / dur, k = 1.f - tt;
     float xn = e.from + D * ease(tt) + (e.v0 - D * kEaseSlope0 / dur) * e.t * k * k;
-    if (D > 0.f) xn = std::min(xn, e.to); else if (D < 0.f) xn = std::max(xn, e.to);   // never past the target
-    e.vel = (xn - x) / h;
+    const float C = e.v0 - D * kEaseSlope0 / dur;
+    float vel = D * ease_slope(tt) / dur + C * (k * k - 2.f * e.t * k / dur);   // the derivative of the curve at its end, not the average over the step
+    if (D > 0.f && xn >= e.to) { xn = e.to; vel = 0.f; } else if (D < 0.f && xn <= e.to) { xn = e.to; vel = 0.f; }   // never past the target
+    e.vel = vel;
     x = e.out = xn;
     return true;
 }
@@ -326,7 +342,7 @@ struct MediaReveal {
                 if (s[worst].idx < 0 || s[worst].x <= s[0].x) s[worst] = s[0];
             }
             s[0] = had ? back : MediaSlot();
-            s[0].idx = focus; s[0].dwell = 0.f;
+            s[0].idx = focus; s[0].dwell = (had && back.x > 0.001f) ? kMediaDwell : 0.f;   // still (partly) out: no dwell, carry on from where it is
         }
         if (show && focus >= 0) s[0].dwell += std::max(0.f, dt); else s[0].dwell = 0.f;
         ease_step(s[0].x, s[0].es, (show && focus >= 0 && s[0].dwell >= kMediaDwell) ? 1.f : 0.f, dt, false, kMediaSecs);

@@ -799,7 +799,7 @@ void draw_cases(Disp& D) {
         ui::anim(CFX.idle_w, at_rest ? 1.f : 0.f, at_rest ? 3.f : 9.f);
         // Headless screenshots are taken on a wall-clock timer, but a software-rendered frame can take longer than the 0.1 s step cap, so the 420 ms dwell + 0.85 s slide
         // would still be running when the picture is taken (the library finishing its scan also restarts it): in screenshot mode the media is simply out.
-        static const bool shot_media_out = g_headless && std::getenv("HUB_SHOT_CASES") != nullptr;
+        const bool shot_media_out = cases_shot_instant();
         CFX.media.step(n ? CS.focus : -1, CS.mode == Mode::Browse && !CS.menu_open, dt, reduced || shot_media_out);
     }
     // ---- stage ----
@@ -817,15 +817,19 @@ void draw_cases(Disp& D) {
     Hc = std::max(sp(12.f), Hc);
     float f0 = avail_top + std::max(0.f, (avail - Hc * 1.34f - title_h) * 0.4f) + Hc * 0.06f + Hc;
     // Coverflow: the info panel takes the bottom-left (above the scrubber), the carousel the room between it and the tabs
-    float info_y0 = 0.f, info_y1 = 0.f;
+    float info_y0 = 0.f, info_y1 = 0.f, band_top = 0.f;
+    const bool banner_up = n > 0 && cases_own_empty() && A.sys_filter.empty() && !A.search_buf[0];   // the add banner sits under the tabs
     if (cfm) {
         namespace cf = hubui::cases::cf;
+        band_top = std::max(avail_top, banner_up ? tab_y + tab_h + sp(1.5f) + sp(5.2f) + sp(0.4f) : 0.f);   // the stage lives between the top controls and the info panel
         info_y1 = strip_y - sp(0.2f);
-        const float info_h = std::min(sp(tight ? 12.5f : 21.f), H * 0.27f);
+        const float room = std::max(1.f, info_y1 - band_top);
+        // the panel never takes more than its share: on a tiny window the cases keep at least a third of the band, and the panel shrinks (its own budget drops lines)
+        const float info_h = std::min(std::min(sp(tight ? 12.5f : 21.f), H * 0.27f), room * 0.66f);
         info_y0 = info_y1 - info_h;
-        const float stage_h = std::max(sp(1.f), info_y0 - avail_top);   // never padded out: on a very short window the cases get smaller, not lower
-        Hc = std::max(sp(1.f), std::min(stage_h / 1.40f, W * 0.26f));
-        const float cy = avail_top + std::max(0.f, stage_h - Hc * 1.36f) * 0.5f + Hc * 0.58f;   // the screen y of the case centres at the centre depth
+        const float stage_h = std::max(1.f, info_y0 - band_top);
+        Hc = std::max(1.f, std::min(stage_h / 1.40f, W * 0.26f));   // sized to the band, never padded out: the hero, its reflection and its media fit inside it
+        const float cy = band_top + std::max(0.f, stage_h - Hc * 1.36f) * 0.5f + Hc * 0.58f;   // the screen y of the case centres at the centre depth
         f0 = cy + cf::kPivot * Hc;
     }
     shelfdraw::CaseScene sc;
@@ -1077,11 +1081,8 @@ void draw_cases(Disp& D) {
         float xs[2 * kWindow + 5];
         float fy = f0 + Hc * 0.04f, ty = f0 - Hc * (cfm ? 1.25f : 1.08f);
         if (cfm) {   // the tab row, the menu button and the add banner keep their clicks, the info panel keeps its buttons
-            float top = tab_y + tab_h + sp(0.4f);
-            if (cases_own_empty() && A.sys_filter.empty() && !A.search_buf[0] && CS.insp.x < 0.05f && CS.flip.x < 0.05f) top = tab_y + tab_h + sp(1.5f) + sp(5.2f) + sp(0.4f);   // the banner is up
-            ty = std::max(ty, top);
-            fy = std::min(fy, info_y0 - sp(0.2f));
-            if (fy < ty + sp(1.f)) fy = ty + sp(1.f);
+            ty = std::max(ty, std::max(band_top, tab_y + tab_h + sp(0.4f)));
+            fy = std::min(fy, info_y0 - sp(0.2f));   // the info panel's clamp always wins: a hit rect that no longer fits is dropped below
         }
         for (int k = 0; k < ns; ++k) xs[k] = 0.5f * (slots[k].mn.x + slots[k].mx.x);
         float bd[2 * kWindow + 5];   // boundary k sits between slot k-1 and slot k
@@ -1096,7 +1097,7 @@ void draw_cases(Disp& D) {
             const Slot& s = slots[k];
             const int idx = D.flat[(size_t)s.i];
             const ImVec2 q0(std::max(bd[k], p0.x), ty), q1(std::min(bd[k + 1], p1.x), fy);
-            if (q1.x - q0.x < 2.f) continue;
+            if (q1.x - q0.x < 2.f || q1.y - q0.y < 4.f) continue;
             const CHit h = cases_hit(item_hash(idx), q0, q1, s.i == CS.focus);
             if (!G.focus_key.empty() && s.i == CS.focus && G.focus_key == item_key(idx)) { apply_pending_focus(idx); G.focus_quiet = false; }
             if (s.i == CS.focus) { centre_click = h.clicked; centre_act = h.activated; centre_det = h.details; centre_press = h.pressed; centre_hover = h.hovered; }
