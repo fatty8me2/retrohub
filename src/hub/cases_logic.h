@@ -148,6 +148,116 @@ inline float neighbour_x(const CaseDims& c, float cs, const CaseDims& n, float n
 }
 constexpr float kNeighbourBase = 0.66f;   // slot_pose(1).x: enough for two keep cases
 
+/* ================= Coverflow (the default carousel style): a straight coverflow, layout numbers adapted from PyroCade (MIT, Pyrodrifter) =================
+ * World units as above (a keep case is 1.0 high; 1.0 = 323 px of the reference). z here is the engine's z: positive = away from the camera. */
+namespace cf {
+constexpr float kDeg = 0.017453293f;
+constexpr float kDist = 4.64f;       // camera distance in case heights (their perspective 1500 px / 323 px)
+constexpr float kEye = 0.68f;        // camera height above the floor (their vanishing point sits a little above the case centre)
+constexpr float kPivot = 0.5f;       // every case is centred on this height (they pivot about their centre; normalised sizes keep the bottoms close)
+constexpr int kReach = 6;            // cases shown each side before the fade
+constexpr float kFadeSpan = 1.2f;    // ...and the distance over which one more fades out
+constexpr float kHeroX = -0.17f, kHeroZ = -0.40f, kHeroLift = 0.025f, kHeroYaw = -22.f * kDeg, kHeroPitch = -4.f * kDeg;
+constexpr float kNbLift = -0.031f, kNbScale = 0.92f, kNbYaw = 50.f * kDeg;
+constexpr float kMoveSecs = 0.7f, kMediaSecs = 0.85f, kMediaDwell = 0.42f, kIdleSecs = 6.f;
+
+struct Pose { float x = 0, lift = 0, z = 0, yaw = 0, pitch = 0, scale = 1, alpha = 1; };
+inline float nb_x(int a) { return 1.006f + (float)(a - 1) * 0.483f; }
+inline float nb_z(int a) { return 0.356f * (float)a + 0.263f; }
+/* The resting pose of slot k (k >= 0; 0 = the selected case) on the side `sgn` (+1 right, -1 left). */
+inline Pose slot_int(int k, float sgn) {
+    Pose p;
+    if (k <= 0) { p.x = kHeroX; p.lift = kHeroLift; p.z = kHeroZ; p.yaw = kHeroYaw; p.pitch = kHeroPitch; p.scale = 1.f; return p; }
+    p.x = sgn * nb_x(k); p.lift = kNbLift; p.z = nb_z(k); p.yaw = sgn * kNbYaw; p.scale = kNbScale;
+    return p;
+}
+/* The pose for a signed, fractional distance d from the selection: straight lines between the slots, so a case in transit keeps a steady look. */
+inline Pose slot(float d) {
+    const float a = std::fabs(d), sgn = d < 0.f ? -1.f : 1.f;
+    const int k = (int)std::floor(a);
+    const float f = a - (float)k;
+    const Pose p0 = slot_int(k, sgn), p1 = slot_int(k + 1, sgn);
+    Pose p;
+    auto L = [&](float u, float v) { return u + (v - u) * f; };
+    p.x = L(p0.x, p1.x); p.lift = L(p0.lift, p1.lift); p.z = L(p0.z, p1.z); p.yaw = L(p0.yaw, p1.yaw); p.pitch = L(p0.pitch, p1.pitch); p.scale = L(p0.scale, p1.scale);
+    p.alpha = a <= (float)kReach ? 1.f : 1.f - smoothstep01((a - (float)kReach) / kFadeSpan);
+    return p;
+}
+/* Every case is shown about as large as the stage allows whatever its real size: their ds = min(1.5, 323/H, 300/W). */
+inline float display_scale(shelf::Media m) { const CaseDims d = case_dims(m); return std::min(1.5f, std::min(1.f / d.h, (300.f / 323.f) / d.w)); }
+/* The case's centre stands on one height, so its bottom is at: */
+inline float base_lift(const CaseDims& c, float scale) { return kPivot - 0.5f * c.h * scale; }
+
+/* The selected case's idle loop (6 s ease-in-out, starting at rest): bob up to 0.015, yaw 22 -> 26 degrees, pitch -4 -> -3. t in seconds since it settled. */
+struct Idle { float lift = 0, yaw = 0, pitch = 0; };
+inline Idle idle(double t) {
+    const float u = 0.5f - 0.5f * (float)std::cos(6.283185307 * std::fmod(std::max(0.0, t), (double)kIdleSecs) / (double)kIdleSecs);
+    return {0.015f * u, -4.f * kDeg * u, 1.f * kDeg * u};
+}
+
+/* ---- the motion: cubic-bezier(.22, 1, .36, 1) over 0.7 s, restarted from wherever it is when the target moves (no overshoot) ---- */
+inline float ease(float t) {
+    if (!(t > 0.f)) return 0.f;
+    if (t >= 1.f) return 1.f;
+    float lo = 0.f, hi = 1.f, s = t;
+    for (int i = 0; i < 22; ++i) {   // x(s) = t, x(s) = 3(.22)s(1-s)^2 + 3(.36)s^2(1-s) + s^3
+        const float u = 1.f - s, x = 0.66f * s * u * u + 1.08f * s * s * u + s * s * s;
+        if (x < t) lo = s; else hi = s;
+        s = 0.5f * (lo + hi);
+    }
+    return 3.f * s * (1.f - s) + s * s * s;
+}
+struct EaseState { float from = 0, to = 0, t = 1e9f, out = 0; };
+/* Moves x toward target; true while moving. A change of x from outside (a jump) restarts the glide from the new place. reduced snaps. */
+inline bool ease_step(float& x, EaseState& e, float target, float dt, bool reduced, float dur = kMoveSecs) {
+    if (reduced || !(dur > 0.f)) { x = target; e.from = e.to = e.out = target; e.t = 1e9f; return false; }
+    if (x != e.out) { e.from = x; e.to = target; e.t = 0.f; }
+    if (target != e.to) { e.from = x; e.to = target; e.t = 0.f; }
+    if (e.t >= dur) { x = e.out = e.to; return false; }
+    e.t += std::max(0.f, std::min(dt, 0.1f));
+    if (e.t >= dur) { x = e.out = e.to; return false; }
+    x = e.from + (e.to - e.from) * ease(e.t / dur);
+    e.out = x;
+    return true;
+}
+
+/* ---- wide boxes: the neighbours may not run into the selected case ---- */
+/* Screen x extent (units of U at depth 0) of a case at x, depth z, turned by yaw, scaled: l / r. */
+inline void screen_extent(const CaseDims& c, float scale, float yaw, float x, float z, float* l, float* r) {
+    const float ct = std::cos(yaw), st = std::sin(yaw);
+    float lo = 1e9f, hi = -1e9f;
+    for (int i = 0; i < 4; ++i) {
+        const float lx = (i & 1 ? 0.5f : -0.5f) * c.w * scale, lz = (i & 2 ? 0.5f : -0.5f) * c.d * scale;
+        const float k = kDist / std::max(0.4f, kDist + z - lx * st + lz * ct);
+        const float px = (x + lx * ct + lz * st) * k;
+        lo = std::min(lo, px); hi = std::max(hi, px);
+    }
+    *l = lo; *r = hi;
+}
+/* How far (>= 0) the first neighbour on one side must stand beyond its slot so its inner edge clears the selected case (c, drawn at scale cs) by a gap. */
+inline float neighbour_extra(const CaseDims& c, float cs, const CaseDims& n, float ns, bool right, float gap = 0.03f) {
+    float hl, hr;
+    screen_extent(c, cs, kHeroYaw, kHeroX, kHeroZ, &hl, &hr);
+    const float edge = right ? hr + gap : -hl + gap;   // the left side is the mirror image (positive yaw / x below)
+    const float ct = std::cos(kNbYaw), st = std::sin(kNbYaw), sc = kNbScale * ns;
+    float need = -1e9f;
+    for (int i = 0; i < 4; ++i) {
+        const float lx = (i & 1 ? 0.5f : -0.5f) * n.w * sc, lz = (i & 2 ? 0.5f : -0.5f) * n.d * sc;
+        const float xr = lx * ct + lz * st, zr = -lx * st + lz * ct;
+        const float k = kDist / std::max(0.4f, kDist + nb_z(1) + zr);
+        need = std::max(need, edge / k - xr);
+    }
+    return std::max(0.f, need - nb_x(1));
+}
+/* The screen x (units of U) of the first right neighbour's inner edge: the limit for the media's reach. */
+inline float first_edge(const CaseDims& n, float ns, float extra) {
+    float l, r;
+    screen_extent(n, kNbScale * ns, kNbYaw, nb_x(1) + extra, nb_z(1), &l, &r);
+    return l;
+}
+
+}  // namespace cf
+
 /* ---- the spring that moves the carousel ---- */
 /* One frame of a soft, slightly under-damped spring toward `target` (the stiffer the further away it is, so a long run keeps up).
  * reduced_motion snaps. Returns true while still moving. */

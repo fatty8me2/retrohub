@@ -415,6 +415,99 @@ int main() {
         }
     }
 
+    /* ---- Coverflow ---- */
+    {
+        namespace cf = hubui::cases::cf;
+        using shelf::Media;
+        const float deg = 3.14159265f / 180.f;
+        // the setting: Coverflow is the default, Classic persists
+        Settings s0;
+        CHECK(!s0.lib_cases_classic);
+        s0.lib_cases_classic = true;
+        Settings s1;
+        CHECK(settings_from_json(settings_to_json(s0), &s1) && s1.lib_cases_classic);
+        Settings s2;
+        CHECK(settings_from_json("{\"lib_layout\": \"cases\"}", &s2) && !s2.lib_cases_classic);   // an older file: Coverflow
+        // the selected case: left of the middle, raised, toward the camera (z < 0), turned 22 degrees one way, pitched -4
+        const cf::Pose h = cf::slot(0.f);
+        CHECK(std::fabs(h.x + 0.17f) < 1e-5f && h.z < -0.39f && h.z > -0.41f && h.lift > 0.f && h.scale == 1.f && h.alpha == 1.f);
+        CHECK(std::fabs(h.yaw + 22.f * deg) < 1e-4f && std::fabs(h.pitch + 4.f * deg) < 1e-4f);
+        // neighbours a = 1..6: x = +-(1.006 + (a-1) 0.483), z = 0.356 a + 0.263 (behind), yaw +-50 degrees, scale 0.92, a bit lower than the selected case
+        for (int a = 1; a <= 6; ++a) {
+            const cf::Pose r = cf::slot((float)a), l = cf::slot((float)-a);
+            CHECK(std::fabs(r.x - (1.006f + (float)(a - 1) * 0.483f)) < 1e-4f && std::fabs(l.x + r.x) < 1e-5f);
+            CHECK(std::fabs(r.z - (0.356f * (float)a + 0.263f)) < 1e-4f && std::fabs(l.z - r.z) < 1e-6f);
+            CHECK(std::fabs(r.yaw - 50.f * deg) < 1e-4f && std::fabs(l.yaw + 50.f * deg) < 1e-4f);
+            CHECK(std::fabs(r.scale - 0.92f) < 1e-6f && r.lift < h.lift && r.alpha == 1.f && r.pitch == 0.f);
+        }
+        // fade out beyond 6 instead of popping; opaque up to 6
+        CHECK(cf::slot(6.f).alpha == 1.f && cf::slot(6.5f).alpha < 1.f && cf::slot(6.5f).alpha > 0.f && cf::slot(7.3f).alpha == 0.f && cf::slot(-9.f).alpha == 0.f);
+        // smooth between slots (no jumps), and the selected case unwinds its 22 degrees while it slides away
+        for (float d = -7.f; d < 7.f; d += 0.01f) {
+            const cf::Pose p = cf::slot(d), q = cf::slot(d + 0.01f);
+            CHECK(std::fabs(q.x - p.x) < 0.02f && std::fabs(q.yaw - p.yaw) < 0.02f && std::fabs(q.z - p.z) < 0.012f);
+        }
+        CHECK(cf::slot(0.5f).yaw > cf::slot(0.f).yaw && cf::slot(0.5f).yaw < cf::slot(1.f).yaw && cf::slot(0.5f).x > cf::slot(0.f).x && cf::slot(0.5f).x < cf::slot(1.f).x);
+        // the display scale: every case about as tall as the stage allows, never wider than 300/323
+        for (int i = 0; i < shelf::kMediaCount; ++i) {
+            const CaseDims d = case_dims((Media)i);
+            const float ds = cf::display_scale((Media)i);
+            CHECK(ds >= 0.9f && ds <= 1.5f + 1e-5f && d.h * ds <= 1.0001f && d.w * ds <= 0.9300f);
+        }
+        CHECK(cf::display_scale(Media::GcCase) == 1.f && cf::display_scale(Media::DsCase) > 1.f && cf::display_scale(Media::SnesCart) < 1.f + 1e-4f);
+        // wide / small boxes: the first neighbour never overlaps the selected case, on either side, for every pair of shapes
+        {
+            int bad = 0;
+            for (int i = 0; i < shelf::kMediaCount; ++i)
+                for (int j = 0; j < shelf::kMediaCount; ++j) {
+                    const CaseDims c = case_dims((Media)i), n = case_dims((Media)j);
+                    const float cs = cf::display_scale((Media)i), ns = cf::display_scale((Media)j);
+                    float hl, hr, nl, nr;
+                    cf::screen_extent(c, cs, cf::kHeroYaw, cf::kHeroX, cf::kHeroZ, &hl, &hr);
+                    const float er = cf::neighbour_extra(c, cs, n, ns, true), el = cf::neighbour_extra(c, cs, n, ns, false);
+                    CHECK(er >= 0.f && el >= 0.f);
+                    cf::screen_extent(n, cf::kNbScale * ns, cf::kNbYaw, cf::nb_x(1) + er, cf::nb_z(1), &nl, &nr);
+                    if (nl < hr - 1e-3f) { if (++bad <= 3) std::printf("right overlap %d %d: %.3f\n", i, j, hr - nl); }
+                    cf::screen_extent(n, cf::kNbScale * ns, -cf::kNbYaw, -(cf::nb_x(1) + el), cf::nb_z(1), &nl, &nr);
+                    if (nr > hl + 1e-3f) { if (++bad <= 3) std::printf("left overlap %d %d: %.3f\n", i, j, nr - hl); }
+                }
+            CHECK(bad == 0);
+            CHECK(cf::neighbour_extra(case_dims(Media::GcCase), 1.f, case_dims(Media::GcCase), 1.f, true) < 0.08f);   // keep cases sit at their slot
+        }
+        // idle: starts at rest, 6 s loop: bob 0.015, yaw 22 -> 26 degrees, pitch -4 -> -3
+        {
+            const cf::Idle i0 = cf::idle(0.0), i3 = cf::idle(3.0), i6 = cf::idle(6.0);
+            CHECK(std::fabs(i0.lift) < 1e-6f && std::fabs(i0.yaw) < 1e-6f && std::fabs(i0.pitch) < 1e-6f);
+            CHECK(std::fabs(i3.lift - 0.015f) < 1e-5f && std::fabs(h.yaw + i3.yaw + 26.f * deg) < 1e-4f && std::fabs(h.pitch + i3.pitch + 3.f * deg) < 1e-4f);
+            CHECK(std::fabs(i6.lift) < 1e-5f && std::fabs(cf::idle(9.0).lift - 0.015f) < 1e-5f);
+            for (double t = 0; t < 12; t += 0.05) CHECK(cf::idle(t).lift >= -1e-6f && cf::idle(t).lift <= 0.015f + 1e-6f);
+        }
+        // the glide: cubic-bezier(.22,1,.36,1): 0 -> 1, monotonic, no overshoot, fast start with a long soft settle
+        {
+            CHECK(cf::ease(0.f) == 0.f && cf::ease(1.f) == 1.f);
+            float prev = 0.f;
+            for (float t = 0.f; t <= 1.f; t += 0.005f) { const float v = cf::ease(t); CHECK(v >= prev - 1e-6f && v <= 1.f + 1e-6f); prev = v; }
+            CHECK(cf::ease(0.1f) > 0.35f && cf::ease(0.5f) > 0.9f && cf::ease(0.5f) < 0.995f);   // mostly there by half time, still settling
+            float x = 0.f; cf::EaseState es;
+            float t = 0.f; int steps = 0; bool moving = true;
+            while (moving && steps < 1000) { moving = cf::ease_step(x, es, 5.f, 1.f / 60.f, false); t += 1.f / 60.f; ++steps; CHECK(x <= 5.f + 1e-5f && x >= 0.f); }
+            CHECK(!moving && x == 5.f && std::fabs(t - 0.7f) < 0.05f);   // 0.7 s
+            // a new target mid-way restarts from where it is (no jump)
+            x = 0.f; es = cf::EaseState();
+            for (int i = 0; i < 12; ++i) cf::ease_step(x, es, 3.f, 1.f / 60.f, false);
+            const float mid = x;
+            cf::ease_step(x, es, 4.f, 1.f / 60.f, false);
+            CHECK(x >= mid && x - mid < 0.5f);
+            // an outside jump (the scrubber) is followed, not fought
+            x = 20.f;
+            cf::ease_step(x, es, 21.f, 1.f / 60.f, false);
+            CHECK(x >= 20.f && x < 21.f);
+            // reduced motion snaps
+            cf::ease_step(x, es, 7.f, 1.f / 60.f, true);
+            CHECK(x == 7.f);
+        }
+    }
+
     if (fails) { std::printf("%d FAILED\n", fails); return 1; }
     std::printf("hub_cases_test: all ok\n");
     return 0;
