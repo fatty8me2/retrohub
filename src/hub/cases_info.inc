@@ -5,6 +5,7 @@
 
 struct CfState {
     hubui::cases::cf::EaseState pos_es;       // the glide of CS.pos.x (cubic-bezier .22 1 .36 1, 0.7 s)
+    hubui::cases::cf::MediaReveal media;      // which cases have their disc / cartridge out
     double idle_t = 0.0; float idle_w = 0.f; bool idle_rest = false;  // time since the carousel settled; the idle loop's weight (it fades in / out, never snaps)
     // the background colour grid (darkened, saturated): the one shown, the one it came from, the one it goes to
     ImU32 bg_cur[64] = {}, bg_from[64] = {}, bg_to[64] = {};
@@ -181,10 +182,8 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
         CFX.eyebrow = con + "  \xC2\xB7  " + count_text(CS.focus, n);
         cf_upper(CFX.eyebrow);
         {
-            using hubui::shelf::Media;
-            const Media mm = CS.media[(size_t)CS.focus];
-            const bool card = hubui::shelf::is_cart(mm) || mm == Media::SwitchCase || mm == Media::DsCase || mm == Media::N3dsCase || mm == Media::PspCase;
-            CFX.chip = card ? "CARTRIDGE" : "DISC";
+            const cf::MediaSpec ms = cf::media_spec(CS.media[(size_t)CS.focus]);
+            CFX.chip = ms.kind == cf::MediaKind::Card ? "CARTRIDGE" : "DISC";
         }
         std::string m;
         const std::string dot = "  \xC2\xB7  ";
