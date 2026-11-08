@@ -260,7 +260,29 @@ static void test_sims() {
     sim_leave(2, 0b10);     // 2 players: the other quits -> ends
 }
 
+
+// Guest 2 lost slot 1 and asks; the host's own view decides. Timeline in ms with the defaults (drop_silence_ms 3000,
+// timeout_ms 10000): the guest repeats its request every 100 ms the whole time.
+static void test_guest_lost_victim() {
+    const uint32_t silence = 3000, timeout = 10000;
+    // (a) the victim is really gone for everybody: refused until the host has been silent for half the limit, then
+    //     the host joins; its own drop_check would fire at 3000 anyway. Either way the drop starts well before timeout.
+    uint32_t joined = 0, own = 0;
+    for (uint32_t t = 0; t <= timeout; t += 100) {
+        if (!joined && drop_msg_allowed(2, false, t ? t : 0, silence)) joined = t;
+        if (!own && t >= silence) own = t;
+    }
+    CHECK(joined == 1500 && own == 3000 && joined < own && own < timeout);
+    // (b) the victim still talks to the host (the loss is only between guest and victim): every request is refused
+    //     the whole time (host last heard it < 100 ms ago), so a guest cannot kick a healthy player.
+    for (uint32_t t = 0; t <= timeout; t += 100) CHECK(!drop_msg_allowed(2, false, 50, silence));
+    // (c) the victim comes back for the guest: no drop was ever begun, nothing to undo.
+    netdrop::Agreement host_side(1, 0b101, 0, 100);
+    CHECK(!host_side.decided());
+}
+
 int main() {
+    test_guest_lost_victim();
     test_policy();
     test_clamp();
     test_partial_loss();
