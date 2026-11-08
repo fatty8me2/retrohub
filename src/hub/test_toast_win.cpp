@@ -16,8 +16,7 @@ int main() {
     if (!hubtoast::toast_winrt_selftest(xml, &err)) { std::printf("FAIL: second call\n"); ++fails; }
     // The scheduler refuses while a game runs (same gate as show()). Probe says "game up", so this can never create a toast.
     hubtoast::set_game_probe([]() { return true; });
-    if (hubtoast::system_scheduler().schedule(xml, "gntest", "gamenight", 4102444800000LL)) { std::printf("FAIL: schedule accepted during a game
-"); ++fails; }
+    if (hubtoast::system_scheduler().schedule(xml, "gntest", "gamenight", 4102444800000LL)) { std::printf("FAIL: schedule accepted during a game\n"); ++fails; }
     hubtoast::set_game_probe(nullptr);
     CoUninitialize();
     std::printf(fails ? "hub_toast_win_test FAILED\n" : "hub_toast_win_test OK\n");
