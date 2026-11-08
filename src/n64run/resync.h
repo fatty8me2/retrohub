@@ -107,12 +107,12 @@ class Ctl {
         if (!enabled_ || (failed_ && !(host() && m.sub == PropAck))) return Act::None;
         if (host()) {
             if (!(guests() >> m.from & 1u)) return Act::None;
-            if (m.sub == Req && !active_ && !stale(m.s) && now) {   // a Req that would start a recovery: one per sender per kReqWindowMs
-                if (last_start_[m.from] && now - last_start_[m.from] < kReqWindowMs) {
+            if (m.sub == Req && !active_ && !stale(m.s) && now) {   // a Req that would start a recovery: a repeat of the same request (same sample) from a sender is refused for kReqWindowMs
+                if (last_start_[m.from] && last_s_[m.from] == m.s && now - last_start_[m.from] < kReqWindowMs) {   // a repeat of the same request
                     if (!(throttle_noted_ >> m.from & 1u)) { throttle_noted_ |= 1u << m.from; throttle_note_ = true; }
                     return Act::None;
                 }
-                last_start_[m.from] = now;
+                last_start_[m.from] = now; last_s_[m.from] = m.s;
             }
             if (m.sub == Req) { if (!active_ && !stale(m.s) && count_ < max_) start(cur); else if (!active_ && !stale(m.s) && count_ >= max_) failed_ = true; }
             else if (m.sub == PropAck) {
@@ -157,7 +157,7 @@ class Ctl {
     Msg ack() const { Msg a; a.sub = PropAck; a.from = (uint8_t)my_; a.seq = seq_; a.s = s_; return a; }
     int my_ = 0, count_ = 0, max_ = kMaxResyncs;
     uint32_t mask_ = 1, margin_ = kDefaultMargin, s_ = 0, floor_ = 0, acked_ = 0, last_req_ = 0, last_prop_ = 0;
-    uint32_t last_start_[8] = {0, 0, 0, 0, 0, 0, 0, 0}, throttle_noted_ = 0;
+    uint32_t last_start_[8] = {0, 0, 0, 0, 0, 0, 0, 0}, last_s_[8] = {0, 0, 0, 0, 0, 0, 0, 0}, throttle_noted_ = 0;
     bool throttle_note_ = false;
     uint8_t seq_ = 0;
     bool enabled_ = false, failed_ = false, active_ = false, have_seq_ = false, want_req_ = false, saved_ = false;

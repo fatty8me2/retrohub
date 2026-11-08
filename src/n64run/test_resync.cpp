@@ -280,23 +280,25 @@ static void test_req_throttle() {
     CHECK(h.on_msg(req, 650, &rep, 1000) == resync::Act::None && h.active());   // first request: honoured immediately
     CHECK(!h.take_throttle_note());
     h.complete();                                                                // recovery 1 done
-    req.s = 1200;
-    CHECK(h.on_msg(req, 1300, &rep, 2000) == resync::Act::None && !h.active());  // 1 s later from the same guest: refused
-    CHECK(h.take_throttle_note() && !h.take_throttle_note());                    // logged once ...
-    h.on_msg(req, 1301, &rep, 2100);
-    CHECK(!h.take_throttle_note() && h.count() == 1 && !h.failed());             // ... not again
-    resync::Msg req2 = req; req2.from = 2;
-    CHECK(h.on_msg(req2, 1302, &rep, 2200) == resync::Act::None && h.active());   // another guest is not affected
-    h.complete();
     req.s = 5000;
-    CHECK(h.on_msg(req, 1500, &rep, 1000 + resync::kReqWindowMs) == resync::Act::None && h.active());   // window over: honoured again
+    CHECK(h.on_msg(req, 1300, &rep, 2000) == resync::Act::None && h.active());  // a NEW desync (new sample) 1 s later: served right away
+    h.complete();                                                                // recovery 2 done
+    CHECK(h.on_msg(req, 1400, &rep, 2100) == resync::Act::None && !h.active());  // the SAME request again inside the window: refused
+    CHECK(h.take_throttle_note() && !h.take_throttle_note());                    // logged once ...
+    h.on_msg(req, 1401, &rep, 2200);
+    CHECK(!h.take_throttle_note() && h.count() == 2 && !h.failed());             // ... not again
+    resync::Msg req2 = req; req2.from = 2;
+    CHECK(h.on_msg(req2, 1402, &rep, 2300) == resync::Act::None && h.active());   // another guest is not affected
     h.complete();
-    CHECK(h.count() == 3);
-    // spam after the limit cannot be used to switch recovery off before the window passes either
+    CHECK(h.count() == 3);                                                       // the per-match limit still holds
+    req.s = 9000;
+    h.on_msg(req, 1500, &rep, 2400);
+    CHECK(h.failed());                                                           // 4th: gives up as before
+    // the same request is served again once the window has passed
     resync::Ctl k; k.configure(0, 0b11, c, 90);
+    req.s = 5000;
     k.on_msg(req, 650, &rep, 10000); k.complete();
-    k.on_msg(req, 1300, &rep, 10100);
-    CHECK(!k.failed() && k.count() == 1);
+    CHECK(k.on_msg(req, 700, &rep, 10000 + resync::kReqWindowMs) == resync::Act::None && k.active());
 }
 
 // netcore-M5: the whole recovery in a 3-4 player room over a lossy, delayed virtual network. One guest's state diverged; every peer runs the
