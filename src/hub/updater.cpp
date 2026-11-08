@@ -46,6 +46,7 @@ constexpr const char* kDownloadPrefix = "https://github.com/fatty8me2/retrohub/r
 constexpr const char* kLegacyDownloadPrefix = "https://github.com/fatty8me2/smash-classic/releases/download/";
 constexpr const char* kPlatformAssetName = "BattleShip-windows.zip";
 constexpr const char* kHubAssetNameC = "RetroHub-windows.zip";
+constexpr const char* kSigAssetNameC = "SHA256SUMS.txt.sig";
 constexpr const char* kSumsAssetName = "SHA256SUMS.txt";
 constexpr const char* kManualUrl = "https://github.com/fatty8me2/retrohub/releases/latest";
 
@@ -79,7 +80,7 @@ std::atomic<bool> s_startup_started{false};
 std::atomic<bool> s_startup_done{false};
 std::vector<std::string> s_startup_notes;   // guarded by s_mu
 
-std::string s_latest, s_notes, s_url, s_digest, s_sums_url, s_status;
+std::string s_latest, s_notes, s_url, s_digest, s_sums_url, s_sig_url, s_status;
 std::string s_hub_url, s_hub_digest;   // RetroHub-windows.zip of the latest release ("" => the release has none)
 long long s_size = 0, s_hub_size = 0;
 std::mutex s_mu;
@@ -287,6 +288,8 @@ Release parse_release(const std::string& json) {
             const JV* url = a.get("browser_download_url");
             if (name && name->type == JV::String && name->s == kSumsAssetName && url && url->type == JV::String &&
                 is_trusted_download_url(url->s)) { r.sums_url = url->s; continue; }
+            if (name && name->type == JV::String && name->s == kSigAssetNameC && url && url->type == JV::String &&
+                is_trusted_download_url(url->s)) { r.sig_url = url->s; continue; }
             if (!name || name->type != JV::String || !url || url->type != JV::String) continue;
             const bool isFull = name->s == kPlatformAssetName, isHub = name->s == kHubAssetNameC;
             if (!isFull && !isHub) continue;
@@ -341,26 +344,130 @@ const char* const kFullAssetName = kPlatformAssetName;
 const char* const kHubAssetName = kHubAssetNameC;
 const char* const kHubOnlyMarker = "# retrohub-only";
 
-bool sums_mark_hub_only(const std::string& text) {
+HubOnlyMarker parse_hub_only_marker(const std::string& text) {
+    HubOnlyMarker out;
     std::istringstream in(text);
     std::string line;
     bool first = true;
+    int seen = 0;
+    HubOnlyMarker found;
     while (std::getline(in, line)) {
         if (first && line.rfind("\xEF\xBB\xBF", 0) == 0) line = line.substr(3);
         first = false;
         while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-        if (line == kHubOnlyMarker) return true;
+        if (line.rfind(kHubOnlyMarker, 0) != 0) continue;
+        if (line.size() > std::strlen(kHubOnlyMarker) && line[std::strlen(kHubOnlyMarker)] != ' ') continue;   // some other comment
+        seen++;
+        std::vector<std::string> t;
+        std::istringstream ls(line);
+        for (std::string w; ls >> w;) t.push_back(w);
+        if (t.size() == 6 && t[0] == "#" && t[1] == "retrohub-only" && t[2] == "smash-sha256" && is_hex64(t[3]) &&
+            t[4] == "smash-since" && !parse_version(t[5]).empty()) {
+            found.valid = true; found.smash_sha256 = lower(t[3]); found.smash_since = t[5];
+        }
     }
-    return false;
+    if (seen == 1 && found.valid) out = found;   // two marker lines (even two good ones) are ambiguous: not hub-only
+    return out;
 }
 
-Payload choose_payload(const Release& r, const std::string& sums_text) {
-    if (r.has_hub_asset && (!r.has_asset || sums_mark_hub_only(sums_text))) return Payload::HubOnly;
+Payload choose_payload(const Release& r, const std::string& sums_text, const std::string& installed) {
+    if (r.has_hub_asset) {
+        HubOnlyMarker m = parse_hub_only_marker(sums_text);
+        if (m.valid && is_hex64(installed) && lower(installed) == m.smash_sha256) return Payload::HubOnly;
+    }
     return r.has_asset ? Payload::Full : Payload::None;
 }
 
-/* M2 (release signing) hook: every fetched SHA256SUMS.txt passes through here before any hash in it is believed. */
-bool sums_are_trusted(const std::string&, const std::string&, std::string*) { return true; }
+const char* const kSigAssetName = kSigAssetNameC;
+/* The publisher's ECDSA P-256 public key (raw X||Y). The matching private key never leaves the release PC. */
+const char* const kReleasePubKeyHex =
+    "658c1b016ebdc2a00f89baf7a7b510026baa7da3b1515e14b6e6bf07f17a307ae2a7b0011d070804b8621e2462fa64a0ea806932b6573a13cf7db747f42fdb73";
+const char* const kUnsignedMessage = "This update isn't signed by RetroHub's publisher, so it wasn't installed.";
+
+bool der_to_raw_rs(const void* derv, size_t len, unsigned char out[64]) {
+    const unsigned char* d = static_cast<const unsigned char*>(derv);
+    if (!d || len < 8 || len > 72) return false;
+    if (d[0] != 0x30) return false;
+    if (d[1] & 0x80) return false;                       // a P-256 signature is at most 70 content bytes: short-form length only
+    if ((size_t)d[1] != len - 2) return false;           // the SEQUENCE length must cover exactly the rest (no trailing bytes)
+    size_t at = 2;
+    unsigned char part[2][32] = {};
+    for (int i = 0; i < 2; i++) {
+        if (at + 2 > len || d[at] != 0x02) return false;
+        size_t n = d[at + 1];
+        at += 2;
+        if (n == 0 || n > 33 || at + n > len) return false;
+        const unsigned char* v = d + at;
+        if (v[0] & 0x80) return false;                   // negative
+        if (n > 1 && v[0] == 0x00 && !(v[1] & 0x80)) return false;   // not the shortest form
+        size_t skip = 0;
+        while (skip < n && v[skip] == 0x00) skip++;
+        if (skip == n) return false;                     // zero
+        size_t w = n - skip;
+        if (w > 32) return false;
+        std::memcpy(part[i] + (32 - w), v + skip, w);
+        at += n;
+    }
+    if (at != len) return false;
+    std::memcpy(out, part[0], 32);
+    std::memcpy(out + 32, part[1], 32);
+    return true;
+}
+
+static bool hex_to_bytes(const char* hex, unsigned char* out, size_t n) {
+    if (!hex || std::strlen(hex) != n * 2) return false;
+    for (size_t i = 0; i < n; i++) {
+        int v[2];
+        for (int k = 0; k < 2; k++) {
+            char c = hex[i * 2 + k];
+            v[k] = (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
+            if (v[k] < 0) return false;
+        }
+        out[i] = (unsigned char)(v[0] * 16 + v[1]);
+    }
+    return true;
+}
+
+static bool g_test_key_set = false;
+static unsigned char g_test_key[64];
+void set_pubkey_for_test(const unsigned char pub[64]) {
+    g_test_key_set = pub != nullptr;
+    if (pub) std::memcpy(g_test_key, pub, 64);
+}
+
+bool verify_ecdsa_p256(const unsigned char pub[64], const void* msg, size_t msgLen, const void* sigDer, size_t sigLen) {
+    unsigned char rs[64];
+    if (!pub || !der_to_raw_rs(sigDer, sigLen, rs)) return false;
+    bool ok = false;
+    BCRYPT_ALG_HANDLE hashAlg = nullptr, ecAlg = nullptr; BCRYPT_KEY_HANDLE key = nullptr;
+    do {
+        if (BCryptOpenAlgorithmProvider(&hashAlg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) break;
+        unsigned char digest[32];
+        if (BCryptHash(hashAlg, nullptr, 0, reinterpret_cast<PUCHAR>(const_cast<void*>(msg)), (ULONG)msgLen, digest, sizeof(digest)) != 0) break;
+        if (BCryptOpenAlgorithmProvider(&ecAlg, BCRYPT_ECDSA_P256_ALGORITHM, nullptr, 0) != 0) break;
+        unsigned char blob[sizeof(BCRYPT_ECCKEY_BLOB) + 64];
+        BCRYPT_ECCKEY_BLOB hdr{}; hdr.dwMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC; hdr.cbKey = 32;
+        std::memcpy(blob, &hdr, sizeof(hdr));
+        std::memcpy(blob + sizeof(hdr), pub, 64);
+        if (BCryptImportKeyPair(ecAlg, nullptr, BCRYPT_ECCPUBLIC_BLOB, &key, blob, (ULONG)sizeof(blob), 0) != 0) break;
+        ok = BCryptVerifySignature(key, nullptr, digest, sizeof(digest), rs, sizeof(rs), 0) == 0;
+    } while (false);
+    if (key) BCryptDestroyKey(key);
+    if (ecAlg) BCryptCloseAlgorithmProvider(ecAlg, 0);
+    if (hashAlg) BCryptCloseAlgorithmProvider(hashAlg, 0);
+    return ok;
+}
+
+bool sums_are_trusted(const std::string& tag, const std::string& sums, const std::string& sig, std::string* why) {
+    unsigned char pub[64];
+    bool have = g_test_key_set ? (std::memcpy(pub, g_test_key, 64), true) : hex_to_bytes(kReleasePubKeyHex, pub, 64);
+    bool ok = have && !sums.empty() && !sig.empty() && verify_ecdsa_p256(pub, sums.data(), sums.size(), sig.data(), sig.size());
+    if (!ok) {
+        ulog("release %s: SHA256SUMS.txt signature %s; the update is refused", tag.c_str(), sig.empty() ? "is missing" : "does not verify");
+        if (why) *why = kUnsignedMessage;
+    }
+    return ok;
+}
 
 Verdict verify_hashes(const std::string& tag, const std::string& actual, const std::string* sums, const std::string& api_digest,
                       const std::string& asset_name) {
@@ -403,22 +510,41 @@ bool fetch_sums(const std::string& sumsUrl, const std::string& scratch, std::str
     return true;
 }
 
+bool fetch_sig(const std::string& sigUrl, const std::string& scratch, std::string* bytes, std::string* err) {
+    std::string sp = scratch + ".sig";
+    rm_file(sp);
+    std::string sig;
+    int c = run_capture("curl -fLsS -m 30 --max-filesize 1024 -o \"" + sp + "\" \"" + sigUrl + "\"", [](const std::string&) {});
+    if (c == 0) {
+        std::ifstream in(P(sp), std::ios::binary);
+        std::stringstream ss; ss << in.rdbuf();
+        sig = ss.str();
+    }
+    rm_file(sp);
+    if (sig.empty()) { if (err) *err = kUnsignedMessage; return false; }
+    if (bytes) *bytes = sig;
+    return true;
+}
+
 bool download_verified(const FetchSpec& f, const std::string& zipPath, std::string* err,
                        const std::function<void(const std::string&)>& onLine) {
     auto bad = [&](const std::string& m) { rm_file(zipPath); if (err) *err = m; return false; };
-    std::string sums; bool haveSums = false;
-    if (f.sums_url.empty() && f.sums_text.empty() && checksums_required(f.tag)) return bad(verdict_message(Verdict::NoSums));
-    if (!f.sums_text.empty()) { sums = f.sums_text; haveSums = true; }
-    else if (!f.sums_url.empty()) {
-        /* A listed-but-unfetchable checksum file is never treated as "legacy". */
+    /* Every update needs a SHA256SUMS.txt that is signed by the publisher (no more "legacy" releases without sums). The signature is
+     * checked first; only a list that verifies is used for the zip. */
+    std::string sums = f.sums_text, sig = f.sig_bytes;
+    if (sums.empty()) {
+        if (f.sums_url.empty()) return bad(verdict_message(Verdict::NoSums));
         std::string e;
         if (!fetch_sums(f.sums_url, zipPath, &sums, &e)) return bad(e);
-        haveSums = true;
-    }
-    if (haveSums) {
+        if (f.sig_url.empty()) { ulog("release %s has no %s", f.tag.c_str(), kSigAssetNameC); return bad(kUnsignedMessage); }
+        if (!fetch_sig(f.sig_url, zipPath, &sig, &e)) { ulog("release %s: could not fetch %s", f.tag.c_str(), kSigAssetNameC); return bad(e); }
         std::string why;
-        if (!sums_are_trusted(f.tag, sums, &why)) return bad(why.empty() ? std::string("the release checksum file could not be trusted.") : why);
+        if (!sums_are_trusted(f.tag, sums, sig, &why)) return bad(why);
+    } else {
+        std::string why;
+        if (!sums_are_trusted(f.tag, sums, sig, &why)) return bad(why);   // preset sums are re-checked: a caller cannot skip the signature
     }
+    const bool haveSums = true;
     rm_file(zipPath);
     if (run_capture("curl -fL -# -m 600 -o \"" + zipPath + "\" \"" + f.zip_url + "\"", onLine) != 0) return bad("download failed.");
     std::ifstream in(P(zipPath), std::ios::binary | std::ios::ate);
@@ -558,17 +684,22 @@ void check_async(bool force) {
             std::lock_guard<std::mutex> l(s_mu);
             s_latest = rel.tag;
             s_notes = detail::strip_markdown(rel.body);
-            s_url.clear(); s_digest.clear(); s_sums_url.clear(); s_size = 0;
+            s_url.clear(); s_digest.clear(); s_sums_url.clear(); s_sig_url.clear(); s_size = 0;
             s_hub_url.clear(); s_hub_digest.clear(); s_hub_size = 0;
         }
         std::string cur = current_version();
         if (detail::compare_versions(rel.tag, cur) <= 0) {
             set_status("Up to date (" + cur + ").");
             ulog("up to date: have %s, latest %s", cur.c_str(), rel.tag.c_str());
+        } else if ((rel.has_asset || rel.has_hub_asset) && (rel.sums_url.empty() || rel.sig_url.empty())) {
+            /* Unsigned (or no checksums): refused up front, nothing is offered or downloaded. */
+            s_failed.store(true);
+            set_status(detail::kUnsignedMessage);
+            ulog("latest %s is not signed (sums %s, signature %s); not offered", rel.tag.c_str(), rel.sums_url.empty() ? "missing" : "present", rel.sig_url.empty() ? "missing" : "present");
         } else if (rel.has_asset || rel.has_hub_asset) {
             {
                 std::lock_guard<std::mutex> l(s_mu);
-                s_url = rel.url; s_size = rel.size; s_digest = rel.digest; s_sums_url = rel.sums_url;
+                s_url = rel.url; s_size = rel.size; s_digest = rel.digest; s_sums_url = rel.sums_url; s_sig_url = rel.sig_url;
                 s_hub_url = rel.hub_url; s_hub_size = rel.hub_size; s_hub_digest = rel.hub_digest;
             }
             s_available.store(true);
@@ -598,10 +729,10 @@ void start_update() {
     s_handing.store(false);
     s_deferred.store(false);
 
-    std::string url, digest, sumsUrl, version, hubUrl, hubDigest; long long size, hubSize;
+    std::string url, digest, sumsUrl, sigUrl, version, hubUrl, hubDigest; long long size, hubSize;
     {
         std::lock_guard<std::mutex> l(s_mu);
-        url = s_url; digest = s_digest; sumsUrl = s_sums_url; version = s_latest; size = s_size;
+        url = s_url; digest = s_digest; sumsUrl = s_sums_url; sigUrl = s_sig_url; version = s_latest; size = s_size;
         hubUrl = s_hub_url; hubDigest = s_hub_digest; hubSize = s_hub_size;
     }
     if (url.empty() && hubUrl.empty()) {
@@ -612,7 +743,7 @@ void start_update() {
     const bool gaming = s_session_probe && s_session_probe();   // read here, on the UI thread
     set_status(gaming ? "Starting download (it installs when you finish playing)..." : "Starting download...");
 
-    std::thread([url, digest, sumsUrl, version, size, hubUrl, hubDigest, hubSize]() {
+    std::thread([url, digest, sumsUrl, sigUrl, version, size, hubUrl, hubDigest, hubSize]() {
         auto fail = [](const std::string& m) {
             ulog("update failed: %s", m.c_str());
             set_status("Error: " + m);
@@ -654,19 +785,25 @@ void start_update() {
             rm_file(zipPath);
             /* Which payload: needs SHA256SUMS.txt (the hub-only marker lives there), so fetch it first. Without one the full zip is the
              * only choice (and download_verified then refuses a release that must have sums). */
-            std::string sumsText;
+            std::string sumsText, sigBytes;
             if (!sumsUrl.empty()) {
                 std::string serr;
                 if (!detail::fetch_sums(sumsUrl, zipPath, &sumsText, &serr)) { fail(serr + " Download manually: " + kManualUrl); return; }
+                if (sigUrl.empty()) { ulog("release %s has no %s", version.c_str(), detail::kSigAssetName); fail(detail::kUnsignedMessage); return; }
+                if (!detail::fetch_sig(sigUrl, zipPath, &sigBytes, &serr)) { fail(serr); return; }
                 std::string why;
-                if (!detail::sums_are_trusted(version, sumsText, &why)) { fail((why.empty() ? std::string("the release checksum file could not be trusted.") : why) + " Download manually: " + kManualUrl); return; }
+                if (!detail::sums_are_trusted(version, sumsText, sigBytes, &why)) { fail(why); return; }   // refused: no manual-download hint for an unsigned release
             }
             detail::Release rel; rel.has_asset = !url.empty(); rel.has_hub_asset = !hubUrl.empty();
-            const detail::Payload pick = detail::choose_payload(rel, sumsText);
+            /* The small RetroHub-only zip needs the release's marker to name the BattleShip.exe installed right now (hashed once, here;
+             * any problem reading it just means "use the full package"). */
+            std::string installedSmash;
+            if (rel.has_hub_asset && detail::parse_hub_only_marker(sumsText).valid) installedSmash = sha256_file(exeDir + "\\BattleShip.exe");
+            const detail::Payload pick = detail::choose_payload(rel, sumsText, installedSmash);
             if (pick == detail::Payload::None) { fail("this release has no update for this platform."); return; }
             hubOnly = pick == detail::Payload::HubOnly;
             ulog("downloading %s (%s)", hubOnly ? hubUrl.c_str() : url.c_str(), hubOnly ? "RetroHub files only" : "full package");
-            detail::FetchSpec spec; spec.tag = version; spec.sums_url = sumsUrl; spec.sums_text = sumsText;
+            detail::FetchSpec spec; spec.tag = version; spec.sums_url = sumsUrl; spec.sums_text = sumsText; spec.sig_url = sigUrl; spec.sig_bytes = sigBytes;
             if (hubOnly) { spec.zip_url = hubUrl; spec.digest = hubDigest; spec.size = hubSize; spec.asset_name = detail::kHubAssetName; }
             else { spec.zip_url = url; spec.digest = digest; spec.size = size; }
             std::string verr;
