@@ -19,13 +19,13 @@ LOGO = bytes([0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 
               0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E])
 
 
-def make_gb():
+def make_gb(rtc=True):
     rom = bytearray(0x8000)
     rom[0x100:0x104] = bytes([0x00, 0xC3, 0x50, 0x01])      # nop ; jp $0150
     rom[0x104:0x134] = LOGO
     rom[0x134:0x13B] = b"RHTEST\0"
     rom[0x143] = 0x00                                       # DMG only
-    rom[0x147] = 0x10                                       # MBC3 + TIMER + RAM + BATTERY
+    rom[0x147] = 0x10 if rtc else 0x03                      # MBC3 + TIMER + RAM + BATTERY, or MBC1 + RAM + BATTERY
     rom[0x148] = 0x00                                       # 32 KB
     rom[0x149] = 0x02                                       # 8 KB RAM
     code = bytearray()
@@ -34,10 +34,11 @@ def make_gb():
     loop = len(code)
     code += bytes([0x21, 0x00, 0xC0, 0x34, 0x7E])           # ld hl,$C000 ; inc (hl) ; ld a,(hl)
     code += bytes([0xEA, 0x00, 0xA0, 0xE0, 0x47])           # ld ($A000),a ; ldh ($47),a
-    code += bytes([0xAF, 0xEA, 0x00, 0x60, 0x3C, 0xEA, 0x00, 0x60])   # latch the clock: write 0 then 1 to $6000
-    code += bytes([0x3E, 0x08, 0xEA, 0x00, 0x40])           # select RTC seconds
-    code += bytes([0xFA, 0x00, 0xA0, 0xEA, 0x01, 0xC0])     # ld a,($A000) ; ld ($C001),a
-    code += bytes([0xAF, 0xEA, 0x00, 0x40])                 # back to RAM bank 0
+    if rtc:
+        code += bytes([0xAF, 0xEA, 0x00, 0x60, 0x3C, 0xEA, 0x00, 0x60])   # latch the clock: write 0 then 1 to $6000
+        code += bytes([0x3E, 0x08, 0xEA, 0x00, 0x40])       # select RTC seconds
+        code += bytes([0xFA, 0x00, 0xA0, 0xEA, 0x01, 0xC0]) # ld a,($A000) ; ld ($C001),a
+        code += bytes([0xAF, 0xEA, 0x00, 0x40])             # back to RAM bank 0
     at = len(code)
     code += bytes([0x18, (loop - (at + 2)) & 0xFF])         # jr loop
     rom[0x150:0x150 + len(code)] = code
@@ -53,6 +54,8 @@ if __name__ == "__main__":
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "gb_test.gb"), "wb") as f:
         f.write(make_gb())
+    with open(os.path.join(out, "gb_test_nortc.gb"), "wb") as f:   # same program on MBC1: no clock
+        f.write(make_gb(False))
     subprocess.check_call([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "make_siotest_rom.py"),
                            os.path.join(out, "gba_test.gba")])
     print("wrote", out)
