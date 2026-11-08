@@ -5,6 +5,8 @@
 #include "online_caps.h"
 #include "gameinfo.h"
 #include "gamepack.h"
+#include "hidden_games.h"
+#include "hidden_ui.h"
 #include <deque>
 #include <map>
 #include <mutex>
@@ -88,8 +90,7 @@ void apply_scan() {
     {   // prefs: hidden games drop out; duplicates collapse to one copy (the preferred path if it was found, else the first scanned)
         std::map<std::string, std::string> pref = preferred_copies();
         std::set<std::string> hid = hidden_game_keys();
-        if (!hid.empty())
-            A.lib.erase(std::remove_if(A.lib.begin(), A.lib.end(), [&](const hub::GameEntry& g) { return g.key != kNativeKey && hid.count(g.key) > 0; }), A.lib.end());
+        hidden_stash_set(hub::hidden::take_hidden(&A.lib, hid, kNativeKey));   // out of Home / Discover / rooms; only the library's "Show hidden" strip lists them
         hubdupes::collapse(&A.lib, pref, &A.dupes);
         apply_located_paths(&A.lib, pref);
     }

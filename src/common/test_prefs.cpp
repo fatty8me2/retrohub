@@ -4,6 +4,7 @@
 #include "json.h"
 #include "library.h"
 #include "prefs.h"
+#include "hidden_games.h"
 
 using namespace hub::prefs;
 namespace fs = std::filesystem;
@@ -312,6 +313,31 @@ int main() {
         Prefs d1 = m; set_user_shelves(&d1, {m.user_shelves[0], m.user_shelves[1]}, 400);
         Prefs md = merge(d1, m);
         CHECK(md.user_shelves.size() == 2 && same(md, merge(m, d1)));
+    }
+
+    {   // library-12: Hide / Unhide round-trip through the prefs file, and the hidden-versus-shown split
+        Prefs h;
+        CHECK(hub::hidden::hide(&h, "n64:a", 100) && h.hidden.size() == 1);
+        CHECK(!hub::hidden::hide(&h, "n64:a", 101));                     // hiding twice changes nothing
+        Prefs back;
+        CHECK(parse(serialize(h), &back) && back.hidden.size() == 1 && back.hidden[0] == "n64:a");   // survives save + load
+        CHECK(hub::hidden::hide(&back, "gb:b", 110) && back.hidden.size() == 2);
+        Prefs other = h;                                                  // another PC still has only n64:a
+        Prefs m = merge(back, other);
+        CHECK(m.hidden.size() == 2);                                      // the newer hide reaches the other PC
+        CHECK(hub::hidden::unhide(&m, "n64:a", 200) && m.hidden.size() == 1 && m.hidden[0] == "gb:b");
+        CHECK(!hub::hidden::unhide(&m, "nope:x", 201));
+        Prefs m2 = merge(m, back);                                        // the unhide is newer than the old hide: it sticks
+        CHECK(m2.hidden.size() == 1 && m2.hidden[0] == "gb:b");
+        struct G { std::string key; };
+        std::vector<G> lib{{"n64:a"}, {"gb:b"}, {"smash"}, {"gc:c"}};
+        std::vector<G> gone = hub::hidden::take_hidden(&lib, {"gb:b", "smash", "gc:c"}, "smash");
+        CHECK(lib.size() == 2 && lib[0].key == "n64:a" && lib[1].key == "smash");   // the bundled game is never hidden
+        CHECK(gone.size() == 2 && gone[0].key == "gb:b" && gone[1].key == "gc:c");
+        std::vector<G> none = hub::hidden::take_hidden(&lib, {});
+        CHECK(none.empty() && lib.size() == 2);
+        CHECK(hub::hidden::chip_label(false, 0).empty());                 // nothing hidden: no chip
+        CHECK(hub::hidden::chip_label(false, 3) == "Show hidden  3" && hub::hidden::chip_label(true, 0) == "Show hidden  0");
     }
 
     std::printf(fails ? "prefs_test FAILED\n" : "prefs_test OK\n");
