@@ -83,14 +83,19 @@ inline uint8_t refuse_code(Verdict v) { return v == Verdict::Rom ? kRefuseMismat
 /* Where the trailer sits in a knock: after the name of a drop-in knock ([kPktJoin, slot, 2, caps, name_len, name]), else right after a plain spectator knock. */
 inline size_t trailer_offset(const std::vector<uint8_t>& m) { return m.size() >= 5 && m[2] == 2 ? 5u + m[4] : 3u; }
 
-/* The host's whole decision for one knock (what Frontend::join_gate does before it answers): pass, or the kPktNoLive reason to send. */
+/* The host's whole decision for one knock (what Frontend::join_gate does before it answers): pass, or the kPktNoLive reason to send (0 = malformed: drop it silently).
+ * A drop-in knock (version 2) plays in the lockstep, so it needs a matching fingerprint: none = an older RetroHub = the old-version refusal.
+ * A plain spectator knock (version 1) can't desync anyone, so a missing trailer (a v1.39 spectator) is let through as before; only a PROVEN mismatch
+ * (both fingerprints present and the game, core or netcode version differ) turns it away. */
 struct Gate { bool pass = false; Verdict v = Verdict::Missing; uint8_t reason = kRefuseOldPeer; };
 inline Gate gate(const Fp& host, const std::vector<uint8_t>& knock) {
+    Gate g;
+    if (knock.size() < 3 || knock[2] == 9) { g.reason = 0; return g; }   // not a knock ([.., 9] = drop-in done never belongs on a spectator path)
+    const bool dropin = knock[2] == 2;
     Fp theirs;
     const bool have = parse(knock.data(), knock.size(), trailer_offset(knock), &theirs);
-    Gate g;
     g.v = check(host, have, theirs);
-    g.pass = g.v == Verdict::Ok;
+    g.pass = g.v == Verdict::Ok || (!dropin && g.v == Verdict::Missing);
     g.reason = g.pass ? 0 : refuse_code(g.v);
     return g;
 }
