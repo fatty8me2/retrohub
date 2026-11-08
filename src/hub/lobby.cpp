@@ -2,6 +2,7 @@
 #include "friends_ui.h"
 #include "party_ui.h"
 #include "profile.h"
+#include "online_caps.h"
 
 bool g_fake_room = false;
 bool g_shot_rejoin = false;
@@ -254,6 +255,10 @@ void guest_apply_launch(const std::string& body) {
 void lobby_tick() {
     party_tick();     // Plan 4: party mode + the finished-match watcher (also outside a room: couch party)
     bracket_tick();
+    /* GameCube NetPlay: the forwarder is pumped by gc_tick, so it must run for as long as a session exists, even while the lobby socket is
+     * down or the player has left the room page (onlineflow-H5). */
+    bool gc_ticked = false;
+    if (hubcaps::gc_session_alive(GCO.active, GCO.fw.active())) { gc_tick(); gc_ticked = true; }
     if (!A.in_room) return;
     A.lobby.update();
     if (A.entering_room) {
@@ -461,7 +466,7 @@ void lobby_tick() {
         A.lobby.send_msg(std::string("{\"kind\":\"ingame\",\"v\":") + (A.prev_proc ? "true" : "false") + "}");
         if (!A.prev_proc && A.my_ready) { A.my_ready = false; A.hello_dirty = true; }
     }
-    gc_tick();
+    if (hubcaps::gc_tick_needed_in_room(gc_ticked)) gc_tick();
     gc_guest_poll();
     room_ping_tick();
     // Membership changes -> forget departed peers, re-announce ourselves.

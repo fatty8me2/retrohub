@@ -23,7 +23,70 @@ inline bool system_has_online_launch(hub::System s) {
  * of the game. Today: Wii U (Cemu) only. */
 inline bool remote_play_system(hub::System s) { return s == hub::System::WiiU; }
 inline bool remote_play_game(hub::System s, const hub::GameInfo*) { return remote_play_system(s); }
-inline const char* remote_play_banner() { return "Mickey streams the game to you - you don't need your own copy."; }
+inline std::string remote_play_banner(const std::string& host_name = std::string()) {
+    return (host_name.empty() ? std::string("The host") : host_name) + " streams the game to you - you don't need your own copy.";
+}
+
+/* ---- GameCube NetPlay session lifetime (onlineflow-H5) ----
+ * The hubnet forwarder carries all of Dolphin's traffic and is only pumped by gc_tick(). It must keep ticking for as long as a session
+ * exists, whatever the room page or the lobby socket is doing (a lobby blip or "Leave room" used to stall everyone's match). */
+/* gco_active stays true until gc_tick sees Dolphin gone and resets it, so a dead Dolphin still ticks once to end the session cleanly. */
+inline bool gc_session_alive(bool gco_active, bool forwarder_active) { return gco_active || forwarder_active; }
+/* True when the room-bound tick must NOT tick it again this frame (already pumped at the top of the frame). */
+inline bool gc_tick_needed_in_room(bool already_ticked) { return !already_ticked; }
+
+/* ---- Cores a remote host may name in its launch message (onlineflow-M12) ----
+ * Only the GB/GBC branch of launch_online() uses the host's core name; everything else picks its core itself. A name is accepted only when
+ * it is a bare file name (no separators, no "..", no drive or UNC prefix) AND a known RetroHub core for that system. Empty = "use my own setting". */
+inline bool core_name_is_bare(const std::string& n) {
+    if (n.empty() || n.size() > 40 || n == "." || n == "..") return false;
+    for (char c : n) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+        if (!ok) return false;   // rejects \ / : . spaces and control characters in one go
+    }
+    return true;
+}
+inline bool core_known_for(hub::System s, const std::string& n) {
+    switch (s) {
+        case hub::System::GB: case hub::System::GBC: return n == "sameboy" || n == "sameboy_rb" || n == "gambatte";
+        case hub::System::GBA: return n == "mgba" || n == "mgba_link";
+        case hub::System::NDS: return n == "melondsds";
+        case hub::System::NES: return n == "nestopia";
+        case hub::System::SNES: return n == "snes9x";
+        default: return false;
+    }
+}
+inline bool core_from_host_ok(hub::System s, const std::string& n) { return core_name_is_bare(n) && core_known_for(s, n); }
+inline const char* core_refused_text() { return "The host's game needs an emulator core RetroHub doesn't know."; }
+
+/* ---- 3DS Azahar join helper result (onlineflow-M3) ----
+ * The helper writes "joined" or "error:<why>" to its status file. No answer at all (helper gone, or too slow) is a failure too. */
+enum class JoinVerdict { Pending, Joined, Error, HelperGone, TimedOut };
+inline JoinVerdict join_verdict(bool helper_started, bool helper_alive, const std::string& status_text, unsigned long long elapsed_ms, unsigned long long timeout_ms = 150000, std::string* detail = nullptr) {
+    std::string last;
+    size_t p = 0;
+    while (p <= status_text.size()) {
+        size_t q = status_text.find('\n', p);
+        if (q == std::string::npos) q = status_text.size();
+        std::string l = status_text.substr(p, q - p);
+        while (!l.empty() && (l.back() == '\r' || l.back() == ' ')) l.pop_back();
+        if (l == "joined" || l.rfind("error:", 0) == 0) last = l;
+        p = q + 1;
+    }
+    if (last == "joined") return JoinVerdict::Joined;
+    if (!last.empty()) { if (detail) *detail = last.substr(6); return JoinVerdict::Error; }
+    if (!helper_started || !helper_alive) return JoinVerdict::HelperGone;
+    if (elapsed_ms > timeout_ms) return JoinVerdict::TimedOut;
+    return JoinVerdict::Pending;
+}
+inline std::string join_failure_text(JoinVerdict v) {
+    switch (v) {
+        case JoinVerdict::Error: return "Azahar couldn't connect to the room. It is running on its own - close it and try again.";
+        case JoinVerdict::HelperGone: return "RetroHub couldn't link Azahar to the room. It is running on its own - close it and try again.";
+        case JoinVerdict::TimedOut: return "Azahar took too long to join the room. It is running on its own - close it and try again.";
+        default: return std::string();
+    }
+}
 
 /* Systems where only catalog-vetted games are KNOWN to work online. Every game of these systems is still offered in rooms (GC: any disc via
  * Dolphin NetPlay; DS: any game via ds-link; PS1: any game via rollback), but a game outside the catalog (or not flagged online) is tagged
