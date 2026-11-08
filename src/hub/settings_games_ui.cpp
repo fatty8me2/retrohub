@@ -23,7 +23,7 @@ hub::gs::Values gs_values_for(const hub::GameEntry& e) {
 
 bool gs_set_game_value(const hub::GameEntry& e, const std::string& key, const std::string& value) {
     if (!GSTORE.set_game(e.key, e.system, key, value)) return false;
-    GSTORE.save(hub::saves::vault_dir());
+    if (!GSTORE.save(hub::saves::vault_dir())) set_notice("Couldn't save your game settings. Please try again.", 8.0);
     return true;
 }
 
@@ -36,7 +36,7 @@ const char* group_label(const std::string& g) {
     return g.c_str();
 }
 
-void gs_save() { GSTORE.save(hub::saves::vault_dir()); }
+void gs_save() { if (!GSTORE.save(hub::saves::vault_dir())) set_notice("Couldn't save your game settings. Please try again.", 8.0); }
 
 /* One option row. `level` 2 = per-game, 1 = system defaults. Returns true when the value changed. */
 bool option_row(const hub::gs::Option& o, const std::string& cur, int src, int level, std::string* out) {
@@ -118,7 +118,9 @@ bool gs_set_system_value(hub::System sys, const std::string& key, const std::str
     const hub::gs::Option* o = hub::gs::find_option(key);
     if (o && !hub::gs::normalize(*o, value, &n)) return false;
     GSTORE.set_system(sys, key, o ? n : value);
-    return GSTORE.save(hub::saves::vault_dir());
+    const bool saved = GSTORE.save(hub::saves::vault_dir());
+    if (!saved) set_notice("Couldn't save your game settings. Please try again.", 8.0);
+    return saved;
 }
 
 bool gs_has_game_section(const hub::GameEntry& e) { return !hub::gs::options_for(e.system).empty(); }

@@ -9,6 +9,8 @@
 #include <fstream>
 #include <sstream>
 #include <atomic>
+#include <chrono>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -407,7 +409,13 @@ void Store::merge_newest(const Store& o) {
         for (const std::string& k : keys) {
             const int64_t ms = stamp_of(*this, pfx + k), ts = stamp_of(o, pfx + k);
             auto ti = theirs.find(k);
-            if (ts > ms) {   // the other side changed this entry later: take it whole (an empty one is a reset)
+            if ((ms == 0) != (ts == 0) && ti != theirs.end()) {   // one side is an older, unstamped file: keep every key of both, the stamped side wins a clash
+                const bool theirs_wins = ts > 0;
+                for (auto& e : ti->second) if (ok(e.first, e.second) && (theirs_wins || !mine[k].count(e.first))) mine[k][e.first] = e.second;
+                if (mine[k].empty()) mine.erase(k);
+                if (theirs_wins) stamp_[pfx + k] = ts;
+            } else if ((ms == 0) != (ts == 0)) {   // (the other side has no keys to add: nothing to do)
+            } else if (ts > ms) {   // the other side changed this entry later: take it whole (an empty one is a reset)
                 Values nv;
                 if (ti != theirs.end()) for (auto& e : ti->second) if (ok(e.first, e.second)) nv[e.first] = e.second;
                 if (nv.empty()) mine.erase(k); else mine[k] = nv;
@@ -434,8 +442,27 @@ bool Store::write_file(const std::string& vault_dir, const std::string& text) {
         f.flush();
         if (!f) return false;
     }
-    fs::rename(tmp, p, ec);
-    if (ec) { fs::remove(p, ec); ec.clear(); fs::rename(tmp, p, ec); }
+    for (int attempt = 0; attempt < 8; ++attempt) {   // another program (a sync tool, an antivirus scan) may hold the file for a moment
+        ec.clear();
+        fs::rename(tmp, p, ec);
+        if (!ec) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    }
+    std::error_code e2;
+    fs::remove(tmp, e2);
+    return false;
+}
+
+bool preserve_unreadable(const std::string& file_path_utf8, const std::string& vault_dir) {
+    std::error_code ec;
+    fs::path src = fs::u8path(file_path_utf8);
+    if (!fs::is_regular_file(src, ec)) return true;
+    static std::atomic<unsigned> counter{0};
+    const long long ms = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    fs::path dst = fs::u8path(vault_dir) / "_conflicts" / "_settings" / (src.filename().u8string() + ".unreadable-" + std::to_string(ms) + "-" + std::to_string(counter++));
+    fs::create_directories(dst.parent_path(), ec);
+    if (ec) return false;
+    fs::copy_file(src, dst, fs::copy_options::none, ec);
     return !ec;
 }
 
@@ -444,7 +471,10 @@ bool merge_cloud_into_vault(const std::string& vault_dir, const std::string& clo
     if (!cloud.from_json(cloud_json)) return false;
     std::lock_guard<std::mutex> lk(files_mutex());
     Store disk;
-    if (!disk.load(vault_dir)) disk.clear_unstamped();   // unreadable local file: the caller has already backed it up
+    if (!disk.load_unlocked(vault_dir)) {   // unreadable local file: keep a copy of it, then treat it as empty
+        if (!preserve_unreadable(Store::file_path(vault_dir), vault_dir)) return false;
+        disk.clear_unstamped();
+    }
     disk.merge_newest(cloud);
     return Store::write_file(vault_dir, disk.to_json());
 }
@@ -454,6 +484,11 @@ std::string Store::file_path(const std::string& vault_dir) {
 }
 
 bool Store::load(const std::string& vault_dir) {
+    std::lock_guard<std::mutex> lk(files_mutex());
+    return load_unlocked(vault_dir);
+}
+
+bool Store::load_unlocked(const std::string& vault_dir) {
     std::ifstream f(fs::u8path(file_path(vault_dir)), std::ios::binary);
     if (!f) { clear_unstamped(); return true; }
     std::stringstream ss; ss << f.rdbuf();
@@ -466,7 +501,8 @@ bool Store::save(const std::string& vault_dir) const {
     std::lock_guard<std::mutex> lk(files_mutex());
     Store out = *this;
     Store disk;
-    if (disk.load(vault_dir)) out.merge_newest(disk);   // a missing file loads as empty; a malformed one is simply replaced
+    if (disk.load_unlocked(vault_dir)) out.merge_newest(disk);   // a missing file loads as empty
+    else if (!preserve_unreadable(file_path(vault_dir), vault_dir)) return false;   // a malformed file is only replaced after a copy of it was kept
     return write_file(vault_dir, out.to_json());
 }
 

@@ -84,7 +84,8 @@ bool delete_state(const std::string& dir, int slot) {
         hub::saves::tomb::Entry en;
         if (hub::saves::tomb::key_for_state_file(dir, b + ext, &vault, &key) && hub::saves::tomb::identity_of_file(join(dir, b + ext), &en)) {
             en.when = (int64_t)std::time(nullptr);
-            hub::saves::tomb::add(vault, key, en);
+            /* without the record the sync would bring the file straight back: if it cannot be written, nothing is deleted (the caller says so) */
+            if (!hub::saves::tomb::add(vault, key, en)) return false;
         }
     }
     fs::remove(fs::u8path(join(dir, b + ".png")), ec);
