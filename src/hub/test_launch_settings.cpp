@@ -1,5 +1,7 @@
 // Console test for the launch wiring helpers (launch_settings.h).
 #include "launch_settings.h"
+#include "launch_guard_logic.h"
+#include "capture_hold_logic.h"
 #include <cstdio>
 using namespace hub; using namespace hub::gs;
 static int g_fail = 0;
@@ -66,6 +68,25 @@ int main(int argc, char** argv) {
         CHECK(hub::gs::volume_of(hubui::effective_values(v, System::GB, "g", false, 40)) == 70);   // per-game beats the global default
         CHECK(!v.set_game("g", System::GB, "volume", "101") && !v.set_game("g", System::GB, "volume", "loud"));
         CHECK(hub::gs::volume_of(Values{{"volume", "999"}}) == 100 && hub::gs::volume_of(Values{{"volume", "-5"}}) == 0 && hub::gs::volume_of(Values()) == 100);
+    }
+    // shell-H2: no launch while ANY session is up (GC NetPlay / 3DS room never set A.proc)
+    CHECK(hubui::launch_allowed(false, false));
+    CHECK(!hubui::launch_allowed(true, true) && !hubui::launch_allowed(true, false) && !hubui::launch_allowed(false, true));
+    CHECK(hubui::launch_button_enabled(true, false, false) && !hubui::launch_button_enabled(true, false, true) && !hubui::launch_button_enabled(false, false, false));
+    CHECK(hubui::cheats_return_focus(true, true) && !hubui::cheats_return_focus(true, false) && !hubui::cheats_return_focus(false, true));
+    // shell-M6: capture dialog press versus hold
+    {
+        hubui::CaptureHold h;
+        CHECK(hubui::capture_hold_step(h, "", false, 0) == hubui::CaptureStep::Wait);
+        CHECK(hubui::capture_hold_step(h, "x", true, 0) == hubui::CaptureStep::Commit && h.tok == "x");   // other buttons: at once
+        hubui::CaptureHold b;
+        CHECK(hubui::capture_hold_step(b, "b", true, 1.0) == hubui::CaptureStep::Wait && b.pending);
+        CHECK(hubui::capture_hold_step(b, "", true, 1.5) == hubui::CaptureStep::Wait);
+        CHECK(hubui::capture_hold_step(b, "", false, 1.6) == hubui::CaptureStep::Commit && b.tok == "b" && !b.pending);   // tap: assigned
+        hubui::CaptureHold k;
+        hubui::capture_hold_step(k, "back", true, 2.0);
+        CHECK(hubui::capture_hold_step(k, "", true, 2.9) == hubui::CaptureStep::Wait);
+        CHECK(hubui::capture_hold_step(k, "", true, 3.0) == hubui::CaptureStep::Cancel && !k.pending);   // hold: cancel
     }
     std::printf(g_fail ? "FAILED\n" : "launch settings OK\n");
     return g_fail != 0;

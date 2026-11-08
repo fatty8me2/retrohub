@@ -180,7 +180,7 @@ bool continue_hero_ok(const hub::GameEntry& e) {
 }
 
 void continue_launch(const hub::GameEntry& e, bool resume, bool fresh) {
-    if (launch_blocked("continue_launch") || A.proc) return;
+    if (launch_blocked("continue_launch") || A.proc || session_active()) return;
     hub::GameEntry c = e;
     if (fresh) A.fresh_key = e.key;
     if (resume) play_entry_anim(c, true, [](const hub::GameEntry& g) { resume_entry(g, -1); });

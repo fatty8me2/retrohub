@@ -1,5 +1,7 @@
 #include "app.h"
 #include "qm_pad.h"
+#include "launch_guard_logic.h"
+#include "cheats_game.h"
 #include "qm_logic.h"
 
 #include <xinput.h>
@@ -23,6 +25,7 @@ cheatstore::Store g_store;
 bool g_loaded = false;
 hub::GameEntry g_ent;            // the game the panel is open for
 bool g_have = false, g_open_req = false;
+bool g_from_game = false, g_was_open = false;   // runners-M6: opened from the game menu / View+Y; the popup was drawn open last frame
 char g_search[64] = {0};
 bool g_add = false;
 char g_add_name[80] = {0}, g_add_codes[512] = {0};
@@ -322,6 +325,7 @@ int cheats_enabled_count(const hub::GameEntry& e) {
 
 void cheats_open(const hub::GameEntry& e) {
     if (!cheats_supported(e)) return;
+    g_from_game = false;
     reload();
     g_ent = e;
     g_have = true;
@@ -332,13 +336,18 @@ void cheats_open(const hub::GameEntry& e) {
     g_confirm_restore = false;
 }
 
+void cheats_open_from_game(const hub::GameEntry& e) {
+    cheats_open(e);
+    if (g_have) g_from_game = true;
+}
+
 /* The running game's cheats overlay (pad combo): brings RetroHub forward on the panel. */
 void cheats_open_live() {
     if (!A.proc || A.run.key.empty()) return;
     const hub::GameEntry* e = find_entry(A.run.key);
     if (!e || !cheats_supported(*e)) return;
     hub::GameEntry c = *e;
-    cheats_open(c);
+    cheats_open_from_game(c);
     focus_hub();
 }
 
@@ -543,7 +552,16 @@ void draw_cheats_modal() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
     bool open = ImGui::BeginPopupModal("##cheats", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
     ImGui::PopStyleVar(2);
-    if (!open) return;
+    if (!open) {
+        if (g_was_open) {   // closed (Close, B, Esc, click outside): the game gets the focus back, like closing the game menu
+            g_was_open = false;
+            const bool back = hubui::cheats_return_focus(g_from_game, A.proc != nullptr);
+            g_from_game = false;
+            if (back) focus_game();
+        }
+        return;
+    }
+    g_was_open = true;
     if (ui::modal_back()) {
         if (g_val_open) g_val_open = false;
         else if (g_add) g_add = false;
