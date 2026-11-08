@@ -74,6 +74,13 @@ int main() {
         Night o = a; CHECK(toast_decide(o, now + 3 * H, true, true, false) == ToastAct::Remove);                // night passed
         Night rm = a; rm.reminded = true; CHECK(toast_decide(rm, now, true, true, false) == ToastAct::Remove);
 
+        // a game or session is up: never schedule (also at exit); removals still happen
+        CHECK(toast_decide(a, now, true, true, false, true) == ToastAct::Remove);   // a.toast_sched is true here
+        { Night u = a; u.toast_sched = false;
+          CHECK(toast_decide(u, now, true, true, false, true) == ToastAct::None);
+          CHECK(toast_decide(u, now + 20 * M - kToastGuardMs + 1000, true, true, true, true) == ToastAct::None);   // exit during a game
+          CHECK(toast_decide(u, now, true, true, true, false) == ToastAct::Schedule); }
+
         Plans sp; sp.v.push_back(a); sp.v[0].toast_sched = false;
         Mock m;
         SyncResult r = sync_toasts(sp, now, true, m);
@@ -85,9 +92,18 @@ int main() {
         CHECK(r.changed && m.cancels == 1 && !sp.v[0].toast_sched);                                            // RetroHub running: pulled
         r = sync_toasts(sp, now + 20 * M - kToastGuardMs + 1000, true, m, true);
         CHECK(r.changed && m.adds == 2 && sp.v[0].toast_sched);                                                // exit: handed back
+        {   // exit while a game runs: nothing is scheduled, the pending flag is not touched wrongly
+            Plans gp; Night g = a; g.toast_sched = false; gp.v.push_back(g);
+            int before = m.adds;
+            r = sync_toasts(gp, now, true, m, true, true);
+            CHECK(!r.changed && m.adds == before && !gp.v[0].toast_sched);
+            r = sync_toasts(gp, now, true, m, false, true); CHECK(!r.changed && m.adds == before);
+            gp.v[0].toast_sched = true;   // a pending toast is pulled once a game is up
+            r = sync_toasts(gp, now, true, m, false, true); CHECK(r.changed && !gp.v[0].toast_sched);
+        }
         m.fail = true;
         r = sync_toasts(sp, now + 20 * M - kToastGuardMs + 1000, true, m);
-        CHECK(r.failed && !r.changed && sp.v[0].toast_sched);                                                  // failed cancel keeps the flag for a retry
+        CHECK(r.failed && r.remove_failed && !r.changed && sp.v[0].toast_sched);                                                  // failed cancel keeps the flag for a retry
         m.fail = false; m.ok = false;
         r = sync_toasts(sp, now, true, m); CHECK(r.changed && !sp.v[0].toast_sched);                           // no scheduler: flag dropped, no calls
         Plans q; Night s2 = a; s2.toast_sched = true; q.v.push_back(s2);

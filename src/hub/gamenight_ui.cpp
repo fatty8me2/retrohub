@@ -63,17 +63,21 @@ void note_bell(const Night& n, const std::string& text) {
 /* Windows scheduled toast for when RetroHub is closed (gamenight_sched.h). Throttled: toasts change rarely, and a failing call is not
  * retried every frame. Nothing is scheduled in headless / screenshot runs or with the Windows-notification setting off. */
 double g_sched_next = 0;
-bool g_exit_hooked = false;
+bool g_exit_hooked = false, g_exit_done = false;
 void toast_sync(bool force, bool for_exit = false) {
     if (g_headless) return;
     const double t = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0;
     if (!force && !for_exit && t < g_sched_next) return;
-    SyncResult r = sync_toasts(GN.plans, wall_ms(), A.st.notify_in_game, hubtoast::system_scheduler(), for_exit);
+    /* RetroHub can close while a game it started keeps running: with any game or session up nothing is scheduled (the reminder is
+     * skipped), whether this is the exit sync or a normal one. Removals still run. */
+    const bool game_up = game_active() || session_active();
+    SyncResult r = sync_toasts(GN.plans, wall_ms(), A.st.notify_in_game, hubtoast::system_scheduler(), for_exit, game_up);
     if (r.changed) persist();
-    g_sched_next = t + (r.failed ? 60.0 : 5.0);
+    g_sched_next = t + (r.remove_failed ? 5.0 : r.failed ? 60.0 : 5.0);
     if (!g_exit_hooked) {
         g_exit_hooked = true;
-        std::atexit([] { try { toast_sync(true, true); } catch (...) {} });   // closing RetroHub: hand the reminders back to Windows
+        /* Backup for exits that skip gn_shutdown(). Once gn_shutdown() ran (the session state is torn down after it) this does nothing. */
+        std::atexit([] { if (g_exit_done) return; g_exit_done = true; try { toast_sync(true, true); } catch (...) {} });
     }
 }
 
@@ -106,7 +110,8 @@ void gn_open_night(const std::string& id) {
 }
 
 void gn_shutdown() {
-    if (!GN.loaded) return;
+    if (!GN.loaded || g_exit_done) return;
+    g_exit_done = true;
     try { toast_sync(true, true); } catch (...) {}
 }
 
