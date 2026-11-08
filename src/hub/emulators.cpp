@@ -102,15 +102,18 @@ static const InstallTestHooks* g_test_hooks = nullptr;
 void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
 
 /* ======================================================================================================================================================
- * FRITCHII PIN - PLACEHOLDERS. The binary is built on GitHub Actions and the real values do not exist yet. Replace ALL FOUR of these (and nothing else) when
- * the release is published: tag + asset name in kPath, the zip's exact byte size, its sha256. While kSha256 is all zeros release_is_placeholder() is true:
- * Play / Settings say Fritchii is "not published yet" instead of starting a download that cannot verify.
+ * FRITCHII PIN (v4.1). The one place the Fritchii download is defined: kPath, kSize, kSha256 (kVersion is the text the marker, Settings and the dialogs show).
+ * Provenance: built on GitHub Actions, run 42450099783 on fatty8me2/Fritchii, branch retrohub/v4.1-msvc. That branch is Frizti's fritchii-v4.1 (f6d42b8) plus
+ * commit 2a1f611, a build-flags-only change. The release asset is byte-identical to the run's artifact 13607057841. Defender clean; every DLL is signed by
+ * Microsoft or Qt. Vetted 2026-11-08. The zip holds lichii.exe, eden-cli.exe, the Qt DLLs and plugin folders, lichii.pdb, eden-cli.pdb, vc_redist.x64.exe and
+ * Frizti's nx2_switches.txt (his default tuning, part of the vetted build: it is kept as shipped, RetroHub never writes to it or adds its own) at the ROOT;
+ * the install deletes the two .pdb files and vc_redist like Lichii's. While kSha256 is all zeros release_is_placeholder() is true (nothing real pinned).
  * ====================================================================================================================================================== */
 namespace fritchii_pin {
 static const char* const kVersion = "v4.1";
-static const wchar_t* const kPath = L"/fatty8me2/Fritchii/releases/download/<TAG>/<ASSET>";   // TODO(pin): real tag + asset name
-static const uint64_t kSize = 0;                                                                 // TODO(pin): exact byte size of the zip
-static const char* const kSha256 = "0000000000000000000000000000000000000000000000000000000000000000";   // TODO(pin): lowercase hex sha256 of the zip
+static const wchar_t* const kPath = L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v4.1/Fritchii-v4.1-RetroHub-windows-x64.zip";
+static const uint64_t kSize = 119612370ull;
+static const char* const kSha256 = "068fb4c66b2e32447ac7690393039043854de4b189aa7e95b34c4bf0d2a4080e";
 }   // namespace fritchii_pin
 
 const Release& release(Kind k) {

@@ -84,7 +84,7 @@ void shot_init_ui() {
                                               "1111111111111111111111111111111111111111111111111111111111111111", L"lichii.exe", "GPL-3.0"};
     static hubemu::InstallTestHooks s_fake_hooks;
     const char* se_mode = std::getenv("HUB_SHOT_EMU");
-    if (std::getenv("HUB_SHOT_FRITCHII_PIN") || (se_mode && std::string(se_mode) == "fritchii")) {   // screenshot aid: pretend Fritchii has a real pin (the real one is still a placeholder), so Settings / the Play prompt show the download wording
+    if (std::getenv("HUB_SHOT_FRITCHII_PIN")) {   // screenshot aid: a FAKE Fritchii pin (96 MB) instead of the real one
         s_fake_hooks.kind = hubemu::Kind::Fritchii;
         s_fake_hooks.release = &s_fake_fritchii;
         hubemu::set_install_test_hooks(&s_fake_hooks);
@@ -93,7 +93,7 @@ void shot_init_ui() {
         std::string m = se;
         if (m == "azahar" || m == "cemu") { EMU.kind = m == "cemu" ? hubemu::Kind::Cemu : hubemu::Kind::Azahar; EMU.state = hubemu::Installer::Asking; }
         else if (m == "lichiiupdate") { EMU.kind = hubemu::Kind::Lichii; EMU.updating = true; EMU.state = hubemu::Installer::Asking; }   // the "newer Lichii" offer at Play
-        else if (m == "fritchii" || m == "fritchiiunpublished") { EMU.kind = hubemu::Kind::Fritchii; EMU.updating = false; EMU.state = hubemu::Installer::Asking; }   // the Play prompt to install Fritchii (unpublished = the placeholder pin: "not available yet")
+        else if (m == "fritchii" || m == "fritchiiunpublished") { EMU.kind = hubemu::Kind::Fritchii; EMU.updating = false; EMU.state = hubemu::Installer::Asking; }   // the Play prompt to install Fritchii (fritchiiunpublished: the same prompt; the real pin is set now, so it is no longer "not available yet")
         else if (m == "failed") { EMU.kind = hubemu::Kind::Azahar; EMU.error = "checksum mismatch: the download was rejected"; EMU.state = hubemu::Installer::Failed; }
         else if (m == "unzip") { UNZ.key = A.env_select; UNZ.state = UnzipJob::Asking; }
         else if (m == "ps2bios") ps2_bios_ask("");
