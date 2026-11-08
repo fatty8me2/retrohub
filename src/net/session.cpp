@@ -33,6 +33,10 @@ using namespace detail;
 /* Plain text for a server reason code (defined in lobby.cpp, same library). "" = a code we do not know: shown as it is. */
 std::string server_reason_text(const std::string& reason);
 
+/* The `caps` URL parameter of a game-room socket. The server reads it as a comma list, so "gameauth" is ignored by older servers; it is only sent
+ * with an account proof (a seat that cannot prove an account would just be closed by a server that checks). */
+std::string game_room_caps(bool have_ident) { return have_ident ? "&caps=reasons,gameauth" : "&caps=reasons"; }
+
 namespace {
 
 /* The relay is the free Cloudflare plan's, and its daily budget can run out (the Worker then answers a relayed frame with
@@ -227,7 +231,7 @@ struct Session::Impl {
 
     void connect_ws()
     {
-        std::string url = hub_url(cfg.server, cfg.room, is_host(), "n64run", slot, spectator, cfg.dropin) + "&caps=reasons";
+        std::string url = hub_url(cfg.server, cfg.room, is_host(), "n64run", slot, spectator, cfg.dropin) + game_room_caps(!ident.empty());
         net_log("Session: connecting %s", url.c_str());
         ws.connect(url);
         welcomed = false;
