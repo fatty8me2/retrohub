@@ -66,6 +66,12 @@ std::string cached_name(const std::string& key);
 /* Average saturated colour of a texture returned by get() (packed r|g<<8|b<<16|255<<24), 0 if unknown / greyscale. */
 uint32_t average_color(SDL_Texture* tex);
 
+/* An 8x8 box-averaged copy of the art as 64 packed colours (row-major, IM_COL32 layout): made once when the art is uploaded and freed with it
+ * (nullptr = unknown). Cases view draws it as a smooth colour mesh under a square icon. Valid until the next pump(). */
+const uint32_t* blur_colors(SDL_Texture* tex);
+/* The 8x8 RGBA box average (alpha-weighted) of an RGBA image, for headless tools. */
+void blur8(const unsigned char* rgba, int w, int h, unsigned char out[8 * 8 * 4]);
+
 bool enabled();             // user setting "Download cover art" (default on)
 void set_enabled(bool on);
 
