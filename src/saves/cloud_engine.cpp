@@ -592,7 +592,7 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
             const str tkey = wire_key(g) + "/" + p;
             auto tm = tombs.find(tkey);
             if (tm != tombs.end()) {
-                if (!it.local.present && it.has_cv && it.cloud.sha == tm->second.sha && it.cloud.size == tm->second.size) {
+                if (!it.local.present && it.has_cv && ((it.cloud.sha == tm->second.sha && it.cloud.size == tm->second.size) || (it.base.present && it.cloud.sha == it.base.sha))) {   // the deleted file, or the older upload this PC had agreed on (a push that never happened)
                     it.act = Act::Nothing; items.push_back(it); continue;   // still that deleted file: never downloaded again, nothing to upload
                 }
                 hub::saves::tomb::clear(vault_dir(), tkey);   // a different file now (saved again here, or uploaded by another PC) or gone from the cloud: a live state again
@@ -683,14 +683,20 @@ PullResult pull_file(Api& api, const GameId& g, const str& gkey, const str& path
     return pr;
 }
 
-void backup_local(const GameId& g, const str& path, const str& tag) {
+/* Copies the local file to _conflicts before it is replaced. True when there was nothing to copy or the copy exists; false = the caller must NOT overwrite the file.
+ * The name carries milliseconds and a counter, so two backups of one file in the same second never replace each other. */
+bool backup_local(const GameId& g, const str& path, const str& tag) {
     fs::path src = abs_of(g, path);
     std::error_code ec;
-    if (!fs::is_regular_file(src, ec)) return;
+    if (!fs::is_regular_file(src, ec)) return true;
+    static std::atomic<unsigned> counter{0};
+    const long long ms = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     fs::path dst = fs::u8path(vault_dir()) / "_conflicts" / fs::u8path(sanitize(g.system)) / fs::u8path(sanitize(g.key)) /
-                   fs::u8path(path + "." + tag + "-" + stamp());
+                   fs::u8path(path + "." + tag + "-" + stamp() + "-" + std::to_string(ms % 1000) + "-" + std::to_string(counter++));
     fs::create_directories(dst.parent_path(), ec);
-    fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
+    if (ec) return false;
+    fs::copy_file(src, dst, fs::copy_options::none, ec);   // never overwrites an existing backup
+    return !ec;
 }
 
 /* Records an AGREEMENT: both sides hold this content at this cloud version. Never call it for content the cloud did not take. */
@@ -771,7 +777,7 @@ bool merge_prefs_conflict(Api& api, const GameId& g, const str& gkey, const str&
     str merged;
     if (is_merged_file(g, path)) {
         /* saves-F11: per-game settings / cheats. Key by key: what only one PC set is kept, the newer wins a key both set. Nothing is written when the cloud copy is unreadable. */
-        backup_local(g, path, "pc");   // always, even when the local file is unreadable: nothing is replaced without a copy
+        if (!backup_local(g, path, "pc")) { log_line("could not back up " + path + " before merging; kept this PC's file"); return false; }   // nothing is replaced without a copy
         const bool ok = path == kCloudCheats ? cheatstore::merge_cloud_into_vault(vault_dir(), theirs) : hub::gs::merge_cloud_into_vault(vault_dir(), theirs);
         if (!ok) {   // the cloud copy is unreadable: keep this PC's file as it is, keep the cloud copy aside to look at
             fs::path bad = fs::u8path(vault_dir()) / "_conflicts" / "_account" / fs::u8path(path + ".cloud-unreadable-" + stamp());
@@ -1057,14 +1063,18 @@ SyncOut sync_game_with(Api& api, const GameId& g, const WGame* cg, const SyncOpt
     std::vector<Item> push_items;
     for (Item* it : pulls) {
         if (opts.deadline_ms && mono_ms() > opts.deadline_ms) { out.pending_bytes += it->cloud.size; out.oc.k = Outcome::Offline; out.oc.code = "deadline"; continue; }
-        if (it->has_cv && is_merged_file(g, it->path) && it->local.present) {   // always merged under the settings mutex (a UI save may have changed the file meanwhile), never replaced
+        if (it->has_cv && is_merged_file(g, it->path)) {   // always merged under the settings mutex (a UI save may have changed the file meanwhile, and the file may not exist yet), never replaced
             Item re;
             if (merge_prefs_conflict(api, g, gkey, it->path, it->cv, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) push_items.push_back(re); }
             else out.pending_bytes += it->cloud.size;
             continue;
         }
         /* newest-wins replaced a changed local copy; also a copy the cloud once refused (its sha is not an agreement) - never overwritten unseen */
-        if (it->local.present && (it->local.sha != it->base.sha || it->lo_marked || !it->refused_sha.empty())) backup_local(g, it->path, "pc");
+        if (it->local.present && (it->local.sha != it->base.sha || it->lo_marked || !it->refused_sha.empty()) && !backup_local(g, it->path, "pc")) {
+            out.pending_bytes += it->cloud.size;   // no copy of the local file, no overwrite
+            log_line("could not back up " + gkey + "/" + it->path + " before replacing it; kept the local file");
+            continue;
+        }
         PullResult r = pull_file(api, g, gkey, it->path, it->cv, opts.deadline_ms);
         if (r.ok) {
             base_set(gkey, it->path, it->cv.ver, it->cv.sha, it->cv.size, it->cv.mtime);
@@ -1088,13 +1098,13 @@ SyncOut sync_game_with(Api& api, const GameId& g, const WGame* cg, const SyncOpt
                 out.local_only_added = true;
                 break;
             case Act::Conflict: {
-                if (it.has_cv && is_prefs_conflict(g, it.path) && !opts.auto_newest) {
+                if (it.has_cv && is_prefs_conflict(g, it.path) && (!opts.auto_newest || is_merged_file(g, it.path))) {
                     Item re;
                     if (merge_prefs_conflict(api, g, gkey, it.path, it.cv, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) push_items.push_back(re); break; }
+                    if (is_merged_file(g, it.path)) break;   // could not merge: keep this PC's file
                 }
                 if (opts.auto_newest) {   // read-only session: newest wins, the loser is kept
-                    if (it.cloud.mtime > it.local.mtime) {
-                        backup_local(g, it.path, "pc");
+                    if (it.cloud.mtime > it.local.mtime && backup_local(g, it.path, "pc")) {
                         PullResult r = pull_file(api, g, gkey, it.path, it.cv, opts.deadline_ms);
                         if (r.ok) { base_set(gkey, it.path, it.cv.ver, it.cv.sha, it.cv.size, it.cv.mtime); out.pulled++; }
                     }

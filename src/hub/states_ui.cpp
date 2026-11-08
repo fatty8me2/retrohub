@@ -191,6 +191,7 @@ void draw_state_strip(const hub::GameEntry& e) {
         if (confirm) {
             bool ok = hubui::delete_state(dir, cur->slot);
             shot_trace("state-delete", e.key + " slot=" + std::to_string(cur->slot) + (ok ? " ok" : " failed"));
+            if (!ok) set_notice("Couldn't delete this save state. Please try again.", 6.0);
             A.state_confirm = -2;
             refresh_save_info(e);
             A.state_sel = -3;

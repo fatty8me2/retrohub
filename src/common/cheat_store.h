@@ -49,12 +49,14 @@ public:
     bool from_json(const std::string& text);              // false (unchanged) on malformed input
     void merge_from(const Store& other);                  // per game: the entry with the newer `updated` wins
     bool empty() const;                                   // no game was ever given a cheat choice: nothing to sync
-    bool load(const std::string& vault_dir);              // missing file = empty, true
-    bool save(const std::string& vault_dir) const;
+    bool load(const std::string& vault_dir);              // missing file = empty, true; takes gs::files_mutex()
+    bool save(const std::string& vault_dir);              // merge-on-write; on success this store is refreshed from the merged result
     static std::string file_path(const std::string& vault_dir);
     bool save_unmerged(const std::string& vault_dir) const;   // plain atomic write (callers hold gs::files_mutex)
 
 private:
+    friend bool merge_cloud_into_vault(const std::string&, const std::string&);
+    bool load_unlocked(const std::string& vault_dir);
     std::map<std::string, GameState> g_;
 };
 

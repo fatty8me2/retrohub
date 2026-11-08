@@ -56,7 +56,7 @@ void ensure_loaded() {
     g_store.load(vault());
 }
 void reload() { g_loaded = false; ++g_rev; ensure_loaded(); }
-void persist() { ++g_rev; g_store.save(vault()); A.vault_dirty = true; }
+void persist() { ++g_rev; if (!g_store.save(vault())) set_notice("Couldn't save your cheat choices. Please try again.", 8.0); A.vault_dirty = true; }
 
 std::string safe_name(std::string s);
 /* The game's vault folder and battery folder (headless runs use a temp folder instead of the real vault). */
