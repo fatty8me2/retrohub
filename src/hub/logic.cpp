@@ -304,8 +304,17 @@ Selectability game_selectable(const std::string& game_id, int max_players,
         token(*host, &ref);
         for (auto& p : peers) {
             token(p, &t);
-            if (t != ref) { r.reason = "different ROM version (" + p.name + ")"; return r; }
+            if (t != ref) { r.reason = p.name + " has a different version of this game (region or revision)"; return r; }
         }
+        /* GB/GBC/GBA/NES/SNES/NDS catalog games: each PC lists its copy's content id under "v:<id>" (lib_state.cpp my_games). Compared only when BOTH sides
+         * published one, so a friend on an older RetroHub (no id) never blocks a match. */
+        auto hv = host->games.find(kVerPrefix + game_id);
+        if (hv != host->games.end())
+            for (auto& p : peers) {
+                if (&p == host) continue;
+                auto pv = p.games.find(kVerPrefix + game_id);
+                if (pv != p.games.end() && pv->second != hv->second) { r.reason = p.name + " has a different version of this game (region or revision)"; return r; }
+            }
     }
     r.ok = true;
     return r;

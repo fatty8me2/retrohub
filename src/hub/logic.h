@@ -122,6 +122,8 @@ struct PeerInfo {
     int parts_expected = 1, parts_got = 1;      // hello is split into several messages when the key list is long
     bool hello_complete() const { return hello && parts_got >= parts_expected; }
 };
+/* hello "games" key prefix for a non-N64 copy's content id: "v:<room id>" -> the game key (content based: CRC / checksum of the ROM data). */
+constexpr const char* kVerPrefix = "v:";
 struct Selectability { bool ok = false; std::string reason; };
 
 /* A game is selectable only if every member owns it. `game_id` is either an N64 catalog id (then
