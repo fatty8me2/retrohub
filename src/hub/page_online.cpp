@@ -301,7 +301,11 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     }
 
     if (extra.empty() && rg && remote_play_entry(*rg) && block.empty())   // remote play banner: who needs the game, and how it connects
-        extra = host ? "Remote play: you run the game and stream it to the others." : hubcaps::remote_play_banner();
+        {
+            std::string host_name;
+            for (auto& m : room_members()) if (m.slot == 0) host_name = m.name;
+            extra = host ? std::string("Remote play: you run the game and stream it to the others.") : hubcaps::remote_play_banner(host_name);
+        }
     if (host && !rplay_status_line().empty()) extra = rplay_status_line();
     ImU32 tone = st.tone == hubui::RoomTone::Good ? ui::GOOD : st.tone == hubui::RoomTone::Bad ? ui::BAD : st.tone == hubui::RoomTone::Warn ? ui::WARN : ui::ACCENT;
     float W = ImGui::GetContentRegionAvail().x;
