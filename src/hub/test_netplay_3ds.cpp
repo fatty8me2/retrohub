@@ -69,9 +69,10 @@ int main() {
         CHECK(room_args(hp.port, gp.password, 8, "", "").find(" --password " + rp) != std::string::npos);
         CHECK(multiplayer_arg("P_1", gp.password, "127.0.0.1", 5) == "-m \"P_1:" + rp + "@127.0.0.1:5\"");
         CHECK(join_driver_args(1, "s.txt", "P_1", gp.password, "127.0.0.1", 5, 120).find("-Pw \"" + rp + "\"") != std::string::npos);
-        CHECK(room_password_supported({"v1.39.1", "1.39.1", "v1.40.0"}));       // all-new room: password
-        CHECK(!room_password_supported({"v1.39.1", "v1.39.0"}));                // one older guest: none
-        CHECK(!room_password_supported({"v1.39.1", ""}) && !room_password_supported({}) && !room_password_supported({"v1.39.1", "junk"}));   // unknown / not yet announced: none
+        CHECK(room_password_supported({"v1.40.0", "1.40.0", "v1.40.1"}));       // all-new room: password
+        CHECK(!room_password_supported({"v1.40.0", "v1.39.0"}));                // one older guest: none
+        CHECK(!room_password_supported({"v1.40.0", "v1.39.1"}));                // the threshold is the 1.40.0 release
+        CHECK(!room_password_supported({"v1.40.0", ""}) && !room_password_supported({}) && !room_password_supported({"v1.40.0", "junk"}));   // unknown / not yet announced: none
         set_pending_host_password(rp);
         CHECK(take_pending_host_password() == rp && take_pending_host_password().empty());   // handed to launch_online_3ds once
     }

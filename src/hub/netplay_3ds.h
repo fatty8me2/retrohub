@@ -38,7 +38,7 @@ std::string random_password(unsigned seed);                    // 12 alphanumeri
 std::string new_room_password();                                // onlineflow-M6: 12 chars from the OS random source, one per launch
 /* A room password is set ONLY when every seated member runs a RetroHub that fills Azahar's password box (older builds join with an empty one and
  * would be locked out). `apps` = each seated member's hello version string (the host's included); "" or not yet announced = not capable. */
-constexpr const char* kPasswordMinApp = "1.39.1";   // first release whose Direct Connect helper passes the room password
+constexpr const char* kPasswordMinApp = "1.40.0";   // first release whose Direct Connect helper passes the room password
 bool room_password_supported(const std::vector<std::string>& apps);
 /* Security note: the password is visible on the azahar-room and join-helper command lines of this PC only (local processes); it never leaves
  * the room's members except through the launch message (see docs: watchers of a 3DS room are refused by the client). */
