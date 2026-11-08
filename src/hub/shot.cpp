@@ -80,10 +80,20 @@ void shot_init_ui() {
         else if (std::string(pg).rfind("discover", 0) == 0) { A.page = Page::Discover; if (const char* c = std::strchr(pg, ':')) discover_shot_console(c + 1); }   // "discover" or "discover:<console>"
     }
     if (std::getenv("HUB_SHOT_CTL_SYS") || std::getenv("HUB_SHOT_FAKE_PADS")) A.page = Page::Controllers;   // Controllers page aids: HUB_SHOT_CTL_SYS/_GAME/_DEMO/_CAPTURE, HUB_SHOT_FAKE_PADS=n
+    static hubemu::Release s_fake_fritchii = {"v4.1", L"github.com", L"/fatty8me2/Fritchii/releases/download/v4.1/Fritchii-v4.1-Windows-x64.zip", 96ull << 20,
+                                              "1111111111111111111111111111111111111111111111111111111111111111", L"lichii.exe", "GPL-3.0"};
+    static hubemu::InstallTestHooks s_fake_hooks;
+    const char* se_mode = std::getenv("HUB_SHOT_EMU");
+    if (std::getenv("HUB_SHOT_FRITCHII_PIN") || (se_mode && std::string(se_mode) == "fritchii")) {   // screenshot aid: pretend Fritchii has a real pin (the real one is still a placeholder), so Settings / the Play prompt show the download wording
+        s_fake_hooks.kind = hubemu::Kind::Fritchii;
+        s_fake_hooks.release = &s_fake_fritchii;
+        hubemu::set_install_test_hooks(&s_fake_hooks);
+    }
     if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show an emulator dialog (azahar | cemu | lichiiupdate | unzip | failed | ...)
         std::string m = se;
         if (m == "azahar" || m == "cemu") { EMU.kind = m == "cemu" ? hubemu::Kind::Cemu : hubemu::Kind::Azahar; EMU.state = hubemu::Installer::Asking; }
         else if (m == "lichiiupdate") { EMU.kind = hubemu::Kind::Lichii; EMU.updating = true; EMU.state = hubemu::Installer::Asking; }   // the "newer Lichii" offer at Play
+        else if (m == "fritchii" || m == "fritchiiunpublished") { EMU.kind = hubemu::Kind::Fritchii; EMU.updating = false; EMU.state = hubemu::Installer::Asking; }   // the Play prompt to install Fritchii (unpublished = the placeholder pin: "not available yet")
         else if (m == "failed") { EMU.kind = hubemu::Kind::Azahar; EMU.error = "checksum mismatch: the download was rejected"; EMU.state = hubemu::Installer::Failed; }
         else if (m == "unzip") { UNZ.key = A.env_select; UNZ.state = UnzipJob::Asking; }
         else if (m == "ps2bios") ps2_bios_ask("");

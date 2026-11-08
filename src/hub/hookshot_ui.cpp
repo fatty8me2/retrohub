@@ -28,6 +28,7 @@ struct View {
     hs::Requirements req;
     int64_t built = 0;
     bool use_hookshot = false;   // Play starts Hookshot (this game's switch.runner is "hookshot")
+    std::string runner = "lichii";   // the game's switch.runner: lichii | fritchii | hookshot
     int64_t kit_bytes = -1;
     bool kit_there = false;
     bool cancelled_note = false;
@@ -43,7 +44,8 @@ struct UI {
     std::string req_for;
     double kit_asked_at = -100.0;
     Fake fake;
-    bool fake_on_hookshot = false;   // the fake done state's runner, toggled by the switch button
+    bool fake_on_hookshot = false;   // the fake done state's runner
+    std::string fake_runner = "lichii";   // ...as a name (the switch buttons set it)
     bool fake_read = false;
     std::string remove_error;
 };
@@ -54,7 +56,7 @@ void read_fake() {
     if (HU.fake_read) return;
     HU.fake_read = true;
     const char* m = g_headless ? std::getenv("HUB_SHOT_HOOKSHOT") : nullptr;
-    if (m && *m) { HU.fake.on = true; HU.fake.mode = m; HU.fake_on_hookshot = HU.fake.mode == "done_on"; }
+    if (m && *m) { HU.fake.on = true; HU.fake.mode = m; HU.fake_on_hookshot = HU.fake.mode == "done_on"; HU.fake_runner = HU.fake_on_hookshot ? "hookshot" : HU.fake.mode == "done_fritchii" ? "fritchii" : "lichii"; }
 }
 
 std::string date_text(int64_t unix_t) {
@@ -115,10 +117,11 @@ View make_view(const hub::GameEntry& e) {
             v.st.overall = 0.40f + 0.57f * 0.58f;
             v.st.paused_for_game = m == "paused";
             v.st.started_unix = (int64_t)std::time(nullptr) - 1800;
-        } else if (m == "done" || m == "done_on") {
+        } else if (m == "done" || m == "done_on" || m == "done_fritchii") {
             v.mode = Mode::Ready;
             v.built = (int64_t)std::time(nullptr) - 5 * 3600;
-            v.use_hookshot = HU.fake_on_hookshot;
+            v.runner = HU.fake_runner;
+            v.use_hookshot = v.runner == "hookshot";
         } else if (m == "failed") {
             v.mode = Mode::Failed;
             v.st.state = hs::BuildState::Failed;
@@ -156,7 +159,8 @@ View make_view(const hub::GameEntry& e) {
         v.built = s_stamp.built;
         const hs::Values gv = gs_values_for(e);
         const auto rit = gv.find(hs::kRunnerSetting);
-        v.use_hookshot = rit != gv.end() && rit->second == "hookshot";
+        v.runner = rit != gv.end() && (rit->second == "hookshot" || rit->second == "fritchii") ? rit->second : "lichii";
+        v.use_hookshot = v.runner == "hookshot";
     } else if (v.st.state == hs::BuildState::Failed) {
         v.mode = Mode::Failed;
     } else {
@@ -301,14 +305,23 @@ void draw_kit_actions(const hub::GameEntry& e, const View& v) {
 void draw_ready(const hub::GameEntry& e, const View& v) {
     using ui::sp;
     ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT);
-    ImGui::TextUnformatted(v.use_hookshot ? "Play starts Hookshot (native)." : "Play starts Lichii (emulator).");
+    ImGui::TextUnformatted(v.use_hookshot ? "Play starts Hookshot (native)." : v.runner == "fritchii" ? "Play starts Fritchii (Ocarina fork of Lichii)." : "Play starts Lichii (emulator).");
     ImGui::PopStyleColor();
-    wrapped(v.use_hookshot ? "Hookshot is experimental. Switch back to Lichii if it misbehaves; your saves are shared by both."
-                           : "The native Hookshot version is built and ready. Your saves are shared by both.", ui::TEXT3);
-    if (ui::button(v.use_hookshot ? "Play with Lichii instead" : "Play with Hookshot instead", ImVec2(0, sp(4.f)), !v.use_hookshot, true, ui::Icon::Refresh)) {
-        const char* nv = v.use_hookshot ? "lichii" : "hookshot";
-        if (HU.fake.on) HU.fake_on_hookshot = !v.use_hookshot;
-        else if (!gs_set_game_value(e, hs::kRunnerSetting, nv)) push_toast("Could not save that choice.", ui::WARN, 6.0);
+    wrapped(v.use_hookshot ? "Hookshot is experimental. Switch back to Lichii if it misbehaves; your saves are shared by all of them."
+                           : "The native Hookshot version is built and ready. Your saves are shared by Lichii, Fritchii and Hookshot.", ui::TEXT3);
+    {   // one button for each runner that is NOT in use now (three runners)
+        struct R { const char* id; const char* label; };
+        const R all[] = {{"lichii", "Play with Lichii instead"}, {"fritchii", "Play with Fritchii instead"}, {"hookshot", "Play with Hookshot instead"}};
+        bool first = true;
+        for (const R& r : all) {
+            if (v.runner == r.id) continue;
+            if (!first) ImGui::SameLine(0, sp(1.f));
+            first = false;
+            if (ui::button(r.label, ImVec2(0, sp(4.f)), std::string(r.id) == "hookshot" && !v.use_hookshot, true, ui::Icon::Refresh)) {
+                if (HU.fake.on) { HU.fake_runner = r.id; HU.fake_on_hookshot = HU.fake_runner == "hookshot"; }
+                else if (!gs_set_game_value(e, hs::kRunnerSetting, r.id)) push_toast("Could not save that choice.", ui::WARN, 6.0);
+            }
+        }
     }
     const std::string d = date_text(v.built);
     if (!d.empty()) wrapped("Built on " + d + ".", ui::TEXT3);

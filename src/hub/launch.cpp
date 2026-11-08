@@ -26,6 +26,7 @@
 #include "ps2.h"
 #include "ppsspp.h"
 #include "lichii.h"
+#include "nx_runner.h"
 #include "wiiu_meta.h"
 #include "invite.h"
 #include "dolphin_speed.h"
@@ -278,12 +279,14 @@ void pad_exit_watch() {
  * the job is ended. Only RetroHub's own Lichii runs in that job (Kind::Lichii is never a user's install); by handle, never by image name. */
 static bool g_hookshot_run = false;   // the running game is Hookshot (set by launch_hookshot)
 bool hookshot_running() { return g_hookshot_run && A.proc; }
+static bool g_fritchii_run = false;   // the running Switch game is Fritchii (set at spawn)
+bool fritchii_running() { return g_fritchii_run && A.proc; }
 
 void lichii_hang_watch() {
     static bool had_window = false;
     static ULONGLONG gone_since = 0;
     static ULONGLONG cpu_at_gone = 0, idle_since = 0;
-    if (!A.proc) g_hookshot_run = false;
+    if (!A.proc) { g_hookshot_run = false; g_fritchii_run = false; }
     if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { had_window = false; gone_since = 0; return; }   // Hookshot has its own exit; the hang is a Lichii issue (builds 88-95)
     const ULONGLONG now = GetTickCount64();
     if (game_main_window()) { had_window = true; gone_since = 0; return; }
@@ -618,6 +621,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     hubemu::Kind kind = hubemu::kind_for(e.system);
     if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot_lichii_once_consume(e.key)) { /* "Play with Lichii this time": skip Hookshot once */ }
     else if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot::use_for(e, gs_values_for(e))) { launch_hookshot(e, ri, battery); return; }   // before any Lichii-only step: works without Lichii, keys or firmware
+    if (kind == hubemu::Kind::Lichii && hubemu::fritchii_selected(e, gs_values_for(e))) kind = hubemu::Kind::Fritchii;   // opt-in per game (switch.runner): the same code path as Lichii, with Fritchii's own install folder
     hubemu::Bios ps2_bios;
     if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is unpacked, downloaded or started
         ps2_bios = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));
@@ -662,18 +666,32 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
                          : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(g0, fs0, "<card>")
                          : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(g0, fs0)
                          : kind == hubemu::Kind::Ppsspp ? hubemu::ppsspp_args(g0, fs0)
-                         : kind == hubemu::Kind::Lichii ? hubemu::lichii_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
-        if (kind == hubemu::Kind::Lichii) { hubemu::NxSetup ns = hubemu::lichii_setup_status(inst.dir); a0 += std::string(" | keys ") + (ns.prod_keys ? "yes" : "no") + " firmware " + (ns.firmware ? "yes" : "no"); }
-        if (kind == hubemu::Kind::Lichii) {
-            const bool pre = !hubemu::lichii_env(gv, hubemu::physical_ram_bytes()).empty();
+                         : hubemu::is_nx(kind) ? hubemu::lichii_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
+        if (hubemu::is_nx(kind)) { hubemu::NxSetup ns = hubemu::lichii_setup_status(inst.dir); a0 += std::string(" | keys ") + (ns.prod_keys ? "yes" : "no") + " firmware " + (ns.firmware ? "yes" : "no"); }
+        if (hubemu::is_nx(kind)) {
+            bool pre = false, upd = false;
+            for (const auto& kv : hubemu::nx_env(kind, gv, hubemu::physical_ram_bytes())) { if (kv.first == "EDEN_NX2_PRELOAD_ALL_PIPELINES") pre = true; if (kv.first == "EDEN_UPDATE_URL") upd = true; }
             a0 += std::string(" | preload all shaders ") + (pre ? "yes" : "no");
-            autotest_log(std::string("lichii: EDEN_NX2_PRELOAD_ALL_PIPELINES ") + (pre ? "set" : "not set"));
+            std::string line = std::string(kind == hubemu::Kind::Fritchii ? "fritchii" : "lichii") + ": EDEN_NX2_PRELOAD_ALL_PIPELINES " + (pre ? "set" : "not set");
+            if (kind == hubemu::Kind::Fritchii) line += std::string(", EDEN_UPDATE_URL ") + (upd ? "pinned" : "missing") + ", leftover update files: " + (hubemu::update_leftovers(kind, inst.dir).empty() ? "none" : hubemu::update_leftovers(kind, inst.dir));
+            autotest_log(line);
         }
         shot_trace("external", std::string(hubemu::name(kind)) + " installed | " + a0);
         set_notice("Headless test run: launch skipped.");
         return;
     }
-    if (kind == hubemu::Kind::Lichii && !switch_ready_or_ask(e, inst.dir)) return;   // keys / firmware first (the player's own; switch_ui.cpp)
+    if (kind == hubemu::Kind::Fritchii) {
+        if (!hubemu::update_leftovers(kind, inst.dir).empty()) {   // its own updater was cut short: starting it would open an "Interrupted Update" box over the game. Offer the normal reinstall instead.
+            EMU.kind = kind;
+            EMU.game_key = e.key;
+            EMU.updating = true;
+            EMU.state = hubemu::Installer::Asking;
+            return;
+        }
+        if (hubemu::is_running(inst.exe)) { set_notice("Lichii or Fritchii is already running. Close it first, then start the game from RetroHub.", 10.0); return; }   // (same program name): no copying while one runs
+        if (nxprep_gate(e, inst.dir)) return;   // one-time copy of keys / firmware / shader cache from Lichii (own thread, dialog); the launch resumes by itself
+    }
+    if (hubemu::is_nx(kind) && !switch_ready_or_ask(e, inst.dir, kind)) return;   // keys / firmware first (the player's own; switch_ui.cpp)
     if (hubemu::is_running(inst.exe)) {   // a second launch would hand over to the running instance and end the session early
         set_notice(std::string(hubemu::name(kind)) + " is already running. Close it first, then start the game from RetroHub.", 10.0);
         return;
@@ -704,12 +722,15 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         hubemu::CemuPads cp = cemu_pads_for(pq);
         std::string perr = hubemu::prepare_ppsspp(inst.dir, pq, cp.xinput.empty() ? 0 : cp.xinput[0], gs_values_for(e));
         if (!perr.empty()) { set_notice("Could not set up PPSSPP: " + perr, 12.0); return; }
-    } else if (kind == hubemu::Kind::Lichii) {   // portable user\ under the managed dir; player 1 from the "switch" profile on one SDL pad
+    } else if (hubemu::is_nx(kind)) {   // (Lichii and Fritchii) portable user\ under the managed dir; player 1 from the "switch" profile on one SDL pad
         hubctl::Profile px = controls_profile("switch", e.key);
         std::string guid; int port = 0; hubemu::SdlBinds binds;
-        if (!lichii_pad_for(px, &guid, &port, &binds)) set_notice("No controller found: connect one and Lichii picks it up (or set it in Lichii's Controls).", 10.0);
-        std::string perr = hubemu::prepare_lichii(inst.dir, px, guid, port, gs_values_for(e), hub::gs::is_fullscreen(gs_values_for(e)), &binds);
-        if (!perr.empty()) { set_notice("Could not set up Lichii: " + perr, 12.0); return; }
+        const std::string nm = hubemu::name(kind);
+        if (!lichii_pad_for(px, &guid, &port, &binds)) set_notice("No controller found: connect one and " + nm + " picks it up (or set it in " + nm + "'s Controls).", 10.0);
+        std::string perr = hubemu::prepare_lichii(inst.dir, px, guid, port, gs_values_for(e), hub::gs::is_fullscreen(gs_values_for(e)), &binds,
+                                                  kind == hubemu::Kind::Fritchii ? &hubemu::nx_skip_keys(kind) : nullptr);
+        if (perr.empty() && kind == hubemu::Kind::Fritchii) perr = hubemu::prepare_fritchii(inst.dir);   // pins Fritchii's settings migration (after the config write above)
+        if (!perr.empty()) { set_notice("Could not set up " + nm + ": " + perr, 12.0); return; }
     } else if (inst.managed) {
         { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw)); }
     } else if (A.st.cemu_manage_controls) {   // the user's own Cemu: backed up once, then RetroHub's controls (setting is ON by default)
@@ -742,13 +763,26 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     } else {
         hubemu::apply_game_settings(kind, inst.dir, gsv);
     }
-    auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, "", wiiu_tid));
+    if (hubemu::is_nx(kind) && e.system == hub::System::Switch) {   // the newest save across Lichii, Fritchii and the vault goes into THIS emulator's folder first (a no-op while only one of them is installed)
+        hubemu::NxSaveSync ss;
+        ss.launching = kind;
+        ss.title_id = hubemu::title_id_from_key(e.key);
+        const hubemu::Install li = hubemu::find(hubemu::Kind::Lichii, "", ""), fr = hubemu::find(hubemu::Kind::Fritchii, "", "");
+        ss.lichii_dir = li.exe.empty() ? std::string() : li.dir;
+        ss.fritchii_dir = fr.exe.empty() ? std::string() : fr.dir;
+        ss.battery = battery;
+        ss.game_label = e.key;
+        const hubemu::NxSaveSyncReport rep = hubemu::nx_sync_saves_before_launch(ss);
+        if (rep.ran) autotest_log("nx saves: " + (rep.ok ? rep.summary : "ERROR " + rep.error));
+        if (!rep.ok) { set_notice("Couldn't compare your saves between Lichii and Fritchii (" + rep.error + "). The game was not started, so nothing changes.", 15.0); return; }
+    }
+    auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, "", wiiu_tid, hubemu::nx_manifest_suffix(kind)));
     autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
     std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
                        : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI", hub::gs::volume_of(gsv))
                        : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(game, fs)
                        : kind == hubemu::Kind::Ppsspp ? hubemu::ppsspp_args(game, fs)
-                       : kind == hubemu::Kind::Lichii ? hubemu::lichii_args(game, fs)
+                       : hubemu::is_nx(kind) ? hubemu::lichii_args(game, fs)
                                                        : hubemu::cemu_args(game, fs);
     if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS") && kind == hubemu::Kind::Dolphin)   // QA only: extra Dolphin flags (e.g. -m movie.dtm)
         args = std::string(std::getenv("RETROHUB_AUTOTEST_DOLPHIN_ARGS")) + " " + args;
@@ -772,8 +806,9 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     };
     autotest_log("external: starting " + inst.exe + " " + args);
     std::vector<std::pair<std::string, std::string>> xenv;   // added to RetroHub's environment for the child (spawn)
-    if (kind == hubemu::Kind::Lichii) { xenv = hubemu::lichii_env(gsv, hubemu::physical_ram_bytes()); autotest_log(std::string("lichii: EDEN_NX2_PRELOAD_ALL_PIPELINES ") + (xenv.empty() ? "not set" : "set")); }
+    if (hubemu::is_nx(kind)) { xenv = hubemu::nx_env(kind, gsv, hubemu::physical_ram_bytes()); autotest_log(std::string(hubemu::name(kind)) + ": " + std::to_string(xenv.size()) + " extra environment variable(s)"); }
     if (!spawn(inst.exe, args, inst.dir, xenv, r)) { autotest_log("external: spawn failed"); NP3.stop(); }
+    else g_fritchii_run = kind == hubemu::Kind::Fritchii;
 }
 
 void start_unzip(const hub::GameEntry& e) {
