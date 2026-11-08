@@ -482,7 +482,7 @@ void cheats_room_strip(const hub::GameEntry* rg, bool host) {
         if (button("Choose cheats", ImVec2(0, 0), false, A.proc == nullptr, ui::Icon::Bolt)) { hub::GameEntry c = *rg; cheats_open(c); }
         {   // one line, like the party strip: the hint takes what is left of the row and is ellipsized, never wrapped
             const float room = ImGui::GetContentRegionAvail().x - sp(2.f) - ImGui::GetStyle().ItemSpacing.x;
-            const std::string hint = ui::ellipsize(ImGui::GetFont(), ImGui::GetFontSize(), "Everyone plays with the same cheats, fixed when the game starts.", room);
+            const std::string hint = ui::ellipsize(ImGui::GetFont(), ImGui::GetFontSize(), "Same cheats for everyone, locked at the start.", room);
             ImGui::SameLine(0, sp(1.5f));
             ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("%s", hint.c_str());

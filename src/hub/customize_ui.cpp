@@ -642,7 +642,9 @@ void draw_customize() {
 
     if (!is_native(e)) {   // Hide game (library-12): one press, then an Undo card; synced to all your PCs like the Hidden games list
         sub_heading("Hide");
-        ImGui::TextDisabled("Takes it off your shelves and out of the library. Show hidden brings it back to look at.");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("Takes it off your shelves and out of the library. Show hidden brings it back to look at.");   // wrapped: it ran off the card (1.40.0 UI QA)
+        ImGui::PopStyleColor();
         if (ui::button("Hide game", ImVec2(0, sp(4.f)), false, true, ui::Icon::Close)) {
             const std::string hk = e.key;
             hide_game_now(hk);   // e is gone from the library after this
