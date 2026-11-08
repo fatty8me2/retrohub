@@ -506,6 +506,8 @@ int main() {
             cf::ease_step(x, es, 7.f, 1.f / 60.f, true);
             CHECK(x == 7.f);
         }
+        // the info block's entrance: 12 px rise and fade over 0.45 s
+        CHECK(cf::info_alpha(0.f) == 0.f && cf::info_alpha(0.45f) == 1.f && cf::info_alpha(1.f) == 1.f && std::fabs(cf::info_rise(0.f) - 12.f) < 1e-5f && cf::info_rise(0.45f) == 0.f && cf::info_rise(0.2f) < 12.f);
     }
 
     if (fails) { std::printf("%d FAILED\n", fails); return 1; }
