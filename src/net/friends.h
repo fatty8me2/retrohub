@@ -329,6 +329,7 @@ class FriendsClient {
      * reminder is the caller's job) and restarts as a brand-new anonymous account. Saves and games are not touched. */
     bool forget_identity_and_restart();
     std::string my_pc_id() const;                                  // this install's stable id (made once, kept in friends-pc.txt)
+    bool server_has_devices() const;                               // the connected server offers per-PC sign-ins (an older server does not: nothing changes for this PC and the PC tools stay hidden)
 
     /* state */
     const std::vector<Friend>& friends() const;
