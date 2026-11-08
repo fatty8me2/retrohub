@@ -170,7 +170,7 @@ void host_launch_selected() {
             gcnp::Spec gspec; bool gc_ok = true;
             if (with_match) spec = hubui::resolve_match(plan.ports, all_picks(), A.rules, seed, match_remix_roster());
             std::string np_extra;
-            if (rg->system == hub::System::N3DS) { hubnp3ds::Plan np; np.expected = (int)A.lobby.members().size(); np.password = hubnp3ds::new_room_password(); hubnp3ds::set_pending_host_password(np.password); np_extra = hubnp3ds::plan_json_fragment(np); }
+            if (rg->system == hub::System::N3DS) { hubnp3ds::Plan np; np.expected = (int)A.lobby.members().size(); { std::vector<std::string> apps; for (auto& pi : peers) apps.push_back(pi.hello ? pi.app : std::string()); if (hubnp3ds::room_password_supported(apps)) np.password = hubnp3ds::new_room_password(); } hubnp3ds::set_pending_host_password(np.password);   /* mixed versions: no password, as before */ np_extra = hubnp3ds::plan_json_fragment(np); }
             if (rg->system == hub::System::GC) {
                 if (!gc_host_spec(*rg, (int)peers.size(), &gspec)) gc_ok = false;
                 else np_extra = gcnp::launch_fragment(gspec);
