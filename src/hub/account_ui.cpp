@@ -299,12 +299,213 @@ void account_text_error(const std::string& s) {
     ImGui::PopTextWrapPos();
 }
 
+
+/* ---------- Account lifecycle: PCs signed in, sign out, give up the username, delete the account ----------
+ * Everything here asks the friends server over the connection the hub already has (no polling: the PC list is asked for once when the
+ * page opens and again on Refresh or after a change). Nothing is ever deleted on this PC without a confirmation the person typed or clicked. */
+struct LifeState {
+    double last_draw = -1e9;   // when the section was last drawn: a gap means the page was just opened
+    bool asked = false;        // the PC list was asked for since the page opened (never re-asked on a timer)
+    int seen_seq = 0;
+    std::string msg;
+    bool msg_ok = true;
+    enum Kind { None, SignOutPc, SignOutAll, SignOutThis, ReleaseName, Delete } confirm = None;
+    bool open = false;
+    hubnet::DeviceInfo target;
+    char typed[48] = {0};
+    bool deleting = false, signing_out = false;
+};
+LifeState LF;
+
+bool life_online() { return !g_headless && !FR.fake && FR.started && FR.cli.connected(); }
+
+/* Forgets the identity on this PC and starts over as a new account. Saves and games are not touched. */
+void finish_forget(const std::string& note) {
+    FR.cli.forget_identity_and_restart();
+    std::remove(code_path().c_str());
+    AC.code_loaded = false; AC.show_code = false; AC.code.clear();
+    AC.io_msg.clear();
+    LF.deleting = LF.signing_out = false; LF.typed[0] = 0;
+    cloud_account_changed();
+    LF.msg = note; LF.msg_ok = true;
+    push_toast(note, ui::GOOD, 8.0);
+}
+
+void life_poll() {
+    if (g_headless || FR.fake || !FR.started) return;
+    const hubnet::AccountResult& r = FR.cli.account_result();
+    if (r.seq != LF.seen_seq) {
+        LF.seen_seq = r.seq;
+        if (r.op == "sign_out" && LF.signing_out) {
+            LF.signing_out = false;
+            if (r.ok) finish_forget("This PC is signed out. Your saves on this PC are untouched. Enter your account code to sign back in.");
+            else { LF.msg = hubnet::account_result_text(r); LF.msg_ok = false; }
+        } else {
+            LF.msg = hubnet::account_result_text(r);
+            LF.msg_ok = r.ok;
+            // The old account codes stopped working after a lock-out. The message says so; a new code is made only when the person clicks.
+            if (r.op == "delete_account" && !r.ok) LF.deleting = false;
+        }
+    }
+    if (LF.deleting && FR.cli.status_text().rfind("This account was deleted", 0) == 0)
+        finish_forget("Your account was deleted. Saves and games on this PC are untouched. This PC now has a new, empty account.");
+}
+
+/* The "PCs signed in" list + the buttons that end an account. */
+void draw_life_section() {
+    settings_label("PCs signed in to this account", "Each PC that uses this account has its own sign-in. Signing a PC out here stops it from using your "
+                                                  "friends, messages and username until someone there enters your account code. Nothing on that PC is deleted.");
+    const bool online = life_online();
+    const bool dev_ok = online && FR.cli.server_has_devices();   // an older server has no per-PC sign-ins: the PC tools stay off and nothing else changes
+    const double tnow = ImGui::GetTime();
+    if (tnow - LF.last_draw > 1.0) LF.asked = false;   // the page was just opened
+    LF.last_draw = tnow;
+    if (dev_ok && !LF.asked) { FR.cli.request_devices(); LF.asked = true; }   // once per opening; Refresh asks again, nothing polls
+    const hubnet::DeviceList& dl = FR.cli.devices();
+    const int64_t nowms = (int64_t)std::time(nullptr) * 1000;
+    if (!online && !g_headless) ImGui::TextDisabled("Connect to see your PCs.");
+    else if (online && !dev_ok) ImGui::TextDisabled("Signing single PCs out is not available on the server yet.");
+    for (const auto& d : dl.devices) {
+        ImGui::PushID(d.id.c_str());
+        ImGui::PushFont(ui::F.bold);
+        ImGui::TextUnformatted(d.name.empty() ? "A PC" : d.name.c_str());
+        ImGui::PopFont();
+        ImGui::SameLine();
+        if (d.current) ImGui::TextDisabled("this PC");
+        else {
+            const int64_t days = d.seen > 0 ? (nowms - d.seen) / 86400000 : 0;
+            ImGui::TextDisabled("%s", days <= 0 ? "seen today" : (std::to_string(days) + (days == 1 ? " day ago" : " days ago")).c_str());
+            ImGui::SameLine(0, sp(2.f));
+            if (button("Sign out this PC", ImVec2(0, 0), false, dev_ok)) { LF.target = d; LF.confirm = LifeState::SignOutPc; LF.open = true; }
+        }
+        ImGui::PopID();
+    }
+    if (online && dl.loaded && dl.legacy)
+        ImGui::TextDisabled("A PC that has not updated RetroHub may still be signed in. It can only be locked out with \"Sign out all other PCs\".");
+    if (button("Refresh##life", ImVec2(0, 0), false, dev_ok, ui::Icon::Refresh)) { FR.cli.request_devices(); LF.asked = true; }
+    ImGui::SameLine();
+    if (button("Sign out all other PCs", ImVec2(0, 0), false, dev_ok)) { LF.confirm = LifeState::SignOutAll; LF.open = true; }
+    if (!LF.msg.empty()) {
+        if (LF.msg_ok) { ImGui::PushTextWrapPos(0.f); ImGui::TextUnformatted(LF.msg.c_str()); ImGui::PopTextWrapPos(); }
+        else account_text_error(LF.msg);
+    }
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+
+    settings_label("End this account", "Sign out only affects this PC. Giving up your username frees it for you to pick again (nobody else can take it for 7 days). "
+                                      "Deleting the account removes your friends list, messages, username and cloud saves from the server for good.");
+    if (A.st.username_claimed && button("Give up my username", ImVec2(0, 0), false, online)) { LF.confirm = LifeState::ReleaseName; LF.open = true; }
+    if (A.st.username_claimed) ImGui::SameLine();
+    if (button("Sign out of this account", ImVec2(0, 0), false, online)) { LF.confirm = LifeState::SignOutThis; LF.open = true; }
+    ImGui::SameLine();
+    if (button("Delete my account...", ImVec2(0, 0), false, online)) { LF.confirm = LifeState::Delete; LF.open = true; LF.typed[0] = 0; }
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+}
+
+/* One modal for all five confirmations (keeps the popup guard happy: it only opens from this page, never over a game). */
+void draw_life_confirm() {
+    if (LF.open) { ImGui::OpenPopup("Are you sure?##life"); LF.open = false; }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.5f)));
+    if (ImGui::BeginPopupModal("Are you sure?##life", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        if (LF.confirm == LifeState::None) ImGui::CloseCurrentPopup();   // finished (account deleted / signed out) while the box was open
+        if (ui::modal_back()) { LF.confirm = LifeState::None; ImGui::CloseCurrentPopup(); }
+        ImGui::PushTextWrapPos(sp(46.f));
+        load_saved_code();
+        const std::string code = AC.code;   // the saved account code, if this PC made one
+        auto code_reminder = [&]() {
+            if (!code.empty()) ImGui::Text("Your account code: %s. Write it down first.", code.c_str());
+            else {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(COL_BAD));
+                ImGui::TextUnformatted("You have no account code saved on this PC. Make one first (\"Show my account code\" above), or you will not be able to get back in.");
+                ImGui::PopStyleColor();
+            }
+        };
+        bool go = false, can = true;
+        const char* go_label = "Yes";
+        switch (LF.confirm) {
+        case LifeState::SignOutPc:
+            ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted(("Sign out " + (LF.target.name.empty() ? std::string("this PC") : LF.target.name) + "?").c_str()); ImGui::PopFont();
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            ImGui::TextUnformatted("That PC stops using your friends, messages and username right away. It can come back only with a NEW account code, because this also stops your old account codes and any PC that has not updated RetroHub. Nothing on it is deleted.");
+            go_label = "Sign it out"; go = false;
+            break;
+        case LifeState::SignOutAll:
+            ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted("Sign out all other PCs?"); ImGui::PopFont();
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            ImGui::TextUnformatted("Every other PC is signed out, including any that have not updated RetroHub. All your old account codes stop working, so you will make a new one afterwards (it is not made for you). "
+                                   "This PC stays signed in.");
+            go_label = "Sign them out";
+            break;
+        case LifeState::SignOutThis:
+            ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted("Sign out of this account on this PC?"); ImGui::PopFont();
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            ImGui::TextUnformatted("This PC forgets the account and starts a new, empty one. Your games and saves on this PC stay where they are. To use this account again, enter your account code.");
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            code_reminder();
+            can = !code.empty();
+            go_label = "Sign out";
+            break;
+        case LifeState::ReleaseName:
+            ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted("Give up your username?"); ImGui::PopFont();
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            ImGui::TextUnformatted("Your friends keep you, but your username goes back to the pool. It is held for you for 7 days, so nobody else can take it. You pick a new name when you are ready.");
+            go_label = "Give it up";
+            break;
+        case LifeState::Delete: {
+            ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted("Delete your account?"); ImGui::PopFont();
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            ImGui::TextUnformatted("This removes your friends list, messages, username and cloud saves from the server. It can't be undone and your account code stops working. "
+                                   "Games and saves on this PC are not touched.");
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            const std::string uname = A.st.username_claimed ? A.st.name : std::string();
+            const std::string fcode = fr_my_code();
+            ImGui::Text("To confirm, type %s", uname.empty() ? fcode.c_str() : (uname + " (or " + fcode + ")").c_str());
+            ImGui::SetNextItemWidth(sp(28.f));
+            osk::input("##deltyped", "Type it here", LF.typed, sizeof LF.typed, 0, osk::Kind::Text);
+            can = hubnet::delete_confirmation_ok(LF.typed, uname, fcode);
+            go_label = LF.deleting ? "Deleting..." : "Delete my account";
+            if (LF.deleting) can = false;
+            break;
+        }
+        default: break;
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        if (button(go_label, ImVec2(sp(18.f), sp(5.f)), true, can && life_online())) go = true;
+        ImGui::SameLine();
+        if (button(LF.deleting ? "Close" : "Cancel", ImVec2(sp(12.f), sp(5.f)))) { LF.confirm = LifeState::None; ImGui::CloseCurrentPopup(); }
+        if (go) {
+            switch (LF.confirm) {
+            case LifeState::SignOutPc:
+                FR.cli.revoke_device(LF.target.id);
+                if (!LF.target.cdev.empty() && A.st.cloud_enabled) pcs_start_revoke(hs::LinkedPc{LF.target.cdev, LF.target.name, 0, 0, false});   // also stop its cloud sync cleanly
+                LF.msg.clear();
+                break;
+            case LifeState::SignOutAll: FR.cli.revoke_other_pcs(); LF.msg.clear(); break;
+            case LifeState::SignOutThis: LF.signing_out = true; FR.cli.sign_out_this_pc(); LF.msg.clear(); break;
+            case LifeState::ReleaseName: FR.cli.release_username(); LF.msg.clear(); break;   // the sentence comes from the server's answer (account_result), never before
+            case LifeState::Delete: LF.deleting = true; FR.cli.delete_account(LF.typed); LF.msg.clear(); break;
+            default: break;
+            }
+            if (LF.confirm != LifeState::Delete) { LF.confirm = LifeState::None; ImGui::CloseCurrentPopup(); }
+        }
+        if (LF.confirm == LifeState::Delete && !LF.deleting && LF.msg.size() && !LF.msg_ok) account_text_error(LF.msg);
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar();
+}
+
 } // namespace
 
 void draw_account_section() {
     seed_for_screenshots();
     poll_jobs();
     pcs_poll();
+    life_poll();
 
     begin_panel("set_account");
     section_title(A.st.username_claimed && !A.st.name.empty() ? "Account: " + A.st.name : std::string("Account"));
@@ -328,7 +529,7 @@ void draw_account_section() {
     {
         namespace cu = hubui::cloudui;
         settings_label("Your PCs", "The PCs that use this account. \"Stop syncing\" switches cloud saves off on that PC until someone there turns sync back on; "
-                                   "nothing is deleted. It does not sign that PC out of your friends or username. You can't do this to the PC you are using.");
+                                   "nothing is deleted. It does not sign that PC out of your friends or username (use \"PCs signed in\" below for that). You can't do this to the PC you are using.");
         if (hs::cloud_revoked()) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(COL_BAD));
             ImGui::PushTextWrapPos(0.f);
@@ -443,6 +644,11 @@ void draw_account_section() {
         else account_text_error(AC.io_msg);
     }
 
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    draw_life_section();
+
     /* ---- confirmation before stopping sync on another PC ---- */
     if (PC.confirm_open) { ImGui::OpenPopup("Stop syncing on this PC?##pc"); PC.confirm_open = false; }
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -473,7 +679,7 @@ void draw_account_section() {
         ImGui::PushTextWrapPos(sp(44.f));
         ImGui::Text("Account to sign in with: %s", hubnet::friend_code(AC.pending.user_id).c_str());
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        ImGui::TextUnformatted("This replaces the account on this PC; the current one is backed up. If another PC still uses the current account, it will stop connecting to friends until you sign it in again with your account code.");
+        ImGui::TextUnformatted("This replaces the account on this PC; the current one is backed up. If another PC still uses the current account, that account is left as it is and the other PC keeps working.");
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         if (button("Replace account", ImVec2(sp(16.f), sp(5.f)), true)) { adopt_pending(); ImGui::CloseCurrentPopup(); }
@@ -482,6 +688,8 @@ void draw_account_section() {
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar();
+
+    draw_life_confirm();
 
     achievements_account_section();
 
