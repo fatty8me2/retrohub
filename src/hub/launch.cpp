@@ -36,6 +36,7 @@
 #define STBI_NO_HDR
 #include "third_party/stb_image.h"
 #include "app.h"
+#include "launch_guard_logic.h"
 #include "exit_combo.h"
 #include "remote_play.h"
 #include "hint_popup.h"
@@ -84,7 +85,7 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
         set_notice("Headless test run: launch skipped.");
         return false;
     }
-    if (A.proc) { set_notice("A game is already running."); return false; }
+    if (!hubui::launch_allowed(A.proc != nullptr, session_active(), /*system_launch=*/true)) { set_notice(hubui::launch_busy_reason(true)); return false; }   // rooms start their own game inside their own session: only A.proc refuses
     if (!file_exists(exe)) { set_notice("Cannot find " + file_name(exe) + " (" + exe + ")"); return false; }
     if (!A.st.start_hint) SetEnvironmentVariableW(L"RETROHUB_START_HINT", L"0");   // retrorun / n64run read it (inherited by the child)
     std::wstring cmd = L"\"" + W(exe) + L"\" " + W(args);
@@ -877,7 +878,12 @@ static std::string resume_arg(const hub::GameEntry& e, const std::string& batter
 
 void play_entry(const hub::GameEntry& e_in) {
     if (launch_blocked("play_entry")) return;
-    if (A.proc) { set_notice("A game is already running."); return; }
+    if (!hubui::launch_allowed(A.proc != nullptr, session_active())) {   // shell-H2: GameCube NetPlay / a 3DS room never set A.proc, so ask every session
+        A.resume_key.clear();
+        A.resume_state.clear();
+        set_notice(hubui::launch_busy_reason(A.proc != nullptr));
+        return;
+    }
     hub::GameEntry hacked;   // ROM hack / translation (Plan 4 H3): launch the patched copy prepared in rom-cache\hacks
     if (is_hack(e_in)) {
         std::string patched;

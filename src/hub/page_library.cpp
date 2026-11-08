@@ -1,4 +1,5 @@
 #include "app.h"
+#include "launch_guard_logic.h"
 #include "wave3_hooks.h"
 #include "libview_ui.h"
 #include "convenience.h"
@@ -134,7 +135,7 @@ void seed_nav_here() {
 }
 
 float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool compact, bool seed_nav) {
-    bool idle = A.proc == nullptr;
+    bool idle = hubui::launch_allowed(A.proc != nullptr, session_active());   // shell-H2: any session, not just A.proc
     const hub::GameState& gs = gstate(e.key);
     bool gc = e.system == hub::System::GC;
     bool online = supports_online(e) || gc;
@@ -147,7 +148,8 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
     ImGui::SetCursorScreenPos(at);
     const bool resume = has_resume(e);   // one press: launch and load the auto state (plain Play when there is none)
     if (button(resume ? "Resume" : "Play", ImVec2(play_w, bh), true, idle, ui::Icon::Play)) { hub::GameEntry c = e; if (resume) play_entry_anim(c, true, [](const hub::GameEntry& g) { resume_entry(g, -1); }); else play_entry_anim(c, true); }
-    if (resume && ImGui::IsItemHovered()) ImGui::SetTooltip("Continue from where you left off");
+    if (!idle && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", hubui::launch_busy_reason(A.proc != nullptr));
+    else if (resume && ImGui::IsItemHovered()) ImGui::SetTooltip("Continue from where you left off");
     if (seed_nav) seed_nav_here();
     if (online) {
         ImGui::SameLine(0, gap);
@@ -158,7 +160,8 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
             A.pending_room_game = room_id(e);
             enter_room(true, hubnet::new_room_code());
         }
-        if (compact && ImGui::IsItemHovered()) ImGui::SetTooltip("Play online with friends");
+        if (!idle && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", hubui::launch_busy_reason(A.proc != nullptr));
+        else if (compact && ImGui::IsItemHovered()) ImGui::SetTooltip("Play online with friends");
     }
     ImGui::SameLine(0, gap);
     if (ui::icon_button("fav", gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star, bh, gs.favorite, gs.favorite ? "Remove from favorites" : "Add to favorites", IM_COL32(236, 180, 40, 255)))
@@ -777,7 +780,7 @@ void draw_details_modal() {
     const GameInfo* cat = catalog_for(e);
     poll_save_info();
     if (A.info_key != e.key || ImGui::GetTime() - A.info_at > 4.0) refresh_save_info_bg(e);
-    bool idle = A.proc == nullptr, native = is_native(e);
+    bool idle = hubui::launch_allowed(A.proc != nullptr, session_active()), native = is_native(e);
     ImU32 c0, c1;
     entry_colors(e, &c0, &c1);
 
@@ -892,6 +895,7 @@ void draw_details_modal() {
     place(sp(17.f));
     tr("play", idle ? "enabled" : "disabled");
     if (button(play_label, ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play) || forced("play")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry_anim(c); }
+    if (!idle && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", hubui::launch_busy_reason(A.proc != nullptr));
     ImGui::SetItemDefaultFocus();
     if (!supports_online(e) && e.system == hub::System::GC) {
         place(label_w("Online soon", true));
@@ -914,6 +918,7 @@ void draw_details_modal() {
             shot_trace("play-online", "pending_room_game=" + A.pending_room_game);
             if (!g_headless) enter_room(true, hubnet::new_room_code());
         }
+        if (!idle && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", hubui::launch_busy_reason(A.proc != nullptr));
     }
     place(label_w("Close", true));
     if (button("Close", ImVec2(0, bh), false, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();

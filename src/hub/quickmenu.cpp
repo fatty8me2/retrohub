@@ -14,6 +14,7 @@
 #include "runner_ctl.h"
 #include "cloud_engine.h"
 #include "qm_logic.h"
+#include "cheats_game.h"
 #include "qm_nav.h"
 #include "qm_pad.h"
 #include "qm_party.h"
@@ -1291,7 +1292,7 @@ static void qm_body() {
         }
     }
     if (e && cheats_supported(*e)) {
-        if (menu_button("Cheats", true, ui::Icon::Bolt)) { hub::GameEntry c = *e; cheats_open(c); ImGui::CloseCurrentPopup(); }
+        if (menu_button("Cheats", true, ui::Icon::Bolt)) { hub::GameEntry c = *e; cheats_open_from_game(c); ImGui::CloseCurrentPopup(); }
     }
     if (g_shot_fake ? false : (e && e->system == hub::System::WiiU)) {   // Cemu: Ctrl+Tab = toggle pad screen (also View + RB held)
         if (menu_button("Swap GamePad / TV screen", true, ui::Icon::Refresh)) { ImGui::CloseCurrentPopup(); wiiu_toggle_gamepad_screen(); }
