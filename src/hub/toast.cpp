@@ -49,6 +49,19 @@ std::string build_online_xml(const std::string& friend_name) {
            "</binding></visual><audio silent=\"true\"/></toast>";
 }
 
+std::string build_gamenight_xml(const std::string& game_title, const std::string& host_name, const std::string& night_id) {
+    std::string id;   // the id is "<uid>@<seconds>": keep the activation link to plain characters
+    for (char c : night_id) if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '@' || c == '-' || c == '_' || c == '.') id += c;
+    std::string url = "retrohub://night/" + id;
+    std::string game = game_title.empty() ? "a session" : game_title;
+    std::string line = host_name.empty() ? "Open RetroHub to host or join." : "With " + host_name + ". Open RetroHub to join.";
+    return "<toast launch=\"" + xml_escape(url) + "\" activationType=\"protocol\" scenario=\"default\">"
+           "<visual><binding template=\"ToastGeneric\">"
+           "<text>Game night in 10 minutes: " + xml_escape(game) + "</text>"
+           "<text>" + xml_escape(line) + "</text>"
+           "</binding></visual><audio silent=\"true\"/></toast>";
+}
+
 bool parse_activation_code(const std::string& args, std::string* code) {
     static const char kPre[] = "retrohub://join/";
     const size_t n = sizeof(kPre) - 1;
