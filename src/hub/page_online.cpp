@@ -5,6 +5,16 @@
 #include "online_caps.h"
 #include "remote_play.h"
 
+/* "Use host's save" is one room flag (A.share_host_save, synced to guests), but its starting value depends on the system (hubcaps::share_host_save_default):
+ * the host's explicit choice is remembered per system, and the flag follows the selected game's system. A host who never touches it sees the old behaviour. */
+static std::map<int, int> g_share_choice;   // System -> 0/1, only when the host ticked/unticked it
+static bool share_flag_for(hub::System s) {
+    auto it = g_share_choice.find((int)s);
+    const bool eff = hubcaps::share_host_save_effective(s, it == g_share_choice.end() ? -1 : it->second);
+    if (A.share_host_save != eff) { A.share_host_save = eff; A.hello_dirty = true; }
+    return eff;
+}
+
 /* Play Online: friends who are in a joinable room right now (same presence data and join path as the friends panel; no extra traffic). */
 static void online_friend_rooms_panel(float w) {
     std::vector<const hubnet::Friend*> rooms;
@@ -151,7 +161,7 @@ void host_launch_selected() {
     GRP.again = false;
     std::vector<hubui::PeerInfo> peers = peer_list();
             int delay = A.st.delay_auto ? 0 : A.st.input_delay;   // 0 = auto, same for everyone
-            bool share = A.share_host_save && !is_kanto(*rg) && hubcaps::share_host_save_supported(rg->system);
+            bool share = hubcaps::share_host_save_supported(rg->system) && share_flag_for(rg->system) && !is_kanto(*rg);
             unsigned seed = std::random_device{}();
             ++A.launch_counter;
             hubui::PortPlan plan = hubui::build_ports(member_pads());   // built once; guests use it verbatim
@@ -525,7 +535,8 @@ void page_online_room() {
     ImGui::Dummy(ImVec2(0, 6 * S));
     if (rg && !is_kanto(*rg) && hubcaps::share_host_save_supported(rg->system)) {
         if (host) {
-            if (ImGui::Checkbox(hubcaps::share_host_save_label(rg->system), &A.share_host_save)) A.hello_dirty = true;
+            share_flag_for(rg->system);
+            if (ImGui::Checkbox(hubcaps::share_host_save_label(rg->system), &A.share_host_save)) { g_share_choice[(int)rg->system] = A.share_host_save ? 1 : 0; A.hello_dirty = true; }
         } else {
             ImGui::TextDisabled("%s", hubcaps::share_host_save_state_text(rg->system, A.share_host_save));
         }

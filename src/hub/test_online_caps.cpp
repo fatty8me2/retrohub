@@ -154,6 +154,9 @@ int main() {
             CHECK(hubcaps::share_host_save_supported(s));
         for (System s : {System::GC, System::WiiU, System::N3DS, System::NDS, System::Unknown})
             CHECK(!hubcaps::share_host_save_supported(s));
+        for (System s : {System::N64, System::GB, System::GBC, System::GBA}) CHECK(hubcaps::share_host_save_default(s) && hubcaps::share_host_save_effective(s, -1));   // old default kept
+        for (System s : {System::NES, System::SNES, System::PS1, System::PS2}) CHECK(!hubcaps::share_host_save_default(s) && !hubcaps::share_host_save_effective(s, -1));   // new: off, so NES/SNES keep drop-in
+        CHECK(hubcaps::share_host_save_effective(System::SNES, 1) && !hubcaps::share_host_save_effective(System::N64, 0));   // an explicit choice wins
         CHECK(std::string(hubcaps::share_host_save_label(System::PS2)).find("memory card") != std::string::npos);
         CHECK(std::string(hubcaps::share_host_save_label(System::SNES)).find("save") != std::string::npos);
     }

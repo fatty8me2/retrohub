@@ -30,6 +30,11 @@ inline bool share_host_save_supported(hub::System s) {
         default: return false;
     }
 }
+/* Default of the box before the host touches it: ON for N64 and GB/GBC/GBA (as it always was), OFF for the systems that gained the option later
+ * (NES/SNES keep free-seat drop-in, which a shared save turns off; PS1/PS2 keep their old blank-card rooms). `choice`: -1 = the host never
+ * touched it for this system, else 0/1. */
+inline bool share_host_save_default(hub::System s) { return s == hub::System::N64 || s == hub::System::GB || s == hub::System::GBC || s == hub::System::GBA; }
+inline bool share_host_save_effective(hub::System s, int choice) { return choice < 0 ? share_host_save_default(s) : choice != 0; }
 inline bool share_host_save_is_card(hub::System s) { return s == hub::System::PS1 || s == hub::System::PS2; }
 inline const char* share_host_save_label(hub::System s) {
     return share_host_save_is_card(s) ? "Use host's memory card (saved games)" : "Use host's save (unlocked characters/boards)";
