@@ -1,0 +1,53 @@
+name: CI
+
+# Build RetroHub (Release) and run the offline tests. One job, no secrets, no releases, no deploys.
+# The online tests (ctest label "online") are excluded: they need a local wrangler server, and the online test
+# binaries refuse the production server anyway. Tests labelled "gui" (they need a desktop session) are excluded too. Tests that need emulator files from deps\ skip themselves when
+# those files are missing (deps\ is not in the repo).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # Keep every test run silent, like the local gate does.
+      RETROHUB_QA: "1"
+      SSB64_MUTE: "1"
+      RETRORUN_MUTE: "1"
+      N64RUN_MUTE: "1"
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Put MinGW on PATH (for sameboy_rb_libretro.dll)
+        shell: pwsh
+        run: |
+          $mingw = 'C:\msys64\mingw64\bin'
+          if (Test-Path "$mingw\gcc.exe") {
+            "$mingw" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+            & "$mingw\gcc.exe" --version | Select-Object -First 1
+          } else {
+            Write-Host "::warning::MinGW gcc not found at $mingw; sameboy_rb is skipped (its tests skip too)."
+          }
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build (Release)
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Test (offline)
+        run: ctest --test-dir build -C Release -LE "online|gui" --output-on-failure --timeout 300
