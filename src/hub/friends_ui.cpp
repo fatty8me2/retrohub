@@ -513,8 +513,10 @@ void fr_notify(bool invite, const std::string& uid, const std::string& name, con
     FR.notifs.erase(std::remove_if(FR.notifs.begin(), FR.notifs.end(), [](const Notif& x) { return x.done; }), FR.notifs.end());
     if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
     if (invite) group_note_invite(uid, name, inv);
-    /* A game is running: no Windows toast (even if opted in), no flash, no hub window. The invite is in the bell (above); the runner's own OSD tells the player. */
-    if (invite && hubui::group::route_event(game_active(), session_active(), A.proc && !A.run.ctl_path.empty(), g_headless).osd) {
+    const hubui::group::EventRoute rt = hubui::group::route_event(game_active(), session_active(), A.proc && !A.run.ctl_path.empty(), g_headless);
+    if (invite && rt.windows_toast) hubtoast::notify_invite(hubtoast::system_notifier(), A.st.notify_in_game, game_active(), name, inv.game_title, inv.lobby_code);   // opt-in; never while a game or session runs
+    /* A game is running: no Windows toast, no flash, no hub window. The invite is in the bell (above); the runner's own OSD tells the player. */
+    if (invite && rt.osd) {
         runctl::Command c;
         c.cmd = runctl::Cmd::OsdMsg;
         c.text = (name.empty() ? std::string("A friend") : name) + " invited you - open RetroHub to join";
@@ -637,19 +639,14 @@ static void fr_toggle_watch(const hubnet::Friend& f) {
     fr_apply_watch();
     set_toast(on ? "You'll be told when " + f.name + " comes online." : "Online alerts for " + f.name + " are off.", true, 3.0);
 }
-/* The server says a watched friend just came online: a bell entry, an in-hub toast, and (while a game runs) a Windows toast. */
+/* The server says a watched friend just came online: a bell entry and an in-hub toast; the opt-in Windows toast only when nothing runs. */
 static void fr_friend_online(const std::string& uid, const std::string& name) {
     const hubnet::Friend* f = fr_find(uid);
     const std::string who = !name.empty() ? name : (f ? f->name : std::string());
     group_note(hubui::group::Kind::FriendOnline, uid, who, "", "", "", "", 0);
     push_toast((who.empty() ? std::string("A friend") : who) + " came online", ui::ACCENT, 5.0);
-    /* While a game runs: no Windows toast. The bell has it; the runner's OSD (if any) shows a short line. */
-    if (hubui::group::route_event(game_active(), session_active(), A.proc && !A.run.ctl_path.empty(), g_headless).osd) {
-        runctl::Command c;
-        c.cmd = runctl::Cmd::OsdMsg;
-        c.text = (who.empty() ? std::string("A friend") : who) + " came online";
-        runctl::send_command_ex(A.run.ctl_path, c);
-    }
+    /* While a game or session runs "came online" goes to the bell only (above); otherwise the opt-in Windows toast (as before). */
+    if (hubui::group::route_event(game_active(), session_active(), false, g_headless).windows_toast) hubtoast::notify_online(hubtoast::system_notifier(), A.st.notify_in_game, game_active(), who);
 }
 std::string fr_lobby_ident_msg(bool nopair) {
     if (FR.fake || !FR.started || FR.cli.my_uid().empty() || FR.cli.my_secret().empty()) return "";
@@ -2064,7 +2061,7 @@ void fr_chat_view(float cw) {
         hub::profile::Tally& tl = FR.reacts[FR.chat_uid + "|" + lk];
         ImGui::PushID((int)i + 100000);
         ImGui::SetCursorScreenPos(q0);
-        const bool bub_pressed = ImGui::InvisibleButton("bub", ImVec2(bw, bh), ImGuiButtonFlags_EnableNav);   // EnableNav: the D-pad can reach each line
+        bool bub_pressed = ImGui::InvisibleButton("bub", ImVec2(bw, bh), ImGuiButtonFlags_EnableNav);   // EnableNav: the D-pad can reach each line
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to react");
         const bool bub_focus = ImGui::IsItemFocused() && A.pad_mode;
         if (bub_focus) {   // controller: A, X or Y on a focused line opens the reaction picker; D-pad picks, A sends, B closes
@@ -2072,8 +2069,8 @@ void fr_chat_view(float cw) {
             float hy = q0.y - (ui::F.cap->FontSize + sp(0.75f)) - sp(0.25f);
             ui::key_hint(cdl, ImVec2(q0.x, hy), true, "X", "", "React");
         }
-        if (bub_pressed || ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)
-            || (bub_focus && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)))) ImGui::OpenPopup("react");
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) bub_pressed = true;   // left click / A already set it
+        if (bub_pressed || (bub_focus && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)))) ImGui::OpenPopup("react");
         if (ImGui::BeginPopup("react")) {
             for (size_t ri = 0; ri < 6; ri++) {
                 if (ri) ImGui::SameLine();

@@ -23,12 +23,13 @@ constexpr size_t kMaxGroups = 5;
 constexpr size_t kMaxNotifs = 50;
 constexpr int64_t kDayMs = 24LL * 60 * 60 * 1000;
 
-/* Where an invite / "came online" event goes. The bell entry always happens. A Windows toast NEVER appears (not even when the player
- * opted in to in-game alerts): it would pop up over the running game. While a game or session runs the runner's on-screen display is
- * used instead (only if the runner has a control channel), and nothing is replayed later. */
+/* Where an invite / "came online" event goes. The bell entry always happens. The opt-in Windows toast is only ever allowed when NO game
+ * or session runs (never over a game, even if opted in). While a game or session runs the runner's on-screen display carries an
+ * INVITE (only if the runner has a control channel); "came online" goes to the bell only. Nothing is replayed later. */
 struct EventRoute { bool bell = true; bool windows_toast = false; bool osd = false; };
 inline EventRoute route_event(bool game_active, bool session_active, bool runner_has_osd, bool headless) {
     EventRoute r;
+    r.windows_toast = !game_active && !session_active && !headless;
     r.osd = (game_active || session_active) && runner_has_osd && !headless;
     return r;
 }
