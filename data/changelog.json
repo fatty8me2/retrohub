@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.37.4",
+      "date": "2026-11-07",
+      "title": "Real-looking Switch 2 cases",
+      "new": [],
+      "improved": [
+        "Switch 2 games in the Cases view now look like real Switch 2 boxes: one wide red banner with NINTENDO SWITCH 2 across the top, and the game's art filling the cover instead of a small framed picture",
+        "Switch games that only have a square icon show it across the whole width of the case, with its colours blending softly into the bottom of the cover"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.37.2",
       "date": "2026-11-07",
       "title": "Preload every shader on Switch",
