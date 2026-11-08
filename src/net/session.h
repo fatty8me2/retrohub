@@ -132,6 +132,16 @@ class Session {
      * Call after start(); nullptr detaches. Windows only. */
     void set_wake_event(void* event);
     void set_ping_interval(uint32_t ms);   // default 500; min 20
+    /* Frames dropped because the sender byte inside them did not match where they really came from (relay: the server's stamp; UDP: the
+     * peer's private token from the relay and the address that showed it). Anyone who could reach the UDP port or the room could otherwise
+     * pose as another slot, even the host. Peers on an older RetroHub send no token and keep the old rules (their frames are counted by
+     * unproven_frames() instead). */
+    uint32_t spoofed_frames() const;
+    uint32_t unproven_frames() const;
+    /* Offline tests (no sockets): set up a session in `cfg.slot`, describe the peers, and feed it frames as if they had arrived. */
+    bool qa_offline(const SessionConfig& cfg);
+    void qa_peer(int slot, bool present, const std::string& pub, const std::string& loc, bool spectator = false);
+    void qa_inject(bool via_relay, int relay_from, const std::string& from_addr, const void* data, int len);
     void qa_drop_ws();   // QA: cut the lobby socket without a close frame; the Session reconnects it (reconnect.h) while UDP play continues
 
     /* Unreliable datagram to one slot or -1 = all other slots. */
