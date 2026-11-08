@@ -1,6 +1,19 @@
 {
   "versions": [
     {
+      "version": "1.38.0",
+      "date": "2026-11-07",
+      "title": "A new carousel",
+      "new": [
+        "The Cases view has a new carousel: the game you pick stands front and centre, its disc or cartridge slides out after a moment, the games beside it turn to show their covers, and the background glows in the cover's colours",
+        "A details panel under the carousel shows the console, play time, a short description, a screenshot when there is one, and Play, Details, Flip and Favorite buttons"
+      ],
+      "improved": [
+        "Prefer the old shelf of spines? Open the Cases menu and set Style to Classic shelf"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.37.4",
       "date": "2026-11-07",
       "title": "Real-looking Switch 2 cases",

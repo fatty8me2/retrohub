@@ -45,6 +45,7 @@ struct Settings {
     std::string discover_sort = "rec"; // Discover: rec | title | new | old | players
     std::string lib_layout = "cases";  // All Games layout: grid | list | compact | showcase | shelf | cases (default Cases)
     bool lib_cases_default = true;     // one-time migration marker: files without it that still say "grid" are moved to Cases once; a later Grid pick sticks
+    bool lib_cases_classic = false;    // Cases layout: false = Coverflow (default), true = the Classic shelf of turned cases
     bool lib_shelf_mixed = false;      // Shelf layout: false = one shelf per console, true = one flow following the Sort chip
     std::string lib_list_col;          // List layout: sorted column ("" = follow the Sort chip) title | console | players | last | time
     bool lib_list_desc = false;        // List layout: column sorted descending

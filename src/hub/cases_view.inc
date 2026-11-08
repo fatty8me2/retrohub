@@ -353,6 +353,7 @@ CHit cases_hit(uint32_t id, ImVec2 p0, ImVec2 p1, bool is_focus_item) {
 
 float key_analog(ImGuiKey k) { const ImGuiKeyData* d = ImGui::GetKeyData(k); return d ? d->AnalogValue : 0.f; }
 
+#include "cases_info.inc"   // Coverflow state, background colours, the info panel (cases_info.inc)
 #include "cases_nav.inc"   // sort chip + picker, scrubber, section jumps, quick-jump overlay, section bubble
 
 /* ---- the tab bar ---- a pill strip: one highlight slides to the active console (in its colour), every console has its colour dot and a small game count ---- */
@@ -620,6 +621,7 @@ void draw_cases(Disp& D) {
             CS.sysv[(size_t)p] = (unsigned char)std::min(31, (int)sy);
         }
         CS.text_sig = 0;
+        CFX.media.reset();
         if (CS.land_pending) {
             int p = 0;
             if (!CS.land_key.empty()) { auto it = D.pos_of.find(CS.land_key); if (it != D.pos_of.end()) p = it->second; }
@@ -755,17 +757,30 @@ void draw_cases(Disp& D) {
         CS.spin.yaw += (spin_home(CS.spin.yaw) - CS.spin.yaw) * k;
         CS.spin.pitch += (0.f - CS.spin.pitch) * k;
     }
-    pos_step(CS.pos, (float)std::max(0, CS.focus), dt, reduced);
+    const bool cfm = cases_flow_on();   // Coverflow (default) or the Classic shelf
+    {   // switching style at run time starts the other one clean: glide state, media timers, idle loop, background, info text, the settle bounce
+        static int prev_style = -1;
+        if (prev_style != (cfm ? 1 : 0)) {
+            if (prev_style >= 0) {
+                CFX.media.reset(); CFX.pos_es = hubui::cases::cf::EaseState(); CFX.pos_es.out = CS.pos.x; CFX.pos_es.to = CS.pos.x;
+                CFX.idle_t = 0.0; CFX.idle_w = 0.f; CFX.idle_rest = false; CFX.bg_init = false; CFX.key = hubui::cases::cf::InfoKey();
+                CS.pos.v = 0.f; CS.settle = hubui::shelf::Spring(); CS.was_moving = false; CS.tl_a = 1.f; CS.tl_slide = 0.f; CS.text_focus = -2;
+            }
+            prev_style = cfm ? 1 : 0;
+        }
+        if (cfm) CS.pos.v = 0.f;   // the glide has its own state; the spring's velocity is not carried
+    }
+    if (cfm) hubui::cases::cf::ease_step(CS.pos.x, CFX.pos_es, (float)std::max(0, CS.focus), dt, reduced); else pos_step(CS.pos, (float)std::max(0, CS.focus), dt, reduced);
     pos_step(CS.flip, ModeState{CS.mode}.flip_target(), dt, reduced);
     pos_step(CS.insp, CS.mode == Mode::Inspect ? 1.f : 0.f, dt, reduced);
     if (CS.mode != Mode::Flip && CS.flip.x < 0.02f && !CS.back_key.empty() && CS.flip.v == 0.f) cases_release_back();
     else cases_back_poll();   // descriptions / screenshots that arrive while the case is turned
-    { static float prev_flash = 0.f; if (CS.fav_flash > prev_flash + 0.5f && !reduced) CS.settle.v += 22.f; prev_flash = CS.fav_flash; }   // a favourite pops the case
+    { static float prev_flash = 0.f; if (CS.fav_flash > prev_flash + 0.5f && !reduced && !cfm) CS.settle.v += 22.f; prev_flash = CS.fav_flash; }   // a favourite pops the case
     ui::anim(CS.fav_flash, 0.f, 2.2f);
     CS.clock += (double)dt;
     {   // a small bounce when the carousel comes to rest, and when a game is favourited
         const bool moving_now = n && std::fabs(CS.pos.x - (float)CS.focus) > 0.02f;
-        if (CS.was_moving && !moving_now && !reduced) CS.settle.v += 12.f;
+        if (CS.was_moving && !moving_now && !reduced && !cfm) CS.settle.v += 12.f;   // Coverflow settles with no bounce
         CS.was_moving = moving_now;
         if (reduced) { CS.settle.x = 0.f; CS.settle.v = 0.f; }
         else {
@@ -776,6 +791,17 @@ void draw_cases(Disp& D) {
         }
     }
 
+    if (cfm) {   // Coverflow: the idle loop starts only after the glide has settled; the disc / cartridge comes out after a dwell
+        const bool at_rest = n && std::fabs(CS.pos.x - (float)CS.focus) < 0.004f && CS.mode == Mode::Browse;
+        if (at_rest && !CFX.idle_rest && CFX.idle_w < 0.02f) CFX.idle_t = 0.0;
+        CFX.idle_rest = at_rest;
+        CFX.idle_t += (double)dt;
+        ui::anim(CFX.idle_w, at_rest ? 1.f : 0.f, at_rest ? 3.f : 9.f);
+        // Headless screenshots are taken on a wall-clock timer, but a software-rendered frame can take longer than the 0.1 s step cap, so the 420 ms dwell + 0.85 s slide
+        // would still be running when the picture is taken (the library finishing its scan also restarts it): in screenshot mode the media is simply out.
+        const bool shot_media_out = cases_shot_instant();
+        CFX.media.step(n ? CS.focus : -1, CS.mode == Mode::Browse && !CS.menu_open, dt, reduced || shot_media_out);
+    }
     // ---- stage ----
     const bool tight = H < sp(44.f);   // a big UI size in a small window: a smaller title and hint bar so the cases keep their room
     ImFont* tfont = (ui::F.title && !tight) ? ui::F.title : ui::F.h2;
@@ -789,10 +815,25 @@ void draw_cases(Disp& D) {
     const float avail = std::max(sp(20.f), avail_bot - avail_top);
     float Hc = std::min((avail - title_h) / 1.34f, W * 0.42f);
     Hc = std::max(sp(12.f), Hc);
-    const float case_top = avail_top + std::max(0.f, (avail - Hc * 1.34f - title_h) * 0.4f) + Hc * 0.06f;
-    const float f0 = case_top + Hc;
+    float f0 = avail_top + std::max(0.f, (avail - Hc * 1.34f - title_h) * 0.4f) + Hc * 0.06f + Hc;
+    // Coverflow: the info panel takes the bottom-left (above the scrubber), the carousel the room between it and the tabs
+    float info_y0 = 0.f, info_y1 = 0.f, band_top = 0.f;
+    const bool banner_up = n > 0 && cases_own_empty() && A.sys_filter.empty() && !A.search_buf[0];   // the add banner sits under the tabs
+    if (cfm) {
+        namespace cf = hubui::cases::cf;
+        band_top = std::max(avail_top, banner_up ? tab_y + tab_h + sp(1.5f) + sp(5.2f) + sp(0.4f) : 0.f);   // the stage lives between the top controls and the info panel
+        info_y1 = strip_y - sp(0.2f);
+        const float room = std::max(1.f, info_y1 - band_top);
+        // the panel never takes more than its share: on a tiny window the cases keep at least a third of the band, and the panel shrinks (its own budget drops lines)
+        const float info_h = std::min(std::min(sp(tight ? 12.5f : 21.f), H * 0.27f), room * 0.66f);
+        info_y0 = info_y1 - info_h;
+        const float stage_h = std::max(1.f, info_y0 - band_top);
+        Hc = std::max(1.f, std::min(stage_h / 1.40f, W * 0.26f));   // sized to the band, never padded out: the hero, its reflection and its media fit inside it
+        const float cy = band_top + std::max(0.f, stage_h - Hc * 1.36f) * 0.5f + Hc * 0.58f;   // the screen y of the case centres at the centre depth
+        f0 = cy + cf::kPivot * Hc;
+    }
     shelfdraw::CaseScene sc;
-    sc.dl = dl; sc.dist = 6.5f; sc.eye = 0.55f; sc.U = Hc; sc.cx = org.x + W * 0.5f; sc.hy = f0 - sc.eye * sc.U;
+    sc.dl = dl; sc.dist = cfm ? hubui::cases::cf::kDist : 6.5f; sc.eye = cfm ? hubui::cases::cf::kEye : 0.55f; sc.U = Hc; sc.cx = org.x + W * 0.5f; sc.hy = f0 - sc.eye * sc.U;
     // tint follows the centre case's console
     ImU32 t0 = ui::ACCENT, t1 = ui::ACCENT;
     if (n) system_colors(sys_of(D.flat[(size_t)CS.focus]), &t0, &t1);
@@ -831,7 +872,10 @@ void draw_cases(Disp& D) {
     }
     const ImVec2 p0 = org, p1(org.x + W, org.y + H);
     dl->PushClipRect(p0, p1, true);
-    shelfdraw::cases_stage_back(sc, p0, p1, CS.tint0, CS.tint1);
+    if (cfm) {   // Coverflow: the selected cover's colours, blurred, with a heavy vignette (cross-fades 1.1 s)
+        cf_bg_update(n, n ? D.flat[(size_t)CS.focus] : -1, D.sig, CS.tint0 ? CS.tint0 : ui::ACCENT, CS.tint1 ? CS.tint1 : ui::ACCENT, CS.no_art, dt, reduced);
+        shelfdraw::flow_background(sc, p0, p1, CFX.bg_cur, CS.tint0 ? CS.tint0 : ui::ACCENT, 1.f);
+    } else shelfdraw::cases_stage_back(sc, p0, p1, CS.tint0, CS.tint1);
 
     // ---- descriptions: once the focus settles, the focused game and its two neighbours on each side are looked up (the back shows them) ----
     if (n && std::fabs(CS.pos.x - (float)CS.focus) < 0.08f && (CS.pf_focus != CS.focus || CS.pf_sig != D.sig)) {
@@ -844,7 +888,7 @@ void draw_cases(Disp& D) {
         }
     }
     // ---- poses ----
-    struct Slot { int i; float d; shelfdraw::CasePose ps; shelfdraw::CaseDraw cd; ImVec2 mn, mx; };
+    struct Slot { int i; float d; shelfdraw::CasePose ps; shelfdraw::CaseDraw cd; ImVec2 mn, mx; float base; };
     static Slot slots[2 * kWindow + 4];
     int ns = 0;
     int first = 0, last = -1;
@@ -862,6 +906,7 @@ void draw_cases(Disp& D) {
         auto need = [&](int c, int nb) {
             if (nb < 0 || nb >= n) return 0.f;
             const hubui::shelf::Media mc = CS.media[(size_t)c], mn = CS.media[(size_t)nb];
+            if (cfm) return hubui::cases::cf::neighbour_extra(case_dims(mc), hubui::cases::cf::display_scale(mc), case_dims(mn), hubui::cases::cf::display_scale(mn), nb > c);
             return std::max(0.f, neighbour_x(case_dims(mc), display_scale(mc), case_dims(mn), display_scale(mn)) - kNeighbourBase);
         };
         extra_r = need(lo, lo + 1) * (1.f - fr) + need(hi, hi + 1) * fr;
@@ -876,22 +921,36 @@ void draw_cases(Disp& D) {
         hubui::cases::FitScene fs;
         fs.U = sc.U; fs.eye = sc.eye; fs.dist = sc.dist; fs.hy = sc.hy;
         const float top_lim = tab_y + tab_h + sp(0.7f);
-        const float bot_lim = (f0 + Hc * 0.24f) * (1.f - ins) + (strip_y - sp(0.4f)) * ins;
-        const float rest = slot_pose(0.f).scale * display_scale(mc) * cadj.scale_mul;
-        fit_mul = hubui::cases::fit_centre_scale(case_dims(mc), rest, 0.55f * ins, 0.05f * ins + 0.02f, cadj.z, fs, top_lim, bot_lim);
+        const float bot_lim = (cfm ? info_y0 - sp(0.3f) : f0 + Hc * 0.24f) * (1.f - ins) + (strip_y - sp(0.4f)) * ins;
+        if (cfm) {
+            namespace cf = hubui::cases::cf;
+            const float rest = cf::display_scale(mc) * cadj.scale_mul;
+            fit_mul = hubui::cases::fit_centre_scale(case_dims(mc), rest, 0.55f * ins, cf::base_lift(case_dims(mc), rest) + 0.05f * ins + 0.025f, cf::kHeroZ + 0.6f * cadj.z, fs, top_lim, bot_lim);
+        } else {
+            const float rest = slot_pose(0.f).scale * display_scale(mc) * cadj.scale_mul;
+            fit_mul = hubui::cases::fit_centre_scale(case_dims(mc), rest, 0.55f * ins, 0.05f * ins + 0.02f, cadj.z, fs, top_lim, bot_lim);
+        }
     }
     float push_l = 0.f, push_r = 0.f;
     if (n > 1 && (fl > 0.01f || ins > 0.01f) && CS.focus >= 0 && CS.focus < n) {
         const hubui::shelf::Media mc = CS.media[(size_t)CS.focus];
         const CaseDims dc = case_dims(mc);
-        const float sc_rest = display_scale(mc), pitch = std::fabs(CS.spin.pitch) * ins;
-        const SlotPose s1 = slot_pose(1.f);
+        const float sc_rest = cfm ? hubui::cases::cf::display_scale(mc) : display_scale(mc), pitch = std::fabs(CS.spin.pitch) * ins;
+        SlotPose s1 = slot_pose(1.f);
+        float hx_now = 0.f, hz_now = cadj.z, hx_rest = 0.f, hz_rest = 0.f;   // the selected case's x / z when flipped and at rest
+        if (cfm) {
+            namespace cf = hubui::cases::cf;
+            const cf::Pose c1 = cf::slot(1.f);
+            s1.x = c1.x; s1.yaw = c1.yaw; s1.z = c1.z; s1.scale = c1.scale;
+            const float fm = std::max(smoothstep01(fl / 3.14159f), ins);
+            hx_now = cf::kHeroX * (1.f - fm); hz_now = cf::kHeroZ + 0.6f * cadj.z; hx_rest = cf::kHeroX; hz_rest = cf::kHeroZ;
+        }
         auto push_for = [&](int nb, float extra) {
             if (nb < 0 || nb >= n) return 0.f;
             const hubui::shelf::Media mn = CS.media[(size_t)nb];
-            const float nsc = s1.scale * display_scale(mn), base = s1.x + extra;
-            const float now = hubui::cases::flip_push(dc, sc_rest * cadj.scale_mul, 0.f, cadj.z, pitch, case_dims(mn), s1.yaw, nsc, s1.z, base, sc.dist);
-            const float rest = hubui::cases::flip_push(dc, sc_rest, 0.f, 0.f, 0.f, case_dims(mn), s1.yaw, nsc, s1.z, base, sc.dist);
+            const float nsc = s1.scale * (cfm ? hubui::cases::cf::display_scale(mn) : display_scale(mn)), base = s1.x + extra;
+            const float now = hubui::cases::flip_push(dc, sc_rest * cadj.scale_mul, hx_now, hz_now, pitch, case_dims(mn), s1.yaw, nsc, s1.z, base, sc.dist);
+            const float rest = hubui::cases::flip_push(dc, sc_rest, hx_rest, hz_rest, 0.f, case_dims(mn), s1.yaw, nsc, s1.z, base, sc.dist);
             return std::max(0.f, now - rest);
         };
         push_r = push_for(CS.focus + 1, extra_r);
@@ -908,17 +967,39 @@ void draw_cases(Disp& D) {
         const float c = std::max(0.f, 1.f - ad);   // 1 at the centre, 0 one slot away
         shelfdraw::CasePose& ps = s.ps;
         ps = shelfdraw::CasePose();
-        ps.x = sp0.x + (s.d < 0.f ? -neighbour_shift(ad, extra_l, push_l) : neighbour_shift(ad, extra_r, push_r)); ps.z = sp0.z; ps.yaw = sp0.yaw; ps.scale = sp0.scale * display_scale(CS.media[(size_t)i]);
-        ps.alpha = sp0.alpha * (0.15f + 0.85f * CS.intro);
-        if (tab_slide != 0.f) ps.x += tab_slide;   // a console change: the whole row slides in from the side the new console sits on
-        // flip: the centre case turns over, rising toward the viewer; the neighbours stand out of its way (push_l / push_r)
-        ps.yaw += c * fl - c * 0.13f;   // the centre case sits turned a touch so its side shows a little depth
-        ps.z += c * cadj.z;
-        ps.scale *= (1.f + c * (cadj.scale_mul - 1.f)) * (1.f + c * (fit_mul - 1.f));
-        if (c > 0.f && !reduced) {   // idle: the case breathes (a slow float and a hint of sway)
-            const float calm = (1.f - ins) * (1.f - std::min(1.f, fl / 3.14159f));
-            ps.lift += c * calm * hubui::cases::idle_bob(CS.clock);
-            ps.yaw += c * calm * hubui::cases::idle_sway(CS.clock);
+        if (cfm) {   // ---- Coverflow: a straight row, the selected case turned 22 degrees and to the left of the middle, the rest turned 50 degrees ----
+            namespace cf = hubui::cases::cf;
+            const cf::Pose cp = cf::slot(s.d);
+            const hubui::shelf::Media mm = CS.media[(size_t)i];
+            const float fm = std::max(smoothstep01(fl / 3.14159f), ins);   // 0 browsing, 1 flipped / inspected: the selected case comes to the middle, turned square
+            ps.x = cp.x + c * (-cf::kHeroX) * fm + (s.d < 0.f ? -neighbour_shift(ad, extra_l, push_l) : neighbour_shift(ad, extra_r, push_r));
+            ps.z = cp.z + c * 0.6f * cadj.z;
+            ps.yaw = cp.yaw + c * (fl - cf::kHeroYaw * fm);
+            ps.pitch = cp.pitch * (1.f - c * fm);
+            ps.scale = cp.scale * cf::display_scale(mm) * (1.f + c * (cadj.scale_mul - 1.f)) * (1.f + c * (fit_mul - 1.f));
+            ps.alpha = cp.alpha * (0.15f + 0.85f * CS.intro);
+            if (tab_slide != 0.f) ps.x += tab_slide;
+            ps.lift = cf::base_lift(case_dims(mm), ps.scale) + cp.lift;
+            s.base = ps.lift;
+            if (c > 0.f && !reduced) {   // idle loop (6 s): a small bob, a slow turn, only once the carousel has settled
+                const float calm = (1.f - ins) * (1.f - std::min(1.f, fl / 3.14159f)) * CFX.idle_w;
+                const cf::Idle id = cf::idle(CFX.idle_t);
+                ps.lift += c * calm * id.lift; ps.yaw += c * calm * id.yaw; ps.pitch += c * calm * id.pitch;
+            }
+            ps.dim = 1.f - c;
+        } else {
+            ps.x = sp0.x + (s.d < 0.f ? -neighbour_shift(ad, extra_l, push_l) : neighbour_shift(ad, extra_r, push_r)); ps.z = sp0.z; ps.yaw = sp0.yaw; ps.scale = sp0.scale * display_scale(CS.media[(size_t)i]);
+            ps.alpha = sp0.alpha * (0.15f + 0.85f * CS.intro);
+            if (tab_slide != 0.f) ps.x += tab_slide;   // a console change: the whole row slides in from the side the new console sits on
+            // flip: the centre case turns over, rising toward the viewer; the neighbours stand out of its way (push_l / push_r)
+            ps.yaw += c * fl - c * 0.13f;   // the centre case sits turned a touch so its side shows a little depth
+            ps.z += c * cadj.z;
+            ps.scale *= (1.f + c * (cadj.scale_mul - 1.f)) * (1.f + c * (fit_mul - 1.f));
+            if (c > 0.f && !reduced) {   // idle: the case breathes (a slow float and a hint of sway)
+                const float calm = (1.f - ins) * (1.f - std::min(1.f, fl / 3.14159f));
+                ps.lift += c * calm * hubui::cases::idle_bob(CS.clock);
+                ps.yaw += c * calm * hubui::cases::idle_sway(CS.clock);
+            }
         }
         // inspect: the case comes forward and turns freely
         if (c > 0.f && ins > 0.001f) {
@@ -948,7 +1029,7 @@ void draw_cases(Disp& D) {
         cd.c0 = CS.sc0[si]; cd.c1 = CS.sc1[si];
         cd.ghost = is_ghost(idx);
         cd.fav = item_fav(idx);
-        if (!CS.no_art && (ad <= 2.5f || (settled && ad <= 5.2f))) {
+        if (!CS.no_art && (ad <= 2.5f || (settled && ad <= (cfm ? 6.6f : 5.2f)))) {
             const ArtRef art = art_of(idx);
             cd.art = art.tex; cd.art_w = art.w; cd.art_h = art.h;
             if (sy == hub::System::Switch) { int iw = 0, ih = 0; if (SDL_Texture* it = cases_shot_icon(&iw, &ih)) { cd.art = it; cd.art_w = iw; cd.art_h = ih; } }
@@ -971,6 +1052,7 @@ void draw_cases(Disp& D) {
         {   // cases fade out toward the edges of the screen instead of being cut off by them
             const float ex = 0.5f * (s.mn.x + s.mx.x);
             ps.alpha *= smoothstep01(std::min(ex - p0.x, p1.x - ex) / std::max(1.f, W * 0.13f));
+            if (cfm) ps.fog = ui::mix(shelfdraw::flow_grid_at(CFX.bg_cur, std::max(0.f, std::min(1.f, (ex - p0.x) / W)), 0.5f), IM_COL32(0, 0, 0, 255), 0.4f);   // a fading case melts into the background
         }
         ++ns;
     }
@@ -981,16 +1063,27 @@ void draw_cases(Disp& D) {
         for (int k = ns - 1; k >= 0; --k) if (slots[k].i > ic) fn(slots[k]);
         for (int k = 0; k < ns; ++k) if (slots[k].i == ic) fn(slots[k]);
     };
-    each_far_to_near([&](Slot& s) { if (std::fabs(s.d) <= 7.f) shelfdraw::cases_case(sc, s.cd, s.ps, true); });
-    shelfdraw::cases_veil(sc, p0, p1, CS.tint0, CS.tint1, 1.f);
-    shelfdraw::cases_stage_front(sc, p0, p1, CS.tint0, CS.tint1);
+    if (cfm) {   // Coverflow: a faint glow on the floor, soft shadows under every case, a short faint reflection of the selected one only
+        shelfdraw::flow_floor_glow(sc, p0, p1, CS.tint0 ? CS.tint0 : ui::ACCENT, f0);
+        for (int k = 0; k < ns; ++k) shelfdraw::flow_shadow(sc, slots[k].cd.media, slots[k].ps, slots[k].base, 1.f);
+        for (int k = 0; k < ns; ++k)
+            if (slots[k].i == ic && std::fabs(slots[k].d) < 0.5f) shelfdraw::flow_reflection(sc, slots[k].cd, slots[k].ps, (1.f - std::min(1.f, fl / 0.5f)) * (1.f - std::min(1.f, ins * 4.f)) * (1.f - std::fabs(slots[k].d) * 2.f));
+    } else {
+        each_far_to_near([&](Slot& s) { if (std::fabs(s.d) <= 7.f) shelfdraw::cases_case(sc, s.cd, s.ps, true); });
+        shelfdraw::cases_veil(sc, p0, p1, CS.tint0, CS.tint1, 1.f);
+        shelfdraw::cases_stage_front(sc, p0, p1, CS.tint0, CS.tint1);
+    }
 
     // ---- hit boxes (left to right; the centre case claims its whole box) ----
     if (n && ns > 0 && !CS.menu_open && !nav_blocking()) {
         int a0 = -1;
         for (int k = 0; k < ns; ++k) if (slots[k].i == ic) a0 = k;
         float xs[2 * kWindow + 5];
-        const float fy = f0 + Hc * 0.04f, ty = f0 - Hc * 1.08f;
+        float fy = f0 + Hc * 0.04f, ty = f0 - Hc * (cfm ? 1.25f : 1.08f);
+        if (cfm) {   // the tab row, the menu button and the add banner keep their clicks, the info panel keeps its buttons
+            ty = std::max(ty, std::max(band_top, tab_y + tab_h + sp(0.4f)));
+            fy = std::min(fy, info_y0 - sp(0.2f));   // the info panel's clamp always wins: a hit rect that no longer fits is dropped below
+        }
         for (int k = 0; k < ns; ++k) xs[k] = 0.5f * (slots[k].mn.x + slots[k].mx.x);
         float bd[2 * kWindow + 5];   // boundary k sits between slot k-1 and slot k
         bd[0] = xs[0] - sc.U * 0.1f;
@@ -1004,7 +1097,7 @@ void draw_cases(Disp& D) {
             const Slot& s = slots[k];
             const int idx = D.flat[(size_t)s.i];
             const ImVec2 q0(std::max(bd[k], p0.x), ty), q1(std::min(bd[k + 1], p1.x), fy);
-            if (q1.x - q0.x < 2.f) continue;
+            if (q1.x - q0.x < 2.f || q1.y - q0.y < 4.f) continue;
             const CHit h = cases_hit(item_hash(idx), q0, q1, s.i == CS.focus);
             if (!G.focus_key.empty() && s.i == CS.focus && G.focus_key == item_key(idx)) { apply_pending_focus(idx); G.focus_quiet = false; }
             if (s.i == CS.focus) { centre_click = h.clicked; centre_act = h.activated; centre_det = h.details; centre_press = h.pressed; centre_hover = h.hovered; }
@@ -1047,14 +1140,30 @@ void draw_cases(Disp& D) {
     // ---- the cases, far to near, each with its floor shadow ----
     each_far_to_near([&](Slot& s) {
         if (s.i == ic && ins > 0.01f) dl->AddRectFilled(p0, p1, IM_COL32(0, 0, 0, (int)(170.f * ins)));   // dim the neighbours: a scrim between them and the inspected case
-        shelfdraw::cases_shadow(sc, s.cd, s.ps);
+        if (cfm) {   // the disc / cartridge that slid out from behind this case
+            namespace cf = hubui::cases::cf;
+            const float am = CFX.media.amount(s.i);
+            if (am > 0.004f) {
+                shelfdraw::MediaDraw md;
+                md.media = s.cd.media; md.art = s.cd.art; md.art_w = s.cd.art_w; md.art_h = s.cd.art_h; md.c0 = s.cd.c0; md.c1 = s.cd.c1; md.nx2 = s.cd.nx2;
+                md.scale = s.ps.scale; md.x = s.ps.x; md.z = s.ps.z;
+                md.centre_y = s.ps.lift + 0.5f * case_dims(s.cd.media).h * s.ps.scale;
+                md.item_yaw = (s.d < 0.f ? -cf::kNbYaw : cf::kNbYaw) * std::min(1.f, std::fabs(s.d));
+                const int k = (int)(&s - slots);
+                if (k + 1 < ns && slots[k + 1].i == s.i + 1) md.far_limit = ((slots[k + 1].mn.x - sc.cx) / sc.U) / (sc.dist / std::max(0.4f, sc.dist + s.ps.z)) - 0.02f;
+                md.amount = am; md.alpha = s.ps.alpha; md.time = CS.clock;
+                shelfdraw::cases_media(sc, md);
+            }
+        } else shelfdraw::cases_shadow(sc, s.cd, s.ps);
         shelfdraw::cases_case(sc, s.cd, s.ps, false);
     });
 
-    shelfdraw::cases_vignette(sc, p0, p1, 0.55f + 0.35f * ins);
+    if (!cfm) shelfdraw::cases_vignette(sc, p0, p1, 0.55f + 0.35f * ins);
 
     // ---- the title block under the centre case: title + favourite star, a console chip with the facts, and the play history ----
-    if (n) {
+    if (n && cfm) {
+        cf_info_panel(dl, org, W, info_y0, info_y1, tight, D.flat[(size_t)CS.focus], can, ins, dt, reduced, n, D.sig);
+    } else if (n) {
         const int idx = cur_idx;
         const float maxw = W * 0.78f;
         const int tick = (int)(CS.clock / 5.f);   // the played line ("3 days ago") is refreshed every few seconds

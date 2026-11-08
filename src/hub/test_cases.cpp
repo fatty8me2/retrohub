@@ -1,6 +1,7 @@
 #include "cases_logic.h"
 #include "cases_stage.h"
 #include "logic.h"
+#include "idle_logic.h"
 
 #include <cmath>
 #include <cstdio>
@@ -412,6 +413,309 @@ int main() {
             CHECK((p.back.u1 - p.back.u0) == (p.front.u1 - p.front.u0) || std::fabs((p.back.u1 - p.back.u0) - (p.front.u1 - p.front.u0)) < 1e-3f);   // equal-width back and front
             const FullParts z = full_cover_parts(0, 0, 0);   // no texture: no NaN
             CHECK(z.back.u1 == 0.f && z.spine.u1 == 0.f);
+        }
+    }
+
+    /* ---- Coverflow ---- */
+    {
+        namespace cf = hubui::cases::cf;
+        using shelf::Media;
+        const float deg = 3.14159265f / 180.f;
+        // the setting: Coverflow is the default, Classic persists
+        Settings s0;
+        CHECK(!s0.lib_cases_classic);
+        s0.lib_cases_classic = true;
+        Settings s1;
+        CHECK(settings_from_json(settings_to_json(s0), &s1) && s1.lib_cases_classic);
+        Settings s2;
+        CHECK(settings_from_json("{\"lib_layout\": \"cases\"}", &s2) && !s2.lib_cases_classic);   // an older file: Coverflow
+        // the selected case: left of the middle, raised, toward the camera (z < 0), turned 22 degrees one way, pitched -4
+        const cf::Pose h = cf::slot(0.f);
+        CHECK(std::fabs(h.x + 0.17f) < 1e-5f && h.z < -0.39f && h.z > -0.41f && h.lift > 0.f && h.scale == 1.f && h.alpha == 1.f);
+        CHECK(std::fabs(h.yaw + 22.f * deg) < 1e-4f && std::fabs(h.pitch + 4.f * deg) < 1e-4f);
+        // neighbours a = 1..6: x = +-(1.006 + (a-1) 0.483), z = 0.356 a + 0.263 (behind), yaw +-50 degrees, scale 0.92, a bit lower than the selected case
+        for (int a = 1; a <= 6; ++a) {
+            const cf::Pose r = cf::slot((float)a), l = cf::slot((float)-a);
+            CHECK(std::fabs(r.x - (1.006f + (float)(a - 1) * 0.483f)) < 1e-4f && std::fabs(l.x + r.x) < 1e-5f);
+            CHECK(std::fabs(r.z - (0.356f * (float)a + 0.263f)) < 1e-4f && std::fabs(l.z - r.z) < 1e-6f);
+            CHECK(std::fabs(r.yaw - 50.f * deg) < 1e-4f && std::fabs(l.yaw + 50.f * deg) < 1e-4f);
+            CHECK(std::fabs(r.scale - 0.92f) < 1e-6f && r.lift < h.lift && r.alpha == 1.f && r.pitch == 0.f);
+        }
+        // fade out beyond 6 instead of popping; opaque up to 6
+        CHECK(cf::slot(6.f).alpha == 1.f && cf::slot(6.5f).alpha < 1.f && cf::slot(6.5f).alpha > 0.f && cf::slot(7.3f).alpha == 0.f && cf::slot(-9.f).alpha == 0.f);
+        // smooth between slots (no jumps), and the selected case unwinds its 22 degrees while it slides away
+        for (float d = -7.f; d < 7.f; d += 0.01f) {
+            const cf::Pose p = cf::slot(d), q = cf::slot(d + 0.01f);
+            CHECK(std::fabs(q.x - p.x) < 0.02f && std::fabs(q.yaw - p.yaw) < 0.02f && std::fabs(q.z - p.z) < 0.012f);
+        }
+        CHECK(cf::slot(0.5f).yaw > cf::slot(0.f).yaw && cf::slot(0.5f).yaw < cf::slot(1.f).yaw && cf::slot(0.5f).x > cf::slot(0.f).x && cf::slot(0.5f).x < cf::slot(1.f).x);
+        // the display scale: every case about as tall as the stage allows, never wider than 300/323
+        for (int i = 0; i < shelf::kMediaCount; ++i) {
+            const CaseDims d = case_dims((Media)i);
+            const float ds = cf::display_scale((Media)i);
+            CHECK(ds >= 0.9f && ds <= 1.5f + 1e-5f && d.h * ds <= 1.0001f && d.w * ds <= 0.9300f);
+        }
+        CHECK(cf::display_scale(Media::GcCase) == 1.f && cf::display_scale(Media::DsCase) > 1.f && cf::display_scale(Media::SnesCart) < 1.f + 1e-4f);
+        // wide / small boxes: the first neighbour never overlaps the selected case, on either side, for every pair of shapes
+        {
+            int bad = 0;
+            for (int i = 0; i < shelf::kMediaCount; ++i)
+                for (int j = 0; j < shelf::kMediaCount; ++j) {
+                    const CaseDims c = case_dims((Media)i), n = case_dims((Media)j);
+                    const float cs = cf::display_scale((Media)i), ns = cf::display_scale((Media)j);
+                    float hl, hr, nl, nr;
+                    cf::screen_extent(c, cs, cf::kHeroYaw, cf::kHeroX, cf::kHeroZ, &hl, &hr);
+                    const float er = cf::neighbour_extra(c, cs, n, ns, true), el = cf::neighbour_extra(c, cs, n, ns, false);
+                    CHECK(er >= 0.f && el >= 0.f);
+                    cf::screen_extent(n, cf::kNbScale * ns, cf::kNbYaw, cf::nb_x(1) + er, cf::nb_z(1), &nl, &nr);
+                    if (nl < hr - 1e-3f) { if (++bad <= 3) std::printf("right overlap %d %d: %.3f\n", i, j, hr - nl); }
+                    cf::screen_extent(n, cf::kNbScale * ns, -cf::kNbYaw, -(cf::nb_x(1) + el), cf::nb_z(1), &nl, &nr);
+                    if (nr > hl + 1e-3f) { if (++bad <= 3) std::printf("left overlap %d %d: %.3f\n", i, j, nr - hl); }
+                }
+            CHECK(bad == 0);
+            CHECK(cf::neighbour_extra(case_dims(Media::GcCase), 1.f, case_dims(Media::GcCase), 1.f, true) < 0.08f);   // keep cases sit at their slot
+        }
+        // idle: starts at rest, 6 s loop: bob 0.015, yaw 22 -> 26 degrees, pitch -4 -> -3
+        {
+            const cf::Idle i0 = cf::idle(0.0), i3 = cf::idle(3.0), i6 = cf::idle(6.0);
+            CHECK(std::fabs(i0.lift) < 1e-6f && std::fabs(i0.yaw) < 1e-6f && std::fabs(i0.pitch) < 1e-6f);
+            CHECK(std::fabs(i3.lift - 0.015f) < 1e-5f && std::fabs(h.yaw + i3.yaw + 26.f * deg) < 1e-4f && std::fabs(h.pitch + i3.pitch + 3.f * deg) < 1e-4f);
+            CHECK(std::fabs(i6.lift) < 1e-5f && std::fabs(cf::idle(9.0).lift - 0.015f) < 1e-5f);
+            for (double t = 0; t < 12; t += 0.05) CHECK(cf::idle(t).lift >= -1e-6f && cf::idle(t).lift <= 0.015f + 1e-6f);
+        }
+        // the glide: cubic-bezier(.22,1,.36,1): 0 -> 1, monotonic, no overshoot, fast start with a long soft settle
+        {
+            CHECK(cf::ease(0.f) == 0.f && cf::ease(1.f) == 1.f);
+            float prev = 0.f;
+            for (float t = 0.f; t <= 1.f; t += 0.005f) { const float v = cf::ease(t); CHECK(v >= prev - 1e-6f && v <= 1.f + 1e-6f); prev = v; }
+            CHECK(cf::ease(0.1f) > 0.35f && cf::ease(0.5f) > 0.9f && cf::ease(0.5f) < 0.995f);   // mostly there by half time, still settling
+            float x = 0.f; cf::EaseState es;
+            float t = 0.f; int steps = 0; bool moving = true;
+            while (moving && steps < 1000) { moving = cf::ease_step(x, es, 5.f, 1.f / 60.f, false); t += 1.f / 60.f; ++steps; CHECK(x <= 5.f + 1e-5f && x >= 0.f); }
+            CHECK(!moving && x == 5.f && std::fabs(t - 0.7f) < 0.05f);   // 0.7 s
+            // a new target mid-way restarts from where it is (no jump)
+            x = 0.f; es = cf::EaseState();
+            for (int i = 0; i < 12; ++i) cf::ease_step(x, es, 3.f, 1.f / 60.f, false);
+            const float mid = x;
+            cf::ease_step(x, es, 4.f, 1.f / 60.f, false);
+            CHECK(x >= mid && x - mid < 0.5f);
+            // an outside jump (the scrubber) is followed, not fought
+            x = 20.f;
+            cf::ease_step(x, es, 21.f, 1.f / 60.f, false);
+            CHECK(x >= 20.f && x < 21.f);
+            // reduced motion snaps
+            cf::ease_step(x, es, 7.f, 1.f / 60.f, true);
+            CHECK(x == 7.f);
+        }
+        // the media: specs per console, sizes relative to the case
+        {
+            const CaseDims keep = case_dims(Media::Ps2Case);
+            const cf::MediaSpec dvd = cf::media_spec(Media::Ps2Case), mini = cf::media_spec(Media::GcCase), sw = cf::media_spec(Media::SwitchCase);
+            CHECK(dvd.kind == cf::MediaKind::Disc && mini.kind == cf::MediaKind::Disc && sw.kind == cf::MediaKind::Card);
+            CHECK(std::fabs(cf::disc_dia(dvd, keep) - 0.94f * 0.71f) < 1e-5f && std::fabs(cf::disc_dia(mini, keep) - 0.94f * 0.71f * 8.f / 12.f) < 1e-5f);
+            CHECK(std::fabs(dvd.slide - 0.65f) < 1e-6f && std::fabs(dvd.rise - 0.04f) < 1e-6f && std::fabs(dvd.yaw - 15.f * deg) < 1e-5f && std::fabs(dvd.roll - 14.f * deg) < 1e-5f);
+            CHECK(std::fabs(sw.slide - 0.71f) < 1e-6f && std::fabs(sw.rise - 0.28f) < 1e-6f && std::fabs(sw.yaw - 17.f * deg) < 1e-5f && std::fabs(sw.roll - 9.f * deg) < 1e-5f);
+            CHECK(sw.w < 0.12f && sw.h < 0.17f && sw.h > sw.w);   // a Switch card is tiny (21 x 31 mm against a 190 mm case)
+            CHECK(cf::media_spec(Media::N64Cart).kind == cf::MediaKind::Card && cf::media_spec(Media::GbaCart).kind == cf::MediaKind::Card && cf::media_spec(Media::DsCase).kind == cf::MediaKind::Card);
+            CHECK(cf::media_spec(Media::Ps1Jewel).kind == cf::MediaKind::Disc && cf::media_spec(Media::WiiUCase).kind == cf::MediaKind::Disc);
+            // the reach: the slide, or less when the next case is in the way; never behind the case (>= a quarter of its width)
+            const float dia = cf::disc_dia(dvd, keep);
+            const cf::MediaOffset free_ = cf::media_offset(dvd, keep, 1.f, dia, dia, cf::kHeroX, 9.f);
+            CHECK(std::fabs(free_.out - 0.65f * 0.71f) < 1e-5f && std::fabs(free_.up - 0.04f) < 1e-5f);
+            const cf::MediaOffset tight = cf::media_offset(dvd, keep, 1.f, dia, dia, cf::kHeroX, 0.5f);
+            CHECK(tight.out < free_.out && tight.out + cf::kHeroX + 0.5f * dia * std::cos(dvd.yaw) <= 0.5f + 1e-4f);
+            const CaseDims sk = case_dims(Media::SwitchCase);
+            const cf::MediaOffset c1 = cf::media_offset(sw, sk, 1.f, sw.w, sw.h, cf::kHeroX, 9.f);
+            CHECK(std::fabs(c1.up - 0.28f * sk.h) < 1e-5f && std::fabs(c1.out - 0.71f * sk.w) < 1e-5f);
+        }
+        // the reveal: a 420 ms dwell, cancelled when the selection moves on; slides out over 0.85 s; back in when it moves
+        {
+            cf::MediaReveal r;
+            const float dt = 1.f / 60.f;
+            for (int i = 0; i < 20; ++i) r.step(5, true, dt, false);   // 0.33 s: not yet
+            CHECK(r.amount(5) == 0.f);
+            r.step(7, true, dt, false);                                  // moved on before the dwell: never launched
+            for (int i = 0; i < 20; ++i) r.step(7, true, dt, false);
+            CHECK(r.amount(5) == 0.f && r.amount(7) == 0.f);
+            int steps = 0;
+            while (r.amount(7) < 0.999f && steps < 600) { r.step(7, true, dt, false); ++steps; }
+            CHECK(r.amount(7) >= 0.999f && (float)steps * dt > 0.09f + 0.5f && (float)steps * dt < 0.09f + 0.85f + 0.05f);
+            r.step(8, true, dt, false);                                  // the selection moves: 7 slides back in, 8 waits its dwell
+            CHECK(r.amount(7) > 0.9f && r.amount(8) == 0.f);
+            for (int i = 0; i < 20; ++i) r.step(8, true, dt, false);
+            const float mid = r.amount(7);
+            CHECK(mid < 0.9f && mid > 0.f);
+            for (int i = 0; i < 120; ++i) r.step(8, true, dt, false);
+            CHECK(r.amount(7) == 0.f && r.amount(8) > 0.99f);
+            r.step(8, false, dt, false);                                 // flip / inspect: it slides in
+            for (int i = 0; i < 120; ++i) r.step(8, false, dt, false);
+            CHECK(r.amount(8) == 0.f && !r.any());
+            r.step(9, true, dt, true);                                   // reduced motion: instant
+            CHECK(r.amount(9) == 1.f);
+            r.step(10, true, dt, true);
+            CHECK(r.amount(9) == 0.f && r.amount(10) == 1.f);
+            r.reset();
+            CHECK(!r.any() && r.amount(10) == 0.f);
+        }
+        // the info block's entrance: 12 px rise and fade over 0.45 s
+        CHECK(cf::info_alpha(0.f) == 0.f && cf::info_alpha(0.45f) == 1.f && cf::info_alpha(1.f) == 1.f && std::fabs(cf::info_rise(0.f) - 12.f) < 1e-5f && cf::info_rise(0.45f) == 0.f && cf::info_rise(0.2f) < 12.f);
+    }
+
+    /* ---- review fixes: Classic pinned, velocity-continuous glide, media limits, info key ---- */
+    {
+        namespace cf = hubui::cases::cf;
+        using shelf::Media;
+        // Classic slot_pose golden values (the shelf of turned cases must never change under the Coverflow work)
+        struct G { float d, x, yaw, z, scale, alpha; };
+        const G golden[] = {{0.f, 0.f, 0.f, 0.f, 1.f, 1.f}, {0.5f, 0.43500f, 0.42841f, 0.41250f, 0.91f, 1.f}, {1.f, 0.66f, 0.72286f, 0.55f, 0.82f, 1.f},
+                            {2.f, 0.82f, 1.06431f, 0.66f, 0.805f, 1.f}, {5.f, 1.30f, 1.33778f, 0.99f, 0.76f, 1.f}, {-3.f, -0.98f, -1.22560f, 0.77f, 0.79f, 1.f},
+                            {10.f, 2.10f, 1.36924f, 1.54f, 0.73f, 0.66392f}};
+        for (const G& g : golden) {
+            const SlotPose p = slot_pose(g.d);
+            CHECK(std::fabs(p.x - g.x) < 2e-4f && std::fabs(p.yaw - g.yaw) < 2e-4f && std::fabs(p.z - g.z) < 2e-4f && std::fabs(p.scale - g.scale) < 2e-4f && std::fabs(p.alpha - g.alpha) < 2e-3f);
+        }
+        // a retarget in mid-glide keeps the speed (no kick): the velocity just after the new target is within a small step of the velocity just before it
+        {
+            const float dt = 1.f / 600.f;
+            float x = 0.f; cf::EaseState es;
+            float prev = x, v_before = 0.f;
+            for (int i = 0; i < 120; ++i) { cf::ease_step(x, es, 5.f, dt, false); v_before = (x - prev) / dt; prev = x; }   // 0.2 s in: still fast
+            cf::ease_step(x, es, 6.f, dt, false);
+            const float v_after = (x - prev) / dt;
+            CHECK(v_before > 1.f && std::fabs(v_after - v_before) < 0.08f * v_before + 0.05f);
+            // ...and a rapid sequence (a held key) never jumps in speed, never goes backwards, never passes the target
+            x = 0.f; es = cf::EaseState(); prev = x;
+            float vprev = 0.f, worst_jump = 0.f; float target = 0.f;
+            for (int i = 0; i < 2400; ++i) {
+                if (i % 30 == 0 && i < 1500) target += 1.f;   // a press every 50 ms
+                cf::ease_step(x, es, target, dt, false);
+                const float v = (x - prev) / dt;
+                if (i > 10) worst_jump = std::max(worst_jump, std::fabs(v - vprev));
+                CHECK(x >= prev - 1e-5f && x <= target + 1e-4f);
+                prev = x; vprev = v;
+            }
+            CHECK(x == target && worst_jump < 1.0f);   // an uncorrected restart would jump by about 4.5x the average speed (several cases / s) on every press
+            // a stationary start keeps the curve's own fast start
+            x = 0.f; es = cf::EaseState();
+            cf::ease_step(x, es, 1.f, dt, false);
+            CHECK((x - 0.f) / dt > 3.f);
+        }
+        // media reach: the 25% floor never beats the next case
+        {
+            const CaseDims keep = case_dims(Media::Ps2Case);
+            const cf::MediaSpec dvd = cf::media_spec(Media::Ps2Case);
+            const float dia = cf::disc_dia(dvd, keep);
+            const float lim = cf::kHeroX + 0.5f * dia * std::cos(dvd.yaw) + 0.05f;   // room for only 0.05 of reach
+            const cf::MediaOffset o = cf::media_offset(dvd, keep, 1.f, dia, dia, cf::kHeroX, lim);
+            CHECK(o.out >= 0.f && std::fabs(o.out - 0.05f) < 1e-4f && o.out < 0.25f * keep.w);
+            const cf::MediaOffset none = cf::media_offset(dvd, keep, 1.f, dia, dia, cf::kHeroX, -5.f);
+            CHECK(none.out == 0.f);
+        }
+        // a media that is still sliding back is never evicted by browsing on: six cases in under 0.85 s keep it
+        {
+            cf::MediaReveal r;
+            const float dt = 1.f / 60.f;
+            for (int i = 0; i < 90; ++i) r.step(1, true, dt, false);   // case 1 fully out
+            CHECK(r.amount(1) > 0.99f);
+            for (int c = 2; c <= 6; ++c) { r.step(c, true, dt, false); for (int i = 0; i < 3; ++i) r.step(c, true, dt, false); }
+            CHECK(r.amount(1) > 0.f);   // still on its way in, not vanished
+            for (int i = 0; i < 90; ++i) r.step(6, true, dt, false);
+            CHECK(r.amount(1) == 0.f && r.amount(6) > 0.99f);
+        }
+        // the info panel's cache key follows the game actually shown (a stale index with the same focus must rebuild)
+        {
+            cf::InfoKey a, b;
+            a.focus = b.focus = 4; a.idx = 10; b.idx = 11; a.sig = b.sig = 7; a.w = b.w = 500.f; a.fs = b.fs = 30.f;
+            CHECK(!a.same(b));
+            b.idx = 10;
+            CHECK(a.same(b));
+            b.w = 501.f; CHECK(a.same(b));
+            b.w = 540.f; CHECK(!a.same(b));
+            b.w = 500.f; b.tick = 3; CHECK(!a.same(b));
+        }
+    }
+
+    /* ---- the media reveal needs frames, not input ---- */
+    {
+        namespace cf = hubui::cases::cf;
+        // the idle throttle (a hub in the background, nothing changing) still draws at least every ~100 ms: timers advance without any input
+        unsigned long long last = 0, worst = 0;
+        hubidle::Inputs in;
+        in.background = true; in.last_activity_ms = 0;
+        for (unsigned long long t = 0; t < 6000; ++t) {
+            in.now_ms = t; in.last_render_ms = last;
+            if (hubidle::decide(in).render) { worst = std::max(worst, t - last); last = t; }
+        }
+        CHECK(worst <= (unsigned long long)hubidle::kIdleGapMs + 1);
+        // ...and at that cadence (the step is capped at 0.1 s) the disc comes out about 1.4 s after the selection settles, with no other event
+        cf::MediaReveal r;
+        int frames = 0;
+        while (r.amount(4) < 0.99f && frames < 100) { r.step(4, true, 0.1f, false); ++frames; }
+        CHECK(frames <= 18 && r.amount(4) >= 0.99f);
+        // a slow renderer (0.25 s frames, step capped at 0.1 s) still gets there, just later
+        cf::MediaReveal r2;
+        frames = 0;
+        while (r2.amount(4) < 0.99f && frames < 200) { r2.step(4, true, 0.25f, false); ++frames; }
+        CHECK(frames < 200 && r2.amount(4) >= 0.99f);
+    }
+
+    /* ---- polish: returning to a case, analytic velocity, eviction choice ---- */
+    {
+        namespace cf = hubui::cases::cf;
+        // A fully out, B for 0.3 s, back to A: A's extension never drops below its value at the moment of return, and it never waits another dwell
+        {
+            cf::MediaReveal r;
+            const float dt = 1.f / 60.f;
+            for (int i = 0; i < 90; ++i) r.step(1, true, dt, false);
+            CHECK(r.amount(1) > 0.99f);
+            for (int i = 0; i < 18; ++i) r.step(2, true, dt, false);   // 0.3 s on B: A is partway back in
+            const float at_return = r.amount(1);
+            CHECK(at_return > 0.02f && at_return < 0.99f);
+            float lowest = at_return, prev = at_return;
+            bool never_down = true;
+            for (int i = 0; i < 120; ++i) {
+                r.step(1, true, dt, false);
+                const float a = r.amount(1);
+                lowest = std::min(lowest, a);
+                if (a < prev - 1e-5f) never_down = false;
+                prev = a;
+            }
+            CHECK(lowest >= at_return - 1e-5f && never_down && r.amount(1) > 0.99f);
+            // the same with a long wait away: A has gone in completely, so it waits its dwell again (a fresh reveal)
+            for (int i = 0; i < 120; ++i) r.step(2, true, dt, false);
+            CHECK(r.amount(1) == 0.f);
+            r.step(1, true, dt, false);
+            CHECK(r.amount(1) == 0.f);
+        }
+        // the carried velocity is the curve's derivative at the end of the step: continuous even with the 0.1 s step cap of a throttled hub
+        {
+            float x = 0.f; cf::EaseState es;
+            for (int i = 0; i < 3; ++i) cf::ease_step(x, es, 5.f, 0.1f, false);   // 0.3 s in
+            const float v_ref = es.vel;
+            CHECK(v_ref > 1.f);
+            const float before = x;
+            cf::ease_step(x, es, 6.f, 0.001f, false);
+            const float v_after = (x - before) / 0.001f;
+            CHECK(std::fabs(v_after - v_ref) < 0.1f * v_ref + 0.05f);
+            // the slope helper agrees with a finite difference of ease()
+            for (float t = 0.05f; t < 0.95f; t += 0.1f) CHECK(std::fabs(cf::ease_slope(t) - (cf::ease(t + 0.001f) - cf::ease(t - 0.001f)) / 0.002f) < 0.02f * cf::ease_slope(t) + 0.01f);
+        }
+        // eviction picks the least-extended slot, and drops the departing media when it is the least extended of all
+        {
+            auto fill = [](cf::MediaReveal& r, float hero_x) {
+                r.reset();
+                const float xs[5] = {0.9f, 0.2f, 0.8f, 0.7f, 0.6f};
+                for (int k = 1; k <= 5; ++k) { r.s[k].idx = 10 + k; r.s[k].x = xs[k - 1]; r.s[k].es.out = xs[k - 1]; r.s[k].es.to = 0.f; r.s[k].es.from = xs[k - 1]; r.s[k].es.t = 0.f; }
+                r.s[0].idx = 7; r.s[0].x = hero_x; r.s[0].es.out = hero_x; r.s[0].es.to = hero_x; r.s[0].es.t = 1e9f;
+            };
+            cf::MediaReveal a;
+            fill(a, 0.5f);
+            a.step(8, true, 1e-5f, false);   // 7 leaves with 0.5: the slot holding 0.2 (case 12) goes, everything else stays
+            CHECK(a.amount(12) == 0.f && a.amount(7) > 0.45f && a.amount(11) > 0.85f && a.amount(13) > 0.75f && a.amount(14) > 0.65f && a.amount(15) > 0.55f);
+            cf::MediaReveal b;
+            fill(b, 0.1f);
+            b.step(8, true, 1e-5f, false);   // 7 leaves with 0.1, less out than all: it is dropped, nobody else is
+            CHECK(b.amount(7) == 0.f && b.amount(11) > 0.85f && b.amount(12) > 0.15f && b.amount(13) > 0.75f && b.amount(14) > 0.65f && b.amount(15) > 0.55f);
         }
     }
 

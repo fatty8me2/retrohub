@@ -97,6 +97,7 @@ struct CasePose {
     float lift = 0;            // raised off the floor (inspect)
     ImU32 fog = IM_COL32(6, 7, 11, 255);   // the colour a faded case blends toward (alpha < 1 fades by fog, never by transparency)
     float refl = 0;            // reflection strength used by cases_case(reflection = true)
+    float dim = 0;             // Coverflow: 0..1 flat dark overlay on the front (the cases that are not selected)
     bool refl_detail = false;  // text in the reflection
 };
 /* Wall, floor and the soft horizon in the console tint (c0 / c1 of the centre case), inside [p0,p1]. Draw first. */
@@ -113,5 +114,36 @@ void cases_case(const CaseScene& sc, const CaseDraw& d, const CasePose& ps, bool
 void cases_bounds(const CaseScene& sc, hubui::shelf::Media m, const CasePose& ps, ImVec2* mn, ImVec2* mx);
 /* Title with a soft glow in `glow`. */
 void glow_text(ImDrawList* dl, ImFont* font, float size, ImVec2 p, ImU32 col, ImU32 glow, float strength, const char* text);
+
+
+/* ============================ Coverflow (cases_flow.cpp, cases_media.cpp) ============================
+ * The default carousel style: a blurred cover-coloured room, soft ellipse shadows under every case, a faint reflection of the selected one, and the disc /
+ * cartridge that slides out from behind it. */
+/* The whole background of [p0,p1]: the 8x8 colour grid of the selected cover (already darkened / saturated) as a smooth mesh, a radial glow of `tint`
+ * (tint_k 0..1), a heavy radial vignette and a darkening top and bottom. Draw first. */
+void flow_background(const CaseScene& sc, ImVec2 p0, ImVec2 p1, const ImU32 grid[64], ImU32 tint, float tint_k);
+/* The faint radial glow on the floor under the stage. */
+void flow_floor_glow(const CaseScene& sc, ImVec2 p0, ImVec2 p1, ImU32 tint, float floor_y);
+/* Two soft ellipses under a case standing at height `base` (a broad blur and a tight darker core); strength 0..1 (the fade of the case). */
+void flow_shadow(const CaseScene& sc, hubui::shelf::Media m, const CasePose& ps, float base, float strength);
+/* A short, faint reflection of a case (about 22% opacity, 20% of its height, fading out); `bg` is not needed: it fades by alpha bands. */
+void flow_reflection(const CaseScene& sc, const CaseDraw& d, const CasePose& ps, float strength);
+/* The colour of the background grid at screen fractions (u, v) (bilinear), for the colour the cases fade into. */
+ImU32 flow_grid_at(const ImU32 grid[64], float u, float v);
+
+struct MediaDraw {
+    hubui::shelf::Media media = hubui::shelf::Media::Generic;
+    SDL_Texture* art = nullptr; int art_w = 0, art_h = 0;   // the cover: the disc's label / the cartridge's label well
+    ImU32 c0 = 0, c1 = 0;                                   // console colours
+    bool nx2 = false;
+    float scale = 1;                  // the case's whole scale (display scale x slot scale)
+    float x = 0, z = 0, centre_y = 0.5f;   // world position of the case centre
+    float item_yaw = 0;               // the slot's turn (without the selected case's own sway): the media slides along it
+    float far_limit = 1e9f;           // world x at the case's depth that the media's far edge must stay left of
+    float amount = 0;                 // 0 = hidden behind the case, 1 = fully out
+    float alpha = 1;
+    double time = 0;
+};
+void cases_media(const CaseScene& sc, const MediaDraw& d);
 
 }  // namespace shelfdraw

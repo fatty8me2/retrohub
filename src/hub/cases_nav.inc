@@ -307,7 +307,7 @@ void nav_draw_scrub(ImDrawList* dl, ImVec2 org, float W, float y, float h, Disp&
     if (x1 - x0 < sp(10.f)) return;
     const float ty = y + h * 0.74f, th = sp(0.5f);
     // backing plate
-    dl->AddRectFilled(ImVec2(org.x + mx - sp(0.8f), y), ImVec2(x1 + sp(0.8f), y + h), ui::with_alpha(ui::PANEL, 0.62f), h * 0.3f);
+    dl->AddRectFilled(ImVec2(org.x + mx - sp(0.8f), y), ImVec2(x1 + sp(0.8f), y + h), ui::with_alpha(ui::PANEL, cases_flow_on() ? 0.34f : 0.62f), h * 0.3f);
     dl->AddText(bf, cf->FontSize, ImVec2(org.x + mx, y + (h - cf->FontSize) * 0.5f), ui::TEXT, cnt.c_str());
     dl->AddRectFilled(ImVec2(x0, ty - th * 0.5f), ImVec2(x1, ty + th * 0.5f), ui::with_alpha(ui::TEXT2, 0.28f), th);
     const int cur = CS.focus >= 0 ? CS.focus : 0;
