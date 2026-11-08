@@ -22,6 +22,8 @@ struct CfState {
     bool have_desc = false;
 } CFX;
 
+/* Screenshot mode (headless + HUB_SHOT_CASES): timers that would still be running when the wall-clock shot is taken are skipped (media, picture dwell). */
+bool cases_shot_instant() { static const bool v = g_headless && std::getenv("HUB_SHOT_CASES") != nullptr; return v; }
 bool cases_flow_on() {
     static const bool force_classic = g_headless && std::getenv("HUB_SHOT_CASES_STYLE") && std::string(std::getenv("HUB_SHOT_CASES_STYLE")) == "classic";
     return !A.st.lib_cases_classic && !force_classic;
@@ -143,8 +145,8 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
     const hub::System sy = sys_of(idx);
     // the screenshot (the game's own title screen / in-game picture; the player's own pictures are on the back of the case)
     SDL_Texture* pic = nullptr; int pw = 0, ph = 0;
-    const bool dwelled = CFX.key.focus == CS.focus && CFX.key.idx == idx && CFX.info_t >= cf::kMediaDwell;   // the 420 ms dwell of the disc: scrolling past does not request pictures
-    const float pic_a = reduced ? 1.f : std::max(0.f, std::min(1.f, (CFX.info_t - cf::kMediaDwell) / 0.3f));
+    const bool dwelled = CFX.key.focus == CS.focus && CFX.key.idx == idx && (CFX.info_t >= cf::kMediaDwell || cases_shot_instant());   // the 420 ms dwell of the disc: scrolling past does not request pictures
+    const float pic_a = (reduced || cases_shot_instant()) ? 1.f : std::max(0.f, std::min(1.f, (CFX.info_t - cf::kMediaDwell) / 0.3f));
     if (!ghost && !CS.no_art && dwelled) {
         const hub::GameEntry& e = A.lib[(size_t)idx];
         pic = hubart::get(e, hubart::Kind::Snap, &pw, &ph);
