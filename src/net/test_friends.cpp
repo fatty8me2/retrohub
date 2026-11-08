@@ -5,6 +5,7 @@
 #include "net_internal.h"
 #include "session.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -137,6 +138,20 @@ static void offline_tests(const std::string& root)
         std::vector<std::string> many;
         for (int i = 0; i < 80; ++i) many.push_back("u" + std::to_string(i));
         CHECK(watch_clean(many).size() == kWatchMax && watch_clean(many).back() == "u49");
+    }
+
+    {   /* account lifecycle: pure rules */
+        AccountResult r; r.op = "delete_account"; r.reason = "confirm-mismatch";
+        CHECK(account_result_text(r).find("Nothing was deleted") != std::string::npos);
+        r.op = "revoke_device"; r.ok = true;
+        CHECK(account_result_text(r).find("signed out") != std::string::npos);
+        r.ok = false; r.reason = "not-found";
+        CHECK(account_result_text(r).find("Sign out all other PCs") != std::string::npos);
+        CHECK(delete_confirmation_ok("  rh-abcd-efgh ", "Mia", "RH-ABCD-EFGH") && delete_confirmation_ok("mia", "Mia", "RH-ABCD-EFGH"));
+        CHECK(!delete_confirmation_ok("", "", "") && !delete_confirmation_ok("mi", "Mia", "RH-ABCD-EFGH") && !delete_confirmation_ok("x", "", ""));
+        bool acct = false;
+        CHECK(!status_next_step(kSignedOutStatus, &acct).empty() && acct);
+        CHECK(status_next_step(kSignedOutStatus, &acct).find("account code") != std::string::npos);
     }
 
     /* conversation persistence */
@@ -397,6 +412,59 @@ int main(int argc, char** argv)
     C->c.stop();
     C->c.start(server, "qa-carol");
     CHECK(wait_for([&] { return C->c.connected(); }) && C->c.my_uid() == cuid);
+
+
+    printf("[per-PC sign-in]
+");
+    {
+        /* The first connect after the update swapped this PC's secret for its own: identity.json holds it and a restart reconnects with it. */
+        std::ifstream f(A->dir + "identity.json"); std::string txt((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        CHECK(txt.find(A->c.my_secret()) != std::string::npos, "identity.json holds the secret in use");
+        CHECK(!A->c.my_pc_id().empty() && fs::exists(A->dir + "friends-pc.txt"), "pc id is kept");
+        A->c.request_devices();
+        CHECK(wait_for([&] { return A->c.devices().loaded && A->c.devices().devices.size() >= 1; }), "device list arrives");
+        /* a second PC starts from a copy of this PC's identity (a shared vault / copied folder): it gets its own sign-in */
+        auto D = make_peer(root, "dave");
+        fs::create_directories(D->dir);
+        fs::copy_file(A->dir + "identity.json", D->dir + "identity.json", fs::copy_options::overwrite_existing);
+        g_all.push_back(D.get());
+        const std::string asec = A->c.my_secret();
+        D->c.start(server, "qa-alice");
+        CHECK(wait_for([&] { return D->c.connected(); }), "second PC connects with the copied identity");
+        CHECK(D->c.my_uid() == A->c.my_uid() && D->c.my_secret() != asec && A->c.my_secret() == asec, "second PC got its own secret; the first keeps its own");
+        A->c.request_devices();
+        CHECK(wait_for([&] { return A->c.devices().devices.size() == 2; }), "both PCs are listed");
+        std::string did;
+        for (const DeviceInfo& d : A->c.devices().devices) if (!d.current) did = d.id;
+        int seq0 = A->c.account_result().seq;
+        A->c.revoke_device(did);
+        CHECK(wait_for([&] { return A->c.account_result().seq > seq0; }) && A->c.account_result().ok, "lock-out answered ok");
+        CHECK(wait_for([&] { return D->c.status_text().rfind("Identity rejected", 0) == 0; }), "the locked-out PC is refused (%s)", D->c.status_text().c_str());
+        CHECK(A->c.connected(), "the other PC keeps working");
+        D->c.stop();
+        g_all.erase(std::remove(g_all.begin(), g_all.end(), D.get()), g_all.end());
+    }
+    {
+        /* sign out: the server drops this PC's sign-in, the client forgets the identity and starts a new account */
+        auto E = make_peer(root, "erin");
+        g_all.push_back(E.get());
+        E->c.start(server, "qa-erin");
+        CHECK(wait_for([&] { return E->c.connected(); }));
+        const std::string old_uid = E->c.my_uid();
+        int seq0 = E->c.account_result().seq;
+        E->c.delete_account("wrong");
+        CHECK(wait_for([&] { return E->c.account_result().seq > seq0; }) && E->c.account_result().reason == "confirm-mismatch", "delete needs the typed username or friend code");
+        seq0 = E->c.account_result().seq;
+        E->c.sign_out_this_pc();
+        CHECK(wait_for([&] { return E->c.account_result().seq > seq0; }) && E->c.account_result().op == "sign_out" && E->c.account_result().ok, "sign-out answered");
+        CHECK(E->c.forget_identity_and_restart(), "identity forgotten");
+        CHECK(wait_for([&] { return E->c.connected(); }) && E->c.my_uid() != old_uid, "a new account is made on this PC");
+        /* delete: the account is gone for good */
+        E->c.delete_account(E->c.my_code());
+        CHECK(wait_for([&] { return E->c.status_text().rfind("This account was deleted", 0) == 0; }), "account deleted (%s)", E->c.status_text().c_str());
+        E->c.stop();
+        g_all.erase(std::remove(g_all.begin(), g_all.end(), E.get()), g_all.end());
+    }
 
     for (Peer* p : g_all) p->c.stop();
     std::error_code ec;
