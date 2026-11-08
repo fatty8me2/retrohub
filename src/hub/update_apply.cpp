@@ -19,8 +19,10 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <bcrypt.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
+#pragma comment(lib, "bcrypt.lib")
 
 namespace fs = std::filesystem;
 
@@ -169,6 +171,34 @@ bool path_is_under(const std::wstring& dir, const std::wstring& path) {
     std::wstring d = lower(norm(dir)), p = lower(norm(path));
     if (d.empty() || p.size() <= d.size()) return false;
     return p.compare(0, d.size(), d) == 0 && p[d.size()] == L'\\';
+}
+
+std::string sha256_file_hex(const std::wstring& path) {
+    std::string hex;
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return hex;
+    BCRYPT_ALG_HANDLE alg = nullptr; BCRYPT_HASH_HANDLE h = nullptr;
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0) {
+        if (BCryptCreateHash(alg, &h, nullptr, 0, nullptr, 0, 0) == 0) {
+            std::vector<unsigned char> buf(1 << 16);
+            bool ok = true;
+            for (;;) {
+                DWORD n = 0;
+                if (!ReadFile(f, buf.data(), (DWORD)buf.size(), &n, nullptr)) { ok = false; break; }
+                if (n == 0) break;
+                if (BCryptHashData(h, buf.data(), n, 0) != 0) { ok = false; break; }
+            }
+            unsigned char d[32];
+            if (ok && BCryptFinishHash(h, d, sizeof(d), 0) == 0) {
+                static const char* kHex = "0123456789abcdef";
+                for (unsigned char b : d) { hex += kHex[b >> 4]; hex += kHex[b & 15]; }
+            }
+            BCryptDestroyHash(h);
+        }
+        BCryptCloseAlgorithmProvider(alg, 0);
+    }
+    CloseHandle(f);
+    return hex;
 }
 
 bool is_smash_classic_file(const std::wstring& relIn) {
@@ -403,6 +433,20 @@ Result apply_files(const Options& o) {
         r.error = o.hub_only ? L"the update is missing RetroHub.exe" : L"the update is missing RetroHub.exe or BattleShip.exe";
         return r;
     }
+    if (o.hub_only) {
+        /* The hub-only files were made for ONE Smash Classic build (named by the signed release list). If the installed BattleShip.exe is not
+         * that build any more (a reinstall or another update landed since it was staged), applying them could mix versions: refuse before any
+         * file is touched. The next update then picks the full package. */
+        std::string want = winutil::to_utf8(o.smash_sha256);
+        for (auto& c : want) if (c >= 'A' && c <= 'F') c = (char)(c - 'A' + 'a');
+        const std::string have = sha256_file_hex(install + L"\\BattleShip.exe");
+        if (want.size() != 64 || have.empty() || have != want) {
+            alog(L"REFUSED: the installed BattleShip.exe is not the Smash Classic build this RetroHub-only update was made for; nothing was changed");
+            r.smash_changed = true;
+            r.error = L"the installed Smash Classic is not the one this update was made for";
+            return r;
+        }
+    }
     std::vector<std::wstring> files = list_staged(staged, o.hub_only);
     std::wstring backup = o.backup.empty() ? install + L"\\updates\\backup" : norm(o.backup);
     std::error_code ec;
@@ -633,6 +677,12 @@ int run(const Options& o) {
             alog(L"the backup in " + r.backup_dir + L" is kept; the next start repairs from it");
         } else {
             st.result = "failed"; st.reason = plain_reason(r.err);
+            if (r.smash_changed) {
+                /* Not a file problem: drop the staged RetroHub-only files so the next update fetches the right package (the full one). */
+                st.reason = "Smash Classic changed";
+                fs::remove_all(fs::path(norm(o.staged)), ec);
+                DeleteFileW((install + L"\\updates\\staged.json").c_str());
+            }
             if (gen_backup) fs::remove_all(bk_parent, ec);   // complete rollback: nothing left to protect
         }
         write_status(status_path, st);
@@ -659,6 +709,7 @@ bool try_apply_mode(int* exit_code) {
             if (a == L"--no-relaunch") o.relaunch = false;
             else if (a == L"--game-active") o.game_active = true;
             else if (a == L"--hub-only") o.hub_only = true;
+            else if (a == L"--smash-sha256" && more) o.smash_sha256 = argv[++i];
             else if (a == L"--version" && more) o.version = argv[++i];
             else if (a == L"--from" && more) o.from_version = argv[++i];
             else if (a == L"--retries" && more) o.retries = std::max(1, _wtoi(argv[++i]));

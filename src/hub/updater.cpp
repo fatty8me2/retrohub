@@ -69,6 +69,7 @@ struct Pending {
     std::wstring apply_exe, apply_dir, staged, exe_dir, marker;
     std::string version;
     bool hub_only = false;   // the staged files are RetroHub's part only: the applier gets --hub-only
+    std::string smash_sha256; // ... and --smash-sha256 <hash>: it refuses unless the installed BattleShip.exe still has this hash
 };
 Pending s_pending;            // guarded by s_mu
 detail::Gate s_gate;          // UI thread only (tick)
@@ -428,12 +429,14 @@ static bool hex_to_bytes(const char* hex, unsigned char* out, size_t n) {
     return true;
 }
 
+#ifdef RETROHUB_UPDATER_TESTING   // test target only: never compiled into RetroHub.exe
 static bool g_test_key_set = false;
 static unsigned char g_test_key[64];
 void set_pubkey_for_test(const unsigned char pub[64]) {
     g_test_key_set = pub != nullptr;
     if (pub) std::memcpy(g_test_key, pub, 64);
 }
+#endif
 
 bool verify_ecdsa_p256(const unsigned char pub[64], const void* msg, size_t msgLen, const void* sigDer, size_t sigLen) {
     unsigned char rs[64];
@@ -460,7 +463,12 @@ bool verify_ecdsa_p256(const unsigned char pub[64], const void* msg, size_t msgL
 
 bool sums_are_trusted(const std::string& tag, const std::string& sums, const std::string& sig, std::string* why) {
     unsigned char pub[64];
-    bool have = g_test_key_set ? (std::memcpy(pub, g_test_key, 64), true) : hex_to_bytes(kReleasePubKeyHex, pub, 64);
+    bool have = false;
+#ifdef RETROHUB_UPDATER_TESTING
+    if (g_test_key_set) { std::memcpy(pub, g_test_key, 64); have = true; }
+    else
+#endif
+    have = hex_to_bytes(kReleasePubKeyHex, pub, 64);
     bool ok = have && !sums.empty() && !sig.empty() && verify_ecdsa_p256(pub, sums.data(), sums.size(), sig.data(), sig.size());
     if (!ok) {
         ulog("release %s: SHA256SUMS.txt signature %s; the update is refused", tag.c_str(), sig.empty() ? "is missing" : "does not verify");
@@ -588,6 +596,7 @@ std::string staged_manifest_json(const StagedInfo& s) {
     o.o.push_back({"files", json::make_int(s.files)});
     o.o.push_back({"bytes", json::make_int(s.bytes)});
     if (s.hub_only) o.o.push_back({"payload", json::make_string("hub")});   // absent => full (older manifests)
+    if (s.hub_only && !s.smash_sha256.empty()) o.o.push_back({"smash_sha256", json::make_string(s.smash_sha256)});
     return json::stringify(o) + "\n";
 }
 
@@ -597,12 +606,13 @@ bool parse_staged_manifest(const std::string& text, StagedInfo* out) {
     StagedInfo s;
     s.version = v.str("version"); s.files = v.i64("files"); s.bytes = v.i64("bytes");
     s.hub_only = v.str("payload") == "hub";
+    s.smash_sha256 = v.str("smash_sha256");
     if (s.version.empty() || s.files <= 0 || s.bytes < 0) return false;
     if (out) *out = s;
     return true;
 }
 
-bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only) {
+bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only, std::string* smash_sha256) {
     std::ifstream in(P(updates_dir + "\\staged.json"), std::ios::binary);
     if (!in || version.empty()) return false;
     std::stringstream ss; ss << in.rdbuf();
@@ -615,14 +625,17 @@ bool staged_reusable(const std::string& updates_dir, const std::string& version,
     }
     StagedInfo now = scan_staged(staged);
     if (now.files != m.files || now.bytes != m.bytes) return false;
+    if (m.hub_only && !is_hex64(m.smash_sha256)) return false;   // no hash to re-check the installed Smash Classic with: fetch it again
     if (hub_only) *hub_only = m.hub_only;
+    if (smash_sha256) *smash_sha256 = m.smash_sha256;
     return true;   // anything missing or changed since it was unpacked: download again
 }
 
-bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only) {
+bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only, const std::string& smash_sha256) {
     StagedInfo s = scan_staged(updates_dir + "\\staged");
     s.version = version;
     s.hub_only = hub_only;
+    s.smash_sha256 = hub_only ? smash_sha256 : std::string();
     if (s.files <= 0 || version.empty()) return false;
     return winutil::write_file_atomic(updates_dir + "\\staged.json", staged_manifest_json(s));
 }
@@ -775,7 +788,8 @@ void start_update() {
             }
         };
         bool hubOnly = false;
-        if (detail::staged_reusable(updatesDir, version, &hubOnly)) {
+        std::string smashHash;   // hub-only: the BattleShip.exe hash the signed marker named (re-checked by the applier before it touches a file)
+        if (detail::staged_reusable(updatesDir, version, &hubOnly, &smashHash)) {
             /* An earlier try (a postponed or failed install, or RetroHub closed while the update waited for a game) already unpacked this
              * exact release: nothing to download. */
             ulog("reusing the unpacked update %s from updates\\staged (no download)", version.c_str());
@@ -802,6 +816,7 @@ void start_update() {
             const detail::Payload pick = detail::choose_payload(rel, sumsText, installedSmash);
             if (pick == detail::Payload::None) { fail("this release has no update for this platform."); return; }
             hubOnly = pick == detail::Payload::HubOnly;
+            if (hubOnly) smashHash = detail::parse_hub_only_marker(sumsText).smash_sha256;
             ulog("downloading %s (%s)", hubOnly ? hubUrl.c_str() : url.c_str(), hubOnly ? "RetroHub files only" : "full package");
             detail::FetchSpec spec; spec.tag = version; spec.sums_url = sumsUrl; spec.sums_text = sumsText; spec.sig_url = sigUrl; spec.sig_bytes = sigBytes;
             if (hubOnly) { spec.zip_url = hubUrl; spec.digest = hubDigest; spec.size = hubSize; spec.asset_name = detail::kHubAssetName; }
@@ -836,7 +851,7 @@ void start_update() {
                     return;
                 }
             }
-            detail::write_staged_manifest(updatesDir, version, hubOnly);   // the unpacked files are kept for a retry until an install succeeds
+            detail::write_staged_manifest(updatesDir, version, hubOnly, smashHash);   // the unpacked files are kept for a retry until an install succeeds
         }
 
         /* TEMP copy of this exe (+ its DLLs) so the install's RetroHub.exe is not locked. */
@@ -867,6 +882,7 @@ void start_update() {
             s_pending.marker = W(updatesDir + "\\apply.started");
             s_pending.version = version;
             s_pending.hub_only = hubOnly;
+            s_pending.smash_sha256 = smashHash;
         }
         s_progress.store(1.0f);
         set_status("Update ready.");
@@ -893,7 +909,7 @@ static void begin_handoff(const Pending& p, bool game_active) {
         DeleteFileW(marker.c_str());
         std::wstring wcmd = L"\"" + p.apply_exe + L"\" --apply-update \"" + p.staged + L"\" \"" + p.exe_dir + L"\" " +
                             std::to_wstring(GetCurrentProcessId()) + L" --version \"" + W(p.version) + L"\" --from \"" + W(current_version()) +
-                            L"\" --started-marker \"" + marker + L"\"" + (game_active ? L" --game-active" : L"") + (p.hub_only ? L" --hub-only" : L"");
+                            L"\" --started-marker \"" + marker + L"\"" + (game_active ? L" --game-active" : L"") + (p.hub_only ? (L" --hub-only --smash-sha256 \"" + W(p.smash_sha256) + L"\"") : std::wstring());
         STARTUPINFOW si{}; si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
         std::wstring cmdBreakaway = wcmd;
