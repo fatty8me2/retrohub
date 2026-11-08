@@ -92,7 +92,7 @@ static std::string join(const std::string& a, const std::string& b) {
     return (c == '\\' || c == '/') ? a + b : a + "\\" + b;
 }
 
-const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : k == Kind::Lrps2 ? "PS2 online core" : k == Kind::Ppsspp ? "PPSSPP" : k == Kind::Lichii ? "Lichii" : "Dolphin"; }
+const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : k == Kind::Lrps2 ? "PS2 online core" : k == Kind::Ppsspp ? "PPSSPP" : k == Kind::Lichii ? "Lichii" : k == Kind::Fritchii ? "Fritchii" : "Dolphin"; }
 Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s == hub::System::GC ? Kind::Dolphin : s == hub::System::PS2 ? Kind::Pcsx2 : s == hub::System::PSP ? Kind::Ppsspp : s == hub::System::Switch ? Kind::Lichii : Kind::Azahar; }
 
 /* Pinned official releases. Azahar: github.com/azahar-emu/azahar (GPL-3.0), asset digest as published by GitHub.
@@ -100,6 +100,18 @@ Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s ==
  * computed from the official v2.6 asset when this was written (trust on first use). */
 static const InstallTestHooks* g_test_hooks = nullptr;
 void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
+
+/* ======================================================================================================================================================
+ * FRITCHII PIN - PLACEHOLDERS. The binary is built on GitHub Actions and the real values do not exist yet. Replace ALL FOUR of these (and nothing else) when
+ * the release is published: tag + asset name in kPath, the zip's exact byte size, its sha256. While kSha256 is all zeros release_is_placeholder() is true:
+ * Play / Settings say Fritchii is "not published yet" instead of starting a download that cannot verify.
+ * ====================================================================================================================================================== */
+namespace fritchii_pin {
+static const char* const kVersion = "v4.1";
+static const wchar_t* const kPath = L"/fatty8me2/Fritchii/releases/download/<TAG>/<ASSET>";   // TODO(pin): real tag + asset name
+static const uint64_t kSize = 0;                                                                 // TODO(pin): exact byte size of the zip
+static const char* const kSha256 = "0000000000000000000000000000000000000000000000000000000000000000";   // TODO(pin): lowercase hex sha256 of the zip
+}   // namespace fritchii_pin
 
 const Release& release(Kind k) {
     if (g_test_hooks && g_test_hooks->release && g_test_hooks->kind == k) return *g_test_hooks->release;
@@ -139,11 +151,22 @@ const Release& release(Kind k) {
     static const Release li = {
         "build 95", L"github.com", L"/zortos293/Lichii/releases/download/build-94/lichii-windows-x86_64.zip",
         116143228ull, "1560b9d46a20b54a8494316a650bfef12a905fbd6c612758d4509dcefca61164", L"lichii.exe", "GPL-3.0"};
-    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : k == Kind::Ppsspp ? pp : k == Kind::Lichii ? li : dol;
+    /* Fritchii (GPL-3.0): Frizti's Ocarina-of-Time fork of Lichii, built by us on GitHub Actions (github.com/fatty8me2/Fritchii). Same exe name (lichii.exe at the ROOT
+     * of the zip, plus eden-cli.exe), same portable `user` folder, same qt-config.ini and save layout as Lichii. It lives in its OWN folder (userdata\emulators\fritchii)
+     * with its OWN user\, never linked to Lichii's. The values come from the one block fritchii_pin below. */
+    static const Release fr = {fritchii_pin::kVersion, L"github.com", fritchii_pin::kPath, fritchii_pin::kSize, fritchii_pin::kSha256, L"lichii.exe", "GPL-3.0"};
+    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : k == Kind::Ppsspp ? pp : k == Kind::Lichii ? li : k == Kind::Fritchii ? fr : dol;
+}
+
+bool release_is_placeholder(Kind k) {
+    const Release& r = release(k);
+    if (!r.sha256) return true;
+    for (const char* c = r.sha256; *c; ++c) if (*c != '0') return false;
+    return true;   // all zeros: nothing real is pinned
 }
 
 std::string managed_root() { return join(hub::data_dir(), "emulators"); }
-std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : k == Kind::Pcsx2 ? "pcsx2" : k == Kind::Lrps2 ? "lrps2" : k == Kind::Ppsspp ? "ppsspp" : k == Kind::Lichii ? "lichii" : "dolphin"); }
+std::string managed_dir(Kind k, const std::string& root) { return join(root, k == Kind::Azahar ? "azahar" : k == Kind::Cemu ? "cemu" : k == Kind::Pcsx2 ? "pcsx2" : k == Kind::Lrps2 ? "lrps2" : k == Kind::Ppsspp ? "ppsspp" : k == Kind::Lichii ? "lichii" : k == Kind::Fritchii ? "fritchii" : "dolphin"); }
 
 /* ------------------------------------------------------------------ */
 /* locating                                                            */
@@ -184,7 +207,7 @@ static const char* const kJournalTmp = "retrohub-upgrade.txt.tmp";
  * (keys, firmware, saves, config, shader caches, RetroHub's retrohub-defaults.txt) is under user\ (portable mode, lichii.h); RetroHub writes nothing else
  * beside the exe except the install marker. */
 static std::vector<std::string> preserved_names(Kind k) {
-    if (k == Kind::Lichii) return {"user"};
+    if (is_nx(k)) return {"user"};   // Lichii and Fritchii: each keeps its own user folder
     return {};
 }
 static bool upgradable(Kind k) { return !preserved_names(k).empty(); }
@@ -199,6 +222,19 @@ static std::string installed_sha(const std::string& dir) {
     while (std::getline(ls, line)) {
         while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
         if (line.compare(0, 7, "sha256 ") == 0) return line.substr(7);
+    }
+    return "";
+}
+
+/* Fritchii's own in-app updater parks an unfinished update as `update-staging`, `update-old` and update journal / lock files beside the exe ("update-*", ".update-*").
+ * Starting the game with one of them there shows an "Interrupted Update" box, so such an install counts as outdated (RetroHub's reinstall puts the pinned build in) and Play
+ * refuses to start it. RetroHub's own install and upgrade never create these. Lichii is never checked (its path stays as it was). */
+std::string update_leftovers(Kind k, const std::string& dir) {
+    if (k != Kind::Fritchii || dir.empty()) return "";
+    std::error_code ec;
+    for (fs::directory_iterator it(P(dir), ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string n = lower(S(it->path().filename()));
+        if (n.compare(0, 7, "update-") == 0 || n.compare(0, 8, ".update-") == 0) return S(it->path().filename());
     }
     return "";
 }
@@ -243,7 +279,7 @@ Install find(Kind k, const std::string& configured, const std::string& game_path
         in.dir = md;
         in.managed = true;
         in.how = "RetroHub download";
-        in.outdated = upgradable(k) && installed_sha(md) != release(k).sha256;
+        in.outdated = upgradable(k) && (installed_sha(md) != release(k).sha256 || !update_leftovers(k, md).empty());
         if (in.outdated) in.how += " (update available)";
     }
     return in;
@@ -630,8 +666,9 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
         *err = std::string("an earlier ") + name(k) + " update could not be finished yet. Close " + name(k) + " if it is open, then try again";
         return false;
     }
+    if (release_is_placeholder(k)) { *err = std::string(name(k)) + " is not published yet (its download has not been set up)"; return false; }
     const bool complete = file_exists(exe) && file_exists(join(dir, "retrohub-install.txt"));   // (marker is written last)
-    if (complete && (!upgradable(k) || installed_sha(dir) == rel.sha256)) return true;
+    if (complete && (!upgradable(k) || (installed_sha(dir) == rel.sha256 && update_leftovers(k, dir).empty()))) return true;
     const bool upgrading = complete;   // an older pin: the old build stays installed and working until the new one is whole
     std::string stage = join(dir, kStageDir);
     std::string archive = join(join(root, "_downloads"), S(fs::path(rel.path).filename()));
@@ -690,7 +727,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     const bool swapped = ok && upgrading;   // from here a failure must put the old build back
     if (ok && k == Kind::Pcsx2) ok = write_text(join(dir, "portable.ini"), "");   // portable mode: all data beside the exe, a user's own PCSX2 is never touched
     if (ok && k == Kind::Ppsspp) { std::error_code ec2; fs::remove(P(join(dir, "installed.txt")), ec2); make_dirs(join(dir, "memstick")); }   // no installed.txt = portable: PPSSPP keeps everything in <dir>\memstick
-    if (ok && k == Kind::Lichii) {   // a `user` folder beside lichii.exe = portable (a player's own %APPDATA%\eden is never touched); the debug symbols (~116 MB) and the bundled VC++ installer are not needed to play
+    if (ok && is_nx(k)) {   // (Lichii and Fritchii) a `user` folder beside lichii.exe = portable (a player's own %APPDATA%\eden is never touched); the debug symbols (~116 MB) and the bundled VC++ installer are not needed to play
         make_dirs(join(dir, "user"));
         std::error_code ec2;
         for (const char* f : {"lichii.pdb", "eden-cli.pdb", "vc_redist.x64.exe"}) fs::remove(P(join(dir, f)), ec2);
@@ -1519,7 +1556,7 @@ void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::
         make_dirs(d);
         std::string f = join(d, "qt-config.ini");
         write_text(f, azahar_config_apply(read_text(f), v));
-    } else if (k == Kind::Pcsx2 || k == Kind::Ppsspp || k == Kind::Lichii) {
+    } else if (k == Kind::Pcsx2 || k == Kind::Ppsspp || is_nx(k)) {
         return;   // written by prepare_pcsx2 / prepare_ppsspp (pcsx2.h, ppsspp.h)
     } else {   // RetroHub's own portable Cemu (a user's own install goes through prepare_cemu_own_settings)
         std::string f = join(install_dir, "portable\\settings.xml");
@@ -1851,7 +1888,37 @@ void sync_vault_to_emulator(SaveSession& s) {
     s.summary = std::to_string(in) + " save file(s) restored from the vault, " + std::to_string(kept) + " kept (emulator copy newer)";
 }
 
-SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& battery_in, const std::string&, uint64_t tid_override) {
+std::string emu_manifest_path(const std::string& battery_in, const char* suffix) {
+    std::string battery = battery_in;
+    while (!battery.empty() && (battery.back() == '\\' || battery.back() == '/')) battery.pop_back();
+    fs::path game = P(battery).parent_path(), sysdir = game.parent_path(), vault = sysdir.parent_path();
+    return S(vault / L".sync" / (L"emu-" + sysdir.filename().wstring() + L"-" + game.filename().wstring() + W(suffix ? suffix : "") + L".json"));
+}
+
+NxSaveMap nx_save_map(const std::string& install_dir, uint64_t tid, const std::string& battery, bool create_profile, bool force_account) {
+    NxSaveMap m;
+    if (!tid || install_dir.empty()) return m;
+    std::string uuid;
+    if (create_profile) {
+        uuid = lichii_ensure_profile(install_dir);
+        if (uuid.empty()) { m.error = "could not create the Switch user profile (profiles.dat)"; return m; }
+    } else {   // read-only look at another install: its profile when it has one, else the fixed RetroHub user (the same on every install)
+        const std::string pf = join(lichii_user_dir(install_dir), "nand\\system\\save\\8000000000000010\\su\\avators\\profiles.dat");
+        uuid = file_exists(pf) ? lichii_ensure_profile(install_dir) : std::string(kLichiiUserUuid);
+        if (uuid.empty()) uuid = kLichiiUserUuid;
+    }
+    m.user_root = lichii_user_dir(install_dir);
+    /* The vault side holds the title id only (the user uuid can differ between PCs): <vault>/switch/<key>/battery/save/<TID> */
+    char tb[24];
+    std::snprintf(tb, sizeof tb, "%016llX", (unsigned long long)tid);
+    m.rels = {lichii_save_rel(uuid, tid)};
+    m.vault_rels = {std::string("save/") + tb};
+    const std::string acct = std::string("nand/user/save/account/") + uuid + "/" + tb;   // Lichii prefers this folder when it exists
+    if (force_account || dir_exists(join(m.user_root, acct)) || dir_exists(join(battery, std::string("save-account/") + tb))) {   /* either side has it: keep both PCs in step */ m.rels.push_back(acct); m.vault_rels.push_back(std::string("save-account/") + tb); }
+    return m;
+}
+
+SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& battery_in, const std::string&, uint64_t tid_override, const char* manifest_suffix) {
     SaveSession s;
     s.started_unix = (int64_t)std::time(nullptr);
     std::string battery = battery_in;
@@ -1860,7 +1927,7 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
     /* <vault>\<system>\<game>\battery -> <vault>\_conflicts\<system>\<game>\battery */
     fs::path game = P(battery).parent_path(), sysdir = game.parent_path(), vault = sysdir.parent_path();
     s.backup_dir = S(vault / L"_conflicts" / sysdir.filename() / game.filename() / L"battery");
-    s.manifest_path = S(vault / L".sync" / (L"emu-" + sysdir.filename().wstring() + L"-" + game.filename().wstring() + L".json"));
+    s.manifest_path = emu_manifest_path(battery, manifest_suffix);   // (vault\.sync\emu-<system>-<game>[suffix].json)
 
     uint64_t tid = tid_override ? tid_override : title_id_from_key(e.key);
     if (e.system == hub::System::N3DS) {
@@ -1906,16 +1973,11 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
         make_dirs(join(s.emu_root, "SAVEDATA"));
     } else if (e.system == hub::System::Switch) {
         if (!tid || inst.dir.empty()) return s;   // no title id (homebrew, unknown): nothing to map
-        const std::string uuid = lichii_ensure_profile(inst.dir);
-        if (uuid.empty()) { s.error = "could not create Lichii's user profile (profiles.dat) - saves were not copied"; return s; }
-        s.emu_root = lichii_user_dir(inst.dir);
-        /* The vault side holds the title id only (the user uuid can differ between PCs): <vault>/switch/<key>/battery/save/<TID> */
-        char tb[24];
-        std::snprintf(tb, sizeof tb, "%016llX", (unsigned long long)tid);
-        s.rels = {lichii_save_rel(uuid, tid)};
-        s.vault_rels = {std::string("save/") + tb};
-        const std::string acct = std::string("nand/user/save/account/") + uuid + "/" + tb;   // Lichii prefers this folder when it exists
-        if (dir_exists(join(s.emu_root, acct)) || dir_exists(join(battery, std::string("save-account/") + tb))) {   /* either side has it: keep both PCs in step */ s.rels.push_back(acct); s.vault_rels.push_back(std::string("save-account/") + tb); }
+        NxSaveMap nm = nx_save_map(inst.dir, tid, battery, true);   // Lichii and Fritchii alike (both map the same layout under their own user\)
+        if (!nm.error.empty()) { s.error = nm.error + " - saves were not copied"; return s; }
+        s.emu_root = nm.user_root;
+        s.rels = nm.rels;
+        s.vault_rels = nm.vault_rels;
     } else if (e.system == hub::System::GC) {
         if (inst.dir.empty()) return s;
         s.emu_root = dolphin_card_root(inst.dir, e.key);   // <install>\User\GC\RetroHub\<game>\GCI  <->  <vault>\gc\<game>\battery\GCI
