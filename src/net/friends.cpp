@@ -243,7 +243,8 @@ static std::string computer_label()
 {
     const char* c = std::getenv("COMPUTERNAME");
     std::string o;
-    for (const char* p = c ? c : ""; *p && o.size() < 24; ++p) if ((unsigned char)*p >= 0x20 && (unsigned char)*p < 0x7f && *p != '"' && *p != '\\') o += *p;
+    for (const char* p = c ? c : ""; *p && o.size() < 24; ++p)
+        if ((unsigned char)*p >= 0x20 && (unsigned char)*p < 0x7f && *p != '"' && *p != '\\') o += *p;
     return o.empty() ? std::string("PC") : o;
 }
 const char* const kSignedOutStatus = "Identity rejected by server (this PC was signed out)";
@@ -482,8 +483,7 @@ std::set<std::string> read_retired_ids(const std::string& data_dir)
     std::istringstream in(text);
     std::string line;
     while (std::getline(in, line)) {
-        while (!line.empty() && (line.back() == '
-' || line.back() == ' ')) line.pop_back();
+        while (!line.empty() && (line.back() == '' || line.back() == ' ')) line.pop_back();
         if (!line.empty()) out.insert(line);
     }
     return out;
@@ -1024,8 +1024,7 @@ struct FriendsClient::Impl {
         std::istringstream in(text);
         std::string line;
         while (std::getline(in, line)) {
-            while (!line.empty() && line.back() == '
-') line.pop_back();
+            while (!line.empty() && line.back() == '') line.pop_back();
             size_t t = line.find('\t');
             if (t != std::string::npos && t > 0) bnames[line.substr(0, t)] = line.substr(t + 1);
         }
@@ -1036,6 +1035,7 @@ struct FriendsClient::Impl {
         for (const auto& kv : bnames) o += kv.first + "\t" + kv.second + "\n";
         async_write(bnames_path(), std::move(o));
     }
+    bool devcap = false;                   // the server (last welcome) offers per-PC sign-ins
     DeviceList devlist; int dev_ver = 0;   // the PCs on this account (last server answer)
     AccountResult acct_res;
     std::string pc_cache;
@@ -1046,9 +1046,7 @@ struct FriendsClient::Impl {
         std::string t;
         const std::string path = with_sep(data_dir) + "friends-pc.txt";
         if (read_file(path, &t)) {
-            while (!t.empty() && (t.back() == '
-' || t.back() == '
-' || t.back() == ' ')) t.pop_back();
+            while (!t.empty() && (t.back() == '\n' || t.back() == '\r' || t.back() == ' ')) t.pop_back();
             bool ok = t.size() >= 8 && t.size() <= 40;
             for (char c : t) if (!std::isalnum((unsigned char)c) && c != '-' && c != '_') ok = false;
             if (ok) return pc_cache = t;
@@ -1057,8 +1055,7 @@ struct FriendsClient::Impl {
         static const char* hx = "0123456789abcdef";
         std::string n = "p-";
         for (int i = 0; i < 16; i++) n += hx[rd() & 15];
-        write_file(path, n + "
-");
+        write_file(path, n + "\n");
         return pc_cache = n;
     }
     /* The cloud-sync device id of this PC (cloud-state.json), so "Stop syncing" on a PC can lock the same PC out of friends. "" = none yet. */
@@ -1092,8 +1089,7 @@ struct FriendsClient::Impl {
         std::istringstream in(text);
         std::string line;
         while (std::getline(in, line)) {
-            while (!line.empty() && (line.back() == '
-' || line.back() == ' ')) line.pop_back();
+            while (!line.empty() && (line.back() == '' || line.back() == ' ')) line.pop_back();
             if (!line.empty()) out.insert(line);
         }
         return out;
@@ -1244,6 +1240,7 @@ struct FriendsClient::Impl {
     {
         welcomed = true;
         access = Access::Ok;
+        devcap = jnum(j, "devcap") >= 1;   // an older server never says so: this PC then simply stays on its shared secret and the new account tools stay off
         if (const Json* dv = j.get("device")) adopt_device_secret(dv->str("secret"));   // before the backup below, so the copies hold this PC's own secret
         if (backup_ok) identity_backup_save(id);   // a server-confirmed account: keep a copy outside the install folder
         admin = jbool(j, "admin");
@@ -1365,7 +1362,7 @@ struct FriendsClient::Impl {
             if (parse_playtime_reply(text, &m)) { pt_friends = std::move(m); ++pt_version; }
         }
         else if (type == "retired") retire_done(j.str("uid"));
-        else if (type == "retire_skipped") retire_rejected(j.str("uid"));   // other PCs still use that account: it stays as it is; stop asking (not a confirmed retirement)
+        else if (type == "retire_skipped") retire_rejected(j.str("uid"));   // other PCs may still use that account: it stays as it is; stop asking (not a confirmed retirement)
         else if (type == "devices") {
             DeviceList dl; dl.loaded = true; dl.cap = (int)jnum(j, "cap"); if (dl.cap <= 0) dl.cap = 8;
             dl.legacy = jbool(j, "legacy");
@@ -1379,14 +1376,15 @@ struct FriendsClient::Impl {
             devlist = std::move(dl); ++dev_ver;
         }
         else if (type == "device_revoked") {
-            acct_res.op = "revoke_device"; acct_res.ok = jbool(j, "ok"); acct_res.reason = j.str("reason"); ++acct_res.seq;
+            acct_res.op = "revoke_device"; acct_res.ok = jbool(j, "ok"); acct_res.reason = j.str("reason"); acct_res.count = 0; ++acct_res.seq;
             if (acct_res.ok) send("{\"type\":\"devices\"}");
         }
         else if (type == "others_revoked") {
             acct_res.op = "revoke_others"; acct_res.ok = jbool(j, "ok"); acct_res.reason = j.str("reason"); acct_res.count = (int)jnum(j, "count"); ++acct_res.seq;
             if (acct_res.ok) send("{\"type\":\"devices\"}");
         }
-        else if (type == "signed_out") { acct_res.op = "sign_out"; acct_res.ok = jbool(j, "ok"); acct_res.reason.clear(); ++acct_res.seq; }
+        else if (type == "username_released") { acct_res.op = "release_username"; acct_res.ok = true; acct_res.reason.clear(); acct_res.count = 0; ++acct_res.seq; }
+        else if (type == "signed_out") { acct_res.op = "sign_out"; acct_res.ok = jbool(j, "ok"); acct_res.reason.clear(); acct_res.count = 0; ++acct_res.seq; }
         else if (type == "account_deleted") { account_deleted = true; status_text = "This account was deleted"; }   // the close that follows (4005) must not say "replaced"
         else if (type == "request") {
             const Json* r = j.get("req");
@@ -1450,7 +1448,7 @@ struct FriendsClient::Impl {
                 for (const Json& m : a->a) add_msg(with, parse_msg(m), false);
         } else if (type == "error") {
             std::string reason = j.str("reason", "error");
-            if (j.str("ref") == "delete_account" || j.str("ref") == "revoke_device" || j.str("ref") == "revoke_others") {   // lifecycle requests report through account_result()
+            if (j.str("ref") == "delete_account" || j.str("ref") == "revoke_device" || j.str("ref") == "revoke_others" || j.str("ref") == "release_username") {   // lifecycle requests report through account_result()
                 acct_res.op = j.str("ref"); acct_res.ok = false; acct_res.reason = j.str("detail").empty() ? reason : j.str("detail"); acct_res.count = 0; ++acct_res.seq;
             }
             if (!welcomed && access_from_reason(reason) != Access::Ok) {   // the owner has not approved this account / it is blocked: no welcome will follow
@@ -1842,18 +1840,19 @@ std::string FriendsClient::my_code() const { return friend_code(impl_->id.user_i
 std::string FriendsClient::my_uid() const { return impl_->id.user_id; }
 std::string FriendsClient::my_secret() const { return impl_->id.secret; }
 std::string FriendsClient::my_pc_id() const { return impl_->pc_id(); }
+bool FriendsClient::server_has_devices() const { return impl_->welcomed && impl_->devcap; }
 
 std::string account_result_text(const AccountResult& r)
 {
     if (r.op == "revoke_device") {
-        if (r.ok) return "That PC is signed out of your account. It can't connect again until someone there enters your account code.";
+        if (r.ok) return "That PC is signed out of your account. Your old account code stopped working, so make a new one below. A PC that has not updated RetroHub is signed out too.";
         if (r.reason == "not-found") return "That PC has not signed in with the new sign-in yet, so it can't be locked out one at a time. Use \"Sign out all other PCs\" instead.";
         if (r.reason == "self") return "You can't sign out the PC you are using here.";
         if (r.reason == "rate-limited") return "Slow down a little and try again in a while.";
         return "Could not sign that PC out. Try again later.";
     }
     if (r.op == "revoke_others") {
-        if (r.ok) return "Every other PC is signed out. Your old account codes stopped working, so make a new one below.";
+        if (r.ok) return "Every other PC is signed out. Your old account code stopped working, so make a new one below.";
         if (r.reason == "needs-device") return "This PC needs to connect once with the new sign-in first. Wait a moment, then try again.";
         if (r.reason == "rate-limited") return "Slow down a little and try again in a while.";
         return "Could not sign the other PCs out. Try again later.";
@@ -1863,6 +1862,11 @@ std::string account_result_text(const AccountResult& r)
         if (r.reason == "confirm-mismatch") return "That does not match your username or friend code. Nothing was deleted.";
         if (r.reason == "rate-limited") return "Slow down a little and try again in a while.";
         return "Could not delete the account. Nothing was deleted.";
+    }
+    if (r.op == "release_username") {
+        if (r.ok) return "Your username was given up. It is held for you for 7 days. Pick a new one when you are ready.";
+        if (r.reason == "rate-limited") return "You have done this a few times today. Try again tomorrow. Your username was not changed.";
+        return "Could not give up your username. It was not changed.";
     }
     if (r.op == "sign_out") return r.ok ? "This PC is signed out." : "Could not sign out. Try again when you are online.";
     return "";
@@ -1883,16 +1887,21 @@ bool delete_confirmation_ok(const std::string& typed, const std::string& usernam
     return (!username.empty() && t == norm(username)) || (!fcode.empty() && t == norm(fcode));
 }
 
-void FriendsClient::request_devices() { if (impl_->welcomed) impl_->send("{\"type\":\"devices\"}"); }
+void FriendsClient::request_devices() { if (impl_->welcomed && impl_->devcap) impl_->send("{\"type\":\"devices\"}"); }
 const DeviceList& FriendsClient::devices() const { return impl_->devlist; }
 int FriendsClient::devices_version() const { return impl_->dev_ver; }
 void FriendsClient::revoke_device(const std::string& id, const std::string& cdev)
 {
-    if (id.empty() && cdev.empty()) return;
+    if ((id.empty() && cdev.empty()) || !impl_->devcap) return;
     impl_->send("{\"type\":\"revoke_device\"" + (id.empty() ? std::string() : ",\"id\":" + q(id)) + (cdev.empty() ? std::string() : ",\"cdev\":" + q(cdev)) + "}");
 }
-void FriendsClient::revoke_other_pcs() { impl_->send("{\"type\":\"revoke_others\"}"); }
-void FriendsClient::sign_out_this_pc() { impl_->send("{\"type\":\"sign_out_device\"}"); }
+void FriendsClient::revoke_other_pcs() { if (impl_->devcap) impl_->send("{\"type\":\"revoke_others\"}"); }
+void FriendsClient::sign_out_this_pc()
+{
+    Impl& d = *impl_;
+    if (d.devcap) { d.send("{\"type\":\"sign_out_device\"}"); return; }
+    d.acct_res.op = "sign_out"; d.acct_res.ok = true; d.acct_res.reason.clear(); d.acct_res.count = 0; ++d.acct_res.seq;   // an older server has no per-PC sign-in to drop
+}
 void FriendsClient::release_username() { impl_->send("{\"type\":\"release_username\"}"); }
 void FriendsClient::delete_account(const std::string& typed) { impl_->send("{\"type\":\"delete_account\",\"confirm\":true,\"typed\":" + q(typed) + "}"); }
 const AccountResult& FriendsClient::account_result() const { return impl_->acct_res; }
@@ -1904,9 +1913,9 @@ bool FriendsClient::forget_identity_and_restart()
     fs::remove(upath(with_sep(d.data_dir) + "identity.json"), ec);
     if (!d.vault_dir.empty()) fs::remove(upath(with_sep(d.vault_dir) + "_identity\\identity.json"), ec);
     if (d.backup_ok) { const std::string bp = identity_backup_path(); if (!bp.empty()) fs::remove(upath(bp), ec); }
+    d.account_deleted = false; d.retire_suppressed = false;
     if (d.started) { std::string server = d.server, name = d.name; start(server, name); }   // no identity left: a fresh anonymous one is made
     else d.id = identity_load_or_create(d.data_dir, d.vault_dir);
-    d.account_deleted = false; d.retire_suppressed = false;
     return true;
 }
 void FriendsClient::set_auto_friend(bool on)

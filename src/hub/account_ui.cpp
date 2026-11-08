@@ -304,7 +304,8 @@ void account_text_error(const std::string& s) {
  * Everything here asks the friends server over the connection the hub already has (no polling: the PC list is asked for once when the
  * page opens and again on Refresh or after a change). Nothing is ever deleted on this PC without a confirmation the person typed or clicked. */
 struct LifeState {
-    double asked_at = -1e9;
+    double last_draw = -1e9;   // when the section was last drawn: a gap means the page was just opened
+    bool asked = false;        // the PC list was asked for since the page opened (never re-asked on a timer)
     int seen_seq = 0;
     std::string msg;
     bool msg_ok = true;
@@ -342,7 +343,7 @@ void life_poll() {
         } else {
             LF.msg = hubnet::account_result_text(r);
             LF.msg_ok = r.ok;
-            if (r.op == "revoke_others" && r.ok) start_create();   // the old codes just stopped working: make a fresh one
+            // The old account codes stopped working after a lock-out. The message says so; a new code is made only when the person clicks.
             if (r.op == "delete_account" && !r.ok) LF.deleting = false;
         }
     }
@@ -355,10 +356,15 @@ void draw_life_section() {
     settings_label("PCs signed in to this account", "Each PC that uses this account has its own sign-in. Signing a PC out here stops it from using your "
                                                   "friends, messages and username until someone there enters your account code. Nothing on that PC is deleted.");
     const bool online = life_online();
-    if (online && ImGui::GetTime() - LF.asked_at > 300.0) { FR.cli.request_devices(); LF.asked_at = ImGui::GetTime(); }
+    const bool dev_ok = online && FR.cli.server_has_devices();   // an older server has no per-PC sign-ins: the PC tools stay off and nothing else changes
+    const double tnow = ImGui::GetTime();
+    if (tnow - LF.last_draw > 1.0) LF.asked = false;   // the page was just opened
+    LF.last_draw = tnow;
+    if (dev_ok && !LF.asked) { FR.cli.request_devices(); LF.asked = true; }   // once per opening; Refresh asks again, nothing polls
     const hubnet::DeviceList& dl = FR.cli.devices();
     const int64_t nowms = (int64_t)std::time(nullptr) * 1000;
     if (!online && !g_headless) ImGui::TextDisabled("Connect to see your PCs.");
+    else if (online && !dev_ok) ImGui::TextDisabled("Signing single PCs out is not available on the server yet.");
     for (const auto& d : dl.devices) {
         ImGui::PushID(d.id.c_str());
         ImGui::PushFont(ui::F.bold);
@@ -370,15 +376,15 @@ void draw_life_section() {
             const int64_t days = d.seen > 0 ? (nowms - d.seen) / 86400000 : 0;
             ImGui::TextDisabled("%s", days <= 0 ? "seen today" : (std::to_string(days) + (days == 1 ? " day ago" : " days ago")).c_str());
             ImGui::SameLine(0, sp(2.f));
-            if (button("Sign out this PC", ImVec2(0, 0), false, online)) { LF.target = d; LF.confirm = LifeState::SignOutPc; LF.open = true; }
+            if (button("Sign out this PC", ImVec2(0, 0), false, dev_ok)) { LF.target = d; LF.confirm = LifeState::SignOutPc; LF.open = true; }
         }
         ImGui::PopID();
     }
     if (online && dl.loaded && dl.legacy)
         ImGui::TextDisabled("A PC that has not updated RetroHub may still be signed in. It can only be locked out with \"Sign out all other PCs\".");
-    if (button("Refresh##life", ImVec2(0, 0), false, online, ui::Icon::Refresh)) { FR.cli.request_devices(); LF.asked_at = ImGui::GetTime(); }
+    if (button("Refresh##life", ImVec2(0, 0), false, dev_ok, ui::Icon::Refresh)) { FR.cli.request_devices(); LF.asked = true; }
     ImGui::SameLine();
-    if (button("Sign out all other PCs", ImVec2(0, 0), false, online)) { LF.confirm = LifeState::SignOutAll; LF.open = true; }
+    if (button("Sign out all other PCs", ImVec2(0, 0), false, dev_ok)) { LF.confirm = LifeState::SignOutAll; LF.open = true; }
     if (!LF.msg.empty()) {
         if (LF.msg_ok) { ImGui::PushTextWrapPos(0.f); ImGui::TextUnformatted(LF.msg.c_str()); ImGui::PopTextWrapPos(); }
         else account_text_error(LF.msg);
@@ -408,6 +414,7 @@ void draw_life_confirm() {
         if (LF.confirm == LifeState::None) ImGui::CloseCurrentPopup();   // finished (account deleted / signed out) while the box was open
         if (ui::modal_back()) { LF.confirm = LifeState::None; ImGui::CloseCurrentPopup(); }
         ImGui::PushTextWrapPos(sp(46.f));
+        load_saved_code();
         const std::string code = AC.code;   // the saved account code, if this PC made one
         auto code_reminder = [&]() {
             if (!code.empty()) ImGui::Text("Your account code: %s. Write it down first.", code.c_str());
@@ -423,13 +430,13 @@ void draw_life_confirm() {
         case LifeState::SignOutPc:
             ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted(("Sign out " + (LF.target.name.empty() ? std::string("this PC") : LF.target.name) + "?").c_str()); ImGui::PopFont();
             ImGui::Dummy(ImVec2(0, sp(0.5f)));
-            ImGui::TextUnformatted("That PC stops using your friends, messages and username right away. It can come back only with your account code. Nothing on it is deleted.");
+            ImGui::TextUnformatted("That PC stops using your friends, messages and username right away. It can come back only with a NEW account code, because this also stops your old account codes and any PC that has not updated RetroHub. Nothing on it is deleted.");
             go_label = "Sign it out"; go = false;
             break;
         case LifeState::SignOutAll:
             ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted("Sign out all other PCs?"); ImGui::PopFont();
             ImGui::Dummy(ImVec2(0, sp(0.5f)));
-            ImGui::TextUnformatted("Every other PC is signed out, including any that have not updated RetroHub. All your old account codes stop working and a new one is made for you. "
+            ImGui::TextUnformatted("Every other PC is signed out, including any that have not updated RetroHub. All your old account codes stop working, so you will make a new one afterwards (it is not made for you). "
                                    "This PC stays signed in.");
             go_label = "Sign them out";
             break;
@@ -480,7 +487,7 @@ void draw_life_confirm() {
                 break;
             case LifeState::SignOutAll: FR.cli.revoke_other_pcs(); LF.msg.clear(); break;
             case LifeState::SignOutThis: LF.signing_out = true; FR.cli.sign_out_this_pc(); LF.msg.clear(); break;
-            case LifeState::ReleaseName: FR.cli.release_username(); LF.msg = "Your username was given up. Pick a new one when you are ready."; LF.msg_ok = true; break;
+            case LifeState::ReleaseName: FR.cli.release_username(); LF.msg.clear(); break;   // the sentence comes from the server's answer (account_result), never before
             case LifeState::Delete: LF.deleting = true; FR.cli.delete_account(LF.typed); LF.msg.clear(); break;
             default: break;
             }

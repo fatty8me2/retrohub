@@ -414,9 +414,9 @@ int main(int argc, char** argv)
     CHECK(wait_for([&] { return C->c.connected(); }) && C->c.my_uid() == cuid);
 
 
-    printf("[per-PC sign-in]
-");
-    {
+    const bool new_server = A->c.server_has_devices();   // an older server (today's production) has no per-PC sign-ins: this PC then stays on its shared secret
+    printf("[per-PC sign-in] server %s per-PC sign-ins\n", new_server ? "offers" : "does not offer");
+    if (new_server) {
         /* The first connect after the update swapped this PC's secret for its own: identity.json holds it and a restart reconnects with it. */
         std::ifstream f(A->dir + "identity.json"); std::string txt((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         CHECK(txt.find(A->c.my_secret()) != std::string::npos, "identity.json holds the secret in use");
@@ -452,11 +452,11 @@ int main(int argc, char** argv)
         CHECK(wait_for([&] { return E->c.connected(); }));
         const std::string old_uid = E->c.my_uid();
         int seq0 = E->c.account_result().seq;
-        E->c.delete_account("wrong");
-        CHECK(wait_for([&] { return E->c.account_result().seq > seq0; }) && E->c.account_result().reason == "confirm-mismatch", "delete needs the typed username or friend code");
+        if (new_server) E->c.delete_account("wrong");
+        if (new_server) CHECK(wait_for([&] { return E->c.account_result().seq > seq0; }) && E->c.account_result().reason == "confirm-mismatch", "delete needs the typed username or friend code");
         seq0 = E->c.account_result().seq;
         E->c.sign_out_this_pc();
-        CHECK(wait_for([&] { return E->c.account_result().seq > seq0; }) && E->c.account_result().op == "sign_out" && E->c.account_result().ok, "sign-out answered");
+        CHECK(wait_for([&] { return E->c.account_result().seq > seq0; }) && E->c.account_result().op == "sign_out" && E->c.account_result().ok, "sign-out answered (an older server: answered locally)");
         CHECK(E->c.forget_identity_and_restart(), "identity forgotten");
         CHECK(wait_for([&] { return E->c.connected(); }) && E->c.my_uid() != old_uid, "a new account is made on this PC");
         /* delete: the account is gone for good */
