@@ -1122,7 +1122,9 @@ void draw_cases(Disp& D) {
     if (!cfm) shelfdraw::cases_vignette(sc, p0, p1, 0.55f + 0.35f * ins);
 
     // ---- the title block under the centre case: title + favourite star, a console chip with the facts, and the play history ----
-    if (n) {
+    if (n && cfm) {
+        cf_info_panel(dl, org, W, info_y0, info_y1, tight, cur_idx, can, ins, dt, reduced, n, D.sig);
+    } else if (n) {
         const int idx = cur_idx;
         const float maxw = W * 0.78f;
         const int tick = (int)(CS.clock / 5.f);   // the played line ("3 days ago") is refreshed every few seconds

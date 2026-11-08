@@ -256,6 +256,9 @@ inline float first_edge(const CaseDims& n, float ns, float extra) {
     return l;
 }
 
+/* The selected-case text block: fades in with a 12 px rise over 0.45 s on every new selection (t = seconds since the selection). */
+inline float info_alpha(float t) { return std::max(0.f, std::min(1.f, t / 0.45f)); }
+inline float info_rise(float t) { const float k = 1.f - info_alpha(t); return 12.f * k * k; }
 }  // namespace cf
 
 /* ---- the spring that moves the carousel ---- */
