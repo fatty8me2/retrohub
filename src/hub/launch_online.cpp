@@ -1,6 +1,7 @@
 #include "netplay_3ds_join.h"
 #include "app.h"
 #include "remote_play.h"
+#include "online_caps.h"
 #include <filesystem>
 
 GcOnline GCO;
@@ -308,7 +309,7 @@ void gc_tick() {
             GCO.status_seen = st.size();
             std::string l;
             while (std::getline(is, l)) {
-                while (!l.empty() && (l.back() == '' || l.back() == ' ')) l.pop_back();
+                while (!l.empty() && (l.back() == '\r' || l.back() == ' ')) l.pop_back();
                 if (l.rfind("error:", 0) == 0) {
                     std::string why = "GameCube online: " + l.substr(6);
                     autotest_log("driver " + l);
@@ -440,6 +441,32 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
     NP3_pending = true;
     set_notice("Connecting the 3DS wireless link...", 20.0);
 }
+/* onlineflow-M3: watch the Azahar join helper. A failure used to be invisible: Azahar ran offline while the hub thought the room link was up. */
+static bool NP3_join_watch = false;
+static unsigned long NP3_join_pid = 0;
+static std::string NP3_join_status;
+static unsigned long long NP3_join_t0 = 0;
+static void poll_np3ds_join() {
+    if (!NP3_join_watch) return;
+    if (!A.proc || !NP3.active()) { NP3_join_watch = false; return; }   // Azahar closed or the room ended: nothing left to report
+    bool alive = false;
+    if (NP3_join_pid) {
+        if (HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, NP3_join_pid)) { alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT; CloseHandle(h); }
+    }
+    std::string text;
+    if (!NP3_join_status.empty()) { std::ifstream f(std::filesystem::u8path(NP3_join_status), std::ios::binary); std::ostringstream o; o << f.rdbuf(); text = o.str(); }
+    std::string detail;
+    hubcaps::JoinVerdict v = hubcaps::join_verdict(NP3_join_pid != 0, alive, text, GetTickCount64() - NP3_join_t0, 150000, &detail);
+    if (v == hubcaps::JoinVerdict::Pending) return;
+    NP3_join_watch = false;
+    if (v == hubcaps::JoinVerdict::Joined) { autotest_log("3ds: joined the room"); return; }
+    online_log("3ds join helper failed: " + detail);
+    autotest_log("3ds join failed: " + detail);
+    const std::string why = hubcaps::join_failure_text(v);
+    NP3.stop();   // the room link is not up: do not keep pretending
+    if (is_host()) { set_notice(why, 15.0); host_abort("3DS online: the host's Azahar could not join its own room"); }
+    else launch_fail(why, 15.0);
+}
 void poll_np3ds() {
     if (NP3_resume.armed()) {
         if (A.lobby.members().empty()) NP3_resume.cancel();   // left the room
@@ -449,13 +476,14 @@ void poll_np3ds() {
             if (NP3_resume.take(!gc_needs_unpack(*g), GetTickCount(), &no, &p)) { hub::GameEntry copy = *g; launch_online_3ds(copy, no, false, nullptr, &p); }
         } else NP3_resume.cancel();
     }
-    if (!NP3.active()) return;
+    if (!NP3.active()) { NP3_join_watch = false; return; }   // room link gone (Azahar closed: launch.cpp after_exit stops NP3): nothing left to watch
     NP3.update();
     if (NP3.failed()) {
         launch_fail("3DS online: " + NP3.status(), 12.0);
         if (is_host()) host_abort("3DS online: " + NP3.status());
         NP3.stop();
         NP3_pending = false;
+        NP3_join_watch = false;
         return;
     }
     if (NP3_pending && NP3.ready()) {   // never start Azahar earlier: a failed join raises a modal error dialog in it
@@ -469,12 +497,15 @@ void poll_np3ds() {
             launch_fail("Azahar did not start - 3DS online cancelled.", 12.0);
             NP3.stop();
         } else {
-            std::string st;
+            NP3_join_status.clear();
             make_dirs(no_slash(hub::data_dir()) + "\\netplay\\3ds");   // only the host created it before: a guest's helper could not write its status file
-            hubnp3ds::start_join_driver(GetProcessId(A.proc), no_slash(hub::data_dir()) + "\\netplay\\3ds", hubnp3ds::nickname(A.st.name, room_my_slot()),
-                                        "", "127.0.0.1", NP3.connect_port(), L"", &st);
+            NP3_join_pid = hubnp3ds::start_join_driver(GetProcessId(A.proc), no_slash(hub::data_dir()) + "\\netplay\\3ds", hubnp3ds::nickname(A.st.name, room_my_slot()),
+                                                       "", "127.0.0.1", NP3.connect_port(), L"", &NP3_join_status);
+            NP3_join_t0 = GetTickCount64();
+            NP3_join_watch = true;
         }
     }
+    poll_np3ds_join();
 }
 /* ---------- Wii U remote play (docs/REMOTE_PLAY.md) ----------
  * Host: Cemu starts like an offline game (managed controls; players 2-4 are the guests' pads, fed to Cemu by the DSU server from
@@ -790,6 +821,10 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         }
         return;
     }
+    if (e.system != hub::System::N3DS && !is_native(e) && rom_missing(e)) {   // onlineflow-M7: a moved/ejected file used to end as a misleading "exit 2" message
+        launch_note(is_host, "RetroHub can't find the game file for " + e.title + ". Open it in your Library to point RetroHub at it again.", 12.0);
+        return;
+    }
     RunInfo ri = run_info_for(e, true);
     ri.room = true;
     ri.dropin = g_dropin_launch;
@@ -942,6 +977,11 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         return;
     }
     if (e.system == hub::System::GBA || e.system == hub::System::GB || e.system == hub::System::GBC) {
+        if (e.system != hub::System::GBA && !core_in.empty() && !hubcaps::core_from_host_ok(e.system, core_in)) {   // onlineflow-M12: the host's core name is remote input, never a path
+            online_log("refused the host's core name (" + std::to_string(core_in.size()) + " chars)");
+            launch_note(is_host, hubcaps::core_refused_text(), 10.0);
+            return;
+        }
         std::string corename = e.system == hub::System::GBA ? "mgba" : (core_in.empty() ? A.st.gb_core : core_in);
         bool gb_rb = false;
         if (e.system != hub::System::GBA && corename == "sameboy" && !find_core("sameboy_rb").empty()) { corename = "sameboy_rb"; gb_rb = true; }
