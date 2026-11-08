@@ -295,7 +295,9 @@ void draw_capture_modal() {
         o.y += sp(0.5f);
         dl->AddRectFilled(o, o + ImVec2(w, h), COL_PANEL2, h);
         dl->AddRectFilled(o, o + ImVec2(w * frac, h), COL_ACCENT, h);
-        ImGui::TextDisabled(CTL.cap_keyboard ? "Cancels by itself in %d s. Click Cancel to stop now." : "Cancels by itself in %d s. Hold B to cancel, or press Esc or click Cancel.", (int)std::ceil(std::max(0.0, left)));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));   // wrapped: it ran off the dialog (1.40.0 UI QA)
+        ImGui::TextWrapped(CTL.cap_keyboard ? "Cancels by itself in %d s. Click Cancel to stop now." : "Cancels by itself in %d s. Hold B to cancel, or press Esc or click Cancel.", (int)std::ceil(std::max(0.0, left)));
+        ImGui::PopStyleColor();
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
         ImGui::TextWrapped("No controller found. Plug one in and try again.");
