@@ -427,6 +427,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         poll_job();
         hang_watchdog_phase("cloud_gate_tick");
         cloud_gate_tick();
+        gs_cloud_sync_tick();
         hang_watchdog_phase("cloud_bg_poll");
         cloud_bg_poll();
         hang_watchdog_phase("run_pending_sync");

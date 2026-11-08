@@ -48,13 +48,20 @@ public:
     std::string to_json() const;
     bool from_json(const std::string& text);              // false (unchanged) on malformed input
     void merge_from(const Store& other);                  // per game: the entry with the newer `updated` wins
+    bool empty() const;                                   // no game was ever given a cheat choice: nothing to sync
     bool load(const std::string& vault_dir);              // missing file = empty, true
     bool save(const std::string& vault_dir) const;
     static std::string file_path(const std::string& vault_dir);
+    bool save_unmerged(const std::string& vault_dir) const;   // plain atomic write (callers hold gs::files_mutex)
 
 private:
     std::map<std::string, GameState> g_;
 };
+
+/* Cloud sync (saves-F11): merge the cloud copy of cheats.json into the file in `vault_dir`, per game, the newer `updated` winning (ties keep both sides' codes),
+ * and write it atomically under the same mutex Store::save() takes (gs::files_mutex). False (nothing written) when the cloud text is malformed; a malformed
+ * or missing local file counts as empty (the caller backs it up first). Store::save() itself merges what is on disk first, so a stale store never clobbers it. */
+bool merge_cloud_into_vault(const std::string& vault_dir, const std::string& cloud_json);
 
 /* ---- list rows ---- */
 struct Row {

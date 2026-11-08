@@ -8,6 +8,15 @@ hub::gs::Store GSTORE;
 
 void gs_load() { GSTORE.load(hub::saves::vault_dir()); }
 
+void gs_cloud_sync_tick() {   // saves-F11: the engine merged settings / cheats from another PC into the files: re-read them (saving merges again, so nothing is overwritten either way)
+    static unsigned seen = hub::saves::cloud_settings_rev();
+    const unsigned now = hub::saves::cloud_settings_rev();
+    if (now == seen) return;
+    seen = now;
+    gs_load();
+    cheats_reload_from_vault();
+}
+
 hub::gs::Values gs_values_for(const hub::GameEntry& e) {
     return hubui::effective_values(GSTORE, e.system, e.key, A.st.fullscreen, A.st.volume);
 }
