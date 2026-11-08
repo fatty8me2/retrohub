@@ -93,6 +93,10 @@ static void session_checks()
         CHECK(got(h, &from) && from == 1);
         h.qa_inject(false, -1, A1, d01, sizeof d01);         // the old address no longer speaks as guest 1
         CHECK(!got(h, &from));
+        // the same token repeated over the relay does not unbind a working path or drop data
+        h.qa_inject(true, 1, "", t1.data(), (int)t1.size());
+        h.qa_inject(false, -1, "1.2.3.4:7000", d01, sizeof d01);
+        CHECK(got(h, &from) && from == 1);
         // the token itself is only accepted over the relay
         auto t1x = tokf(1, 0x33333333u);
         h.qa_inject(false, -1, A1, t1x.data(), (int)t1x.size());
