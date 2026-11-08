@@ -414,13 +414,18 @@ int main(int argc, char** argv) {
         // a hub-only payload: no BattleShip.exe needed, and the kind round-trips through the manifest
         put(d / "staged" / "sub" / "x.dat", std::string(100, 'x'));
         bool kind = true;
-        CHECK(write_staged_manifest(ud, "v1.40.0", true));
-        CHECK(staged_reusable(ud, "v1.40.0", &kind) && kind);
+        const std::string SH = std::string(64, 'c');
+        CHECK(write_staged_manifest(ud, "v1.40.0", true));                               // hub-only with no hash to re-check Smash Classic with: not reusable
+        CHECK(!staged_reusable(ud, "v1.40.0", &kind));
+        CHECK(write_staged_manifest(ud, "v1.40.0", true, "not-a-hash") && !staged_reusable(ud, "v1.40.0", &kind));
+        std::string gotHash;
+        CHECK(write_staged_manifest(ud, "v1.40.0", true, SH));
+        CHECK(staged_reusable(ud, "v1.40.0", &kind, &gotHash) && kind && gotHash == SH);   // the hash the signed marker named comes back for the hand-off
         CHECK(write_staged_manifest(ud, "v1.40.0", false));
         CHECK(!staged_reusable(ud, "v1.40.0", &kind));                                  // the same files recorded as a full payload need BattleShip.exe
-        StagedInfo hi = scan_staged(ud + "\\staged"); hi.version = "v1.40.0"; hi.hub_only = true;
+        StagedInfo hi = scan_staged(ud + "\\staged"); hi.version = "v1.40.0"; hi.hub_only = true; hi.smash_sha256 = SH;
         StagedInfo hp;
-        CHECK(parse_staged_manifest(staged_manifest_json(hi), &hp) && hp.hub_only);
+        CHECK(parse_staged_manifest(staged_manifest_json(hi), &hp) && hp.hub_only && hp.smash_sha256 == SH);
         hi.hub_only = false;
         CHECK(parse_staged_manifest(staged_manifest_json(hi), &hp) && !hp.hub_only && staged_manifest_json(hi).find("payload") == std::string::npos);   // older manifests stay as they were
         std::filesystem::remove_all(d, ec);
