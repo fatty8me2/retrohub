@@ -17,6 +17,7 @@ namespace hubnet {
 
 constexpr int kMaxSlots = 4;
 constexpr int kMaxPayload = 1100;   // bytes per send()
+std::string game_room_caps(bool have_ident);         // "&caps=reasons[,gameauth]" for a game-room socket (session.cpp)
 bool is_production_server(const std::string& url);   // true for the production Worker host
 /* Test/QA harnesses: server = argv[1] > $RETROHUB_TEST_SERVER. Exits(2) with a clear message if neither is set, or if it is
  * production and RETROHUB_ALLOW_PROD_TESTS=1 is not set (tests create throwaway accounts that get auto-friended to the owner). */
