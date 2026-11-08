@@ -9,6 +9,7 @@
 #define STBI_NO_HDR
 #include "third_party/stb_image.h"
 #include "continue_ui.h"
+#include "launch_guard_logic.h"
 #include "hack_ui.h"
 #include "continue_logic.h"
 #include "attract_logic.h"
@@ -180,7 +181,8 @@ bool continue_hero_ok(const hub::GameEntry& e) {
 }
 
 void continue_launch(const hub::GameEntry& e, bool resume, bool fresh) {
-    if (launch_blocked("continue_launch") || A.proc || session_active()) return;
+    if (launch_blocked("continue_launch")) return;
+    if (!hubui::launch_allowed(A.proc != nullptr, session_active())) { set_notice(hubui::launch_busy_reason(A.proc != nullptr)); return; }
     hub::GameEntry c = e;
     if (fresh) A.fresh_key = e.key;
     if (resume) play_entry_anim(c, true, [](const hub::GameEntry& g) { resume_entry(g, -1); });
@@ -315,7 +317,8 @@ void draw_continue_hero(const hub::GameEntry& e, float h) {
     const float main_w = sp(narrow ? 18.f : 24.f);
     if (button(act.label.c_str(), ImVec2(main_w, bh), true, act.enabled, playing ? ui::Icon::Gamepad : ui::Icon::Play))
         continue_launch(e, act.resume);
-    if (act.resume && ImGui::IsItemHovered()) ImGui::SetTooltip("Pick up from your last save state");
+    if (!act.enabled && !app_locked() && !running_this(e) && busy_now() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", hubui::launch_busy_reason(A.proc != nullptr));
+    else if (act.resume && ImGui::IsItemHovered()) ImGui::SetTooltip("Pick up from your last save state");
     seed_nav_here();   // the Continue button is the default focus on Home
     if (act.show_fresh) {
         ImGui::SameLine(0, gap);
