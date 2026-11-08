@@ -302,6 +302,7 @@ static std::atomic<bool> g_clip_want{false};   // set by the pad poll (any threa
 static unsigned long long g_clip_cool = 0;
 static void clip_request_save() {
     std::string m;
+    if (!g_clips.enabled()) { osd::push("Instant replay is off. Turn it on in RetroHub Settings.", osd::Kind::Warn); return; }
     if (g_clips.request_save(std::time(nullptr), &m)) osd::push("Saving clip...");
     else osd::push(m, osd::Kind::Warn);
 }
@@ -1171,7 +1172,9 @@ static void ctl_dispatch(const runctl::Command& c, bool vi_ctx) {
             break;
         case runctl::Cmd::Clip: {
             std::string m;
-            bool ok = g_clips.request_save(std::time(nullptr), &m);
+            const bool clips_on = g_clips.enabled();
+            bool ok = clips_on && g_clips.request_save(std::time(nullptr), &m);
+            if (!clips_on) m = "Instant replay is off. Turn it on in RetroHub Settings.";
             if (ok) { osd::push("Saving clip..."); m = "saving"; }
             else osd::push(m, osd::Kind::Warn);
             ctl_ack(c.seq, ok, m);
