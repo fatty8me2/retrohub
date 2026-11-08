@@ -16,15 +16,15 @@
 namespace runctl {
 
 enum class Cmd { None, SaveState, LoadState, Screenshot, SwapDisc, Quit,
-                 /* added for the quick menu / OSD (docs/RUNNER_CTL.md); all but OsdMsg, Volume and Mute are refused online */
+                 /* added for the quick menu / OSD (docs/RUNNER_CTL.md); the rule is offline_only() below: the commands it lists are refused online */
                  Volume,    // value 0-100
                  Mute,      // value 1 = mute, 0 = unmute
                  Ff,        // value 1 = on (the last chosen fast speed, default 2x), 0 = off (1x)
                  Speed,     // speed = 0.25 0.5 1 1.5 2 3 5 8, or 0 = "max" (uncapped)
-                 Rewind,    // value 1/0   (runners reply "unsupported" for now)
-                 Shader,    // text = shader name (unsupported for now)
-                 Overlay,   // value 1/0   (unsupported for now)
-                 Clip,      // save the last 30 s as an MP4 into the shots folder (retrorun, n64run; allowed online: cosmetic)
+                 Rewind,    // value 1/0   (retrorun: implemented, offline only; n64run replies "unsupported")
+                 Shader,    // text = shader name (retrorun: screen filter / bezel, offline only; n64run replies "unsupported")
+                 Overlay,   // value 1/0   (retrorun: stats overlay, FPS / ping, allowed online as it only displays; n64run replies "unsupported")
+                 Clip,      // save the last 30 s as an MP4 into the shots folder (retrorun and n64run; allowed online: cosmetic)
                  OsdMsg,    // text = toast shown on the runner's OSD
                  Input,     // value 0 = "input off" (neutral input to the core while the hub's quick menu is open), 1 = on. Allowed online.
                  /* Plan 4 (docs/RUNNER_CTL.md): */
@@ -32,7 +32,8 @@ enum class Cmd { None, SaveState, LoadState, Screenshot, SwapDisc, Quit,
                  OsdCorner, // text = persistent corner text (party standings, a challenge timer), "" clears it; slot = corner 0 top-left,
                             // 1 top-right, 2 bottom-left, 3 bottom-right; value = seconds to keep it (0 = until replaced). Allowed online.
                  Handoff,   // pass a controller port to another player of the session: slot = port 0-3, value = the receiving lobby
-                            // slot. Allowed online. Runners ack ok:false "unsupported" until the hand-off netcode lands (Plan 4 P4).
+                            // slot. Allowed online. retrorun: experimental, needs --handoff or RETRORUN_HANDOFF=1
+                            // and a rollback game, else it acks ok:false "unsupported". n64run always acks "unsupported".
                  /* Live hub (docs/RUNNER_CTL.md "Live controls"): */
                  ReloadControls }; // re-read the --controls profile file (the hub rewrote it) and apply it on the next frame: mapping, deadzones,
                             // turbo and the pad port order. Local only (inputs travel as RetroPad masks), so it is allowed online.
