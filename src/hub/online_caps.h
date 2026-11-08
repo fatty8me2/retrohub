@@ -29,6 +29,30 @@ inline bool has_version_id(hub::System s) {
 inline void add_version_id(std::map<std::string, std::string>* games, hub::System s, const std::string& catalog_id, const std::string& key) {
     if (games && !catalog_id.empty() && !key.empty() && has_version_id(s)) games->emplace(std::string(kVerPrefix) + catalog_id, key);
 }
+/* "Use host's save" (onlineflow-M11): the systems whose launch_online() branch copies the host's battery save / memory card into the
+ * throwaway session dir and passes --share-host-save (guests' own saves are never touched; nobody writes into a vault). KEEP IN SYNC with
+ * those branches in launch_online.cpp. Kanto Together and the link-cable/DS/GC/3DS/Wii U paths have their own save rules. */
+inline bool share_host_save_supported(hub::System s) {
+    switch (s) {
+        case hub::System::N64: case hub::System::GBA: case hub::System::GB: case hub::System::GBC:
+        case hub::System::NES: case hub::System::SNES: case hub::System::PS1: case hub::System::PS2:
+            return true;
+        default: return false;
+    }
+}
+/* Default of the box before the host touches it: ON for N64 and GB/GBC/GBA (as it always was), OFF for the systems that gained the option later
+ * (NES/SNES keep free-seat drop-in, which a shared save turns off; PS1/PS2 keep their old blank-card rooms). `choice`: -1 = the host never
+ * touched it for this system, else 0/1. */
+inline bool share_host_save_default(hub::System s) { return s == hub::System::N64 || s == hub::System::GB || s == hub::System::GBC || s == hub::System::GBA; }
+inline bool share_host_save_effective(hub::System s, int choice) { return choice < 0 ? share_host_save_default(s) : choice != 0; }
+inline bool share_host_save_is_card(hub::System s) { return s == hub::System::PS1 || s == hub::System::PS2; }
+inline const char* share_host_save_label(hub::System s) {
+    return share_host_save_is_card(s) ? "Use host's memory card (saved games)" : "Use host's save (unlocked characters/boards)";
+}
+inline const char* share_host_save_state_text(hub::System s, bool on) {
+    if (share_host_save_is_card(s)) return on ? "Using the host's memory card (saved games)." : "Starting from a blank memory card.";
+    return on ? "Using the host's save (unlocked characters/boards)." : "Starting from an empty save.";
+}
 
 /* Remote play: the host runs the emulator and streams video to guests (streamrun), guests send pad input back. Guests need no copy
  * of the game. Today: Wii U (Cemu) only. */
