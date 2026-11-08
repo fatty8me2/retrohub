@@ -302,9 +302,22 @@ Selectability game_selectable(const std::string& game_id, int max_players,
     if (host && !remote_play) {
         std::string ref;
         token(*host, &ref);
+        /* GB/GBC/GBA/NES/SNES/NDS catalog games: each PC lists its copy's content id under "v:<id>" (lib_state.cpp my_games). Compared only when BOTH sides
+         * published one, so a friend on an older RetroHub (no id) never blocks a match. */
+        auto hv = host->games.find(kVerPrefix + game_id);
+        std::vector<const PeerInfo*> odd;
         for (auto& p : peers) {
+            if (&p == host) continue;
             token(p, &t);
-            if (t != ref) { r.reason = "different ROM version (" + p.name + ")"; return r; }
+            auto pv = p.games.find(kVerPrefix + game_id);
+            if (t != ref || (hv != host->games.end() && pv != p.games.end() && pv->second != hv->second)) odd.push_back(&p);
+        }
+        if (!odd.empty()) {
+            size_t guests = peers.size() - 1;
+            /* every guest differs from the host (and there are several): the host's copy is the odd one out */
+            if (guests >= 2 && odd.size() == guests) r.reason = host->name + " has a different version of this game (region or revision)";
+            else r.reason = odd[0]->name + " has a different version of this game (region or revision)";
+            return r;
         }
     }
     r.ok = true;
@@ -332,21 +345,22 @@ std::vector<std::string> hello_messages(const std::string& version, const std::m
                                         const std::string& app) {
     std::vector<std::string> out;
     size_t i = 0;
+    auto gi = games.begin();
     int part = 0;
     do {
         std::string o = "{\"kind\":\"hello\",\"version\":\"" + json::escape(version) + "\",\"part\":" + std::to_string(part) + ",\"parts\":@@";
-        if (part == 0) {
-            if (!app.empty()) o += ",\"app\":\"" + json::escape(app) + "\"";
-            o += ",\"games\":{";
-            bool f = true;
-            for (auto& g : games) {
-                if (!f) o += ",";
-                f = false;
-                o += "\"" + json::escape(g.first) + "\":\"" + json::escape(g.second) + "\"";
-            }
-            o += "}";
+        if (part == 0 && !app.empty()) o += ",\"app\":\"" + json::escape(app) + "\"";
+        /* the games map (catalog md5s + "v:" version ids) is spread over the parts too, so a big library never passes the server's text limit */
+        o += ",\"games\":{";
+        bool f = true;
+        while (gi != games.end()) {
+            std::string g = "\"" + json::escape(gi->first) + "\":\"" + json::escape(gi->second) + "\"";
+            if (!f && o.size() + g.size() + 3 > max_bytes) break;
+            o += (f ? "" : ",") + g;
+            f = false;
+            ++gi;
         }
-        o += ",\"keys\":[";
+        o += "},\"keys\":[";
         bool first = true;
         while (i < keys.size()) {
             std::string k = "\"" + json::escape(keys[i]) + "\"";
@@ -357,7 +371,7 @@ std::vector<std::string> hello_messages(const std::string& version, const std::m
         }
         out.push_back(o + "]}");
         ++part;
-    } while (i < keys.size());
+    } while (i < keys.size() || gi != games.end());
     for (auto& m : out) m.replace(m.find("@@"), 2, std::to_string(out.size()));   // total part count, so receivers know when the hello is complete
     return out;
 }
@@ -366,6 +380,10 @@ bool parse_hello(const Json& body, PeerInfo* out) {
     if (body.str("kind") != "hello") return false;
     bool cont = body.num("part", 0) > 0;   // continuation of a long key list
     if (cont) {
+        const Json* cg = body.get("games");
+        if (cg && cg->type == Json::Object)
+            for (auto& kv : cg->o)
+                if (kv.second.type == Json::String) out->games[kv.first] = kv.second.s;
         const Json* k = body.get("keys");
         if (k && k->type == Json::Array)
             for (auto& v : k->a)

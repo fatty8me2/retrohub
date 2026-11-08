@@ -670,6 +670,8 @@ void my_games(std::map<std::string, std::string>* games, std::vector<std::string
         if (is_native(e)) { (*games)["smash64"] = "native"; continue; }
         if (!e.catalog_id.empty() && e.key.compare(0, 4, "n64:") == 0 && !games->count(e.catalog_id))
             (*games)[e.catalog_id] = upper(e.key.substr(4));
+        /* Same catalog game, different region/revision: send the content-based key as a version id (see hubcaps::add_version_id). Older RetroHubs publish none and are never blocked by it. */
+        hubcaps::add_version_id(games, e.system, e.catalog_id, e.key);
         if (keys) {
             keys->push_back(e.key);
             /* The room names a catalog game by its catalog id (room_id), so advertise that too, or game_selectable never finds non-N64 catalog games (GameCube) */
