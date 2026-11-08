@@ -18,7 +18,7 @@ void boot_sync_options() {
  * (default play_entry) runs exactly as before. */
 void play_entry_anim(const hub::GameEntry& e, bool quick, std::function<void(const hub::GameEntry&)> launch) {
     if (launch_blocked("play_entry_anim")) return;
-    if (!hubui::launch_allowed(A.proc != nullptr, session_active())) { set_notice(hubui::launch_busy_reason()); return; }   // shell-H2: no animation, no second game
+    if (!hubui::launch_allowed(A.proc != nullptr, session_active())) { set_notice(hubui::launch_busy_reason(A.proc != nullptr)); return; }   // shell-H2: no animation, no second game
     if (!launch) launch = [](const hub::GameEntry& g) { play_entry(g); };
     boot_sync_options();
     const bool headless_skip = g_headless && !std::getenv("HUB_BOOTANIM_FORCE");

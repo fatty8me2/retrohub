@@ -72,7 +72,10 @@ int main(int argc, char** argv) {
     // shell-H2: no launch while ANY session is up (GC NetPlay / 3DS room never set A.proc)
     CHECK(hubui::launch_allowed(false, false));
     CHECK(!hubui::launch_allowed(true, true) && !hubui::launch_allowed(true, false) && !hubui::launch_allowed(false, true));
-    CHECK(hubui::launch_button_enabled(true, false, false) && !hubui::launch_button_enabled(true, false, true) && !hubui::launch_button_enabled(false, false, false));
+    // a room's own launch inside its session (3DS Azahar after NP3 is up, Wii U Cemu after RP.proc) must pass; a user launch must not
+    CHECK(hubui::launch_allowed(false, true, true) && !hubui::launch_allowed(false, true, false));
+    CHECK(!hubui::launch_allowed(true, true, true) && !hubui::launch_allowed(true, false, true));   // a running A.proc still refuses everything
+    CHECK(std::string(hubui::launch_busy_reason(true)) == "A game is already running." && std::string(hubui::launch_busy_reason(false)) == "An online game is running.");
     CHECK(hubui::cheats_return_focus(true, true) && !hubui::cheats_return_focus(true, false) && !hubui::cheats_return_focus(false, true));
     // shell-M6: capture dialog press versus hold
     {
