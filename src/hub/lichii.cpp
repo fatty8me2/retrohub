@@ -441,7 +441,9 @@ std::string lichii_ini_defaults(const std::string& in) {
 
 static bool all_digits(const std::string& s) { return !s.empty() && s.size() < 4 && s.find_first_not_of("0123456789") == std::string::npos; }
 
-std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, bool fullscreen) {
+std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, bool fullscreen, const std::vector<std::string>* skip_keys) {
+    auto skipped = [&](const char* sec, const char* key) { if (!skip_keys) return false; const std::string id = std::string(sec) + "." + key; for (const auto& k : *skip_keys) if (k == id) return true; return false; };
+    auto put = [&](std::string& t, const char* sec, const char* key, const std::string& val) { if (!skipped(sec, key)) t = ini_put(t, sec, key, val); };
     auto get = [&](const char* k, const char* def) { auto i = v.find(k); return i == v.end() || i->second.empty() ? std::string(def) : i->second; };
     std::string res = get("switch.res", "3"), fg = get("switch.framegen", "off"), vs = get("switch.vsync", "fifo");
     if (!all_digits(res)) res = "3";
@@ -454,23 +456,30 @@ std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, b
     const std::string pc = get("switch.pacing", "lichii");
     if (pc == "smooth60") fg = "2";
     std::string t = in;
-    t = ini_put(t, "Renderer", "resolution_setup", res);
+    put(t, "Renderer", "resolution_setup", res);
     if (pc == "auto" || pc == "30" || pc == "60" || pc == "smooth60")
-        t = ini_put(t, "Renderer", "frame_pacing_mode", pc == "auto" ? "0" : pc == "30" ? "1" : "2");
+        put(t, "Renderer", "frame_pacing_mode", pc == "auto" ? "0" : pc == "30" ? "1" : "2");
     if (all_digits(fg) && fg != "0" && fg != "1") {
-        t = ini_put(t, "Renderer", "frame_gen", "true");
-        t = ini_put(t, "Renderer", "frame_gen_type", "1");
-        t = ini_put(t, "Renderer", "frame_gen_multiplier", fg);
+        put(t, "Renderer", "frame_gen", "true");
+        put(t, "Renderer", "frame_gen_type", "1");
+        put(t, "Renderer", "frame_gen_multiplier", fg);
     } else {
-        t = ini_put(t, "Renderer", "frame_gen", "false");
+        put(t, "Renderer", "frame_gen", "false");
     }
-    t = ini_put(t, "Renderer", "use_vsync", vs == "mailbox" ? "1" : vs == "off" ? "0" : "2");
+    put(t, "Renderer", "use_vsync", vs == "mailbox" ? "1" : vs == "off" ? "0" : "2");
     const std::string as = get("switch.async_shaders", "on");
-    if (as == "on" || as == "off") t = ini_put(t, "Renderer", "use_asynchronous_shaders", as == "on" ? "true" : "false");   // "lichii": untouched
+    if (as == "on" || as == "off") put(t, "Renderer", "use_asynchronous_shaders", as == "on" ? "true" : "false");   // "lichii": untouched
     const std::string ga = get("switch.gpu_accuracy", "low");   // Lichii GpuAccuracy {Low 0, High 1}
-    if (ga == "low" || ga == "high") t = ini_put(t, "Renderer", "gpu_accuracy", ga == "low" ? "0" : "1");   // "lichii": untouched
-    t = ini_put(t, "UI", "fullscreen", fullscreen ? "true" : "false");
-    t = ini_put(t, "System", "current_user", "0");
+    if (ga == "low" || ga == "high") put(t, "Renderer", "gpu_accuracy", ga == "low" ? "0" : "1");   // "lichii": untouched
+    put(t, "UI", "fullscreen", fullscreen ? "true" : "false");
+    put(t, "System", "current_user", "0");
+    return t;
+}
+
+std::string fritchii_ini_pin(const std::string& in) {
+    std::string t = in;
+    t = ini_put(t, "Renderer", "frizti_settings_revision", std::to_string(kFriztiPinRevision));
+    t = ini_put(t, "Renderer", "oot_fps_asked", "true");
     return t;
 }
 
@@ -659,7 +668,7 @@ std::string lichii_controls_ini(const std::string& in, const hubctl::Profile& pr
 /* ------------------------------------------------------------------ prepare + args */
 
 std::string prepare_lichii(const std::string& install, const hubctl::Profile& prof, const std::string& guid, int port, const hub::gs::Values& v,
-                           bool fullscreen, const SdlBinds* binds) {
+                           bool fullscreen, const SdlBinds* binds, const std::vector<std::string>* skip_keys) {
     std::error_code ec;
     fs::create_directories(P(lichii_user_dir(install)), ec);
     if (!is_dir(lichii_user_dir(install))) return "could not create Lichii's user folder";
@@ -667,7 +676,7 @@ std::string prepare_lichii(const std::string& install, const hubctl::Profile& pr
     std::string t = read_text(ini);
     const bool first = read_text(marker).empty();
     if (first) t = lichii_ini_defaults(t);
-    t = lichii_ini_launch(t, v, fullscreen);
+    t = lichii_ini_launch(t, v, fullscreen, skip_keys);
     std::string g = guid;
     int pt = port;
     const SdlBinds* b = binds;

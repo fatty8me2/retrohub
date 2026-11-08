@@ -72,7 +72,12 @@ std::string lichii_ini_defaults(const std::string& ini);
  * frame_pacing_mode (switch.pacing: auto 0, 30 1, 60 2, smooth60 = 2 + frame generation 2x overriding switch.framegen (the target counts
  * presented frames, generated ones included: 30 real + 30 generated), "lichii" = untouched);
  * [UI] fullscreen; [System] current_user=0. */
-std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, bool fullscreen);
+/* skip_keys: "Section.key" names the caller does not want written (Fritchii resets its own tuned graphics keys at every start: nx_runner.h kFritchiiSkipKeys). nullptr = write all (Lichii). */
+std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, bool fullscreen, const std::vector<std::string>* skip_keys = nullptr);
+/* Fritchii only (nx_runner.h): [Renderer] frizti_settings_revision=999 (+ the \default=false twin) and oot_fps_asked=true. Fritchii reapplies 15 "tuned" graphics keys at start
+ * from its own settings revision; a revision above its own (3 in v4.1) means "already applied", so RetroHub's values stay what Lichii would get. Pure. */
+constexpr int kFriztiPinRevision = 999;
+std::string fritchii_ini_pin(const std::string& ini);
 /* [Controls] player 1 (player_0_*) from the RetroHub "switch" profile on one SDL pad (guid + port among same-guid pads); player_0_connected=true,
  * player_0_type=0 (Pro Controller), players 2-8 disconnected. Value format (Lichii sdl_driver.cpp):
  *   button  engine:sdl,port:<n>,guid:<guid>,button:<sdl button>
@@ -122,7 +127,7 @@ bool lichii_pad_select(const std::vector<PadDesc>& by_port, const std::vector<Pa
 
 /* Creates user\ (portable), writes the defaults once, the per-launch values, controls and the profile. Returns "" or an error. */
 std::string prepare_lichii(const std::string& install_dir, const hubctl::Profile& profile, const std::string& sdl_guid, int port,
-                           const hub::gs::Values& v, bool fullscreen, const SdlBinds* binds = nullptr);
+                           const hub::gs::Values& v, bool fullscreen, const SdlBinds* binds = nullptr, const std::vector<std::string>* skip_keys = nullptr);
 /* Environment variables added to Lichii's own (the child inherits RetroHub's environment plus these; launch.cpp spawn()).
  * switch.preload_shaders: "all" -> EDEN_NX2_PRELOAD_ALL_PIPELINES=1 (Lichii builds every cached pipeline at start, ~0.45 MB driver memory each);
  * "auto" (also missing / unknown) -> the same when physical_ram_bytes >= 30 GiB (a PC sold as 32 GB reports ~31.7 GiB); "recent" -> nothing. Pure. */

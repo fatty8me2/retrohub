@@ -19,10 +19,16 @@
 
 namespace hubemu {
 
-enum class Kind { Azahar, Cemu, Dolphin, Pcsx2, Lrps2, Ppsspp, Lichii };   // Ppsspp: PlayStation Portable (ppsspp.h); Lichii: Switch / Switch 2 (lichii.h)
+enum class Kind { Azahar, Cemu, Dolphin, Pcsx2, Lrps2, Ppsspp, Lichii, Fritchii };   // Ppsspp: PlayStation Portable (ppsspp.h); Lichii: Switch / Switch 2 (lichii.h); Fritchii: Frizti's Ocarina-of-Time fork of Lichii (same exe name, folder layout, config and save layout; opt-in via switch.runner, nx_runner.h)
 //   // Pcsx2: PlayStation 2 (pcsx2.h); Lrps2: the libretro PS2 core for online rooms (a DLL for retrorun, not an exe)
 
 const char* name(Kind k);                 // "Azahar" / "Cemu" / "Dolphin"
+/* The two Switch emulators (Lichii and its fork Fritchii) share all their code: install, upgrade, config, keys, saves. */
+inline bool is_nx(Kind k) { return k == Kind::Lichii || k == Kind::Fritchii; }
+/* True while the Release for this kind still holds placeholder values (sha256 all zeros: no real pin yet). Installing it is refused with a plain message. */
+bool release_is_placeholder(Kind k);
+/* Fritchii only: the first `update-*` / `.update-*` entry its own updater left in the install folder ("" = none; always "" for other kinds). See emulators.cpp. */
+std::string update_leftovers(Kind k, const std::string& install_dir);
 Kind kind_for(hub::System s);             // N3DS -> Azahar, WiiU -> Cemu, GC -> Dolphin, PS2 -> Pcsx2
 /* Pinned release: version, archive URL, exact size and SHA-256 (checked after the download). */
 struct Release {
@@ -230,7 +236,14 @@ struct SaveSession {
 };
 /* Before launch: vault -> emulator (newest wins; see sync_tree_newest). */
 SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& vault_battery_dir,
-                          const std::string& vault_root, uint64_t title_id_override = 0);   // override: Wii U title id read from an unpacked .wua
+                          const std::string& vault_root, uint64_t title_id_override = 0,   // override: Wii U title id read from an unpacked .wua
+                          const char* manifest_suffix = "");   // "-fritchii": a second emulator sharing the vault folder keeps its OWN "last agreed" manifest (a shared one would let a stale copy win)
+/* The Switch save folders of one install, as begin_session maps them: rels[i] is relative to <install>\user, vault_rels[i] relative to the vault battery dir. */
+struct NxSaveMap { std::string user_root; std::vector<std::string> rels, vault_rels; std::string error; };
+/* create_profile: write profiles.dat when missing (the install about to run); false = a read-only look at another install. force_account: always list the nand/user/save/account folder too. */
+NxSaveMap nx_save_map(const std::string& install_dir, uint64_t title_id, const std::string& vault_battery_dir, bool create_profile, bool force_account = false);
+/* <vault>\.sync\emu-<system>-<game><suffix>.json for a vault battery dir (what begin_session uses). */
+std::string emu_manifest_path(const std::string& vault_battery_dir, const char* suffix = "");
 /* The vault -> emulator step of begin_session (newest wins), for a session whose fields the caller filled in (s.active, emu_root, battery,
  * backup_dir, rels, vault_rels, manifest_path); sets s.summary and s.error. */
 void sync_vault_to_emulator(SaveSession& s);

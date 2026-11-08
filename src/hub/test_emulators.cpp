@@ -1017,11 +1017,11 @@ static Files snapshot(const fs::path& d) {
 }
 }   // namespace upg
 
-static void test_lichii_upgrade(const fs::path& root) {
+static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
     using namespace upg;
     std::error_code ec;
     fs::remove_all(root, ec);
-    const fs::path dir = fs::u8path(hubemu::managed_dir(hubemu::Kind::Lichii, root.string()));
+    const fs::path dir = fs::u8path(hubemu::managed_dir(kind, root.string()));
     const fs::path user = dir / "user";
 
     auto v1 = make_rel(root / "zips" / "v1.zip", "build-88", {{"lichii.exe", "EXE-1"}, {"Qt6Core.dll", "qt-1"}, {"old_only.dll", "gone-soon"},
@@ -1044,7 +1044,7 @@ static void test_lichii_upgrade(const fs::path& root) {
     fs::path corrupt_for;   // when set, a fetch of the release with this zip delivers the corrupt copy
     std::map<std::string, fs::path> zips = {{v1->sha, v1->zip}, {v2->sha, v2->zip}, {v3->sha, v3->zip}, {v4->sha, v4->zip}};
     hubemu::InstallTestHooks hk;
-    hk.kind = hubemu::Kind::Lichii;
+    hk.kind = kind;
     hk.release = cur;
     hk.fetch = [&](const hubemu::Release& r, const std::string& out, std::string* err) {
         ++fetches;
@@ -1058,11 +1058,11 @@ static void test_lichii_upgrade(const fs::path& root) {
     };
     hk.running = [&](const std::string&) { return is_running; };
     auto use = [&](const std::shared_ptr<Rel>& r) { cur = &r->r; hk.release = cur; hubemu::set_install_test_hooks(&hk); };
-    auto run = [&](std::string* err) { return hubemu::install_blocking(hubemu::Kind::Lichii, root.string(), err, nullptr); };
+    auto run = [&](std::string* err) { return hubemu::install_blocking(kind, root.string(), err, nullptr); };
     auto marker_has = [&](const std::shared_ptr<Rel>& r) { return read_text(dir / "retrohub-install.txt").find("sha256 " + r->sha) != std::string::npos; };
     auto scratch_gone = [&]() { return !fs::exists(dir / "_old") && !fs::exists(dir / "_extract") && !fs::exists(dir / "retrohub-upgrade.txt"); };
     auto playable = [&](const char* exe_text) {
-        hubemu::Install in = hubemu::find(hubemu::Kind::Lichii, "", "", root.string());
+        hubemu::Install in = hubemu::find(kind, "", "", root.string());
         return !in.exe.empty() && in.managed && read_text(fs::u8path(in.exe)) == exe_text;
     };
 
@@ -1083,12 +1083,12 @@ static void test_lichii_upgrade(const fs::path& root) {
     // ---- 1. the marker matches the pin: nothing to do (no download, nothing touched)
     fetches = 0;
     CHECK(run(&err) && fetches == 0);
-    CHECK(!hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).outdated);
+    CHECK(!hubemu::find(kind, "", "", root.string()).outdated);
 
     // ---- 2. a newer pin: the install is outdated but still playable, and the next run upgrades it
     use(v2);
     {
-        hubemu::Install in = hubemu::find(hubemu::Kind::Lichii, "", "", root.string());
+        hubemu::Install in = hubemu::find(kind, "", "", root.string());
         CHECK(!in.exe.empty() && in.outdated && in.how.find("update available") != std::string::npos);
     }
     fetches = 0;
@@ -1099,7 +1099,7 @@ static void test_lichii_upgrade(const fs::path& root) {
     CHECK(!fs::exists(dir / "old_only.dll"));   // stale file of the old build removed
     CHECK(!fs::exists(dir / "lichii.pdb") && !fs::exists(dir / "eden-cli.pdb") && !fs::exists(dir / "vc_redist.x64.exe"));
     CHECK(marker_has(v2) && !marker_has(v1) && scratch_gone());
-    CHECK(!hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).outdated && playable("EXE-2"));
+    CHECK(!hubemu::find(kind, "", "", root.string()).outdated && playable("EXE-2"));
     fetches = 0;
     CHECK(run(&err) && fetches == 0);   // and now it is current
 
@@ -1109,7 +1109,7 @@ static void test_lichii_upgrade(const fs::path& root) {
     err.clear();
     CHECK(!run(&err) && !err.empty());   // download fails
     CHECK(playable("EXE-2") && marker_has(v2) && snapshot(user) == data && scratch_gone());
-    CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).outdated);   // and it will be offered again
+    CHECK(hubemu::find(kind, "", "", root.string()).outdated);   // and it will be offered again
     offline = false;
     corrupt_for = v3->zip;
     err.clear();
@@ -1162,15 +1162,15 @@ static void test_lichii_upgrade(const fs::path& root) {
         write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\nphase 2\n");   // every old file parked, the new ones coming in
         write_text(dir / "fourth.dll", "half-written");
         write_text(dir / "_extract" / "junk.bin", "junk");
-        CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).exe.empty());   // right now it does not look installed
-        hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());   // what the next start does
+        CHECK(hubemu::find(kind, "", "", root.string()).exe.empty());   // right now it does not look installed
+        hubemu::recover_interrupted(kind, root.string());   // what the next start does
         CHECK(snapshot(dir) == before);   // exactly the v3 install again, user\ included
         CHECK(playable("EXE-3") && marker_has(v3) && scratch_gone());
         {   // a crash while still parking (phase 1): some old files moved, the rest never did, and none of them may be lost
             fs::create_directories(dir / "_old", ec);
             fs::rename(dir / "lichii.exe", dir / "_old" / "lichii.exe", ec);
             write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\nphase 1\n");
-            hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());
+            hubemu::recover_interrupted(kind, root.string());
             CHECK(snapshot(dir) == before && playable("EXE-3") && scratch_gone());
         }
         // the same crash, found by the next install job instead of the start-up check: it recovers, then upgrades
@@ -1192,7 +1192,7 @@ static void test_lichii_upgrade(const fs::path& root) {
         write_text(dir / "_old" / "lichii.exe", "EXE-3");
         write_text(dir / "_extract" / "junk.bin", "junk");
         write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\n");
-        hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());
+        hubemu::recover_interrupted(kind, root.string());
         CHECK(playable("EXE-4") && marker_has(v4) && scratch_gone() && snapshot(user) == data);
     }
 
@@ -1206,7 +1206,7 @@ static void test_lichii_upgrade(const fs::path& root) {
         err.clear();
         CHECK(!run(&err));   // even a failed first install keeps the player's data
         CHECK(snapshot(user) == data && !fs::exists(dir / "stray.dll") && !fs::exists(dir / "_extract") && !fs::exists(dir / "lichii.exe"));
-        CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).exe.empty());
+        CHECK(hubemu::find(kind, "", "", root.string()).exe.empty());
         offline = false;
         CHECK(run(&err) && playable("EXE-4") && marker_has(v4) && snapshot(user) == data && scratch_gone());
     }
@@ -1216,14 +1216,14 @@ static void test_lichii_upgrade(const fs::path& root) {
         fs::create_directories(dir / "_old", ec);
         write_text(dir / "retrohub-upgrade.txt", "");
         write_text(dir / "retrohub-upgrade.txt.tmp", "to build-98\nsha");
-        hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());
+        hubemu::recover_interrupted(kind, root.string());
         CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone() && !fs::exists(dir / "retrohub-upgrade.txt.tmp"));
         // no phase line, and the new build's lichii.exe already clashes with the parked old one: the old one comes back over it
         fs::create_directories(dir / "_old", ec);
         fs::rename(dir / "lichii.exe", dir / "_old" / "lichii.exe", ec);
         write_text(dir / "lichii.exe", "EXE-NEW");
         write_text(dir / "retrohub-upgrade.txt", "to build-98\nsha256 0000\n");
-        hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());
+        hubemu::recover_interrupted(kind, root.string());
         CHECK(snapshot(dir) == before && playable("EXE-4") && scratch_gone());
     }
 
@@ -1279,7 +1279,7 @@ static void test_lichii_upgrade(const fs::path& root) {
         CHECK(!r && err.find("could not be finished") != std::string::npos && fetches == 0);
         CHECK(!fs::exists(dir / "fresh.dll") && fs::exists(dir / "_old" / "lichii.exe") && fs::exists(dir / "_old" / "retrohub-install.txt"));   // new file gone, old ones still parked
         CHECK(read_text(dir / "retrohub-upgrade.txt").find("phase 2") != std::string::npos && snapshot(user) == data);
-        CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).exe.empty());
+        CHECK(hubemu::find(kind, "", "", root.string()).exe.empty());
         fetches = 0;
         CHECK(run(&err) && fetches == 0);
         CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone());
@@ -1312,11 +1312,60 @@ static void test_lichii_upgrade(const fs::path& root) {
         err.clear();
         const bool r = run(&err);
         CHECK(!r && fs::exists(dir / "lichii.exe") && fs::exists(dir / "retrohub-install.txt") && fs::exists(dir / "_old" / "fourth.dll"));
-        CHECK(hubemu::find(hubemu::Kind::Lichii, "", "", root.string()).exe.empty());   // not playable while the journal is there
+        CHECK(hubemu::find(kind, "", "", root.string()).exe.empty());   // not playable while the journal is there
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
-        hubemu::recover_interrupted(hubemu::Kind::Lichii, root.string());   // the next start finishes it
+        hubemu::recover_interrupted(kind, root.string());   // the next start finishes it
         CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone());
     }
+    hubemu::set_install_test_hooks(nullptr);
+    fs::remove_all(root, ec);
+}
+
+/* Fritchii specifics on top of the shared install / upgrade test above: its own folder, the placeholder pin, and its updater's leftovers. */
+static void test_fritchii_install(const fs::path& root) {
+    using namespace upg;
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    const hubemu::Kind K = hubemu::Kind::Fritchii;
+    CHECK(std::string(hubemu::name(K)) == "Fritchii" && hubemu::is_nx(K) && hubemu::is_nx(hubemu::Kind::Lichii) && !hubemu::is_nx(hubemu::Kind::Cemu));
+    CHECK(hubemu::managed_dir(K, root.string()) != hubemu::managed_dir(hubemu::Kind::Lichii, root.string()));
+    CHECK(fs::u8path(hubemu::managed_dir(K, root.string())).filename() == "fritchii");
+    CHECK(std::wstring(hubemu::release(K).exe) == L"lichii.exe" && std::string(hubemu::release(K).license) == "GPL-3.0" && std::string(hubemu::release(K).version) == "v4.1");
+    // the placeholder pin: nothing to download yet, the install refuses with a plain message and creates nothing
+    CHECK(hubemu::release_is_placeholder(K) && !hubemu::release_is_placeholder(hubemu::Kind::Lichii));
+    {
+        std::string err;
+        CHECK(!hubemu::install_blocking(K, root.string(), &err, nullptr) && err.find("not published") != std::string::npos);
+        CHECK(hubemu::find(K, "", "", root.string()).exe.empty());
+    }
+    auto v1 = make_rel(root / "zips" / "f1.zip", "v4.1", {{"lichii.exe", "FEXE-1"}, {"eden-cli.exe", "cli"}, {"lichii.pdb", "pdb"}, {"vc_redist.x64.exe", "vc"}, {"Qt6Core.dll", "qt"}});
+    hubemu::InstallTestHooks hk;
+    hk.kind = K;
+    hk.release = &v1->r;
+    hk.fetch = [&](const hubemu::Release&, const std::string& out, std::string*) { std::error_code e2; fs::copy_file(v1->zip, fs::u8path(out), fs::copy_options::overwrite_existing, e2); return !e2; };
+    hk.running = [](const std::string&) { return false; };
+    hubemu::set_install_test_hooks(&hk);
+    CHECK(!hubemu::release_is_placeholder(K));   // a real (test) pin
+    std::string err;
+    CHECK(hubemu::install_blocking(K, root.string(), &err, nullptr));
+    const fs::path dir = fs::u8path(hubemu::managed_dir(K, root.string()));
+    CHECK(read_text(dir / "lichii.exe") == "FEXE-1" && fs::exists(dir / "eden-cli.exe") && fs::is_directory(dir / "user"));
+    CHECK(!fs::exists(dir / "lichii.pdb") && !fs::exists(dir / "vc_redist.x64.exe"));            // deleted like Lichii's
+    CHECK(!fs::exists(dir / "update-staging") && hubemu::update_leftovers(K, dir.string()).empty());   // the installer never leaves updater files
+    CHECK(!fs::exists(fs::u8path(hubemu::managed_dir(hubemu::Kind::Lichii, root.string()))));    // and never touches Lichii's folder
+    CHECK(hubemu::find(K, "", "", root.string()).exe == (dir / "lichii.exe").string() && !hubemu::find(K, "", "", root.string()).outdated);
+    write_text(dir / "user" / "keys" / "prod.keys", "FRITCHII-KEYS");
+    // Fritchii's own updater was cut short: update-staging beside the exe. The install counts as outdated (Play offers the reinstall) and the reinstall clears it.
+    fs::create_directories(dir / "update-staging" / "x", ec);
+    write_text(dir / "update-staging" / "x" / "half.dll", "half");
+    write_text(dir / "update-journal.json", "{}");
+    CHECK(hubemu::update_leftovers(K, dir.string()) != "");
+    CHECK(hubemu::find(K, "", "", root.string()).outdated);
+    CHECK(hubemu::install_blocking(K, root.string(), &err, nullptr));   // same pin, but the leftovers force the reinstall
+    CHECK(hubemu::update_leftovers(K, dir.string()).empty() && !hubemu::find(K, "", "", root.string()).outdated);
+    CHECK(read_text(dir / "lichii.exe") == "FEXE-1" && read_text(dir / "user" / "keys" / "prod.keys") == "FRITCHII-KEYS");   // data kept
+    // Lichii's check is unchanged: a folder named update-staging beside a Lichii install means nothing
+    CHECK(hubemu::update_leftovers(hubemu::Kind::Lichii, dir.string()).empty());
     hubemu::set_install_test_hooks(nullptr);
     fs::remove_all(root, ec);
 }
@@ -1339,7 +1388,9 @@ int main(int argc, char** argv) {
     test_controls_emulators(dir / "ctl");
     test_controls2_emulators(dir / "ctl2");
     test_ppsspp_pin_and_config(dir / "psp");
-    test_lichii_upgrade(dir / "upg");
+    test_nx_upgrade(hubemu::Kind::Lichii, dir / "upg");
+    test_nx_upgrade(hubemu::Kind::Fritchii, dir / "upg_fritchii");   // the same install / upgrade / recovery scenarios on the Fritchii folder
+    test_fritchii_install(dir / "fritchii");
     fs::remove_all(dir, ec);
 
     int dl_bad = 0;
