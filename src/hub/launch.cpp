@@ -906,6 +906,7 @@ void play_entry(const hub::GameEntry& e_in) {
     hub::rom_cache_touch(e);   // LRU stamp for the unpacked copy (no-op for plain files)
     hub::rom_cache_pin(&e);    // and never trimmed while it runs (library-14)
     if (rom_missing(e)) { missing_rom_ask(e.key); return; }   // the file is gone: Locate / Rescan / Remove popup
+    if (dumpwarn_play_gate(e)) return;   // an incomplete Switch dump: one note in the hub first (Play anyway / Don't warn again)
     RunInfo ri = run_info_for(e, false);
     std::string sys = sys_short(e);
     if (is_kanto(e)) { kt_play(e); return; }

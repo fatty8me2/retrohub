@@ -3,6 +3,7 @@
 #include <windows.h>
 #include "library.h"
 #include "nx.h"
+#include "dump_check.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -539,12 +540,124 @@ static void test_nup_icon() {
     fs::remove_all(dir, ec);
 }
 
+
+/* ---- dump_check.h: incomplete / cut-short dumps ---- */
+namespace dcx = hub::dumpcheck;
+static dcx::ReadFn bytes_reader(const Bytes& b) {
+    return [&b](uint64_t off, size_t len, std::vector<uint8_t>* o) {
+        o->clear();
+        if (off < b.size()) { size_t n = (size_t)std::min<uint64_t>(len, b.size() - off); o->assign(b.begin() + (long)off, b.begin() + (long)off + (long)n); }
+        return true;
+    };
+}
+static void test_dump_check() {
+    const uint64_t kOot = 0x0400486024DEC000ull;
+    // known-title table
+    dcx::Result r = dcx::check_size(kOot, ".nup", 25020741061ull);   // the owner's file
+    CHECK(r.v == dcx::Verdict::LooksIncomplete && r.have == 25020741061ull && r.expected == 25620000000ull);
+    CHECK(dcx::format_gb(25020741061ull) == "23.30 GB" && dcx::format_gb(25620000000ull) == "23.86 GB");
+    CHECK(dcx::warning_text(r).find("Water Temple") != std::string::npos && dcx::warning_text(r).find("re-dump") != std::string::npos);
+    CHECK(dcx::check_size(kOot, ".nup", 25620000000ull).v == dcx::Verdict::Ok);
+    CHECK(dcx::check_size(kOot, ".nup", 25400000000ull).v == dcx::Verdict::Ok);
+    CHECK(dcx::check_size(kOot, ".nup", 25399999999ull).v == dcx::Verdict::LooksIncomplete);
+    CHECK(dcx::check_size(0x0100ABCD12340000ull, ".nup", 1).v == dcx::Verdict::Ok);   // unknown title
+    CHECK(dcx::check_size(kOot, ".nsp", 1).v == dcx::Verdict::Ok);                     // not the container the numbers are for
+    CHECK(dcx::check_size(0, ".nup", 1).v == dcx::Verdict::Ok);
+    CHECK(dcx::warning_text(dcx::check_size(kOot, ".nup", 25620000000ull)).empty());
+
+    // PFS0: header says two entries, 100 + 50 bytes of data
+    Bytes p = make_pfs0({"a.nca", "b.nca"});
+    le64(p, 16, 0); le64(p, 24, 100); le64(p, 16 + 0x18, 100); le64(p, 16 + 0x18 + 8, 50);
+    const uint64_t hdr = p.size(), full = hdr + 150;
+    CHECK(dcx::check_structure(bytes_reader(p), full, ".nsp").v == dcx::Verdict::Ok);
+    CHECK(dcx::check_structure(bytes_reader(p), full + 7, ".nsz").v == dcx::Verdict::Ok);
+    r = dcx::check_structure(bytes_reader(p), full - 1, ".nsp");
+    CHECK(r.v == dcx::Verdict::Truncated && r.have == full - 1 && r.expected == full && !dcx::warning_text(r).empty());
+    CHECK(dcx::check_structure(bytes_reader(p), hdr, ".nsp").v == dcx::Verdict::Truncated);
+    CHECK(dcx::check_structure(bytes_reader(p), full - 1, ".xcz").v == dcx::Verdict::Ok);   // compressed: can't tell
+    CHECK(dcx::check_structure(bytes_reader(p), 3, ".txt").v == dcx::Verdict::Ok);
+
+    // XCI: valid data ends at unit 0x1F -> 0x4000 bytes
+    Bytes x = make_xci(0x100);
+    le32(x, 0x118, 0x1F);
+    CHECK(dcx::check_structure(bytes_reader(x), 0x4000, ".xci").v == dcx::Verdict::Ok);
+    r = dcx::check_structure(bytes_reader(x), 0x3FFF, ".xci");
+    CHECK(r.v == dcx::Verdict::Truncated && r.expected == 0x4000);
+    le32(x, 0x118, 0);
+    CHECK(dcx::check_structure(bytes_reader(x), 10, ".xci").v == dcx::Verdict::Ok);   // no size declared
+
+    // NUP superblock
+    Bytes n(0x80, 0);
+    put(n, 0, std::string("NUP\x01", 4));
+    le64(n, 0x40, 1000);
+    CHECK(dcx::check_structure(bytes_reader(n), 1000, ".nup").v == dcx::Verdict::Ok);
+    CHECK(dcx::check_structure(bytes_reader(n), 999, ".nup").v == dcx::Verdict::Truncated);
+
+    // fuzz: short, random and mutated headers never crash and never claim a huge file is missing for nonsense
+    uint32_t seed = 12345;
+    auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+    const char* exts[] = {".nsp", ".nsz", ".xci", ".xcz", ".nup", ""};
+    for (int it = 0; it < 3000; ++it) {
+        Bytes f(rnd() % 0x400);
+        for (auto& c : f) c = (uint8_t)rnd();
+        const int kind = (int)(rnd() % 4);
+        if (kind == 0 && f.size() >= 16) put(f, 0, "PFS0");
+        if (kind == 1 && f.size() >= 0x120) put(f, 0x100, "HEAD");
+        if (kind == 2 && f.size() >= 0x80) put(f, 0, std::string("NUP\x01", 4));
+        if (kind == 3) f = p, f.resize(f.size() - rnd() % 8);
+        const uint64_t fsz = (rnd() & 1) ? f.size() : ((uint64_t)rnd() << 20);
+        for (const char* e : exts) { dcx::Result q = dcx::check_structure(bytes_reader(f), fsz, e); CHECK(q.v == dcx::Verdict::Ok || q.expected > q.have); }
+    }
+    CHECK(dcx::check_structure(nullptr, 1, ".nsp").v == dcx::Verdict::Ok);
+    dcx::ReadFn failing = [](uint64_t, size_t, std::vector<uint8_t>*) { return false; };
+    CHECK(dcx::check_structure(failing, 100, ".nsp").v == dcx::Verdict::Ok && dcx::check_structure(failing, 100, ".nup").v == dcx::Verdict::Ok);
+
+    // real files + cache
+    std::error_code ec;
+    fs::path d = fs::temp_directory_path() / "retrohub_dumpcheck_test";
+    fs::remove_all(d, ec);
+    Bytes cut = p; cut.resize(cut.size() + 100);   // 100 of 150 data bytes
+    CHECK(write_file(d / "cut.nsp", cut));
+    CHECK(dcx::check_file(U8(d / "cut.nsp"), 0).v == dcx::Verdict::Truncated);
+    CHECK(dcx::check_file(U8(d / "missing.nsp"), 0).v == dcx::Verdict::Ok);
+    CHECK(write_file(d / "small.nup", n));   // 128 bytes, declares 1000
+    CHECK(dcx::check_file(U8(d / "small.nup"), kOot).v == dcx::Verdict::Truncated);
+    Bytes okn = n; le64(okn, 0x40, 0x80);
+    CHECK(write_file(d / "ok.nup", okn));
+    CHECK(dcx::check_file(U8(d / "ok.nup"), kOot).v == dcx::Verdict::LooksIncomplete);   // right structure, far below the known size
+    CHECK(dcx::check_file(U8(d / "ok.nup"), 0).v == dcx::Verdict::Ok);
+
+    dcx::Cache cache;
+    dcx::Result cr;
+    const std::string cp = U8(d / "cut.nsp");
+    CHECK(!cache.get(cp, 0, &cr));   // first ask: not known yet, never blocks
+    cache.wait_idle();
+    CHECK(cache.get(cp, 0, &cr) && cr.v == dcx::Verdict::Truncated && cache.runs() == 1);
+    cache.get(cp, 0, &cr);
+    cache.wait_idle();
+    CHECK(cache.runs() == 1);   // same path, size and time: no second read
+
+    // "Don't warn again": per path AND size, round trip, hostile text
+    dcx::DismissList dl;
+    dl.add("C:\Games\Zelda.nup", 25020741061ull);
+    CHECK(dl.has("C:\Games\Zelda.nup", 25020741061ull) && dl.has("c:\games\ZELDA.NUP", 25020741061ull));
+    CHECK(!dl.has("C:\Games\Zelda.nup", 25620000000ull));   // a new dump at the same path warns again
+    CHECK(!dl.has("C:\Games\Other.nup", 25020741061ull));
+    dcx::DismissList d2;
+    d2.parse(dl.serialize() + "garbage\n\t\nx\tpath\n5\t\n99999999999999999999\tp\n7\tD:\ok.nsp\r\n");
+    CHECK(d2.has("C:\Games\Zelda.nup", 25020741061ull) && d2.has("D:\ok.nsp", 7) && d2.size() == 2);
+    dl.add("bad\tpath", 1);
+    CHECK(dl.size() == 1);
+    fs::remove_all(d, ec);
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--probe") return probe(argv[2]);
     test_parsers();
     test_garbage();
     test_nup();
     test_nup_icon();
+    test_dump_check();
     test_files_and_scan();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("hub_nx_test: all passed\n");
