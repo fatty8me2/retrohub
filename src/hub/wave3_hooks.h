@@ -35,6 +35,11 @@ void resume_details_section(const hub::GameEntry& e);                           
 void progress_details_section(const hub::GameEntry& e);                                  // details modal, Info tab
 
 void verify_details_section(const hub::GameEntry& e);                                    // details modal, Info tab
+void dumpwarn_details_section(const hub::GameEntry& e);                                  // details modal, top of the About tab: an incomplete Switch dump
 void verify_library_card();                                                              // All Games page, above the grid
 
 void save_import_section();                                                              // Saves page
+
+bool dumpwarn_play_gate(const hub::GameEntry& e, bool party_round);   // Play: a Switch dump that looks incomplete asks once (hub window, before launch); never in a couch round
+bool party_couch_launching();   // party_ui.cpp: a couch round was just launched and has not started yet; the dump note must not open then
+void dumpwarn_draw();                                                                    // once per frame, with the other dialogs

@@ -1,11 +1,11 @@
 # Real Lichii install / upgrade QA (downloads the pinned build from github.com/zortos293/Lichii; launches nothing, opens no window).
 # Runs RetroHub's own job through hub_lichii_upgrade_qa.exe on COPIES of a build-88 install and checks four scenarios:
-#   1. upgrade 88 -> 95 (user\ byte-identical, program files match the build-95 reference, no scratch left)
+#   1. upgrade 88 -> the pinned build 125 (user\ byte-identical, program files match the pinned-build reference, no scratch left)
 #   2. second run is a no-op (no download, nothing changes)
 #   3. fresh install into an empty root
 #   4. forced failure (<root>\_downloads is a FILE) keeps the old build and user\ intact
 # Usage:
-#   powershell -NoProfile -File qa\lichii_upgrade_real.ps1 -Bench <copy-of-a-build-88-lichii-folder> -Rx <build-95-reference-folder> -Work <fresh-folder>
+#   powershell -NoProfile -File qa\lichii_upgrade_real.ps1 -Bench <copy-of-a-build-88-lichii-folder> -Rx <pinned-build-reference-folder> -Work <fresh-folder>
 # -Bench is only read (copied). -Work must be a new folder and must not be under the user's real data folder.
 param(
     [string]$Tool = (Join-Path $PSScriptRoot '..\build\bin\Release\hub_lichii_upgrade_qa.exe'),
@@ -15,8 +15,8 @@ param(
 )
 $ErrorActionPreference = 'Continue'
 $Sha88 = '3405860a13f7b0729548ddb9402a355f4cfb1cd6a6d705fb8ea26f88879b0407'
-$Sha95 = '1560b9d46a20b54a8494316a650bfef12a905fbd6c612758d4509dcefca61164'
-$Excluded = @('lichii.pdb', 'eden-cli.pdb', 'vc_redist.x64.exe')
+$ShaPin = 'c55eaaedbdcd87eebcab5510a3d19c49545a4718b9355d95150150d5aeb67bb6'   # build 125
+$Excluded = @('lichii.pdb', 'eden-cli.pdb', 'vc_redist.x64.exe', 'lichii-updater.exe')
 
 if ($Work -match 'smashClassic\\userdata') { Write-Error 'Refusing: -Work is under the real user data folder.'; exit 2 }
 if (Test-Path -LiteralPath $Work) { Write-Error "-Work must be a fresh folder: $Work already exists."; exit 2 }
@@ -53,7 +53,7 @@ function Check-Rx([string]$lic) {
         if (-not (Test-Path -LiteralPath $p)) { $bad++; Log "    missing: $rel"; return }
         if ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash) { $bad++; Log "    hash differs: $rel" }
     }
-    Check ($bad -eq 0) "program files match build-95 reference ($n files, 3 excluded absent)"
+    Check ($bad -eq 0) "program files match the pinned-build reference ($n files, $($Excluded.Count) excluded absent)"
 }
 function Check-Clean([string]$root, [string]$lic) {
     Check (-not (Test-Path -LiteralPath (Join-Path $lic '_old'))) 'no _old left'
@@ -82,7 +82,7 @@ function New-Root88([string]$name) {
 
 Log "== Lichii real upgrade QA $(Get-Date -Format s) =="
 # ---- Scenario 1
-Log '== Scenario 1: upgrade 88 -> 95'
+Log '== Scenario 1: upgrade 88 -> 125'
 $r1 = New-Root88 's1'
 $lic1 = Join-Path $r1 'lichii'
 $userBefore = Snap $lic1 'user'
@@ -93,13 +93,13 @@ Check ($c -eq 0) 'exit 0'
 $txt = Get-Content (Join-Path $Work 's1_tool.txt') -Raw
 Check ($txt -match 'after: .*outdated=0') 'after shows outdated=0'
 $marker = Get-Content -LiteralPath (Join-Path $lic1 'retrohub-install.txt')
-Check (($marker -join "`n") -match "sha256 $Sha95" -and ($marker -join "`n") -match 'build 95') 'marker has build-95 sha256 and mentions build 95'
+Check (($marker -join "`n") -match "sha256 $ShaPin" -and ($marker -join "`n") -match 'build 125') 'marker has the pinned sha256 and mentions build 125'
 $userAfter = Snap $lic1 'user'
 Check (($userBefore -join "`n") -eq ($userAfter -join "`n")) "user\ byte-identical ($($userBefore.Count) files, none missing or added)"
 Check-Rx $lic1
 Check-Clean $r1 $lic1
 $gone = @($progBefore | Where-Object { $_ -ne 'retrohub-install.txt' -and -not (Test-Path -LiteralPath (Join-Path $Rx $_)) -and (Test-Path -LiteralPath (Join-Path $lic1 $_)) })
-Check ($gone.Count -eq 0) 'build-88 program files not in build 95 are gone'
+Check ($gone.Count -eq 0) 'build-88 program files not in build 125 are gone'
 
 # ---- Scenario 2: second run on the same root
 Log '== Scenario 2: second run is a no-op'

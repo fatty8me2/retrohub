@@ -1,6 +1,19 @@
 {
   "versions": [
     {
+      "version": "1.40.1",
+      "date": "2026-11-08",
+      "title": "Lichii build 125 and a warning for incomplete game files",
+      "new": [
+        "RetroHub now warns you when a Switch game file looks incomplete or cut short. An incomplete copy can be missing walls or textures in some areas, like Ocarina of Time's Water Temple. The warning shows on the game's page, in Library health, and once before you play"
+      ],
+      "improved": [
+        "Lichii (Switch) is updated to build 125. It can build some shaders that build 95 couldn't, so some missing graphics may now show up. Shaders preloaded at start now stay loaded until they're used, and your shader cache carries over. Press Play on a Switch game and choose Update",
+        "Lichii's own update check and updater are switched off: RetroHub keeps Lichii up to date"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.40.0",
       "date": "2026-11-08",
       "title": "Signed updates, safer saves and smoother online play",

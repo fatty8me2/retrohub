@@ -1,5 +1,5 @@
 #pragma once
-/* Nintendo Switch / Switch 2 via Lichii (github.com/zortos293/Lichii, an Eden fork; Kind::Lichii in emulators.h, pinned to build 95, release tag build-94).
+/* Nintendo Switch / Switch 2 via Lichii (github.com/zortos293/Lichii, an Eden fork; Kind::Lichii in emulators.h, pinned to build 125, release tag build-125).
  * RetroHub's own portable download only: a `user` folder beside lichii.exe makes it portable (Lichii common/fs/fs_paths.h PORTABLE_DIR),
  * so a player's own Eden/yuzu/Ryujinx install is NEVER written to. UI-free; see docs/EMULATORS.md (Switch).
  *
