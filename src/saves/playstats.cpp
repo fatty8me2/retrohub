@@ -85,8 +85,12 @@ void read_playlog_dir(const fs::path& pl, const std::string& sys, const std::str
         for (auto& c : ext) c = (wchar_t)towlower(c);
         if (ext != L".log") continue;
         std::ifstream in(fi->path(), std::ios::binary);
-        const auto stem = fi->path().stem().u8string();   // std::string in C++17, std::u8string in C++20
-        const std::string device(stem.begin(), stem.end());
+        std::string device;   // the file name without ".log", as UTF-8 (WideCharToMultiByte never throws, unlike path::u8string on a broken name)
+        const std::wstring stem = fi->path().stem().wstring();
+        if (const int n = WideCharToMultiByte(CP_UTF8, 0, stem.data(), (int)stem.size(), nullptr, 0, nullptr, nullptr); n > 0) {
+            device.resize((size_t)n);
+            WideCharToMultiByte(CP_UTF8, 0, stem.data(), (int)stem.size(), &device[0], n, nullptr, nullptr);
+        }
         std::string line;
         while (std::getline(in, line)) {
             Session s;
