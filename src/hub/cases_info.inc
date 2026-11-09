@@ -3,6 +3,19 @@
  * (console / position / media chip), the title (2 lines at most), the facts, a short description, the action buttons, and a 16:10 screenshot on the
  * right. Everything is cached when the selection (or the width) changes: nothing is built or allocated per frame in the draw path. */
 
+/* The played line under / beside the centred case. Sorted by "Most played" it leads with the hours (Steam style): "42.6 hours played  .  Last played 2 days ago",
+ * or "Not played yet"; every other sort keeps the usual "Last played ..  .  14 h total" line. */
+std::string cf_played_line(const hub::GameState& gs, const std::string& dot) {
+    const uint64_t now = (uint64_t)std::time(nullptr);
+    if (A.sort_mode != hubui::SortMode::MostPlayed) return hubui::cont::last_played_line(now, gs.last_played, gs.play_seconds, dot);
+    const std::string h = hubui::pt::hours_played(gs.play_seconds);
+    const std::string l = gs.last_played ? "Last played " + hubui::cont::relative_time(now, gs.last_played) : std::string();
+    if (h.empty() && l.empty()) return "Not played yet";
+    if (h.empty()) return l;
+    if (l.empty()) return h;
+    return h + dot + l;
+}
+
 struct CfState {
     hubui::cases::cf::EaseState pos_es;       // the glide of CS.pos.x (cubic-bezier .22 1 .36 1, 0.7 s)
     hubui::cases::cf::MediaReveal media;      // which cases have their disc / cartridge out
@@ -204,7 +217,7 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
         if (ghost) add("From a friend's library");
         else {
             const hub::GameState& gs = gstate(A.lib[(size_t)idx].key);
-            std::string pl = hubui::cont::last_played_line((uint64_t)std::time(nullptr), gs.last_played, gs.play_seconds, dot);
+            std::string pl = cf_played_line(gs, dot);
             if (!pl.empty()) { if (!m.empty()) m += dot; m += pl; }
         }
         CFX.meta = m.empty() ? m : ui::ellipsize(cap, cfs * 1.08f, m, text_w);

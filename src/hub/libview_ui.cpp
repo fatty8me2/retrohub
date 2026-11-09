@@ -16,6 +16,7 @@
 #include "cases_audit.h"
 #include "cases_stage.h"
 #include "continue_logic.h"
+#include "playtime_logic.h"
 #include "../saves/savestore.h"
 #include "state_slots.h"
 #include "libview_ui.h"
@@ -385,7 +386,7 @@ void draw_list_row(int idx, float w, float h, const hubui::ListCols& C, bool odd
             dl->AddText(cf, cf->FontSize, ImVec2(p0.x + C.last_x, cy - cf->FontSize * 0.5f), gs.last_played ? scol : ui::TEXT3, s.c_str());
         }
         if (C.time) {
-            std::string s = gs.play_seconds ? hubui::format_play_time(gs.play_seconds) : std::string("-");
+            std::string s = gs.play_seconds ? hubui::pt::hours_text(gs.play_seconds) : std::string("-");
             dl->AddText(cf, cf->FontSize, ImVec2(p0.x + C.time_x, cy - cf->FontSize * 0.5f), gs.play_seconds ? scol : ui::TEXT3, s.c_str());
         }
         bool on = entry_online(A.lib[idx]);
@@ -719,7 +720,7 @@ void draw_showcase(Disp& D) {
             const GameInfo* cat = catalog_for(e);
             if (cat && cat->year) pills.push_back({std::to_string(cat->year), IM_COL32(255, 255, 255, 34)});
             pills.push_back({gs.last_played ? "Played " + fmt_ago(gs.last_played) : std::string("Not played yet"), IM_COL32(255, 255, 255, 34)});
-            if (gs.play_seconds) pills.push_back({hubui::format_play_time(gs.play_seconds), IM_COL32(255, 255, 255, 34)});
+            if (gs.play_seconds) pills.push_back({hubui::pt::hours_text(gs.play_seconds), IM_COL32(255, 255, 255, 34)});
             if (entry_online(e)) pills.push_back({"Online", ui::mix(ui::GOOD, IM_COL32_BLACK, 0.35f)});
         } else pills.push_back({"A friend's game", IM_COL32(255, 255, 255, 34)});
         ImFont* cf = ui::F.cap;
@@ -1259,6 +1260,15 @@ void lib_shot_seed() {
         const std::string m = cs;
         nav_shot_seed(m);   // "sortpicker:release_year+rev", "quickjump:console", "bubble:last_played", "sort:title+rev"
         if (m.rfind("cartridge", 0) == 0) A.sys_filter = m.size() > 10 ? m.substr(10) : std::string("n64");
+    }
+    if (const char* so = std::getenv("HUB_SHOT_SORT"); so && *so) {   // "most_played" / "title+rev" / "last_played+favs" (same grammar as nav_shot_seed's "sort:...")
+        const std::string spec = so;
+        A.st.library_sort_rev = spec.find("+rev") != std::string::npos;
+        A.st.library_favs_first = spec.find("+favs") != std::string::npos;
+        const size_t pl = spec.find('+');
+        A.st.library_sort = hubui::sort_key(hubui::sort_from_key(pl == std::string::npos ? spec : spec.substr(0, pl)));
+        A.sort_mode = hubui::sort_from_key(A.st.library_sort);
+        A.vis_dirty = true;
     }
     const char* v = std::getenv("HUB_SHOT_LIBVIEW");
     if (!v || !*v) return;

@@ -186,7 +186,7 @@ ListCols list_columns(float w, float u) {
     c.console_w = 8.f * u;
     c.players_w = 6.f * u;
     c.last_w = 10.f * u;
-    c.time_w = 8.f * u;
+    c.time_w = 11.f * u;   // "9,999 hours" in the caption font (~83 px at 100% scale) plus a gap
     const float thumb = 5.f * u, min_title = 16.f * u;
     auto fits = [&]() {
         float need = thumb + min_title + c.icons_w + (c.console ? c.console_w : 0) + (c.players ? c.players_w : 0) +
