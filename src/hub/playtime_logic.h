@@ -6,7 +6,8 @@
  *     list rows use exactly these numbers.
  *   - the vault play log (playstats.h): one "<start>,<seconds>" line per finished session in <game dir>/playlog/<PC>.log, one file per
  *     PC (the cloud saves bring the other PCs' files here). playlog_read_game() reads one game's files.
- * The game page shows this PC's numbers (so its total matches the tile), and the time other PCs logged as a figure of its own. */
+ * The game page counts every PC, like Steam's account-wide hours: this PC's total plus the time other PCs logged. When another PC
+ * logged time, the strip also shows the "This PC" part (the tile's number) and the "Other PC(s)" part, so the two always add up. */
 
 #include "playstats.h"
 
@@ -98,13 +99,14 @@ inline std::string header_line(uint64_t secs, uint64_t last_played, int64_t now,
 
 /* ---- one game's numbers ---- */
 struct GameStats {
-    uint64_t total_secs = 0;    // this PC: library.json's total, or this PC's logged sessions when they add up to more (library.json younger than the vault)
-    uint64_t last_played = 0;   // this PC: unix seconds (library.json, or this PC's newest logged session start); 0 = never
-    int sessions = 0;           // sessions this PC logged
-    int64_t recent_secs = 0;    // this PC: time played inside [now - window, now] (only the part of a session inside the window counts)
-    int64_t longest_secs = 0;   // this PC: the longest logged session
-    int64_t other_secs = 0;     // logged by other PCs: a figure of its own, never added to total_secs
-    int other_pcs = 0;          // how many other PCs logged time for this game
+    uint64_t total_secs = 0;     // every PC: this_pc_secs + other_secs
+    uint64_t this_pc_secs = 0;   // this PC: library.json's total, or this PC's logged sessions when they add up to more (library.json younger than the vault)
+    uint64_t other_secs = 0;     // the time other PCs logged
+    int other_pcs = 0;           // how many other PCs logged time for this game
+    uint64_t last_played = 0;    // every PC: unix seconds, the newest of library.json's last_played and every logged session start; 0 = never
+    int sessions = 0;            // logged sessions, every PC
+    int64_t recent_secs = 0;     // every PC: time played inside [now - window, now] (only the part of a session inside the window counts)
+    int64_t longest_secs = 0;    // every PC: the longest logged session
     bool played() const { return total_secs > 0 || last_played > 0; }
 };
 
@@ -120,32 +122,33 @@ inline bool same_pc(const std::string& a, const std::string& b) {
     return true;
 }
 
-/* lib_total / lib_last: library.json (hub::GameState play_seconds / last_played). sessions: the game's play log from every PC
+/* lib_total / lib_last: library.json (hub::GameState play_seconds / last_played, this PC). sessions: the game's play log from every PC
  * (hub::saves::playlog_read_game); this_pc: hub::saves::playlog_device(). A session with an empty device counts as this PC.
  * Sessions with secs <= 0 or start <= 0 are ignored. */
 inline GameStats game_stats(uint64_t lib_total, uint64_t lib_last, const std::vector<hub::saves::Session>& sessions, const std::string& this_pc,
                             int64_t now, int64_t window = kRecentWindow) {
     GameStats g;
-    uint64_t logged = 0;
+    uint64_t logged_here = 0;
     int64_t newest = 0;
     std::vector<std::string> others;
     const int64_t from = now - window;
     for (const hub::saves::Session& s : sessions) {
         if (s.secs <= 0 || s.start <= 0) continue;
         if (!s.device.empty() && !same_pc(s.device, this_pc)) {
-            g.other_secs += s.secs;
+            g.other_secs += (uint64_t)s.secs;
             if (std::none_of(others.begin(), others.end(), [&](const std::string& o) { return same_pc(o, s.device); })) others.push_back(s.device);
-            continue;
+        } else {
+            logged_here += (uint64_t)s.secs;
         }
         g.sessions++;
-        logged += (uint64_t)s.secs;
         newest = std::max(newest, s.start);
         g.longest_secs = std::max(g.longest_secs, s.secs);
         const int64_t a = std::max(s.start, from), b = std::min(s.start + s.secs, now);
         if (b > a) g.recent_secs += b - a;
     }
     g.other_pcs = (int)others.size();
-    g.total_secs = std::max(lib_total, logged);
+    g.this_pc_secs = std::max(lib_total, logged_here);
+    g.total_secs = g.this_pc_secs + g.other_secs;
     g.last_played = std::max(lib_last, (uint64_t)newest);
     return g;
 }
@@ -153,9 +156,9 @@ inline GameStats game_stats(uint64_t lib_total, uint64_t lib_last, const std::ve
 /* ---- the stats strip under the header ---- */
 struct Cell { std::string label, value; };
 
-/* In order: "Play time" (when > 0), "Last played" (when known), "Sessions" (when any were logged), "Last 2 weeks" (when > 0),
- * "Other PC" / "Other PCs" (when one / several other PCs logged time). Empty when the game was never played.
- * Values: hours_text / last_played_text / group_thousands. */
+/* In order: "Play time" (every PC, when > 0), "Last played" (when known), "Sessions" (when any were logged), "Last 2 weeks" (when > 0),
+ * then, only when another PC logged time: "This PC" (when > 0) and "Other PC" / "Other PCs" (one / several other PCs).
+ * Empty when the game was never played. Values: hours_text / last_played_text / group_thousands. */
 inline std::vector<Cell> strip_cells(const GameStats& g, int64_t now, int tz) {
     std::vector<Cell> v;
     if (!g.played()) return v;
@@ -164,7 +167,10 @@ inline std::vector<Cell> strip_cells(const GameStats& g, int64_t now, int tz) {
     if (!lp.empty()) v.push_back({"Last played", lp});
     if (g.sessions > 0) v.push_back({"Sessions", group_thousands((uint64_t)g.sessions)});
     if (g.recent_secs > 0) v.push_back({"Last 2 weeks", hours_text((uint64_t)g.recent_secs)});
-    if (g.other_secs > 0) v.push_back({g.other_pcs == 1 ? "Other PC" : "Other PCs", hours_text((uint64_t)g.other_secs)});
+    if (g.other_secs > 0) {
+        if (g.this_pc_secs) v.push_back({"This PC", hours_text(g.this_pc_secs)});
+        v.push_back({g.other_pcs == 1 ? "Other PC" : "Other PCs", hours_text(g.other_secs)});
+    }
     return v;
 }
 
