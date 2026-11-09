@@ -43,8 +43,8 @@ void build_items(const std::vector<hubui::PeerInfo>& peers) {
         hubpick::Item it;
         it.id = rid;
         it.title = e.title;
-        it.sys = sys_short(e);
-        it.sys_name = hub::system_name(e.system);
+        it.sys = hub::console_id(e);   // a console id: Switch 2 is its own chip / section
+        it.sys_name = hub::console_name(e);
         it.pinned = is_native(e);
         it.min_players = 1;
         it.max_players = supports_online(e) ? max_players_for(e) : local_players_for(e);   // the room's cap, not the local pad count
@@ -155,7 +155,7 @@ void detail_popup(bool host) {
     ImU32 c0, c1;
     entry_colors(*e, &c0, &c1);
     float x = tx;
-    x += ui::pill_at(dl, ImVec2(x, y), hub::system_name(e->system), mix(c0, IM_COL32_BLACK, 0.2f)) + sp(0.75f);
+    x += ui::pill_at(dl, ImVec2(x, y), hub::console_name(*e), mix(c0, IM_COL32_BLACK, 0.2f)) + sp(0.75f);
     x += ui::pill_at(dl, ImVec2(x, y), hubpick::players_text(it->min_players, it->max_players).c_str(), ui::PANEL2) + sp(0.75f);
     if (it->supported) ui::pill_at(dl, ImVec2(x, y), it->untested ? "Untested online" : "Verified online", it->untested ? IM_COL32(0, 0, 0, 170) : ui::GOOD, it->untested ? ui::WARN : IM_COL32(8, 28, 16, 255));
     else ui::pill_at(dl, ImVec2(x, y), "No online", ui::PANEL2, ui::TEXT2);
@@ -216,7 +216,7 @@ void room_game_hero(const hub::GameEntry* rg, bool host) {
     if (rg) {
         title = rg->title;
         const bool unt = online_untested(*rg);
-        pills.push_back({hub::system_name(rg->system), mix(c0, IM_COL32_BLACK, 0.2f), IM_COL32_WHITE});
+        pills.push_back({hub::console_name(*rg), mix(c0, IM_COL32_BLACK, 0.2f), IM_COL32_WHITE});
         pills.push_back({hubpick::players_text(1, supports_online(*rg) ? max_players_for(*rg) : local_players_for(*rg)), IM_COL32(0, 0, 0, 120), IM_COL32_WHITE});
         pills.push_back({unt ? "Untested online" : "Online ready", unt ? IM_COL32(0, 0, 0, 170) : ui::GOOD, unt ? ui::WARN : IM_COL32(8, 28, 16, 255)});
         if (g_headless) {   // screenshot aids: a long title and every pill present
@@ -358,7 +358,7 @@ static void picker_modal(const std::vector<hubui::PeerInfo>& peers) {
             float w = ImGui::CalcTextSize(lab).x + sp(3.5f);
             if (ImGui::GetItemRectMax().x + sp(1.f) + w <= lim) ImGui::SameLine();   // otherwise the next chip starts a new line by itself
             ImU32 a = COL_ACCENT, b2;
-            system_colors(hub::system_from_short(c.sys), &a, &b2);
+            console_colors(c.sys, &a, &b2);
             if (ui::chip(lab, PK.sys == c.sys, a)) { PK.sys = PK.sys == c.sys ? std::string() : c.sys; PK.scroll_top = true; }
         }
     }

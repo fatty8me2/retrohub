@@ -85,6 +85,8 @@ public:
     Values resolve_console(const std::string& console, const std::string& game_key) const;
     /* 0 = option default, 1 = a console or system default (for "switch2": either layer), 2 = per-game override. */
     int source_console(const std::string& console, const std::string& game_key, const std::string& key) const;
+    /* True when the console's OWN entry holds a value for `key` (false for "switch2" when the value only comes from the Switch defaults); UI "from Switch" labels. */
+    bool has_console_value(const std::string& console, const std::string& key) const;
     /* The game's own console (console_id(e)); what launch code and the game's Settings tab use. */
     Values resolve_game(const GameEntry& e) const { return resolve_console(console_id(e), e.key); }
 

@@ -52,7 +52,7 @@ std::string title_of(const std::string& key) {
     return key;
 }
 
-std::string sys_name(const std::string& sys_short_name) { return hub::system_name(hub::system_from_short(sys_short_name)); }
+std::string sys_name(const std::string& console) { return hub::console_name(console); }
 
 void make_fakes() {
     WS.use_fake = true;
@@ -89,6 +89,9 @@ void recompute() {
     const int tz = local_tz();
     const int64_t now = (int64_t)unix_now();
     std::vector<hs::Session> sessions = WS.use_fake ? WS.fake_sessions : hs::playlog_read_all();
+    for (auto& s : sessions)   // stored sessions are keyed by system short: a Switch 2 game counts as its own console
+        if (s.system == "switch")
+            if (const hub::GameEntry* ge = find_entry(s.key)) s.system = hub::console_id(*ge);
     std::vector<wr::GroupEvent> groups;
     if (WS.use_fake) groups = WS.fake_groups;
     else
@@ -221,7 +224,7 @@ void paint_card(const Paint& p, int idx, const wr::Data& d, const std::string& p
             float x = bx;
             for (size_t i = 0; i < d.systems.size(); ++i) {
                 ImU32 a, b;
-                system_colors(hub::system_from_short(d.systems[i].first), &a, &b);
+                console_colors(d.systems[i].first, &a, &b);
                 const float w = bw * (float)d.systems[i].second / (float)std::max<int64_t>(1, d.total_secs);
                 if (w < 1.f) continue;
                 p.dl->AddRectFilled(p.P(x, by), p.P(std::min(bx + bw, x + w), by + bh), ui::mix(a, IM_COL32_WHITE, 0.15f), i == 0 ? 8.f * p.k : 0.f);
@@ -229,7 +232,7 @@ void paint_card(const Paint& p, int idx, const wr::Data& d, const std::string& p
             }
             for (size_t i = 0; i < d.systems.size() && i < 6; ++i) {
                 ImU32 a, b;
-                system_colors(hub::system_from_short(d.systems[i].first), &a, &b);
+                console_colors(d.systems[i].first, &a, &b);
                 const float y = 210 + (float)i * 38.f;
                 const int pct = (int)(d.systems[i].second * 100 / std::max<int64_t>(1, d.total_secs));
                 p.dl->AddCircleFilled(p.P(34, y + 10), 7.f * p.k, ui::mix(a, IM_COL32_WHITE, 0.15f), 20);
@@ -361,7 +364,7 @@ void to_file(void* ctx, void* data, int size) { std::fwrite(data, 1, (size_t)siz
 std::string save_image(const wr::Data& d, const std::string& player, std::string* err) {
     if (d.empty() || d.top.empty()) { *err = "There is nothing to save for this period yet."; return std::string(); }
     const std::string& key = d.top[0].key;
-    const std::string sys = d.top[0].system;
+    const std::string sys = hub::system_short(hub::console_system(d.top[0].system));   // vault folder is keyed by the real system
     const std::string dir = no_slash(hs::game_dir(sys, key)) + "\\shots";
     make_dirs(dir);
     char nm[64];

@@ -1061,6 +1061,36 @@ System system_from_short(const std::string& s) {
     return System::Unknown;
 }
 
+/* ---- consoles (Nintendo Switch and Switch 2 are two consoles; see library.h) ---- */
+std::string console_id(System s, bool nx2) {
+    if (s == System::Switch && nx2) return kConsoleSwitch2;
+    return system_short(s);
+}
+std::string console_id(const GameEntry& e) { return console_id(e.system, e.nx2); }
+System console_system(const std::string& id) {
+    if (console_is_switch2(id)) return System::Switch;
+    return system_from_short(id);
+}
+bool console_is_switch2(const std::string& id) { return ascii_lower(id) == kConsoleSwitch2; }
+const char* console_name(const std::string& id) {
+    if (console_is_switch2(id)) return "Nintendo Switch 2";
+    System s = system_from_short(id);
+    return s == System::Unknown ? "" : system_name(s);
+}
+const char* console_name(const GameEntry& e) { return e.system == System::Unknown ? "" : (e.system == System::Switch && e.nx2 ? "Nintendo Switch 2" : system_name(e.system)); }
+const std::vector<std::string>& console_ids() {
+    static const std::vector<std::string> v = [] {
+        std::vector<std::string> r;
+        for (int i = (int)System::Unknown + 1; i <= (int)System::Switch; i++) {
+            System s = (System)i;
+            r.push_back(system_short(s));
+            if (s == System::Switch) r.push_back(kConsoleSwitch2);
+        }
+        return r;
+    }();
+    return v;
+}
+
 uint64_t library_identify_count() { return g_identify_calls.load(); }
 
 namespace {

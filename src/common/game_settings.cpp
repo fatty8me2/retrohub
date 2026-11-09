@@ -368,6 +368,84 @@ int Store::source(System s, const std::string& g, const std::string& key) const 
     return 0;
 }
 
+// ---------------------------------------------------------------- console layer (Nintendo Switch 2 on top of Nintendo Switch)
+
+namespace {
+/* The sys_ entry a console edits: system_short for a system console, "switch2" for Switch 2; "" for an unknown id. */
+std::string console_entry(const std::string& console) {
+    if (console_is_switch2(console)) return kConsoleSwitch2;
+    System s = system_from_short(console);
+    return s == System::Unknown ? std::string() : std::string(system_short(s));
+}
+}
+
+bool Store::set_console(const std::string& console, const std::string& key, const std::string& value) {
+    const std::string ent = console_entry(console);
+    if (ent.empty()) return false;
+    const System s = console_system(console);
+    const Option* o = find_option(key);
+    std::string n;
+    if (!o || !(o->systems & sys_bit(s)) || !normalize(*o, value, &n)) return false;
+    sys_[ent][key] = n;
+    touch("s:" + ent);
+    return true;
+}
+
+void Store::clear_console_key(const std::string& console, const std::string& key) {
+    const std::string ent = console_entry(console);
+    if (ent.empty()) return;
+    auto it = sys_.find(ent);
+    if (it != sys_.end()) { it->second.erase(key); if (it->second.empty()) sys_.erase(it); touch("s:" + ent); }
+}
+
+void Store::reset_console(const std::string& console) {
+    const std::string ent = console_entry(console);
+    if (ent.empty()) return;
+    if (sys_.erase(ent) || stamp_.count("s:" + ent)) touch("s:" + ent);
+}
+
+Values Store::resolve_console(const std::string& console, const std::string& g) const {
+    const std::string ent = console_entry(console);
+    if (ent.empty()) return Values();
+    const System s = console_system(console);
+    Values v = defaults_for(s);
+    auto layer = [&](const Values& m) {
+        for (auto& kv : m) {
+            if (!v.count(kv.first)) continue;
+            const Option* o = find_option(kv.first);
+            std::string n;
+            if (o && !normalize(*o, kv.second, &n)) continue;
+            v[kv.first] = o ? n : kv.second;
+        }
+    };
+    auto si = sys_.find(sys_name(s));
+    if (si != sys_.end()) layer(si->second);
+    if (ent == kConsoleSwitch2) {
+        auto s2 = sys_.find(ent);
+        if (s2 != sys_.end()) layer(s2->second);
+    }
+    auto gi = game_.find(g);
+    if (gi != game_.end()) layer(gi->second);
+    return v;
+}
+
+bool Store::has_console_value(const std::string& console, const std::string& key) const {
+    const std::string ent = console_entry(console);
+    auto si = ent.empty() ? sys_.end() : sys_.find(ent);
+    return si != sys_.end() && si->second.count(key) != 0;
+}
+
+int Store::source_console(const std::string& console, const std::string& g, const std::string& key) const {
+    const std::string ent = console_entry(console);
+    if (ent.empty()) return 0;
+    auto gi = game_.find(g);
+    if (gi != game_.end() && gi->second.count(key)) return 2;
+    auto has = [&](const std::string& e) { auto si = sys_.find(e); return si != sys_.end() && si->second.count(key); };
+    if (has(sys_name(console_system(console)))) return 1;
+    if (ent == kConsoleSwitch2 && has(ent)) return 1;
+    return 0;
+}
+
 std::string Store::to_json() const {
     std::string o = "{\n  \"version\": \"1\",\n";
     put_group(o, "systems", sys_, stamp_, "s:");

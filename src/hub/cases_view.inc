@@ -49,6 +49,7 @@ struct CasesState {
     bool menu_open = false, menu_focus_req = false;   // the slide-down menu overlay (the toolbar the immersive view hides)
     float menu_t = 0.f, menu_h = 0.f;
     float pending_shuffle = -1.f;
+    static constexpr int kSw2Slot = 31;         // sysv / sc0 slot of Switch 2 games (the System enum stays below it)
     ImU32 sc0[32] = {}, sc1[32] = {};
     bool sc_have[32] = {};
     // car-stage: ambient colour from the focused cover, idle motion, the title block, the sliding tab highlight
@@ -414,7 +415,7 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
     if (snap) CS.tab_off = off_t;
     // the sliding highlight (strip coordinates) and its colour
     ImU32 acol = ui::ACCENT, b2;
-    if (!CS.tabs[(size_t)active].sys.empty()) system_colors(hub::system_from_short(CS.tabs[(size_t)active].sys), &acol, &b2);
+    if (!CS.tabs[(size_t)active].sys.empty()) console_colors(CS.tabs[(size_t)active].sys, &acol, &b2);   // a tab's sys is a console id
     if (CS.hl_x0 < 0.f || snap) { CS.hl_x0 = xo[active]; CS.hl_x1 = xo[active] + wv[active]; CS.hl_col = acol; }
     ui::anim(CS.hl_x0, xo[active], 14.f); ui::anim(CS.hl_x1, xo[active] + wv[active], 11.f);   // the trailing edge lags: the pill stretches as it moves
     CS.hl_col = ui::mix(CS.hl_col ? CS.hl_col : acol, acol, snap ? 1.f : 1.f - std::exp(-io.DeltaTime * 12.f));
@@ -443,7 +444,7 @@ void cases_tabs(ImDrawList* dl, ImVec2 org, float W, float y, float h, int activ
         const bool hov = ImGui::IsItemHovered();
         const bool on = (int)i == active;
         ImU32 col = ui::ACCENT, b3;
-        if (!t.sys.empty()) system_colors(hub::system_from_short(t.sys), &col, &b3);
+        if (!t.sys.empty()) console_colors(t.sys, &col, &b3);
         if (hov && !on) dl->AddRectFilled(p0, p1, ui::FRAME_HOV, ph * 0.5f);
         const float hl_on = on ? 1.f : 0.f;
         const bool light = on && ((0.2126f * (CS.hl_col & 0xFF) + 0.7152f * ((CS.hl_col >> 8) & 0xFF) + 0.0722f * ((CS.hl_col >> 16) & 0xFF)) / 255.f) > 0.72f;
@@ -617,8 +618,9 @@ void draw_cases(Disp& D) {
         for (int p = 0; p < n; ++p) {
             const int idx = D.flat[(size_t)p];
             const hub::System sy = sys_of(idx);
-            CS.media[(size_t)p] = hubui::shelf::media_for(hub::system_short(sy));
-            CS.sysv[(size_t)p] = (unsigned char)std::min(31, (int)sy);
+            const std::string con = item_sys(idx);   // console id: Switch 2 keeps the Switch case media but its own colour slot (CasesState::kSw2Slot)
+            CS.media[(size_t)p] = hubui::shelf::media_for(con);
+            CS.sysv[(size_t)p] = hub::console_is_switch2(con) ? (unsigned char)CasesState::kSw2Slot : (unsigned char)std::min(CasesState::kSw2Slot - 1, (int)sy);
         }
         CS.text_sig = 0;
         CFX.media.reset();
@@ -836,7 +838,7 @@ void draw_cases(Disp& D) {
     sc.dl = dl; sc.dist = cfm ? hubui::cases::cf::kDist : 6.5f; sc.eye = cfm ? hubui::cases::cf::kEye : 0.55f; sc.U = Hc; sc.cx = org.x + W * 0.5f; sc.hy = f0 - sc.eye * sc.U;
     // tint follows the centre case's console
     ImU32 t0 = ui::ACCENT, t1 = ui::ACCENT;
-    if (n) system_colors(sys_of(D.flat[(size_t)CS.focus]), &t0, &t1);
+    if (n) console_colors(item_sys(D.flat[(size_t)CS.focus]), &t0, &t1);
     {   // ...but the focused game's own cover colour wins when it has one (computed once per texture, never from pixels per frame)
         using namespace hubui::cases;
         SDL_Texture* ft = nullptr;
@@ -1016,16 +1018,17 @@ void draw_cases(Disp& D) {
         cd.media = CS.media[(size_t)i];
         cd.seed = item_hash(idx);
         cd.title = title_c(idx);
-        const hub::System sy = (hub::System)CS.sysv[(size_t)i];
+        const bool sw2 = CS.sysv[(size_t)i] == CasesState::kSw2Slot;   // a Switch 2 game (System::Switch, nx2)
+        const hub::System sy = sw2 ? hub::System::Switch : (hub::System)CS.sysv[(size_t)i];
         cd.sys_name = hub::system_name(sy);
         cd.sys_short = sys_short_c(sy);
         if (sy == hub::System::Switch) {   // Switch 2 games have their own banner; HUB_SHOT_NX2 (screenshots) makes every Switch case one
             static const bool shot_nx2 = g_headless && std::getenv("HUB_SHOT_NX2") != nullptr;
-            cd.nx2 = shot_nx2 || (!is_ghost(idx) && A.lib[(size_t)idx].nx2);
+            cd.nx2 = shot_nx2 || sw2;
             if (cd.nx2) { cd.sys_name = "Nintendo Switch 2"; cd.sys_short = "SWITCH 2"; }
         }
         const int si = CS.sysv[(size_t)i];
-        if (!CS.sc_have[si]) { system_colors(sy, &CS.sc0[si], &CS.sc1[si]); CS.sc_have[si] = true; }
+        if (!CS.sc_have[si]) { if (sw2) console_colors(hub::kConsoleSwitch2, &CS.sc0[si], &CS.sc1[si]); else system_colors(sy, &CS.sc0[si], &CS.sc1[si]); CS.sc_have[si] = true; }
         cd.c0 = CS.sc0[si]; cd.c1 = CS.sc1[si];
         cd.ghost = is_ghost(idx);
         cd.fav = item_fav(idx);
@@ -1172,7 +1175,6 @@ void draw_cases(Disp& D) {
             CS.text_focus = CS.focus; CS.text_sig = D.sig; CS.text_w = maxw; CS.chip_font = tsz; CS.text_tick = tick;
             if (new_game) { CS.tl_a = reduced ? 1.f : 0.f; CS.tl_slide = reduced ? 0.f : 1.f; }
             CS.title_txt = ui::ellipsize(tfont, tsz, item_title(idx), maxw);
-            const hub::System sy = sys_of(idx);
             int year = 0, players = item_players(idx);
             std::string genre;
             const bool ghost = is_ghost(idx);
@@ -1186,11 +1188,11 @@ void draw_cases(Disp& D) {
                 else if (cat && cat->max_players > 0) players = cat->max_players;
                 genre = !ci.genre.empty() ? ci.genre : (cat ? cat->genre : std::string());
             }
-            CS.sub_txt = subtitle_text(hub::system_name(sy), year, players);
+            CS.sub_txt = subtitle_text(hub::console_name(item_sys(idx)), year, players);
             const char* lab = tab_label(item_sys(idx));
-            CS.chip_txt = console_chip(lab ? lab : hub::system_name(sy), !ghost && A.lib[(size_t)idx].nx2);
+            CS.chip_txt = console_chip(lab ? lab : hub::console_name(item_sys(idx)), false);   // tab_label("switch2") is already "Switch 2"
             ImU32 cc0 = ui::ACCENT, cc1 = ui::ACCENT;
-            system_colors(sy, &cc0, &cc1);
+            console_colors(item_sys(idx), &cc0, &cc1);
             CS.chip_col = cc0;
             const std::string dot = "  \xC2\xB7  ";
             std::string m;

@@ -47,6 +47,7 @@ const char* short_label(const std::string& s)
     if (s == "ps2") return "PS2";
     if (s == "psp") return "PSP";
     if (s == "switch") return "Switch";
+    if (s == "switch2") return "Switch 2";
     return s.c_str();
 }
 

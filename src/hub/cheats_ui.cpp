@@ -730,7 +730,7 @@ void draw_cheats_modal() {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         if (lines.empty()) ImGui::TextDisabled("Waiting for a code...");
         else if (okc) { cheatstore::detect_format(tg, lines[0], &f); ImGui::PushStyleColor(ImGuiCol_Text, ui::GOOD); ImGui::Text("Detected: %s, %d line%s", fmt_label(f), (int)lines.size(), lines.size() == 1 ? "" : "s"); ImGui::PopStyleColor(); }
-        else { ImGui::PushStyleColor(ImGuiCol_Text, ui::BAD); ImGui::TextWrapped("Not a valid code for %s.", hub::system_name(e.system)); ImGui::PopStyleColor(); }
+        else { ImGui::PushStyleColor(ImGuiCol_Text, ui::BAD); ImGui::TextWrapped("Not a valid code for %s.", hub::console_name(e)); ImGui::PopStyleColor(); }
         if (!g_add_err.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ui::BAD); ImGui::TextWrapped("%s", g_add_err.c_str()); ImGui::PopStyleColor(); }
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         if (button("Add cheat", ImVec2(sp(16.f), sp(5.5f)), true, okc, ui::Icon::Plus)) {

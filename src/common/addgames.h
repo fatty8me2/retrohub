@@ -21,6 +21,7 @@ bool is_game_file(const std::string& path);   // by extension only
 
 /* Console subfolder under the games root; matches the installer's folders. Unknown -> "Other". */
 std::string console_folder(System s);
+std::string console_folder(System s, bool nx2);   // a Switch 2 game (nx2) goes to "Switch 2", every other console as above
 
 /* The games root: the first rom folder named "RetroHub Games" (the installer's choice), else <documents>\RetroHub Games. */
 std::string games_root(const std::vector<std::string>& rom_folders, const std::string& documents_dir, const std::string& custom_root = "");
@@ -31,6 +32,7 @@ bool is_absolute_path(const std::string& p);
  * even when the library scan is unfinished or stale. Returns early (partial) when *stop becomes true. */
 std::set<std::string> index_keys(const std::string& root, const std::atomic<bool>* stop = nullptr);
 std::string dest_dir(const std::string& root, System s);   // root\<console>
+std::string dest_dir(const std::string& root, System s, bool nx2);
 
 /* Destination file name that does not clash: "name.ext", then "name (2).ext", ... `exists` tests a full path. */
 std::string unique_name(const std::string& dir, const std::string& file_name, const std::function<bool(const std::string&)>& exists);
@@ -39,6 +41,7 @@ enum class Outcome { Added, Duplicate, Unsupported, Failed, Cancelled };
 struct Item {
     std::string src, title, dest, message;
     System system = System::Unknown;
+    bool nx2 = false;   // identified as a Nintendo Switch 2 game (system stays Switch)
     Outcome outcome = Outcome::Failed;
     bool other = false;   // unidentified: went to "Other"
 };

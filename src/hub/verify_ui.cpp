@@ -143,14 +143,14 @@ void rebuild_notes() {
             const hub::GameEntry* e = find_entry(kv.first);
             if (!e) continue;
             if (kv.second.v == vf::Verdict::Good) ++good;
-            else if (kv.second.v == vf::Verdict::Unknown) { ++unknown; bad_titles.push_back(e->title + "  (" + hub::system_name(e->system) + ")"); }
+            else if (kv.second.v == vf::Verdict::Unknown) { ++unknown; bad_titles.push_back(e->title + "  (" + hub::console_name(*e) + ")"); }
         }
     } else {
         for (const auto& kv : V.runner.snapshot()) {
             const hub::GameEntry* e = find_entry(kv.first);
             if (!e) continue;
             if (kv.second.v == vf::Verdict::Good) ++good;
-            else if (kv.second.v == vf::Verdict::Unknown) { ++unknown; bad_titles.push_back(e->title + "  (" + hub::system_name(e->system) + ")"); }
+            else if (kv.second.v == vf::Verdict::Unknown) { ++unknown; bad_titles.push_back(e->title + "  (" + hub::console_name(*e) + ")"); }
         }
     }
     std::sort(bad_titles.begin(), bad_titles.end());

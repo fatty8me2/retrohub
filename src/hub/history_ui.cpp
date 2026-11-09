@@ -233,7 +233,7 @@ void stats_ui_card() {
         for (auto& e : A.lib) {
             if (is_native(e)) continue;
             const hub::GameState& gs = gstate(e.key);
-            if (gs.play_seconds) tot.push_back({sys_short(e), e.key, (int64_t)gs.play_seconds});
+            if (gs.play_seconds) tot.push_back({hub::console_id(e), e.key, (int64_t)gs.play_seconds});
         }
         std::time_t t = std::time(nullptr);
         std::tm lt{};
@@ -303,7 +303,7 @@ void stats_ui_card() {
         for (size_t i = 0; i < st.systems.size() && i < 6; ++i) {
             const auto& s = st.systems[i];
             int pct = st.total_secs ? (int)(s.second * 100 / st.total_secs) : 0;
-            ImGui::Text("%s", hub::system_name(hub::system_from_short(s.first)));
+            ImGui::Text("%s", hub::console_name(s.first));
             ImGui::SameLine(sp(14.f));
             ImGui::TextDisabled("%s  (%d%%)", hours_text(s.second).c_str(), pct);
         }

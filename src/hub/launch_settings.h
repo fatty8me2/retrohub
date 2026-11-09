@@ -32,11 +32,18 @@ inline std::string join_cmd(const std::vector<std::string>& a) {
 
 /* Settings of one game: option defaults <- system defaults <- game override. The hub's global "Start games fullscreen"
  * is the default for every system: it applies unless the system or the game set "fullscreen" themselves. */
-inline hub::gs::Values effective_values(const hub::gs::Store& st, hub::System s, const std::string& game_key, bool global_fullscreen, int global_volume = 100) {
-    hub::gs::Values v = st.resolve(s, game_key);
-    if (st.source(s, game_key, "fullscreen") == 0) v["fullscreen"] = global_fullscreen ? "true" : "false";
-    if (st.source(s, game_key, "volume") == 0) v["volume"] = std::to_string(global_volume < 0 ? 0 : global_volume > 100 ? 100 : global_volume);   // global volume is the default
+inline hub::gs::Values effective_values(const hub::gs::Store& st, const std::string& console, const std::string& game_key, bool global_fullscreen, int global_volume = 100) {
+    hub::gs::Values v = st.resolve_console(console, game_key);
+    if (st.source_console(console, game_key, "fullscreen") == 0) v["fullscreen"] = global_fullscreen ? "true" : "false";
+    if (st.source_console(console, game_key, "volume") == 0) v["volume"] = std::to_string(global_volume < 0 ? 0 : global_volume > 100 ? 100 : global_volume);   // global volume is the default
     return v;
+}
+inline hub::gs::Values effective_values(const hub::gs::Store& st, hub::System s, const std::string& game_key, bool global_fullscreen, int global_volume = 100) {
+    return effective_values(st, std::string(hub::system_short(s)), game_key, global_fullscreen, global_volume);
+}
+/* The game's own console (Nintendo Switch 2 games get the Switch 2 layer). */
+inline hub::gs::Values effective_values(const hub::gs::Store& st, const hub::GameEntry& e, bool global_fullscreen, int global_volume = 100) {
+    return effective_values(st, hub::console_id(e), e.key, global_fullscreen, global_volume);
 }
 
 /* Values for an online session. Host: its own Sync values go out; guests: `host_launch_body` (the raw launch message)

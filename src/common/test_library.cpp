@@ -656,6 +656,28 @@ int main(int argc, char** argv) {
     CHECK(system_from_short("gbc") == System::GBC && std::string(system_short(System::GC)) == "gc");
     CHECK(std::string(system_name(System::GBA)) == "Game Boy Advance");
 
+    // consoles: Nintendo Switch and Switch 2 are two distinct consoles (a Switch 2 game stays System::Switch)
+    {
+        GameEntry sw, sw2, gb;
+        sw.system = System::Switch; sw2.system = System::Switch; sw2.nx2 = true; gb.system = System::GB; gb.nx2 = true;   // nx2 is ignored off Switch
+        CHECK(console_id(sw) == "switch" && console_id(sw2) == "switch2" && console_id(gb) == "gb");
+        CHECK(console_id(System::Switch, true) == "switch2" && console_id(System::Switch, false) == "switch" && console_id(System::N64, true) == "n64");
+        CHECK(console_system("switch2") == System::Switch && console_system("switch") == System::Switch && console_system("gba") == System::GBA && console_system("nope") == System::Unknown);
+        CHECK(console_is_switch2("switch2") && !console_is_switch2("switch") && !console_is_switch2(""));
+        CHECK(std::string(console_name("switch")) == "Nintendo Switch" && std::string(console_name("switch2")) == "Nintendo Switch 2");
+        CHECK(std::string(console_name(sw)) == "Nintendo Switch" && std::string(console_name(sw2)) == "Nintendo Switch 2" && std::string(console_name(gb)) == "Game Boy");
+        CHECK(std::string(console_name("n64")) == "Nintendo 64" && std::string(console_name("zzz")).empty() && std::string(console_name(GameEntry())).empty());
+        const std::vector<std::string>& ids = console_ids();
+        CHECK(ids.size() == 15 && ids.front() == "n64" && ids.back() == "switch2");
+        size_t at_sw = ids.size(), at_sw2 = ids.size(), n_sw = 0, n_sw2 = 0;
+        for (size_t i = 0; i < ids.size(); ++i) { if (ids[i] == "switch") { at_sw = i; ++n_sw; } if (ids[i] == "switch2") { at_sw2 = i; ++n_sw2; } }
+        CHECK(n_sw == 1 && n_sw2 == 1 && at_sw2 == at_sw + 1);
+        for (const std::string& id : ids) {   // every console id round trips and has a name
+            CHECK(!std::string(console_name(id)).empty() && console_system(id) != System::Unknown);
+            CHECK(console_id(console_system(id), id == "switch2") == id);
+        }
+    }
+
     // dedupe: an unzipped copy beats a zipped/7z copy of the same game; otherwise first wins
     CHECK(dedupe_prefers("D:/roms/a.z64", "D:/roms/a.zip"));
     CHECK(dedupe_prefers("D:/roms/a.gba", "D:/roms/b.7z"));

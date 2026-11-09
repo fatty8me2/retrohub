@@ -225,6 +225,82 @@ int main() {
         fs::remove_all(v, ec);
     }
 
+    // console layer: Nintendo Switch 2 on top of Nintendo Switch
+    {
+        set_stamp_clock(100);
+        Store s;
+        const std::string fs_k = "fullscreen";
+        // other consoles: the console calls equal the System calls
+        CHECK(s.set_console("n64", "n64.res", "2") && s.resolve(System::N64, "g")["n64.res"] == "2" && s.resolve_console("n64", "g")["n64.res"] == "2");
+        CHECK(s.source_console("n64", "g", "n64.res") == 1 && s.source(System::N64, "g", "n64.res") == 1);
+        CHECK(!s.set_console("nope", "fullscreen", "true") && s.resolve_console("nope", "g").empty() && s.source_console("nope", "g", fs_k) == 0);
+        CHECK(!s.set_console("n64", "gb.hardware", "x"));   // validation is the system's
+        // Switch 2 inherits Switch until it sets its own
+        CHECK(s.set_console("switch", "fullscreen", "false"));
+        CHECK(s.resolve_console("switch2", "")["fullscreen"] == "false");
+        CHECK(s.source_console("switch2", "", "fullscreen") == 1 && !s.has_console_value("switch2", "fullscreen") && s.has_console_value("switch", "fullscreen"));
+        CHECK(s.resolve_console("switch", "")["fullscreen"] == "false");
+        CHECK(s.set_console("switch2", "fullscreen", "true"));
+        CHECK(s.resolve_console("switch2", "")["fullscreen"] == "true" && s.resolve_console("switch", "")["fullscreen"] == "false");
+        CHECK(s.has_console_value("switch2", "fullscreen") && s.source_console("switch2", "", "fullscreen") == 1);
+        CHECK(s.resolve(System::Switch, "")["fullscreen"] == "false");   // the System call is the Switch layer only
+        // game overrides win over both layers and are shared: keyed on the game, not the console
+        CHECK(s.set_game("switch:abc", System::Switch, "fullscreen", "false"));
+        CHECK(s.resolve_console("switch2", "switch:abc")["fullscreen"] == "false" && s.source_console("switch2", "switch:abc", "fullscreen") == 2);
+        GameEntry g2; g2.system = System::Switch; g2.nx2 = true; g2.key = "switch:abc";
+        GameEntry g1; g1.system = System::Switch; g1.key = "switch:def";
+        CHECK(s.resolve_game(g2)["fullscreen"] == "false");
+        s.clear_game_key("switch:abc", "fullscreen");
+        CHECK(s.resolve_game(g2)["fullscreen"] == "true" && s.resolve_game(g1)["fullscreen"] == "false");
+        // JSON round trip keeps the switch2 entry and its stamp
+        const std::string js = s.to_json();
+        CHECK(js.find("\"switch2\"") != std::string::npos);
+        Store back;
+        CHECK(back.from_json(js) && back.resolve_console("switch2", "")["fullscreen"] == "true" && back.resolve_console("switch", "")["fullscreen"] == "false");
+        CHECK(back.to_json() == js);
+        // clearing the only key drops Switch 2's own entry: it falls back to Switch's value
+        set_stamp_clock(200);
+        back.clear_console_key("switch2", "fullscreen");
+        CHECK(back.resolve_console("switch2", "")["fullscreen"] == "false" && back.resolve_console("switch", "")["fullscreen"] == "false");
+        set_stamp_clock(300);
+        Store t;
+        CHECK(t.from_json(js));
+        t.reset_console("switch2");
+        CHECK(t.resolve_console("switch2", "")["fullscreen"] == "false" && t.resolve_console("switch", "")["fullscreen"] == "false");
+        CHECK(t.to_json().find("\"s:switch2\"") != std::string::npos || t.to_json().find("switch2") != std::string::npos);   // the stamped tombstone is kept
+        // cloud merge into a vault file keeps "switch2" (the newer stamp wins the whole entry) and leaves "switch" to its own stamp
+        std::error_code ec;
+        fs::path v = fs::temp_directory_path() / "hub_gs_console_test";
+        fs::remove_all(v, ec);
+        const std::string vd = v.u8string();
+        set_stamp_clock(100);
+        Store disk;
+        CHECK(disk.from_json(js) && disk.save(vd));
+        set_stamp_clock(400);
+        Store cloud;
+        CHECK(cloud.set_console("switch2", "volume", "40") && cloud.set_console("switch", "fullscreen", "true"));
+        CHECK(merge_cloud_into_vault(vd, cloud.to_json()));
+        Store merged;
+        CHECK(merged.load(vd));
+        CHECK(merged.resolve_console("switch2", "")["volume"] == "40" && merged.has_console_value("switch2", "volume"));
+        CHECK(merged.resolve_console("switch", "")["fullscreen"] == "true");
+        // a tombstone from another PC removes the Switch 2 entry here, and the file still loads
+        set_stamp_clock(500);
+        Store reset_pc;
+        CHECK(reset_pc.from_json(merged.to_json()));
+        reset_pc.reset_console("switch2");
+        CHECK(merge_cloud_into_vault(vd, reset_pc.to_json()));
+        Store after;
+        CHECK(after.load(vd) && !after.has_console_value("switch2", "volume") && after.resolve_console("switch", "")["fullscreen"] == "true");
+        Store again;
+        CHECK(again.from_json(after.to_json()) && again.to_json() == after.to_json());
+        // an old file with no switch2 entry loads and Switch 2 inherits
+        Store legacy_sw;
+        CHECK(legacy_sw.from_json("{\"systems\":{\"switch\":{\"fullscreen\":\"false\"}}}") && legacy_sw.resolve_console("switch2", "")["fullscreen"] == "false");
+        set_stamp_clock(0);
+        fs::remove_all(v, ec);
+    }
+
     std::printf(g_fail ? "FAILED (%d)\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

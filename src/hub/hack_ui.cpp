@@ -25,6 +25,11 @@ std::string data_root() {
     while (!d.empty() && (d.back() == '\\' || d.back() == '/')) d.pop_back();
     return d;
 }
+/* Console name of a base candidate: a Switch 2 game in the library reads "Nintendo Switch 2" (Cand carries only the System). */
+std::string cand_console(const hk::Cand& c) {
+    const hub::GameEntry* e = c.system == hub::System::Switch ? find_entry(c.key) : nullptr;
+    return e ? std::string(hub::console_name(*e)) : std::string(hub::system_name(c.system));
+}
 std::string cache_dir_for(const std::string& key) { return data_root() + "\\rom-cache\\hacks\\" + hk::cache_folder(key); }
 
 bool g_shot = false;
@@ -233,7 +238,7 @@ void add_modal() {
         ImGui::BeginChild("##hackbase", ImVec2(0, sp(28.f)), ImGuiChildFlags_NavFlattened);
         for (size_t i = 0; i < AD.fr.choices.size(); ++i) {
             const hk::Cand& c = AD.fr.choices[i];
-            std::string label = c.title + "   -   " + hub::system_name(c.system);
+            std::string label = c.title + "   -   " + cand_console(c);
             ImGui::PushID((int)i);
             if (i == 0) focus_first();
             if (ImGui::Selectable(label.c_str(), false, 0, ImVec2(0, sp(3.5f)))) {
@@ -248,7 +253,7 @@ void add_modal() {
         if (button("Cancel", ImVec2(sp(14.f), bh), false, true, ui::Icon::Close)) { add_reset(); ImGui::CloseCurrentPopup(); }
     } else if (AD.st == Add::Details) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-        ImGui::TextWrapped("Original game: %s (%s)", AD.base.title.c_str(), hub::system_name(AD.base.system));
+        ImGui::TextWrapped("Original game: %s (%s)", AD.base.title.c_str(), cand_console(AD.base).c_str());
         ImGui::PopStyleColor();
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         ImGui::TextUnformatted("Name");

@@ -584,9 +584,8 @@ TileSpec spec_for_ghost(const hubui::fg::Ghost& g, const char* shelf, bool show_
     TileSpec t;
     t.id = std::string(shelf) + "|ghost|" + g.id;
     t.title = g.title;
-    hub::System sy = hub::system_from_short(g.sys);
-    if (show_sys) t.badge = sys_badge(sy);
-    system_colors(sy, &t.c0, &t.c1);
+    if (show_sys) t.badge = console_badge(g.sys);   // packs from other PCs say "switch" (no Switch 2 info in them); a "switch2" id would work too
+    console_colors(g.sys, &t.c0, &t.c1);
     t.c0 = mix(t.c0, IM_COL32(92, 95, 104, 255), 0.72f);   // no-cover tiles are grey too
     t.c1 = mix(t.c1, IM_COL32(70, 73, 82, 255), 0.72f);
     t.owned = false;       // greyed, no star
@@ -664,7 +663,7 @@ void selected_bar_ghost(const hubui::fg::Ghost& g) {
     float tx = a1.x + sp(2.f);
     float text_w = std::max(sp(8.f), p1.x - sp(2.f) - bw - tx - sp(2.f));
     dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(tx, p0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.h2, ui::F.h2->FontSize, g.title, text_w).c_str());
-    std::string sub = std::string(hub::system_name(hub::system_from_short(g.sys))) + "  -  " + hubui::fg::badge_text(ghost_names(g));
+    std::string sub = std::string(hub::console_name(g.sys)) + "  -  " + hubui::fg::badge_text(ghost_names(g));
     dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.25f) + ui::F.h2->FontSize + sp(0.5f)), ui::TEXT2,
                 ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, text_w).c_str());
     ImGui::SetCursorScreenPos(ImVec2(p1.x - sp(2.f) - bw, p0.y + (h - bh) * 0.5f));
@@ -713,9 +712,8 @@ void draw_ghost_modal() {
     g_ghost_popup_open = true;
     const hubui::fg::Ghost& g = *gp;
     const GameInfo* cat = g.cid.empty() ? nullptr : hub::find_game(g.cid);
-    hub::System sy = hub::system_from_short(g.sys);
     ImU32 c0, c1;
-    system_colors(sy, &c0, &c1);
+    console_colors(g.sys, &c0, &c1);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 o = ImGui::GetCursorScreenPos();
     float avail = ImGui::GetContentRegionAvail().x;
@@ -742,7 +740,7 @@ void draw_ghost_modal() {
     ImGui::PopFont();
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    pill(hub::system_name(sy), mix(c0, IM_COL32_BLACK, 0.2f));
+    pill(hub::console_name(g.sys), mix(c0, IM_COL32_BLACK, 0.2f));
     if (cat && cat->year) { ImGui::SameLine(0, sp(0.75f)); pill(std::to_string(cat->year).c_str(), ui::PANEL2); }
     int players = cat ? cat->max_players : 0;
     if (players > 0) {

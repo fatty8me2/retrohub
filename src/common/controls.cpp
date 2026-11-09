@@ -24,7 +24,7 @@ const char* button_name(int i) { return i >= 0 && i < kNumButtons ? kButtons[i] 
 const char* axis_name(int i) { return i >= 0 && i < kNumAxes ? kAxes[i] : ""; }
 
 const std::vector<std::string>& systems() {
-    static const std::vector<std::string> v = {"n64", "retro", "ps1", "gc", "wiiu", "3ds", "ps2", "nes", "snes", "psp", "switch"};
+    static const std::vector<std::string> v = {"n64", "retro", "ps1", "gc", "wiiu", "3ds", "ps2", "nes", "snes", "psp", "switch", "switch2"};
     return v;
 }
 bool is_system(const std::string& s) { return std::find(systems().begin(), systems().end(), s) != systems().end(); }
@@ -46,9 +46,15 @@ std::string system_key(hub::System s) {
     }
 }
 
+std::string console_key(const hub::GameEntry& e) {
+    if (e.system == hub::System::Switch && e.nx2) return "switch2";
+    return system_key(e.system);
+}
+
 /* ------------------------------------------------------------------ control lists + defaults */
 
-const std::vector<ControlInfo>& controls_for(const std::string& sys) {
+const std::vector<ControlInfo>& controls_for(const std::string& sys_in) {
+    const std::string sys = sys_in == "switch2" ? std::string("switch") : sys_in;   // Switch 2 has the same buttons as Switch
     static const std::map<std::string, std::vector<ControlInfo>> m = {
         {"n64", {{"a", "A", false}, {"b", "B", false}, {"z", "Z trigger", false}, {"start", "Start", false}, {"l", "L", false},
                  {"r", "R", false}, {"c_up", "C up", false}, {"c_down", "C down", false}, {"c_left", "C left", false},
@@ -116,6 +122,12 @@ Profile canonical_name(Profile p) {
 }
 
 Profile default_profile(const std::string& sys) {
+    if (sys == "switch2") {   // maps exactly like Switch; its own profile name / system so it is a separate tab and separate overrides
+        Profile p = default_profile("switch");
+        p.name = "default-switch2";
+        p.system = "switch2";
+        return p;
+    }
     Profile p;
     p.name = "default-" + sys;
     p.system = sys;
@@ -422,13 +434,28 @@ void Mapper::stick(int id, const PadState& s, float* ox, float* oy) const {
 /* ------------------------------------------------------------------ Store operations */
 
 Profile resolve(const Store& s, const std::string& sys, const std::string& game) {
+    const bool sw2 = sys == "switch2";   // a Switch 2 game also accepts a Switch profile (the player's older per-game / default one) until it has its own
     const std::string* name = nullptr;
     auto g = s.game_override.find(game);
-    if (!game.empty() && g != s.game_override.end()) name = &g->second;
+    bool from_game = false;
+    if (!game.empty() && g != s.game_override.end()) { name = &g->second; from_game = true; }
     else { auto d = s.system_default.find(sys); if (d != s.system_default.end()) name = &d->second; }
+    auto usable = [&](const std::string* nm, const Profile** out) {
+        if (!nm) return false;
+        auto it = s.profiles.find(*nm);
+        if (it == s.profiles.end()) return false;
+        if (it->second.system != sys && !(sw2 && it->second.system == "switch")) return false;
+        *out = &it->second;
+        return true;
+    };
     Profile p;
-    if (name) { auto it = s.profiles.find(*name); if (it != s.profiles.end() && it->second.system == sys) p = it->second; else name = nullptr; }
-    if (!name) p = default_profile(sys);
+    const Profile* found = nullptr;
+    bool ok = usable(name, &found);
+    if (!ok && sw2 && !from_game) {   // no Switch 2 default of its own: the Switch default
+        auto d = s.system_default.find("switch");
+        if (d != s.system_default.end()) ok = usable(&d->second, &found);
+    }
+    if (ok) { p = *found; if (sw2) p.system = sys; } else p = default_profile(sys);
     p.port_order = s.port_order;
     return p;
 }
@@ -439,6 +466,7 @@ Profile& edit_profile(Store& s, const std::string& sys, const std::string& game)
     if (it == s.profiles.end()) {
         Profile base = resolve(s, sys, game.empty() ? "" : game);
         base.name = name;
+        base.system = sys;
         base.port_order.clear();
         it = s.profiles.emplace(name, base).first;
     }

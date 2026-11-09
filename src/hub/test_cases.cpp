@@ -95,6 +95,10 @@ int main() {
     // ---- tabs ----
     std::map<std::string, int> counts = {{"gba", 3}, {"n64", 5}, {"zzz", 1}, {"gc", 0}, {"ps2", 2}};
     std::vector<Tab> tabs = build_tabs(counts, 11, "");
+    {   // Switch 2 is its own tab right after Switch
+        std::vector<Tab> t2 = build_tabs({{"switch", 2}, {"switch2", 1}, {"n64", 1}}, 4, "");
+        CHECK(t2.size() == 4 && t2[1].sys == "n64" && t2[2].sys == "switch" && t2[2].label == "Switch" && t2[3].sys == "switch2" && t2[3].label == "Switch 2" && t2[3].count == 1);
+    }
     CHECK(tabs.size() == 5 && tabs[0].sys.empty() && tabs[0].label == "All" && tabs[0].count == 11);
     CHECK(tabs[1].sys == "n64" && tabs[2].sys == "ps2" && tabs[3].sys == "gba" && tabs[4].sys == "zzz" && tabs[4].label == "ZZZ");   // library order, unknown last, empty dropped
     CHECK(build_tabs(counts, 11, "gc").size() == 6);   // the active console keeps its tab even when a filter empties it
@@ -163,6 +167,7 @@ int main() {
         using shelf::media_for;
         CHECK(media_for("switch") == Media::SwitchCase && kind_for(Media::SwitchCase) == CaseKind::Keep && has_sheen(Media::SwitchCase) && !is_box(Media::SwitchCase));
         CHECK(std::string(shelf::media_key(Media::SwitchCase)) == "switch-case" && !shelf::is_cart(Media::SwitchCase));
+        CHECK(media_for("switch2") == Media::SwitchCase);   // Switch 2 shelves keep the Switch case
         // every console has its own, non-generic media: no two share one
         const char* all[] = {"nes", "snes", "n64", "gb", "gbc", "gba", "nds", "3ds", "ps1", "ps2", "gc", "wiiu", "psp", "switch"};
         for (const char* sys : all) CHECK(media_for(sys) != Media::Generic);

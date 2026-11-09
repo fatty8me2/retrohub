@@ -622,7 +622,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     hubemu::Kind kind = hubemu::kind_for(e.system);
     if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot_lichii_once_consume(e.key)) { /* "Play with Lichii this time": skip Hookshot once */ }
     else if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot::use_for(e, gs_values_for(e))) { launch_hookshot(e, ri, battery); return; }   // before any Lichii-only step: works without Lichii, keys or firmware
-    if (kind == hubemu::Kind::Lichii) kind = hubemu::nx_emulator_for(e, gs_values_for(e), ri.online || ri.room, GSTORE.source(e.system, e.key, hubemu::kRunnerKey),
+    if (kind == hubemu::Kind::Lichii) kind = hubemu::nx_emulator_for(e, gs_values_for(e), ri.online || ri.room, GSTORE.source_console(hub::console_id(e), e.key, hubemu::kRunnerKey),
                                                                   !hubemu::release_is_placeholder(hubemu::Kind::Fritchii) || !hubemu::find(hubemu::Kind::Fritchii, A.st.cemu_exe, e.path).exe.empty());   // switch.runner (Ocarina of Time defaults to Fritchii unless chosen), offline only like Hookshot: the same code path as Lichii, with Fritchii's own install folder
     hubemu::Bios ps2_bios;
     if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is unpacked, downloaded or started
@@ -725,7 +725,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         std::string perr = hubemu::prepare_ppsspp(inst.dir, pq, cp.xinput.empty() ? 0 : cp.xinput[0], gs_values_for(e));
         if (!perr.empty()) { set_notice("Could not set up PPSSPP: " + perr, 12.0); return; }
     } else if (hubemu::is_nx(kind)) {   // (Lichii and Fritchii) portable user\ under the managed dir; player 1 from the "switch" profile on one SDL pad
-        hubctl::Profile px = controls_profile("switch", e.key);
+        hubctl::Profile px = controls_profile(hubctl::console_key(e), e.key);
         std::string guid; int port = 0; hubemu::SdlBinds binds;
         const std::string nm = hubemu::name(kind);
         if (!lichii_pad_for(px, &guid, &port, &binds)) set_notice("No controller found: connect one and " + nm + " picks it up (or set it in " + nm + "'s Controls).", 10.0);
@@ -974,7 +974,7 @@ void play_entry(const hub::GameEntry& e_in) {
         case hub::System::GB:
         case hub::System::GBC: {
             std::string core = find_core(hubui::retro_core_name(e.system, A.st.gb_core));
-            if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
+            if (core.empty()) { set_notice("Emulator core for " + std::string(hub::console_name(e)) + " not found (cores folder)."); return; }
             const RealBootPlan rb_plan = real_boot_plan(e);
             const bool rb_drops = rb_plan.use && hub::realboot::drops_resume(e.system);   // a real startup replaces the resume
             std::string args = hubui::retro_base_args(core, e.path, sys, battery, states, resume_arg(e, battery, states, rb_drops), e.title, e.save_stem) + controls_arg("retro", e.key);
@@ -993,7 +993,7 @@ void play_entry(const hub::GameEntry& e_in) {
         case hub::System::NES:
         case hub::System::SNES: {   // Nestopia UE (NES) / Snes9x (SNES) through retrorun; battery .srm in the vault, auto-resume state like GBA
             std::string core = find_core(hubui::retro_core_name(e.system, A.st.gb_core));
-            if (core.empty()) { set_notice("Emulator core for " + std::string(hub::system_name(e.system)) + " not found (cores folder)."); return; }
+            if (core.empty()) { set_notice("Emulator core for " + std::string(hub::console_name(e)) + " not found (cores folder)."); return; }
             std::string args = hubui::retro_base_args(core, e.path, sys, battery, states, resume_arg(e, battery, states, false), e.title, e.save_stem) + controls_arg(sys, e.key);
             args += hubui::retro_extra_args(e.system, gs_values_for(e));
             args += " --max-local " + std::to_string(hubcaps::runner_local_seats(e.system, hub::find_game(e.catalog_id)));   // seats of this game: retrorun never boots an adapter for a 1-2 player game

@@ -69,6 +69,8 @@ std::string console_folder(System s) {
     }
 }
 
+std::string console_folder(System s, bool nx2) { return s == System::Switch && nx2 ? "Switch 2" : console_folder(s); }
+
 bool is_absolute_path(const std::string& p) {
     if (p.size() >= 3 && std::isalpha((unsigned char)p[0]) && p[1] == ':' && (p[2] == '\\' || p[2] == '/')) return true;
     return p.size() >= 3 && p[0] == '\\' && p[1] == '\\';
@@ -113,6 +115,7 @@ std::string games_root(const std::vector<std::string>& rom_folders, const std::s
 }
 
 std::string dest_dir(const std::string& root, System s) { return pjoin(root, console_folder(s)); }
+std::string dest_dir(const std::string& root, System s, bool nx2) { return pjoin(root, console_folder(s, nx2)); }
 
 std::string unique_name(const std::string& dir, const std::string& file_name, const std::function<bool(const std::string&)>& exists) {
     if (!exists(pjoin(dir, file_name))) return file_name;
@@ -243,13 +246,14 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
         GameEntry g;
         bool known = identify_game(src, &g);
         it.system = known ? g.system : System::Unknown;
+        it.nx2 = known && g.nx2;
         it.other = !known || g.system == System::Unknown;
         it.title = known && !g.title.empty() ? g.title : U8(P(name).stem());
         if (known && !g.key.empty()) {
             if (known_keys.count(g.key)) { finish(Outcome::Duplicate, "already in your library"); bytes_done_ += size; continue; }
             known_keys.insert(g.key);   // also dedupes the same game appearing twice in one batch
         }
-        std::string dir = dest_dir(root, it.system);
+        std::string dir = dest_dir(root, it.system, it.nx2);
         /* A PlayStation .cue / .m3u needs its bins / discs next to it: the set goes into its own folder, game name as folder name. */
         std::vector<std::string> comps;
         if (known && (g.system == System::PS1 || g.system == System::PS2)) {   // PS2 CDs come as cue + bin too

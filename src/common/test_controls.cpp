@@ -543,7 +543,53 @@ static void test_live_reload() {
     fs::remove_all(dir, ec);
 }
 
+/* Nintendo Switch 2 is its own controller tab; it falls back to the Switch profile, then to a built-in default that maps like Switch. */
+static void test_switch2() {
+    namespace fs = std::filesystem;
+    const std::vector<std::string>& sy = hubctl::systems();
+    size_t a = sy.size(), b = sy.size();
+    for (size_t i = 0; i < sy.size(); ++i) { if (sy[i] == "switch") a = i; if (sy[i] == "switch2") b = i; }
+    CHECK(a < sy.size() && b == a + 1 && hubctl::is_system("switch2"));
+    hub::GameEntry sw, sw2, gb;
+    sw.system = hub::System::Switch; sw2.system = hub::System::Switch; sw2.nx2 = true; gb.system = hub::System::GB;
+    CHECK(hubctl::console_key(sw) == "switch" && hubctl::console_key(sw2) == "switch2" && hubctl::console_key(gb) == "retro");
+    CHECK(hubctl::system_key(hub::System::Switch) == "switch");
+    // built-in default maps exactly like Switch
+    hubctl::Profile d1 = hubctl::default_profile("switch"), d2 = hubctl::default_profile("switch2");
+    CHECK(d2.system == "switch2" && d2.name == "default-switch2" && d1.buttons == d2.buttons && d1.analogs == d2.analogs && d1.axis_threshold == d2.axis_threshold);
+    CHECK(hubctl::controls_for("switch2").size() == hubctl::controls_for("switch").size() && !hubctl::controls_for("switch2").empty());
+    CHECK(hubctl::resolve(hubctl::Store(), "switch2").same_mapping(d2) && hubctl::resolve(hubctl::Store(), "switch2").system == "switch2");
+    // no Switch 2 profile of its own: the Switch default applies, then its own once set
+    hubctl::Store s;
+    CHECK(hubctl::set_mapping(s, "switch", "", "a", "x"));
+    CHECK(hubctl::resolve(s, "switch").buttons["a"] == "x");
+    CHECK(hubctl::resolve(s, "switch2").buttons["a"] == "x" && hubctl::resolve(s, "switch2").system == "switch2");
+    CHECK(hubctl::set_mapping(s, "switch2", "", "a", "y"));
+    CHECK(hubctl::resolve(s, "switch2").buttons["a"] == "y" && hubctl::resolve(s, "switch").buttons["a"] == "x");
+    // per-game overrides still win first; a Switch game's older override (system "switch") still applies to a Switch 2 game
+    CHECK(hubctl::set_mapping(s, "switch", "switch:game1", "b", "start"));
+    CHECK(hubctl::resolve(s, "switch2", "switch:game1").buttons["b"] == "start" && hubctl::resolve(s, "switch2", "switch:game1").system == "switch2");
+    CHECK(hubctl::set_mapping(s, "switch2", "switch:game2", "b", "back"));
+    CHECK(hubctl::resolve(s, "switch2", "switch:game2").buttons["b"] == "back" && hubctl::resolve(s, "switch", "switch:game2").buttons["b"] != "back");
+    CHECK(hubctl::resolve(s, "switch2", "switch:other").buttons["a"] == "y");
+    // reset of Switch 2 goes back to the Switch profile, not the built-in one
+    hubctl::Store s2 = s;
+    hubctl::reset(s2, "switch2", "");
+    CHECK(hubctl::resolve(s2, "switch2").buttons["a"] == "x");
+    // storage round trip keeps the switch2 profiles
+    std::error_code ec;
+    fs::path dir = fs::temp_directory_path(ec) / "hubctl_switch2_test";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    CHECK(hubctl::save_store(s, dir.string(), ""));
+    hubctl::Store back;
+    CHECK(hubctl::load_store(dir.string(), "", &back));
+    CHECK(hubctl::resolve(back, "switch2").buttons["a"] == "y" && hubctl::resolve(back, "switch2", "switch:game2").buttons["b"] == "back" && hubctl::resolve(back, "switch").buttons["a"] == "x");
+    fs::remove_all(dir, ec);
+}
+
 int main() {
+    test_switch2();
     test_live_reload();
     test_turbo();
     test_ps2_pressure();
