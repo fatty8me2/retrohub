@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.40.4",
+      "date": "2026-11-08",
+      "title": "Recently used shaders by default",
+      "new": [],
+      "improved": [
+        "Shaders at start now defaults to Recently used on every PC: Switch games start quickly and use much less memory, and new shaders are built as you play. Pick Auto or All cached shaders in Settings if you prefer"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.40.3",
       "date": "2026-11-08",
       "title": "Faster GPU reads for Switch, start animation and menu sounds off",
