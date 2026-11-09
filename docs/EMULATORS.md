@@ -317,9 +317,24 @@ The vault side never contains the user uuid (`SaveSession::vault_rels`), so any 
 
 **Faster GPU reads (`switch.fast_reads`, default `on`, global and per game).** In some places Ocarina of Time (Switch 2) fell from about 60 to about 17 fps on Lichii build 125: the guest CPU reads GPU-written memory 45-105 times a second and Lichii makes every read wait for the whole GPU (upstream Lichii issues #944 and #416). When this is not `off`, RetroHub starts Lichii (and Fritchii, same program family; the variable is harmless if a build ignores it) with `EDEN_NX2_NO_REACTIVE=1`, which build 125 uses (`RasterizerMarkRegionCached` in `src/core/memory.cpp`) to drop its read traps on Switch 2 programs. Trade-off: without the traps a CPU read of GPU-written memory can see stale data, so a rare small glitch is possible; turn it off if something looks wrong. Help text: "Lichii skips waiting for the GPU when a game reads back graphics memory. Much faster in parts of Ocarina of Time. Rarely a small glitch: turn it off if something looks wrong." One helper, `hubemu::lichii_fast_reads` (`lichii.cpp`), is used by `lichii_env` and `nx_env`, so every Lichii-family launch (offline, room and online) gets the same variable via `spawn` in `launch.cpp`; Hookshot (native) is unaffected. RetroHub never touches Lichii's own `use_reactive_flushing` setting (turning it off would arm a second trap path). A missing value counts as on. The headless launch trace prints `fast GPU reads yes/no`.
 
+### Fritchii (Ocarina of Time's own build of Lichii)
+
+Fritchii is Frizti's Ocarina-of-Time fork of Lichii. RetroHub downloads it itself (one pinned build, `fritchii_pin` in `src/hub/emulators.cpp`: version, path, size, SHA-256)
+into `<data>\emulators\fritchii`, with its own `user\` folder, and runs it through the same code as Lichii (keys, firmware, controls, saves, hang watch).
+
+- **Version.** The pin is **v5** (`retrohub-fritchii-v5` on `fatty8me2/Fritchii`). Until its size and SHA-256 are filled in (TODO in `emulators.cpp`) `release_is_placeholder()` is true and nothing downloads;
+  Ocarina of Time then keeps playing with Lichii unless Fritchii is already installed.
+- **Upgrading from v4.1.** Like Lichii's in-place upgrade: `install_core` replaces the program files and keeps `user\` (keys, saves, settings, shader cache). Fritchii v5 migrates its own old shader cache.
+- **Default for Ocarina of Time.** Ocarina of Time (Switch 2, `0400486024DEC000`) plays with Fritchii by default. The rule is one pure function, `hubemu::nx_emulator_for` (`nx_runner.cpp`):
+  no `switch.runner` choice for the game or for Switch as a whole (`Store::source` is 0) means Fritchii for that title only; any explicit choice (even `lichii`) wins. Other Switch games stay on
+  Lichii. Online and room launches always use Lichii. If Fritchii is not installed, Play shows the usual download prompt. Hookshot is still opt-in and is decided first.
+- **Shader preparation.** On its first start v5 prepares all shaders once (a "Preparing shaders" screen, about 15 minutes, once). RetroHub does nothing to skip or shorten it: it never sets
+  `EDEN_NX2_PRELOAD_ALL_PIPELINES` for Fritchii (not even for "Shaders at start = All": v5 builds without keeping pipelines, preloading would double the work and memory), never `FRITCHII_CLASSIC_UI` or `EDEN_NX2_PRECOMPILE=0`, keeps `EDEN_UPDATE_URL=http://127.0.0.1:9/x` and `EDEN_NX2_NO_REACTIVE=1`, and copies Lichii's v54 and v53 caches in as before (v5 merges them into its own cache and never writes Lichii's files). It runs on its own at `-g` launches when a recipe is found (`recipes*.nx2recipe` beside the exe, so the install keeps that folder).
+- **NVIDIA tip.** If the game stutters on an NVIDIA card, set the driver's Shader Cache Size to Unlimited (NVIDIA Control Panel > Manage 3D settings).
+
 ### Hookshot (native Ocarina of Time)
 
-Ocarina of Time (Switch 2, title id `0400486024DEC000`) is played with Lichii by default; the player can opt in to a native Windows build, Hookshot, instead (`src/hub/hookshot.*`; the build
+Ocarina of Time (Switch 2, title id `0400486024DEC000`) is played with Fritchii by default (Lichii if it is not obtainable); the player can opt in to a native Windows build, Hookshot, instead (`src/hub/hookshot.*`; the build
 itself is `docs/HOOKSHOT.md`). Hookshot is made on the player's PC from their own game file and never leaves it.
 
 - **When it is used.** Play starts Hookshot when `hookshot::use_for` is true: the game is that one title, a build exists (`hookshot.exe`, `hookshot_vk.dll`,
