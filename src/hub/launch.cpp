@@ -278,7 +278,7 @@ void pad_exit_watch() {
     request_game_close();
 }
 
-/* Lichii builds 88-95 (build 88 release notes, known issue; still unfixed in build 95): a fence-worker shutdown race can leave lichii.exe waiting after its window closed. The session
+/* Lichii builds 88-95 (build 88 release notes, known issue; still unfixed in build 95; not known for build 125, so the watch stays on): a fence-worker shutdown race can leave lichii.exe waiting after its window closed. The session
  * (save copy-back, vault sync) waits for the whole job, so once the game had a window and every window of the job has been gone for 15 s,
  * the job is ended. Only RetroHub's own Lichii runs in that job (Kind::Lichii is never a user's install); by handle, never by image name. */
 static bool g_hookshot_run = false;   // the running game is Hookshot (set by launch_hookshot)
@@ -291,7 +291,7 @@ void lichii_hang_watch() {
     static ULONGLONG gone_since = 0;
     static ULONGLONG cpu_at_gone = 0, idle_since = 0;
     if (!A.proc) { g_hookshot_run = false; g_fritchii_run = false; }
-    if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { had_window = false; gone_since = 0; return; }   // Hookshot has its own exit; the hang is a Lichii issue (builds 88-95)
+    if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { had_window = false; gone_since = 0; return; }   // Hookshot has its own exit; the hang is a Lichii issue (builds 88-95; build 125 unknown)
     const ULONGLONG now = GetTickCount64();
     if (game_main_window()) { had_window = true; gone_since = 0; return; }
     if (!had_window) return;

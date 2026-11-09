@@ -473,6 +473,7 @@ std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, b
     if (ga == "low" || ga == "high") put(t, "Renderer", "gpu_accuracy", ga == "low" ? "0" : "1");   // "lichii": untouched
     put(t, "UI", "fullscreen", fullscreen ? "true" : "false");
     put(t, "System", "current_user", "0");
+    t = ini_put(t, "UI", "check_for_updates", "false");   // last (after fullscreen, so [UI] keeps its order), on every launch and never skipped: Lichii's own update check must never run (RetroHub is the only updater), even if the player switched it back on
     return t;
 }
 
