@@ -10,6 +10,7 @@
 #include <zstd.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -31,6 +32,7 @@ constexpr uint32_t kTocMagic = 0x01434F54u;
 constexpr uint64_t kMaxToc = 1ull << 30;            // a TOC beyond 1 GiB is not a real game
 constexpr uint64_t kMaxMember = 1ull << 30;         // extract() refuses a member beyond 1 GiB
 constexpr size_t kHeadRead = 128 * 1024;
+constexpr uint64_t kHeadMax = 1024 * 1024;   // most a head check ever reads from one member
 constexpr uint32_t kMaxDirDepth = 128;
 constexpr const char* kManifestHead = "RetroHub damaged-file repair 1";
 
@@ -349,20 +351,25 @@ struct HeadChecker {
             if (!n.f.read_at(f.eoff, b, 4)) { *io_error = true; return false; }
             return has_magic(b);
         }
-        const size_t len = (size_t)std::min<uint64_t>(f.esize, kHeadRead);
-        in.resize(len);
-        if (!n.f.read_at(f.eoff, in.data(), len)) { *io_error = true; return false; }
         if (!dctx) { *io_error = true; return false; }
         ZSTD_DCtx_reset(dctx, ZSTD_reset_session_only);
+        // zstd outputs nothing before it holds the whole first block (up to 128 KiB + 3 + a frame header of up to 18 bytes): read 129 KiB,
+        // and while there is still no output and more extent remains keep feeding, up to 1 MiB. Input running out early is never a verdict.
         uint8_t head[4] = {};
-        ZSTD_inBuffer ib{in.data(), len, 0};
         ZSTD_outBuffer ob{head, 4, 0};
-        while (ob.pos < 4) {
-            const size_t before_in = ib.pos, before_out = ob.pos;
-            const size_t r = ZSTD_decompressStream(dctx, &ob, &ib);
-            if (ZSTD_isError(r)) return false;
-            if (r == 0) break;
-            if (ib.pos == before_in && ob.pos == before_out) break;   // no progress: truncated
+        uint64_t read = 0;
+        bool finished = false;
+        while (ob.pos < 4 && !finished && read < f.esize && read < kHeadMax) {
+            const size_t len = (size_t)std::min<uint64_t>(read == 0 ? kHeadRead + 1024 : 64 * 1024, std::min<uint64_t>(f.esize, kHeadMax) - read);
+            in.resize(len);
+            if (!n.f.read_at(f.eoff + read, in.data(), len)) { *io_error = true; return false; }
+            read += len;
+            ZSTD_inBuffer ib{in.data(), len, 0};
+            while (ib.pos < ib.size && ob.pos < 4) {
+                const size_t r = ZSTD_decompressStream(dctx, &ob, &ib);
+                if (ZSTD_isError(r)) return false;
+                if (r == 0) { finished = true; break; }
+            }
         }
         return ob.pos >= 4 && has_magic(head);
     }
@@ -378,6 +385,12 @@ bool safe_path(const std::string& p) {
         const std::string c = p.substr(start, e - start);
         if (c.empty() || c == "." || c == "..") return false;
         if (c.back() == ' ' || c.back() == '.') return false;
+        {   // Windows device names, with or without an extension ("NUL.zs")
+            std::string stem = c.substr(0, c.find('.'));
+            for (char& ch : stem) ch = (char)std::toupper((unsigned char)ch);
+            if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL") return false;
+            if (stem.size() == 4 && (stem.compare(0, 3, "COM") == 0 || stem.compare(0, 3, "LPT") == 0) && stem[3] >= '1' && stem[3] <= '9') return false;
+        }
         for (unsigned char ch : c)
             if (ch < 0x20 || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '"' || ch == '<' || ch == '>' || ch == '|') return false;
         if (e == p.size()) break;
@@ -484,6 +497,9 @@ std::wstring parent_of(const std::wstring& p) {
     return cut == std::wstring::npos ? std::wstring() : p.substr(0, cut);
 }
 
+using Bytes_t = std::vector<uint8_t>;
+bool read_bytes(const std::string& path, Bytes_t* out) { return winutil::read_file(path, out); }
+
 bool write_bytes_atomic(const std::string& path, const std::vector<uint8_t>& data) {
     std::error_code ec;
     fs::create_directories(fs::path(parent_of(W(path))), ec);
@@ -534,7 +550,12 @@ int delete_listed(const std::string& mod, const Manifest& m, const std::set<std:
 bool read_manifest(const std::string& user_dir, uint64_t title_id, Manifest* out) {
     try {
         std::string txt;
-        if (!winutil::read_file(mod_dir_of(user_dir, title_id) + "\\" + kManifestName, &txt) || txt.size() > (16u << 20)) return false;
+        {   // size first: a huge file in the mod folder is never read
+            RFile mf;
+            if (!mf.open(W(mod_dir_of(user_dir, title_id) + "\\" + kManifestName)) || mf.size > (16u << 20)) return false;
+            txt.resize((size_t)mf.size);
+            if (!txt.empty() && !mf.read_at(0, &txt[0], txt.size())) return false;
+        }
         std::vector<std::string> lines;
         size_t pos = 0;
         while (pos < txt.size()) {
@@ -706,7 +727,8 @@ int remove(const std::string& user_dir, uint64_t title_id) {
 
 Applied apply(const std::string& nup_path, const Scan& sc, const std::string& user_dir) {
     Applied a;
-    std::vector<std::string> fresh;   // files written now that no earlier manifest listed (removed again on failure)
+    std::vector<std::string> fresh;                          // targets that did not exist before: deleted again on failure
+    std::vector<std::pair<std::string, Bytes_t>> backups;    // targets that existed with other bytes: restored on failure
     const std::string mod = mod_dir_of(user_dir, sc.title_id);
     try {
         if (!sc.ok) { a.error = "the scan did not succeed"; return a; }
@@ -746,11 +768,17 @@ Applied apply(const std::string& nup_path, const Scan& sc, const std::string& us
             const std::string target = file_in_mod(mod, e.damaged_path);
             std::string have_sha;
             uint64_t have_size = 0;
-            if (file_sha_and_size(target, &have_sha, &have_size) && have_size == e.size && have_sha == e.sha256) { ++a.kept; continue; }
+            const bool existed = file_sha_and_size(target, &have_sha, &have_size);
+            if (existed && have_size == e.size && have_sha == e.sha256) { ++a.kept; continue; }   // already in place (also a hand-made identical file)
+            if (existed) {   // keep what is there so a later failure can put it back
+                Bytes_t old_bytes;
+                if (have_size > (256u << 20) || !read_bytes(target, &old_bytes)) { a.error = "cannot back up " + e.damaged_path; failed = true; break; }
+                backups.push_back({target, std::move(old_bytes)});
+            }
             std::vector<uint8_t> bytes;
             if (!extract_from(n, merged, e.stand_in_path, &bytes, &err)) { a.error = "cannot read the stand-in " + e.stand_in_path + ": " + err; failed = true; break; }
             if (!write_bytes_atomic(target, bytes)) { a.error = "cannot write " + e.damaged_path; failed = true; break; }
-            if (!old_paths.count(e.damaged_path)) fresh.push_back(target);
+            if (!existed) fresh.push_back(target);
             ++a.written;
         }
         if (!failed) {
@@ -758,6 +786,7 @@ Applied apply(const std::string& nup_path, const Scan& sc, const std::string& us
             if (!winutil::write_file_atomic(mod + "\\" + kManifestName, manifest_text(sc, want))) { a.error = "cannot write the manifest"; failed = true; }
         }
         if (failed) {
+            for (const auto& b : backups) write_bytes_atomic(b.first, b.second);
             for (const std::string& f : fresh) { const std::wstring w = W(f); delete_file(w); prune_up(parent_of(w), W(mod)); }
             a.written = 0;
             a.kept = 0;
@@ -776,7 +805,28 @@ Applied apply(const std::string& nup_path, const Scan& sc, const std::string& us
     return a;
 }
 
-Ensure ensure(const std::string& nup_path, const std::string& user_dir, bool enabled) {
+namespace {
+
+/* RetroHub-side "this copy needs no repair" record: <state_dir>\nup-repair-<TITLE ID>.txt, never in the emulator's folders. */
+std::string clean_path(const std::string& state_dir, uint64_t tid) { return join_user(state_dir) + "\\nup-repair-" + tid_hex(tid) + ".txt"; }
+std::string identity_line(uint64_t size, uint64_t mtime, const std::string& toc) {
+    return "nup " + std::to_string(size) + " " + std::to_string(mtime) + " " + toc + " rule " + std::to_string(kRuleVersion);
+}
+bool clean_matches(const std::string& state_dir, uint64_t tid, const std::string& identity) {
+    RFile f;
+    if (!f.open(W(clean_path(state_dir, tid))) || f.size > 65536) return false;
+    std::string t((size_t)f.size, '\0');
+    if (!t.empty() && !f.read_at(0, &t[0], t.size())) return false;
+    const size_t e = t.find('\n');
+    std::string l = t.substr(0, e);
+    if (!l.empty() && l.back() == '\r') l.pop_back();
+    return l == identity;
+}
+void clean_remove(const std::string& state_dir, uint64_t tid) { DeleteFileW(W(clean_path(state_dir, tid)).c_str()); }
+
+}  // namespace
+
+Ensure ensure(const std::string& nup_path, const std::string& user_dir, bool enabled, const std::string& state_dir) {
     Ensure r;
     try {
         Nup n;
@@ -789,11 +839,19 @@ Ensure ensure(const std::string& nup_path, const std::string& user_dir, bool ena
         if (!enabled) {
             r.applied.ok = true;
             r.applied.removed = remove(user_dir, tid);
+            if (!state_dir.empty()) clean_remove(state_dir, tid);
             r.summary = "nup repair: off, " + std::to_string(r.applied.removed) + " removed";
             return r;
         }
+        const std::string identity = identity_line(n.file_size, n.f.mtime, n.toc_hex);
         Manifest m;
-        if (read_manifest(user_dir, tid, &m) && m.file_size == n.file_size && m.mtime == n.f.mtime && m.toc_sha256 == n.toc_hex && m.rule == kRuleVersion && !m.entries.empty()) {
+        const bool have_manifest = read_manifest(user_dir, tid, &m);
+        if (!have_manifest && !state_dir.empty() && clean_matches(state_dir, tid, identity)) {   // scanned before: nothing to repair in this copy
+            r.applied.ok = true;
+            r.summary = "nup repair: unchanged, nothing to repair";
+            return r;
+        }
+        if (have_manifest && m.file_size == n.file_size && m.mtime == n.f.mtime && m.toc_sha256 == n.toc_hex && m.rule == kRuleVersion && !m.entries.empty()) {
             const std::string mod = mod_dir_of(user_dir, tid);
             bool all = true;
             for (const ManifestEntry& e : m.entries) {
@@ -814,6 +872,15 @@ Ensure ensure(const std::string& nup_path, const std::string& user_dir, bool ena
         r.applied = apply(nup_path, r.scan, user_dir);
         if (!r.applied.ok) { r.summary = "nup repair: error: " + r.applied.error; return r; }
         const int repaired = r.applied.written + r.applied.kept;
+        if (!state_dir.empty()) {
+            if (repaired == 0) {   // no repair with a stand-in (none at all, or only unrepairable ones): remember the verdict
+                std::error_code ec;
+                fs::create_directories(fs::path(W(join_user(state_dir))), ec);
+                winutil::write_file_atomic(clean_path(state_dir, tid), identity_line(r.scan.file_size, r.scan.mtime, r.scan.toc_sha256) + "\npath " + nup_path + "\n");
+            } else {
+                clean_remove(state_dir, tid);
+            }
+        }
         if (repaired == 0 && r.applied.unrepaired == 0) {
             r.summary = "nup repair: nothing to repair, " + std::to_string(r.scan.checked) + " checked";
         } else {
