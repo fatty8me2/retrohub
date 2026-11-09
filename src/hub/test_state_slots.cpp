@@ -190,6 +190,49 @@ int main() {
         CHECK(settings_from_json("{\"library_sort\":\"from_the_future\"}", &s2) && sort_from_key(s2.library_sort) == SortMode::Title && !s2.library_sort_rev && !s2.library_favs_first);
     }
 
+    /* ---- "Most played" sort (play_seconds): most first, never played last (also reversed), ties by title then key ---- */
+    {
+        std::vector<ListItem> mp = {
+            {"a", "Alpha", "n64", false, 0, 100, 0},
+            {"b", "bravo", "n64", false, 0, 500, 0},
+            {"c", "Charlie", "n64", false, 0, 0, 0},      // never played
+            {"d", "Delta", "n64", false, 0, 100, 0},
+            {"f", "ALPHA", "n64", false, 0, 100, 0},      // same title as "a" (case-insensitive): the key decides
+            {"n", "Zed Native", "n64", true, 0, 0, 0},    // pinned
+            {"g", "Ghost", "n64", false, 0, 9999, 0},     // a friend's game
+        };
+        mp[6].ghost = true;
+        auto nm = [&](const SortSpec& sp) { std::string r; for (int i : filter_sort(mp, "", "", sp)) r += mp[i].key; return r; };
+        CHECK(nm(SortSpec(SortMode::MostPlayed)) == "nbafdcg");                   // pinned, 500, 100 x3 (alpha/ALPHA by key, then delta), never, ghost last
+        CHECK(nm(SortSpec(SortMode::MostPlayed, true)) == "nafdbcg");             // Least played: least first, ties unchanged, never-played STILL after the played ones
+        CHECK(list_item_less(mp[1], mp[0], SortSpec(SortMode::MostPlayed)) && !list_item_less(mp[0], mp[1], SortSpec(SortMode::MostPlayed)));
+        CHECK(!list_item_less(mp[1], mp[0], SortSpec(SortMode::MostPlayed, true)) && list_item_less(mp[0], mp[1], SortSpec(SortMode::MostPlayed, true)));
+        for (bool rev : {false, true}) {
+            const SortSpec sp(SortMode::MostPlayed, rev);
+            CHECK(list_item_less(mp[0], mp[2], sp) && !list_item_less(mp[2], mp[0], sp));   // played before never played, reversed or not
+            CHECK(list_item_less(mp[5], mp[1], sp) && !list_item_less(mp[1], mp[5], sp));   // pinned before everything
+            CHECK(list_item_less(mp[2], mp[6], sp) && !list_item_less(mp[6], mp[2], sp));   // ghost after everything, whatever its play time
+            CHECK(!list_item_less(mp[0], mp[0], sp));
+            CHECK(list_item_less(mp[0], mp[4], sp) && !list_item_less(mp[4], mp[0], sp));   // equal time and title: key
+            CHECK(list_item_less(mp[0], mp[3], sp) && !list_item_less(mp[3], mp[0], sp));   // equal time: Alpha before Delta even when reversed
+        }
+        mp[3].favorite = true; mp[2].favorite = true;                             // Delta (100 s) and Charlie (never)
+        CHECK(nm(SortSpec(SortMode::MostPlayed, false, true)) == "ndcbafg");      // favorites first (played before never), then the order
+        CHECK(nm(SortSpec(SortMode::MostPlayed, true, true)) == "ndcafbg");
+        CHECK(nm(SortSpec(SortMode::MostPlayed)) == "nbafdcg");   // favorites do not matter when favs_first is off
+        CHECK(sort_label(SortSpec(SortMode::MostPlayed)) == "Most played");
+        CHECK(sort_label(SortSpec(SortMode::MostPlayed, true)) == "Least played");
+        CHECK(sort_label(SortSpec(SortMode::MostPlayed, false, true)) == "Favorites, Most played");
+        CHECK(sort_label(SortSpec(SortMode::MostPlayed, true, true)) == "Favorites, Least played");
+        CHECK(next_sort(SortMode::LastPlayed) == SortMode::MostPlayed && next_sort(SortMode::MostPlayed) == SortMode::RecentlyAdded);
+        CHECK(next_sort(SortMode::MostPlayed, -1) == SortMode::LastPlayed);
+        CHECK(std::string(sort_name(SortMode::MostPlayed)) == "Most played" && std::string(sort_key(SortMode::MostPlayed)) == "most_played");
+        Settings ms, mt;
+        ms.library_sort = "most_played"; ms.library_sort_rev = true;
+        CHECK(settings_from_json(settings_to_json(ms), &mt) && mt.library_sort == "most_played" && mt.library_sort_rev && !mt.library_favs_first);
+        CHECK(sort_from_key(mt.library_sort) == SortMode::MostPlayed);
+    }
+
     std::printf(fails ? "hub_states_test: %d FAILED\n" : "hub_states_test: all passed\n", fails);
     return fails ? 1 : 0;
 }
