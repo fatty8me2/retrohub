@@ -910,7 +910,7 @@ static void draw_playtime_strip(const std::vector<hubui::pt::Cell>& cells, float
             dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(x + padx, y + pady + cap_h + gap_y), ui::TEXT, it.val.c_str());
             ImGui::PopFont();
             if (has_other && hov_ok && it.label == "Play time" && ImGui::IsMouseHoveringRect(ImVec2(x, y), ImVec2(x + it.w, y + row_h)))
-                ImGui::SetTooltip("Time played on this PC. Other PCs are listed separately.");
+                ImGui::SetTooltip("Every PC together: this PC plus the time your other PCs logged (their play logs sync with your saves).");
             x += it.w;
         }
     }
