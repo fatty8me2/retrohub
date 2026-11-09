@@ -660,34 +660,7 @@ static void test_dump_check() {
         CHECK(c2.runs() == 3);
     }
 
-    // "Don't warn again": per path AND size, round trip, hostile text
-    dcx::DismissList dl;
-    dl.add("C:\\Games\\Zelda.nup", 25020741061ull);
-    CHECK(dl.has("C:\\Games\\Zelda.nup", 25020741061ull) && dl.has("c:\\games\\ZELDA.NUP", 25020741061ull));
-    CHECK(!dl.has("C:\\Games\\Zelda.nup", 25620000000ull));   // a new dump at the same path warns again
-    CHECK(!dl.has("C:\\Games\\Other.nup", 25020741061ull));
-    dcx::DismissList d2;
-    d2.parse(dl.serialize() + "garbage\n\t\nx\tpath\n5\t\n99999999999999999999\tp\n7\tD:\\ok.nsp\r\n");
-    CHECK(d2.has("C:\\Games\\Zelda.nup", 25020741061ull) && d2.has("D:\\ok.nsp", 7) && d2.size() == 2);
-    dl.add("bad\tpath", 1);
-    CHECK(dl.size() == 1);
     fs::remove_all(d, ec);
-
-    // the Play-gate decision: only an incomplete verdict with nothing else in the way opens the note
-    {
-        dcx::PlayGateIn g;
-        CHECK(!dcx::play_gate_shows(g));                                        // Ok
-        g.verdict = dcx::Verdict::LooksIncomplete;
-        CHECK(dcx::play_gate_shows(g));
-        g.verdict = dcx::Verdict::Truncated;
-        CHECK(dcx::play_gate_shows(g));
-        { dcx::PlayGateIn h = g; h.dismissed = true;     CHECK(!dcx::play_gate_shows(h)); }
-        { dcx::PlayGateIn h = g; h.pass_fresh = true;    CHECK(!dcx::play_gate_shows(h)); }
-        { dcx::PlayGateIn h = g; h.game_running = true;  CHECK(!dcx::play_gate_shows(h)); }
-        { dcx::PlayGateIn h = g; h.party_round = true;   CHECK(!dcx::play_gate_shows(h)); }
-        { dcx::PlayGateIn h = g; h.hookshot = true;      CHECK(!dcx::play_gate_shows(h)); }
-        { dcx::PlayGateIn h; h.party_round = true; h.pass_fresh = true; CHECK(!dcx::play_gate_shows(h)); }
-    }
 }
 
 int main(int argc, char** argv) {

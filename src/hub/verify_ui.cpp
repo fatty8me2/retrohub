@@ -8,14 +8,11 @@
 #include "pcsx2.h"
 #include "verify.h"
 #include "dump_check.h"
-#include "hookshot.h"
 #include "nx.h"
-#include "runner_ctl.h"
 
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <map>
 #include <set>
 #include <string>
@@ -120,31 +117,15 @@ void refresh_bios() {
     if (nds) optional(hub::System::NDS, "Nintendo DS");
 }
 
-
-/* ---- Incomplete game files (dump_check.h): Switch dumps that are cut short or smaller than any complete copy ---- */
+/* ---- Switch dump check (dump_check.h), shown only as the About tab warning: dumps cut short or smaller than any complete copy ---- */
 namespace dc = hub::dumpcheck;
 dc::Cache g_dump_cache;
-dc::DismissList g_dump_off;
-bool g_dump_off_loaded = false;
-std::string g_dump_pass_key;   // "Play anyway": the next play_entry for this game skips the note once
-ULONGLONG g_dump_pass_until = 0;   // set with it: the pass expires 20 s after "Play anyway", or 10 min while that launch waits on the cloud-save check or a save sync (both re-enter play_entry when done), so a launch that stopped early cannot skip the note on a much later Play
-
-std::string dump_off_path() { return hub::data_dir() + "dump_warn_off.txt"; }
-void dump_off_load() {
-    if (g_dump_off_loaded) return;
-    g_dump_off_loaded = true;
-    std::ifstream f(std::filesystem::u8path(dump_off_path()), std::ios::binary);
-    if (!f) return;
-    g_dump_off.parse(std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()));
-}
 /* The cached verdict (never blocks: the first ask starts a background check and answers "nothing yet"). */
 bool dump_result(const hub::GameEntry& e, dc::Result* r) {
     if (e.system != hub::System::Switch || is_hack(e) || e.path.empty() || e.key == kNativeKey) return false;
     if (!g_dump_cache.get(e.path, hub::nx::title_id_from_key(e.key), r)) return false;
     return r->v != dc::Verdict::Ok;
 }
-
-struct DumpAsk { bool open = false, seen = false; std::string key, title; dc::Result res; } DA;
 
 void rebuild_notes() {
     V.notes.clear();
@@ -184,25 +165,6 @@ void rebuild_notes() {
         V.summary = "Checked " + plural(good + unknown, "game", "games") + ": " + std::to_string(good) + " match a known good dump" +
                     (unknown ? ", " + std::to_string(unknown) + " don't." : ".");
         V.ever_checked = true;
-    }
-
-    // 1b. Switch dumps that look incomplete
-    {
-        std::vector<std::string> inc;
-        for (const hub::GameEntry& e : A.lib) {
-            dc::Result r;
-            if (dump_result(e, &r)) inc.push_back(e.title + ": " + dc::short_line(r));
-        }
-        if (!inc.empty()) {
-            std::sort(inc.begin(), inc.end());
-            Note n;
-            n.head = "Incomplete game files";
-            n.lines.push_back("Some games look incomplete and may be missing parts. Open a game's page for details.");
-            for (size_t i = 0; i < inc.size() && i < 4; ++i) n.lines.push_back(inc[i]);
-            if (inc.size() > 4) n.lines.push_back("and " + std::to_string(inc.size() - 4) + " more");
-            n.col = ui::WARN;
-            V.notes.push_back(std::move(n));
-        }
     }
 
     // 2. missing BIOS files
@@ -404,61 +366,4 @@ void verify_library_card() {
     ImGui::EndChild();
     ImGui::PopStyleColor(2);
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-}
-
-/* Play: a Switch dump that looks incomplete gets one note in the hub, BEFORE anything starts. true = the note is open, the caller stops;
- * its buttons call play_entry again. Never while a game runs; "Don't warn again" is remembered per file path and size. */
-bool dumpwarn_play_gate(const hub::GameEntry& e, bool party_round) {
-    if (e.system != hub::System::Switch || A.proc || game_active() || party_round) return false;
-    dc::PlayGateIn in;
-    in.pass_fresh = g_dump_pass_key == e.key && GetTickCount64() < g_dump_pass_until;
-    if (g_dump_pass_key == e.key) g_dump_pass_key.clear();   // used (or stale): one pass only
-    in.hookshot = hookshot::use_for(e, gs_values_for(e));
-    dc::Result r;
-    if (!dump_result(e, &r)) return false;
-    dump_off_load();
-    in.verdict = r.v;
-    in.dismissed = g_dump_off.has(e.path, r.have);
-    if (!dc::play_gate_shows(in)) return false;
-    DA = DumpAsk();
-    DA.open = true;
-    DA.key = e.key;
-    DA.title = e.title;
-    DA.res = r;
-    return true;
-}
-
-void dumpwarn_draw() {
-    if (!DA.open) return;
-    if (A.proc || game_active()) { DA.open = false; return; }   // a game started meanwhile: drop it silently
-    bool open = false;
-    emu_modal_begin("This copy looks incomplete", &open);
-    if (!open) return;
-    if (ui::modal_back()) DA.open = false;
-    ImGui::TextWrapped("%s", DA.title.c_str());
-    ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));
-    text_wrapped_disabled(dc::warning_text(DA.res));
-    ImGui::Dummy(ImVec2(0, ui::sp(1.5f)));
-    const ImVec2 bs(ImGui::GetContentRegionAvail().x, ui::sp(4.f));
-    if (!DA.seen) { ImGui::SetKeyboardFocusHere(0); DA.seen = true; }   // a pad lands on Play anyway
-    auto go = [&](bool remember) {
-        const hub::GameEntry* g = find_entry(DA.key);
-        if (remember && g) {
-            dump_off_load();
-            g_dump_off.add(g->path, DA.res.have);
-            runctl::write_text_atomic(dump_off_path(), g_dump_off.serialize());
-        }
-        g_dump_pass_key = DA.key;
-        g_dump_pass_until = GetTickCount64() + 20000;
-        DA.open = false;
-        if (g) { hub::GameEntry copy = *g; play_entry(copy); }
-        if (!g || (A.cloud_gate.phase == CloudGate::Idle && !A.job.running)) g_dump_pass_key.clear();   // cleared whatever play_entry did, unless the launch was deferred
-        else if (!g_dump_pass_key.empty()) g_dump_pass_until = GetTickCount64() + 600000;   // deferred before the gate: the cloud check / save sync re-enters play_entry when it finishes, often well past 20 s; keep the pass until then
-    };
-    if (ui::button("Play anyway", bs, true, true)) go(false);
-    if (ui::button("Don't warn about this file again", bs, false, true)) go(true);
-    ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));
-    if (ui::button("Cancel", ImVec2(ui::sp(14.f), ui::sp(3.5f)))) DA.open = false;
-    if (!DA.open) { ImGui::CloseCurrentPopup(); DA.seen = false; }
-    ImGui::EndPopup();
 }
