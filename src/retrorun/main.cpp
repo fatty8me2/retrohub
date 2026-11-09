@@ -55,6 +55,7 @@ namespace slot2 = retrorun::slot2;
 #include "miniz.h"
 #include "joinfp.h"
 #include "joinid.h"
+#include "gb_cart.h"
 
 constexpr uint8_t kPktCfg = 0x60;
 constexpr uint8_t kPktCfg2 = 0x61;   // PS2: {type, slot, u64 total, u32 core, u32 bios, u32 disc, u32 options}: which part differs is reported   // {type, slot, u64 PlayStation setup fingerprint}; unknown to lockstep/rollback (ignored there)
@@ -3896,6 +3897,15 @@ int Frontend::run(const Args& args) {
             rlog("qa: port %lu device 0x%lx (RETRORUN_SET_DEVICES)", port, dev);
             p = *e2 == ',' ? e2 + 1 : e2;
             if (e2 == e1 + 1) break;
+        }
+    }
+    if (!a.net.empty() && !a.link && !a.synctest) {   /* Gambatte keeps a cartridge clock on wall time: two PCs would drift apart. Normally the hub picks SameBoy; this catches an older host. */
+        std::string gln = lower(core.info().library_name ? core.info().library_name : "");
+        uint8_t ctype = 0;
+        if (gln.find("gambatte") != std::string::npos && gbcart::read_cart_type(fs::u8path(a.rom).wstring(), &ctype) && gbcart::gb_cart_has_clock(ctype)) {
+            rlog("net: refused: Gambatte with a real-time clock cartridge (type 0x%02x)", (unsigned)ctype);
+            net_fail("This game keeps its own clock, and the room's Game Boy core (Gambatte) can't keep it in step between PCs. The host can switch to SameBoy in Settings, or update RetroHub, and start the game again.");
+            return net_rc;
         }
     }
     if (a.rollback && !a.synctest) {
