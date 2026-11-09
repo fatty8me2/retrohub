@@ -38,3 +38,6 @@ void verify_details_section(const hub::GameEntry& e);                           
 void verify_library_card();                                                              // All Games page, above the grid
 
 void save_import_section();                                                              // Saves page
+
+bool dumpwarn_play_gate(const hub::GameEntry& e);                                        // Play: a Switch dump that looks incomplete asks once (hub window, before launch)
+void dumpwarn_draw();                                                                    // once per frame, with the other dialogs
