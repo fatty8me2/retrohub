@@ -61,6 +61,15 @@ static void test_ini() {
     CHECK(m.find("check_for_updates=false") < m.find("[Renderer]"));   // into [UI], not appended after Renderer
     CHECK(m.find("fullscreen_mode=0") > m.find("[Renderer]") && count_of(m, "[Renderer]") == 1 && count_of(m, "[UI]") == 1);
     CHECK(lichii_ini_defaults(m) == m);   // idempotent
+    {   // the update check is switched off on EVERY launch, even when the player (or an old config) switched it back on after the first launch
+        const std::string on = "[UI]\ncheck_for_updates\\default=false\ncheck_for_updates=true\n";
+        const hub::gs::Values sv = hub::gs::defaults_for(hub::System::Switch);
+        const std::string off = lichii_ini_launch(on, sv, false);
+        CHECK(has(off, "check_for_updates=false\n") && !has(off, "check_for_updates=true") && count_of(off, "check_for_updates=") == 1);
+        CHECK(has(lichii_ini_launch("", sv, true), "check_for_updates=false\n"));
+        const std::vector<std::string> keep = {"UI.check_for_updates"};   // not even a key the player keeps from Lichii's own settings
+        CHECK(has(lichii_ini_launch(on, sv, false, &keep), "check_for_updates=false\n"));
+    }
 
     hub::gs::Values v = hub::gs::defaults_for(hub::System::Switch);
     std::string l = lichii_ini_launch("", v, true);
@@ -328,6 +337,14 @@ static void test_prepare(const fs::path& d) {
     hub::gs::Values v = hub::gs::defaults_for(hub::System::Switch);
     hubctl::Profile p = hubctl::default_profile("switch");
     fs::path ini = inst / "user" / "config" / "qt-config.ini", marker = inst / "user" / "config" / "retrohub-defaults.txt";
+    {   // defaults already written once, then the update check switched back on (in Lichii, or by an old config): the next launch turns it off again
+        const fs::path i2 = d / "pr_upd";
+        write_text(i2 / "user" / "config" / "retrohub-defaults.txt", "done");
+        write_text(i2 / "user" / "config" / "qt-config.ini", "[UI]\ncheck_for_updates\\default=false\ncheck_for_updates=true\n");
+        CHECK(prepare_lichii(U8(i2), p, "guid1", 0, v, false).empty());
+        const std::string u = read_text(i2 / "user" / "config" / "qt-config.ini");
+        CHECK(has(u, "check_for_updates=false\n") && !has(u, "check_for_updates=true"));
+    }
     write_text(ini, "[UI]\nmyKey=keep\nfirstStart=true\n");
     CHECK(prepare_lichii(U8(inst), p, "guid1", 0, v, true).empty());
     std::string t = read_text(ini);
