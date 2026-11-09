@@ -172,7 +172,8 @@ add_test(NAME hubsaves_engine_test COMMAND hubsaves_engine_test)   # cloud saves
 add_test(NAME hub_logic_test COMMAND hub_logic_test)
 add_test(NAME hub_homefun_test COMMAND hub_homefun_test)               # attract mode idle/slideshow, Surprise-me weighting + reel, Wrapped aggregation
 add_test(NAME hub_continue_test COMMAND hub_continue_test)           # Home Continue hero: hero pick, backdrop source, relative time, Continue/Play label, Jump back in row
-add_test(NAME hub_states_test COMMAND hub_states_test)               # save-state slot listing, resume wording, library sort
+add_test(NAME hub_playtime_test COMMAND hub_playtime_test)           # Steam-style play time: hours text, last played, game stats, stats strip
+add_test(NAME hub_states_test COMMAND hub_states_test)              # save-state slot listing, resume wording, library sort
 add_test(NAME hub_cases_test COMMAND hub_cases_test)   # Cases view: slot pose maths, case shapes, wrap/clamp, tab memory, flip/inspect modes, layout key round-trip
 add_test(NAME hub_homescroll_test COMMAND hub_homescroll_test)   # Home wheel routing (vertical/horizontal/Shift/diagonal) + eased page spring
 add_test(NAME hub_shelf_test COMMAND hub_shelf_test)   # Shelf view: media per console, row packing, focus movement, slide-out spring
