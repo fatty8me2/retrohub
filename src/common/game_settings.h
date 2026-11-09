@@ -74,6 +74,20 @@ public:
     /* Where a value comes from, for the UI: 0 = option default, 1 = system default, 2 = per-game override. */
     int source(System s, const std::string& game_key, const std::string& key) const;
 
+    /* Console layer (library.h console ids). Nintendo Switch 2 ("switch2") is its own console in the UI: its defaults live in their own
+     * entry (sys_["switch2"], stamp "s:switch2", same file and sync rules as a system entry) ON TOP of the Nintendo Switch defaults, so a
+     * Switch 2 game resolves: option default <- "switch" defaults <- "switch2" defaults <- game overrides, and inherits whatever was set
+     * for Switch until the player sets it for Switch 2 itself. For every other console the console IS the system and these calls equal
+     * the System ones. Options and validation are the console's System's (console_system()). Unknown console id -> false / empty. */
+    bool set_console(const std::string& console, const std::string& key, const std::string& value);
+    void clear_console_key(const std::string& console, const std::string& key);
+    void reset_console(const std::string& console);
+    Values resolve_console(const std::string& console, const std::string& game_key) const;
+    /* 0 = option default, 1 = a console or system default (for "switch2": either layer), 2 = per-game override. */
+    int source_console(const std::string& console, const std::string& game_key, const std::string& key) const;
+    /* The game's own console (console_id(e)); what launch code and the game's Settings tab use. */
+    Values resolve_game(const GameEntry& e) const { return resolve_console(console_id(e), e.key); }
+
     std::string to_json() const;
     bool from_json(const std::string& text);   // replaces the contents; false (and unchanged) on malformed input
     /* Merge another PC's file: other's entries win per key (callers decide which is newer). */

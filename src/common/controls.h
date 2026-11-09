@@ -33,6 +33,11 @@ constexpr int kDefaultAxisThreshold = 16384;
 const std::vector<std::string>& systems();
 bool is_system(const std::string& s);
 std::string system_key(hub::System s);   // "" when RetroHub has no profile for it
+/* The controller-profile key of a GAME: system_key(e.system), except a Nintendo Switch 2 game, which is "switch2" (its own console on the
+ * Controllers page, library.h console ids). "switch2" is in systems() right after "switch"; resolve() for "switch2" with no "switch2"
+ * profile of its own falls back to the "switch" profile (then the built-in default, which maps like "switch"), so a Switch 2 game keeps
+ * the controls the player set for Switch until they set Switch 2 ones. A per-game override still wins first. */
+std::string console_key(const hub::GameEntry& e);
 
 struct ControlInfo {
     std::string name;    // key in Profile::buttons / Profile::analogs
