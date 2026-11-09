@@ -526,6 +526,22 @@ static void test_fast_reads() {
     }
 }
 
+/* switch.repair_damaged: default on, two choices, global + per game (the launch reads "anything but off"). */
+static void test_repair_setting() {
+    const hub::gs::Option* o = hub::gs::find_option("switch.repair_damaged");
+    CHECK(o && o->def == "on" && o->label == "Repair damaged game files" && o->group == "Emulation" && o->choices.size() == 2);
+    CHECK(hub::gs::defaults_for(hub::System::Switch)["switch.repair_damaged"] == "on");
+    const std::string g = "switch:0400486024dec000";
+    hub::gs::Store st;
+    CHECK(st.set_game(g, hub::System::Switch, "switch.repair_damaged", "off"));
+    CHECK(st.resolve(hub::System::Switch, g)["switch.repair_damaged"] == "off");
+    CHECK(st.resolve(hub::System::Switch, "switch:0100abcd12340000")["switch.repair_damaged"] == "on");
+    CHECK(st.set_system(hub::System::Switch, "switch.repair_damaged", "off"));
+    CHECK(st.set_game(g, hub::System::Switch, "switch.repair_damaged", "on"));
+    CHECK(st.resolve(hub::System::Switch, g)["switch.repair_damaged"] == "on");
+    CHECK(!st.set_game(g, hub::System::Switch, "switch.repair_damaged", "bogus"));
+}
+
 /* switch.runner: three choices, per-game overrides, and what Fritchii gets in its environment. */
 static void test_runner() {
     const hub::gs::Option* o = hub::gs::find_option("switch.runner");
@@ -584,6 +600,7 @@ int main(int argc, char** argv) {
     test_saves(d);
     test_env();
     test_fast_reads();
+    test_repair_setting();
     test_runner();
     std::error_code ec;
     fs::remove_all(d, ec);

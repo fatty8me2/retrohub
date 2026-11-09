@@ -31,6 +31,11 @@ target_link_libraries(patcher_test PRIVATE hubcommon)
 target_compile_definitions(patcher_test PRIVATE PATCHER_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/testdata/patcher")
 
 target_sources(hubcommon PRIVATE dump_check.cpp)   # incomplete-dump check (tests: hub_nx_test)
+target_sources(hubcommon PRIVATE nup_repair.cpp)   # damaged-member repair for Switch .nup games (tests: nuprepair_test)
+
+# Damaged-member repair: synthetic NUPs (stand-in choice, base + update merge, TOC bounds, apply / ensure / remove, manifest). Real-file QA: --scan / --apply / --ensure <file.nup> (never run by ctest).
+add_executable(nuprepair_test test_nup_repair.cpp)
+target_link_libraries(nuprepair_test PRIVATE hubcommon bcrypt)
 
 # Console-only unit test (no WIN32 flag, so it stays a console app).
 add_executable(hubcommon_test test_games.cpp)

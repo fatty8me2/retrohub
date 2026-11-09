@@ -49,6 +49,7 @@
 #include "resume_more.h"
 #include "hookshot.h"
 #include "hookshot_build.h"
+#include "nup_repair.h"
 #include <thread>
 #include <xinput.h>
 
@@ -776,6 +777,15 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         const hubemu::NxSaveSyncReport rep = hubemu::nx_sync_saves_before_launch(ss);
         if (rep.ran) autotest_log("nx saves: " + (rep.ok ? rep.summary : "ERROR " + rep.error));
         if (!rep.ok) { set_notice("Couldn't compare your saves between Lichii and Fritchii (" + rep.error + "). The game was not started. Nothing was lost: every save file that could have been replaced was backed up first (save-backups, and the vault's _conflicts folder).", 15.0); return; }
+    }
+    if (hubemu::is_nx(kind) && game.size() >= 4) {   // a damaged .nup copy: put the intact stand-in files in the emulator's LayeredFS folder first (quiet: never blocks, fails or shows anything)
+        std::string ext = game.substr(game.size() - 4);
+        for (char& ch : ext) ch = (char)std::tolower((unsigned char)ch);
+        if (ext == ".nup") {
+            auto rp = gsv.find("switch.repair_damaged");
+            const hub::nuprepair::Ensure er = hub::nuprepair::ensure(game, inst.dir + "\\user", rp == gsv.end() || rp->second != "off");
+            autotest_log(er.summary);
+        }
     }
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, "", wiiu_tid, hubemu::nx_manifest_suffix(kind)));
     autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
