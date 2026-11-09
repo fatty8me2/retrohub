@@ -30,6 +30,8 @@ add_executable(patcher_test test_patcher.cpp)
 target_link_libraries(patcher_test PRIVATE hubcommon)
 target_compile_definitions(patcher_test PRIVATE PATCHER_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/testdata/patcher")
 
+target_sources(hubcommon PRIVATE dump_check.cpp)   # incomplete-dump check (tests: hub_nx_test)
+
 # Console-only unit test (no WIN32 flag, so it stays a console app).
 add_executable(hubcommon_test test_games.cpp)
 target_link_libraries(hubcommon_test PRIVATE hubcommon)

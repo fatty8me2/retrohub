@@ -968,6 +968,7 @@ void draw_details_modal() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, std::min(tabh, sp(15.f))), ImVec2(FLT_MAX, tabh));
     ImGui::BeginChild("##tabbody", ImVec2(0, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AutoResizeY);
     if (tab == TabAbout) {
+        dumpwarn_details_section(e);   // first: a copy that looks incomplete must be seen without scrolling
         gameinfo_ui_section(e, cat ? cat->title : std::string(), 2);
         achievements_ui_section(e);   // RetroAchievements progress (only when signed in)
         if (e.system == hub::System::WiiU) {
