@@ -40,7 +40,21 @@ $rb = ($Mode -eq 'rollback')
 if (-not $PSBoundParameters.ContainsKey('Core')) { $Core = if ($rb) { 'nestopia_libretro.dll' } else { 'mgba_libretro.dll' } }
 if (-not $PSBoundParameters.ContainsKey('Rom')) { $Rom = if ($rb) { 'deps\testroms\netplay.nes' } else { 'deps\testroms\sram.gba' } }
 if (-not $PSBoundParameters.ContainsKey('System')) { $System = if ($rb) { 'nes' } else { 'gba' } }
-if ($Rom -like '*netplay.nes' -and -not (Test-Path (Join-Path $root $Rom))) { python "$PSScriptRoot\make_nesnes_roms.py" (Join-Path $root 'deps\testroms') }
+if ($Rom -like '*netplay.nes' -and -not (Test-Path (Join-Path $root $Rom))) {
+    if (-not (Get-Command python -ErrorAction SilentlyContinue)) { throw "python was not found on PATH, so qa\make_nesnes_roms.py could not create $Rom. Install Python or create the ROM by hand." }
+    python "$PSScriptRoot\make_nesnes_roms.py" (Join-Path $root 'deps\testroms')
+}
+# resolve and check everything BEFORE the local worker starts, so a failure here cannot leak the worker process
+$exe = if ($Exe -ne '') { $Exe } else { Join-Path $root 'build\bin\Release\retrorun.exe' }
+if (-not (Test-Path $exe)) { throw "retrorun not found: $exe" }
+$corePath = Join-Path (Split-Path -Parent $exe) ('cores\' + $Core)
+if (-not (Test-Path $corePath)) { $corePath = Join-Path $root ('build\bin\Release\cores\' + $Core) }
+if (-not (Test-Path $corePath)) { $corePath = Join-Path $root ('deps\cores\' + $Core) }
+if (-not (Test-Path $corePath)) { $corePath = Join-Path 'C:\Users\fatty\Desktop\SmashClassicPort\RetroHub\deps\cores' $Core }
+if (-not (Test-Path $corePath)) { throw "core not found: $Core" }
+$romPath = Join-Path $root $Rom
+if (-not (Test-Path $romPath)) { $romPath = Join-Path 'C:\Users\fatty\Desktop\SmashClassicPort\RetroHub' $Rom }
+if (-not (Test-Path $romPath)) { throw "rom not found: $Rom" }
 $wr = $null
 if ($Server -eq '') {
     $Server = "ws://127.0.0.1:$Port"
@@ -61,16 +75,9 @@ if ($Server -eq '') {
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 if ($Relay) { $env:HUBNET_FORCE_RELAY = '1' }
 $env:RETRORUN_MUTE = '1'
-if ($ReplayFromStart) { $env:RETRORUN_NO_LIVE_SPECTATE = '1' }   # only spectators read it
+# the host also reads this: it stops offering live snapshots (and drop-in), so the spectator replays from frame 0 and fast-forwards
+if ($ReplayFromStart) { $env:RETRORUN_NO_LIVE_SPECTATE = '1' }
 
-$exe = if ($Exe -ne '') { $Exe } else { Join-Path $root 'build\bin\Release\retrorun.exe' }
-if (-not (Test-Path $exe)) { throw "retrorun not found: $exe" }
-$corePath = Join-Path (Split-Path -Parent $exe) ('cores\' + $Core)
-if (-not (Test-Path $corePath)) { $corePath = Join-Path $root ('build\bin\Release\cores\' + $Core) }
-if (-not (Test-Path $corePath)) { $corePath = Join-Path $root ('deps\cores\' + $Core) }
-if (-not (Test-Path $corePath)) { $corePath = Join-Path 'C:\Users\fatty\Desktop\SmashClassicPort\RetroHub\deps\cores' $Core }
-$romPath = Join-Path $root $Rom
-if (-not (Test-Path $romPath)) { $romPath = Join-Path 'C:\Users\fatty\Desktop\SmashClassicPort\RetroHub' $Rom }
 $outDir = Join-Path $root ('qa\out\' + $Tag)
 if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
@@ -161,9 +168,14 @@ $ref = $finals['p0']
 $mismatch = @()
 foreach ($k in $finals.Keys) {
     $v = $finals[$k]
-    if ($v.H -eq 'NONE') { continue }
-    if ((HashOf $v.H 'state-hash') -ne (HashOf $ref.H 'state-hash')) { $mismatch += "$k state-hash $(HashOf $v.H 'state-hash') vs p0 $(HashOf $ref.H 'state-hash')" }
-    if (-not $v.StateOnly -and (HashOf $v.H 'output-hash') -ne (HashOf $ref.H 'output-hash')) { $mismatch += "$k output-hash $(HashOf $v.H 'output-hash') vs p0 $(HashOf $ref.H 'output-hash')" }
+    if ($v.H -eq 'NONE') { continue }   # already counted as a failure above
+    $fields = if ($v.StateOnly) { @('state-hash') } else { @('state-hash', 'output-hash') }
+    foreach ($f in $fields) {
+        $mine = HashOf $v.H $f; $theirs = HashOf $ref.H $f
+        if ($mine -eq '') { $mismatch += "${k}: no $f in its final line" }
+        elseif ($theirs -eq '') { $mismatch += "p0: no $f in its final line" }
+        elseif ($mine -ne $theirs) { $mismatch += "$k $f $mine vs p0 $theirs" }
+    }
 }
 if ($mismatch.Count) { $fail++; Write-Output "FAIL: final hashes differ: $($mismatch -join ' || ')" }
 if ($fail) { Write-Output "RESULT: FAIL"; exit 1 }
