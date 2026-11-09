@@ -215,7 +215,7 @@ static void fritchii_settings_ui() {
         }
         ImGui::EndCombo();
     }
-    text_wrapped_disabled("Hookshot only plays Ocarina of Time (once built on its game page). Fritchii needs to be installed; until then Play offers to download it.");
+    text_wrapped_disabled("Ocarina of Time plays with Fritchii unless you pick a program for it. Hookshot only plays Ocarina of Time (once built on its game page). Fritchii needs to be installed; until then Play offers to download it.");
 }
 
 /* Settings > Playing (emulators list). */
