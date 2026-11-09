@@ -50,6 +50,7 @@ const std::vector<std::string>& nx_skip_keys(Kind k) {
 std::vector<std::pair<std::string, std::string>> nx_env(Kind k, const hub::gs::Values& v, uint64_t ram) {
     if (k != Kind::Fritchii) return lichii_env(v, ram);   // Lichii: exactly as before
     std::vector<std::pair<std::string, std::string>> env;
+    if (lichii_fast_reads(v)) env.push_back({"EDEN_NX2_NO_REACTIVE", "1"});   // same helper as lichii_env
     auto it = v.find("switch.preload_shaders");
     if (it != v.end() && it->second == "all") env.push_back({"EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"});
     env.push_back({"EDEN_UPDATE_URL", kFritchiiUpdateUrl});

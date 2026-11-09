@@ -709,8 +709,14 @@ std::string lichii_args(const std::string& game, bool fullscreen) {
     return std::string(fullscreen ? "-f " : "") + "-u 0 -g " + winutil::quote_arg(game);
 }
 
+bool lichii_fast_reads(const hub::gs::Values& v) {
+    auto it = v.find("switch.fast_reads");
+    return it == v.end() || it->second != "off";   // missing / unknown counts as on
+}
+
 std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t ram) {
     std::vector<std::pair<std::string, std::string>> env;
+    if (lichii_fast_reads(v)) env.push_back({"EDEN_NX2_NO_REACTIVE", "1"});
     auto it = v.find("switch.preload_shaders");
     const std::string m = it == v.end() ? "auto" : it->second;
     const uint64_t kGiB = 1024ull * 1024 * 1024;

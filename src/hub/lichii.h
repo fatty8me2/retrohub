@@ -132,6 +132,9 @@ std::string prepare_lichii(const std::string& install_dir, const hubctl::Profile
  * switch.preload_shaders: "all" -> EDEN_NX2_PRELOAD_ALL_PIPELINES=1 (Lichii builds every cached pipeline at start, ~0.45 MB driver memory each);
  * "auto" (also missing / unknown) -> the same when physical_ram_bytes >= 30 GiB (a PC sold as 32 GB reports ~31.7 GiB); "recent" -> nothing. Pure. */
 std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t physical_ram_bytes);
+/* switch.fast_reads ("Faster GPU reads"): anything but "off" (missing counts as on) -> EDEN_NX2_NO_REACTIVE=1 (Lichii build 125 drops its read traps on Switch 2
+ * programs; stale reads are possible but rare). One helper for every Lichii-family launch: lichii_env (Lichii) and nx_env (Fritchii) both call it. */
+bool lichii_fast_reads(const hub::gs::Values& v);
 uint64_t physical_ram_bytes();   // GlobalMemoryStatusEx ullTotalPhys; 0 when unknown
 /* [-f] -u 0 -g "<game>" */
 std::string lichii_args(const std::string& game_path, bool fullscreen);
