@@ -286,14 +286,16 @@ void tab_general() {
         if (ImGui::RadioButton("Room and friends##gchat", A.st.game_chat == 2)) { A.st.game_chat = 2; mark_dirty(); }
         text_wrapped_disabled("Shows messages as small text in the corner of the game, nothing pops up. Reply from the game menu (View + Y).");
     }
-    if (ImGui::Checkbox("Notification sound", &A.st.notif_sound)) mark_dirty();
-    if (ImGui::Checkbox("Menu sounds", &A.st.menu_sounds)) mark_dirty();
-    if (A.st.menu_sounds) {
-        ImGui::SameLine(); ImGui::SetNextItemWidth(sp(28.f));
-        if (ImGui::SliderInt("##menu_vol", &A.st.menu_volume, 0, 100, "%d%%")) mark_dirty();
+    if (hubui::kMenuSoundsOn) {   // feature_off.h: menu sounds turned off for now
+        if (ImGui::Checkbox("Notification sound", &A.st.notif_sound)) mark_dirty();
+        if (ImGui::Checkbox("Menu sounds", &A.st.menu_sounds)) mark_dirty();
+        if (A.st.menu_sounds) {
+            ImGui::SameLine(); ImGui::SetNextItemWidth(sp(28.f));
+            if (ImGui::SliderInt("##menu_vol", &A.st.menu_volume, 0, 100, "%d%%")) mark_dirty();
+        }
+        if (ImGui::Checkbox("Menu music", &A.st.menu_music)) mark_dirty();
+        text_wrapped_disabled("Soft sounds and an optional quiet ambient loop in RetroHub. Always silent while a game is running or RetroHub is in the background.");
     }
-    if (ImGui::Checkbox("Menu music", &A.st.menu_music)) mark_dirty();
-    text_wrapped_disabled("Soft sounds and an optional quiet ambient loop in RetroHub. Always silent while a game is running or RetroHub is in the background.");
     tvmode::settings_ui();
     if (ImGui::Checkbox("Show what's new after updates", &A.st.show_whats_new)) mark_dirty();
     text_wrapped_disabled("A short welcome-back card with the highlights the first time RetroHub opens on a new version. Never while a game is running.");

@@ -56,7 +56,7 @@ RealBootPlan real_boot_plan(const hub::GameEntry& e) {
     RealBootPlan p;
     p.supported = hub::realboot::supported(e.system);
     if (!p.supported) return p;
-    p.enabled = hub::realboot::enabled_for(A.st.real_boot_off, e.system);
+    p.enabled = hubui::kStartAnimationOn && hub::realboot::enabled_for(A.st.real_boot_off, e.system);   // feature_off.h: no console intro while the start animation is off
     switch (e.system) {
         case hub::System::PS1: p.have = ps1_real_bios_present(); break;
         case hub::System::PS2: p.have = !hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders)).file.empty(); break;

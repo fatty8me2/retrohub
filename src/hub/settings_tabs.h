@@ -3,6 +3,8 @@
  * kControls lists EVERY setting control the Settings page offers and the tab it lives on. When a control is added or moved,
  * update this table; test_logic.cpp compares it with the pre-split checklist so nothing silently disappears. */
 #include <cstring>
+#include <vector>
+#include "feature_off.h"
 
 namespace hubui {
 
@@ -34,12 +36,12 @@ inline int settings_tab_step(int cur, int dir, int* next) {
 
 struct SettingsCtl { const char* id; int tab; };
 inline const SettingsCtl* settings_controls(int* n) {
-    static const SettingsCtl c[] = {
+    static const SettingsCtl all[] = {
         {"rom_folders_list", ST_General}, {"pack_links", ST_General}, {"rom_folder_remove", ST_General}, {"add_folder", ST_General}, {"find_games", ST_General},
         {"run_setup_again", ST_General}, {"rescan", ST_General}, {"download_art", ST_General}, {"smash_exe_browse", ST_General},
         {"smash_exe_default", ST_General}, {"sidebar_mode", ST_General}, {"theme_picker", ST_General}, {"show_friends", ST_General}, {"notify_in_game", ST_General}, {"game_chat", ST_General},
         {"tv_mode", ST_General}, {"tv_start", ST_General}, {"tv_cases", ST_General}, {"tv_windows", ST_General},
-        {"notif_sound", ST_General}, {"menu_sounds", ST_General}, {"menu_music", ST_General}, {"attract_mode", ST_General}, {"rom_cache_clear", ST_General}, {"rom_cache_limit", ST_General}, {"skipped_archives", ST_General},
+        {"notif_sound", ST_General}, {"menu_sounds", ST_General}, {"menu_volume", ST_General}, {"menu_music", ST_General}, {"attract_mode", ST_General}, {"rom_cache_clear", ST_General}, {"rom_cache_limit", ST_General}, {"skipped_archives", ST_General},
         {"delay_auto", ST_Online}, {"input_delay", ST_Online}, {"auto_friend", ST_Online}, {"share_playtime", ST_Online}, {"share_games", ST_Online}, {"show_friend_games", ST_Online}, {"friend_code_copy", ST_Online}, {"server_url", ST_Online},
         {"cloud_summary", kPageSaves}, {"saves_page_link", kPageSaves}, {"pause_cloud", kPageSaves}, {"backup_shots", kPageSaves},
         {"cloud_states", kPageSaves}, {"sync_folder", kPageSaves}, {"sync_folder_stop", kPageSaves}, {"sync_auto", kPageSaves}, {"sync_copy_now", kPageSaves},
@@ -53,8 +55,19 @@ inline const SettingsCtl* settings_controls(int* n) {
         {"username", ST_Account}, {"change_username", ST_Account}, {"friend_code", ST_Account}, {"account_code", ST_Account},
         {"redeem_code", ST_Account}, {"export_account", ST_Account}, {"import_account", ST_Account},
     };
-    *n = (int)(sizeof c / sizeof c[0]);
-    return c;
+    /* feature_off.h: controls of a feature that is turned off are left out, so search can not jump to a row that is not drawn */
+    static const std::vector<SettingsCtl> c = [] {
+        std::vector<SettingsCtl> v;
+        for (const SettingsCtl& k : all) {
+            const bool snd = !std::strcmp(k.id, "notif_sound") || !std::strcmp(k.id, "menu_sounds") || !std::strcmp(k.id, "menu_volume") || !std::strcmp(k.id, "menu_music");
+            const bool anim = !std::strncmp(k.id, "boot_", 5) || !std::strncmp(k.id, "real_boot", 9);
+            if ((snd && !kMenuSoundsOn) || (anim && !kStartAnimationOn)) continue;
+            v.push_back(k);
+        }
+        return v;
+    }();
+    *n = (int)c.size();
+    return c.data();
 }
 inline int settings_control_tab(const char* id) {
     int n; const SettingsCtl* c = settings_controls(&n);

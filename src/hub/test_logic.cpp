@@ -957,10 +957,13 @@ int main() {
         static const char* before[] = {"rom_folders_list", "rom_folder_remove", "add_folder", "find_games", "run_setup_again", "rescan", "download_art",
             "smash_exe_browse", "smash_exe_default", "gb_core", "fullscreen", "dolphin_status", "pcsx2_status", "ps2_bios_dir", "ps2_bios_auto",
             "ps1_bios", "ps1_openbios", "azahar_status", "cemu_exe", "cemu_exe_auto", "cemu_manage_controls", "cemu_restore_controls", "delay_auto",
-            "input_delay", "game_defaults", "show_friends", "notify_in_game", "notif_sound", "auto_friend", "friend_code_copy", "username",
+            "input_delay", "game_defaults", "show_friends", "notify_in_game", "auto_friend", "friend_code_copy", "username",
             "change_username", "friend_code", "account_code", "redeem_code", "export_account", "import_account", "sidebar_mode", "server_url",
             "pause_cloud", "backup_shots", "cloud_states", "sync_folder", "sync_folder_stop", "sync_auto", "sync_copy_now"};
         for (const char* id : before) CHECK(hubui::settings_control_tab(id) >= 0);
+        /* feature_off.h: sound and start-animation controls are in the search index only while their feature is on */
+        for (const char* id : {"notif_sound", "menu_sounds", "menu_volume", "menu_music"}) CHECK((hubui::settings_control_tab(id) >= 0) == hubui::kMenuSoundsOn);
+        for (const char* id : {"boot_anim", "boot_sounds", "boot_volume", "boot_short", "boot_skip_online"}) CHECK((hubui::settings_control_tab(id) >= 0) == hubui::kStartAnimationOn);
         int n; const hubui::SettingsCtl* c = hubui::settings_controls(&n);
         for (int i = 0; i < n; ++i) for (int j = i + 1; j < n; ++j) CHECK(std::strcmp(c[i].id, c[j].id) != 0);
         for (int i = 0; i < n; ++i) CHECK((c[i].tab >= 0 && c[i].tab < hubui::ST_Count) || c[i].tab == hubui::kPageSaves || c[i].tab == hubui::kPageControllers);

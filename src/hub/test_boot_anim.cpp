@@ -3,6 +3,7 @@
 #include <cmath>
 #include "boot_logic.h"
 #include "logic.h"
+#include "feature_off.h"
 
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
@@ -152,6 +153,23 @@ int main() {
         CHECK(hubui::settings_from_json("{\"name\":\"x\"}", &k) && k.boot_anim && k.boot_volume == 70);   // old settings files keep the defaults
         hubui::Settings m;
         CHECK(hubui::settings_from_json("{\"boot_volume\": 900}", &m) && m.boot_volume == 100);
+    }
+
+    /* feature_off.h: start animation and menu sounds are off for now, saved settings stay as stored */
+    {
+        hubui::Settings d;
+        CHECK(!hubui::start_animation_on(d));
+        d.boot_anim = true;
+        CHECK(!hubui::start_animation_on(d));
+        hubui::Settings s;
+        s.boot_anim = true; s.menu_sounds = true; s.menu_music = true; s.notif_sound = true; s.menu_volume = 55;
+        const hubui::MenuSoundCfg m = hubui::effective_menu_sound(s);
+        CHECK(!m.sounds && !m.music && !m.notif && m.volume == 0);
+        Options po; po.enabled = hubui::start_animation_on(s); po.sounds = true;   // what boot_sync_options() builds from boot_anim=true
+        for (bool online : {false, true}) for (bool quick : {false, true}) CHECK(choose_mode(po, online, quick) == Mode::Skip);   // every launch goes straight to the game
+        hubui::Settings r;
+        CHECK(hubui::settings_from_json(hubui::settings_to_json(s), &r));
+        CHECK(r.boot_anim && r.menu_sounds && r.menu_music && r.notif_sound && r.menu_volume == 55);
     }
 
     std::printf(fails ? "boot_anim test: %d FAILED\n" : "boot_anim test: all passed\n", fails);
