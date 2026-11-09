@@ -91,7 +91,7 @@ function Launch([string]$name, [string[]]$extra) {
     $a = @('--core', $corePath, '--rom', $romPath, '--system', $System, '--save-dir', $sv, '--state-dir', $st, '--headless', '--frames', $Frames,
         '--net', $Server, '--room', $Room, '--ports', '0,1,-1,-1', '--log', $log) + $extra
     if ($Mode -eq 'rollback') { $a += '--rollback' }
-    if ($ExpectLive) { $a += '--realtime' }   # lockstep headless runs uncapped otherwise; a live join needs a real-time match
+    if ($ExpectLive -or $LateSec -gt 0) { $a += '--realtime' }   # lockstep headless runs uncapped otherwise (3000 frames in ~1 s): a late or live join needs a real-time match
     $p = Start-Process -FilePath $exe -ArgumentList $a -PassThru -WindowStyle Hidden
     return [pscustomobject]@{ Name = $name; Proc = $p; Log = $log }
 }
