@@ -69,6 +69,23 @@ struct GameEntry {
     bool nx2 = false;         // Nintendo Switch 2 game (System::Switch; NPDM with the Switch 2 ACID layout). Cached with the scan.
 };
 
+/* ---- Consoles as the player sees them: Nintendo Switch and Nintendo Switch 2 are two consoles. ----
+ * A Switch 2 game stays System::Switch with GameEntry::nx2 set, because both share everything under the hood: the emulator family
+ * (Lichii / Fritchii / Hookshot), keys + firmware, the game key prefix "switch:", the save vault layout and every storage path.
+ * Everything the player SEES or CHOOSES per console uses the console id instead of System: names, short names, badges, colours,
+ * filter chips and their counts, group-by / sort-by console, console lists (Settings, Controllers, Saves, stats, Discover, add-games
+ * folders, presence / room / notification text). There "switch" (Nintendo Switch) and "switch2" (Nintendo Switch 2) are distinct.
+ * Emulator, launch, save, key and path logic keeps using System (never console ids) so nothing a player has moves. */
+constexpr const char* kConsoleSwitch2 = "switch2";
+std::string console_id(System s, bool nx2);        // system_short(s), or "switch2" for System::Switch with nx2
+std::string console_id(const GameEntry& e);        // console_id(e.system, e.nx2)
+System console_system(const std::string& id);     // "switch2" -> System::Switch; anything else -> system_from_short(id)
+bool console_is_switch2(const std::string& id);    // id == "switch2"
+const char* console_name(const std::string& id);   // "Nintendo Switch 2" for "switch2", else system_name(console_system(id)); "" for an unknown id
+const char* console_name(const GameEntry& e);      // console_name(console_id(e))
+/* Every console in the order the UI lists them: the System enum's order with "switch2" right after "switch" (System::Unknown left out). */
+const std::vector<std::string>& console_ids();
+
 /* Identify one file by extension + header. false if not a recognized game. Cheap:
  * reads headers only, except N64 (full MD5) and GBA (CRC32) which hash the file. */
 bool identify_game(const std::string& path, GameEntry* out);
