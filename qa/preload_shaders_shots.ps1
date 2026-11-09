@@ -12,7 +12,7 @@ param([string]$DataFrom = "C:\Users\fatty\Desktop\smashClassic\userdata", [strin
 $ErrorActionPreference = "Stop"
 $OOT = "switch:0400486024dec000"
 # the pinned Lichii build (emulators.cpp, Kind::Lichii): a marker naming it and its sha256 means "not outdated"
-$LICHII_SHA = "1560b9d46a20b54a8494316a650bfef12a905fbd6c612758d4509dcefca61164"
+$LICHII_SHA = "c55eaaedbdcd87eebcab5510a3d19c49545a4718b9355d95150150d5aeb67bb6"
 $root = Split-Path $PSScriptRoot -Parent
 if (-not $Build) { $Build = Join-Path $root "build\bin\Release" }
 if (-not (Test-Path (Join-Path $Build "RetroHub.exe"))) { throw "no RetroHub.exe in $Build" }
@@ -44,7 +44,7 @@ function New-Copy([string]$tag, [string]$gameSettingsJson = "") {
     $l = Join-Path $ud "emulators\lichii"
     New-Item -ItemType Directory -Force $l | Out-Null
     [IO.File]::WriteAllBytes((Join-Path $l "lichii.exe"), [byte[]]@(0x4D, 0x5A))
-    [IO.File]::WriteAllText((Join-Path $l "retrohub-install.txt"), "Lichii build 95`nsha256 $LICHII_SHA`n", (New-Object System.Text.UTF8Encoding $false))
+    [IO.File]::WriteAllText((Join-Path $l "retrohub-install.txt"), "Lichii build 125`nsha256 $LICHII_SHA`n", (New-Object System.Text.UTF8Encoding $false))
     if ($gameSettingsJson) {
         New-Item -ItemType Directory -Force (Join-Path $vault "_settings") | Out-Null
         [IO.File]::WriteAllText((Join-Path $vault "_settings\game_settings.json"), $gameSettingsJson, (New-Object System.Text.UTF8Encoding $false))
