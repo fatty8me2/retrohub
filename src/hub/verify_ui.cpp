@@ -127,7 +127,7 @@ dc::Cache g_dump_cache;
 dc::DismissList g_dump_off;
 bool g_dump_off_loaded = false;
 std::string g_dump_pass_key;   // "Play anyway": the next play_entry for this game skips the note once
-ULONGLONG g_dump_pass_at = 0;   // set with it: the pass expires after 20 s, so a launch that stopped early cannot skip the note on a later Play
+ULONGLONG g_dump_pass_until = 0;   // set with it: the pass expires 20 s after "Play anyway", or 10 min while that launch waits on the cloud-save check or a save sync (both re-enter play_entry when done), so a launch that stopped early cannot skip the note on a much later Play
 
 std::string dump_off_path() { return hub::data_dir() + "dump_warn_off.txt"; }
 void dump_off_load() {
@@ -293,17 +293,18 @@ void tick() {
 
 }  // namespace
 
+void dumpwarn_details_section(const hub::GameEntry& e) {   // an incomplete Switch dump: say so plainly, with what to do, at the TOP of the About tab
+    dc::Result r;
+    if (!dump_result(e, &r)) return;
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+    ImGui::PushTextWrapPos(0.f);
+    ImGui::TextWrapped("%s", dc::warning_text(r).c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));
+}
+
 void verify_details_section(const hub::GameEntry& e) {
-    {   // an incomplete Switch dump: say so plainly, with what to do
-        dc::Result r;
-        if (dump_result(e, &r)) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
-            ImGui::PushTextWrapPos(0.f);
-            ImGui::TextWrapped("%s", dc::warning_text(r).c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::PopStyleColor();
-        }
-    }
     if (!vf::supported(e.system) || is_hack(e)) return;   // discs and hacks: nothing to say
     shot_seed();
     vf::Result r;
@@ -410,7 +411,7 @@ void verify_library_card() {
 bool dumpwarn_play_gate(const hub::GameEntry& e, bool party_round) {
     if (e.system != hub::System::Switch || A.proc || game_active() || party_round) return false;
     dc::PlayGateIn in;
-    in.pass_fresh = g_dump_pass_key == e.key && GetTickCount64() - g_dump_pass_at < 20000;
+    in.pass_fresh = g_dump_pass_key == e.key && GetTickCount64() < g_dump_pass_until;
     if (g_dump_pass_key == e.key) g_dump_pass_key.clear();   // used (or stale): one pass only
     in.hookshot = hookshot::use_for(e, gs_values_for(e));
     dc::Result r;
@@ -448,10 +449,11 @@ void dumpwarn_draw() {
             runctl::write_text_atomic(dump_off_path(), g_dump_off.serialize());
         }
         g_dump_pass_key = DA.key;
-        g_dump_pass_at = GetTickCount64();
+        g_dump_pass_until = GetTickCount64() + 20000;
         DA.open = false;
         if (g) { hub::GameEntry copy = *g; play_entry(copy); }
-        if (!g || (A.cloud_gate.phase == CloudGate::Idle && !A.job.running)) g_dump_pass_key.clear();   // cleared whatever play_entry did, unless the launch was deferred (cloud check / save sync re-enters play_entry; the 20 s expiry covers that)
+        if (!g || (A.cloud_gate.phase == CloudGate::Idle && !A.job.running)) g_dump_pass_key.clear();   // cleared whatever play_entry did, unless the launch was deferred
+        else if (!g_dump_pass_key.empty()) g_dump_pass_until = GetTickCount64() + 600000;   // deferred before the gate: the cloud check / save sync re-enters play_entry when it finishes, often well past 20 s; keep the pass until then
     };
     if (ui::button("Play anyway", bs, true, true)) go(false);
     if (ui::button("Don't warn about this file again", bs, false, true)) go(true);

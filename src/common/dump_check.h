@@ -94,7 +94,7 @@ class Cache {
 public:
     explicit Cache(int recheck_ms = 30000);   // recheck_ms: how often size / time are re-read (tests pass 0)
     /* Non-blocking. false = not known yet (a worker thread was started if none is running). true = *out holds the last answer. The file's
-     * size / time are re-read at most every 30 s, on the worker, and the check only re-runs when one of them changed. */
+     * size / time are re-read at most every recheck_ms (default 30 s), on the worker, and the check only re-runs when one of them changed. */
     bool get(const std::string& path, uint64_t title_id, Result* out);
     /* Test aid: wait for idle workers. */
     void wait_idle();
