@@ -54,7 +54,7 @@ if ((Test-Path $gam) -and (Test-Path $exe)) {
         $p = Start-Process -FilePath $exe -ArgumentList $a -PassThru -WindowStyle Hidden
         if (-not $p.WaitForExit(30000)) { taskkill /PID $p.Id /T /F | Out-Null }
         $txt = if (Test-Path $reason) { Get-Content -Raw $reason } else { '' }
-        $refused = ($p.ExitCode -eq 12) -and ($txt -match 'real-time clock')
+        $refused = ($p.ExitCode -eq 12) -and ($txt -match 'keeps its own clock')
         $ok = ($refused -eq $t.refuse)
         Write-Output ("gambatte-net {0}: exit {1} refused-for-clock={2} expected={3} {4}" -f $t.rom, $p.ExitCode, $refused, $t.refuse, $(if ($ok) { 'ok' } else { 'WRONG' }))
         $ran++

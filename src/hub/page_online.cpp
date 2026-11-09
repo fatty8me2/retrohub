@@ -192,7 +192,7 @@ void host_launch_selected() {
                     uint8_t ct = 0;
                     if (gbcart::read_cart_type(winutil::to_wide(rg->path), &ct) && gbcart::gb_cart_has_clock(ct)) {
                         room_gb_core = gbcart::online_gb_core(room_gb_core, true);
-                        set_notice(rg->title + " has a clock that Gambatte can't keep in step online, so this game uses SameBoy online.", 10.0);
+                        set_notice(rg->title + " keeps its own clock, which Gambatte can't keep in step between PCs, so this online game uses SameBoy.", 10.0);
                     }
                 }
                 std::string lmsg = hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, room_gb_core, share, &plan, with_match ? &spec : nullptr, np_extra, dropin_adv, dropin_adv && rg->system == hub::System::N64 ? 2 : 3);   /* the joiner would be refused with a shared host save or cheats: do not advertise a free port then */
