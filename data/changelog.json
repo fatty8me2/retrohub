@@ -1,6 +1,23 @@
 {
   "versions": [
     {
+      "version": "1.40.6",
+      "date": "2026-11-09",
+      "title": "Fritchii v5.5, and damaged game files repaired automatically",
+      "new": [
+        "Ocarina of Time plays with Fritchii v5.5. RetroHub's build of it now runs as Fritchii itself, so its Preparing shaders screen appears when the game starts and prepares every shader at full speed before you play (about 10 to 15 minutes, once after this update), instead of in the background while you play",
+        "Switch games in .nup files: when you press Play, RetroHub now checks the copy for damaged files and fills each one in with a matching intact file from the same copy. Some copies of Ocarina of Time have a few blank files that make whole rooms invisible, like the Water Temple walls, the fairy fountain caves and part of Ganon's Castle. Your game file is never changed, and you can turn this off with Repair damaged game files in the game's Settings tab"
+      ],
+      "improved": [
+        "Fritchii v5.5 keeps a large NVIDIA shader cache for itself, fixes dialogue text that could show scraps of other textures, and fits its windows to Windows' display scale",
+        "The game page says when a copy has damaged files and which places they affect. Only a fresh dump of your own copy restores them exactly"
+      ],
+      "fixed": [
+        "Ocarina of Time: the Water Temple walls show up again on copies with a damaged wall texture",
+        "Ocarina of Time lagged while Fritchii prepared its shaders in the background during play"
+      ]
+    },
+    {
       "version": "1.40.5",
       "date": "2026-11-08",
       "title": "Fritchii v5 for Ocarina of Time",
