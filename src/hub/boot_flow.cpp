@@ -1,13 +1,14 @@
 #include "app.h"
 #include "boot_anim.h"
 #include "launch_guard_logic.h"
+#include "feature_off.h"
 
 /* Launch flow + settings glue for the game start animation (engine: boot_anim.cpp). Online launches (launch_online.cpp, rooms) never
  * pass through here, so online sync never waits on the animation. */
 
 void boot_sync_options() {
     bootanim::Options& o = bootanim::options();
-    o.enabled = A.st.boot_anim;
+    o.enabled = hubui::start_animation_on(A.st);
     o.sounds = A.st.boot_sounds;
     o.volume = std::max(0, std::min(100, A.st.boot_volume)) / 100.f;
     o.short_version = A.st.boot_short;
@@ -38,6 +39,7 @@ void play_entry_anim(const hub::GameEntry& e, bool quick, std::function<void(con
 }
 
 void boot_settings_ui() {
+    if (!hubui::kStartAnimationOn) return;   // feature_off.h: start animation turned off for now
     settings_label("Game start animation");
     if (ImGui::Checkbox("Play the start animation", &A.st.boot_anim)) mark_dirty();
     text_wrapped_disabled("The game's cartridge or disc flies out of the shelf into its console before the game starts. "

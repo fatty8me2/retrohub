@@ -337,7 +337,7 @@ bool shot_frozen() { return g_frozen; }
 
 void start(const hub::GameEntry& e, std::function<void()> on_done, bool online, bool quick, bool real_boot) {
     Mode m = choose_mode(g_opt, online, quick);
-    if (g_frozen) m = Mode::Full;
+    if (g_frozen) m = Mode::Full;   // headless-only shot aid (HUB_SHOT_BOOTANIM): ignores kStartAnimationOn on purpose
     if (const char* tr = std::getenv("HUB_SHOT_TRACE"); tr && *tr) {
         if (FILE* f = std::fopen(tr, "a")) { std::fprintf(f, "bootanim start %s mode=%d\n", e.key.c_str(), (int)m); std::fclose(f); }
     }
