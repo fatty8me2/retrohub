@@ -130,6 +130,47 @@ int main() {
         CHECK(std::string(nx_manifest_suffix(Kind::Fritchii)) == "-fritchii");
     }
 
+    // ---- default runner: Ocarina of Time plays with Fritchii unless somebody chose
+    {
+        hub::GameEntry oot, other, oot_v2, gc;
+        oot.system = other.system = oot_v2.system = hub::System::Switch;
+        oot.key = "switch:0400486024dec000";
+        oot_v2.key = "switch:0400486024DEC000-v2";
+        other.key = "switch:0100abcd12340000";
+        gc.system = hub::System::GC;
+        gc.key = "gc:0400486024dec000";
+        hub::gs::Values lich, fri;
+        lich["switch.runner"] = "lichii";
+        fri["switch.runner"] = "fritchii";
+        const bool on = true;
+        CHECK(kOotTitleId == 0x0400486024DEC000ull);
+        CHECK(nx_emulator_for(oot, lich, false, 0, on) == Kind::Fritchii);                    // default: OoT -> Fritchii
+        CHECK(nx_emulator_for(oot_v2, lich, false, 0, on) == Kind::Fritchii);
+        CHECK(nx_emulator_for(other, lich, false, 0, on) == Kind::Lichii);                    // other Switch games stay on Lichii
+        CHECK(nx_emulator_for(gc, lich, false, 0, on) == Kind::Lichii);
+        CHECK(nx_emulator_for(oot, lich, false, 2, on) == Kind::Lichii);                      // the player picked Lichii for this game
+        CHECK(nx_emulator_for(oot, lich, false, 1, on) == Kind::Lichii);                      // ...or for all of Switch
+        CHECK(nx_emulator_for(oot, fri, false, 2, on) == Kind::Fritchii && nx_emulator_for(other, fri, false, 1, on) == Kind::Fritchii);
+        CHECK(nx_emulator_for(oot, lich, true, 0, on) == Kind::Lichii);                       // online and rooms: always Lichii
+        CHECK(nx_emulator_for(oot, fri, true, 2, on) == Kind::Lichii);
+        CHECK(nx_emulator_for(oot, lich, false, 0, false) == Kind::Lichii);                   // Fritchii neither installed nor downloadable: the default does not block Play
+        CHECK(nx_emulator_for(oot, fri, false, 2, false) == Kind::Fritchii);                  // ...but an explicit choice still gets the install prompt
+        hub::gs::Values hs;
+        hs["switch.runner"] = "hookshot";
+        CHECK(nx_emulator_for(oot, hs, false, 2, on) == Kind::Lichii);                        // Hookshot is decided before this (launch.cpp)
+        // through the real settings store
+        hub::gs::Store st;
+        const std::string k = oot.key;
+        auto pick = [&] { return nx_emulator_for(oot, st.resolve(hub::System::Switch, k), false, st.source(hub::System::Switch, k, kRunnerKey), on); };
+        CHECK(pick() == Kind::Fritchii);
+        CHECK(st.set_system(hub::System::Switch, kRunnerKey, "lichii") && pick() == Kind::Lichii);
+        st.clear_system_key(hub::System::Switch, kRunnerKey);
+        CHECK(pick() == Kind::Fritchii);
+        CHECK(st.set_game(k, hub::System::Switch, kRunnerKey, "lichii") && pick() == Kind::Lichii);
+        st.clear_game_key(k, kRunnerKey);
+        CHECK(pick() == Kind::Fritchii);
+    }
+
     // ---- environment
     {
         const uint64_t GiB = 1ull << 30;
@@ -152,7 +193,8 @@ int main() {
         CHECK(!has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
         CHECK(has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_UPDATE_URL", "http://127.0.0.1:9/x"));
         v["switch.preload_shaders"] = "all";
-        CHECK(has(nx_env(Kind::Fritchii, v, 8 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"));
+        CHECK(!has(nx_env(Kind::Fritchii, v, 8 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES") && !has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // v5 prepares shaders itself
+        CHECK(has(nx_env(Kind::Lichii, v, 8 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"));   // Lichii keeps its behaviour
         v["switch.preload_shaders"] = "recent";
         CHECK(!has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
         CHECK(has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_UPDATE_URL"));
@@ -163,7 +205,12 @@ int main() {
             for (Kind k : {Kind::Lichii, Kind::Fritchii}) {
                 auto e = nx_env(k, v, 64 * GiB);
                 CHECK(!has(e, "EDEN_NX2_DEBUG_SERVER") && !has(e, "EDEN_NX2_CRASH_DUMP"));
+                CHECK(!has(e, "FRITCHII_CLASSIC_UI") && !has(e, "EDEN_NX2_PRECOMPILE") && !has(e, "EDEN_NX2_PRECOMPILE_RECIPE"));   // would skip / break v5's shader preparation
             }
+            hub::gs::Values off = v;
+            off["switch.fast_reads"] = "off";
+            auto e2 = nx_env(Kind::Fritchii, off, 64 * GiB);
+            CHECK(!has(e2, "FRITCHII_CLASSIC_UI") && !has(e2, "EDEN_NX2_PRECOMPILE") && !has(e2, "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
         }
         CHECK(nx_skip_keys(Kind::Lichii).empty());
     }
@@ -177,6 +224,11 @@ int main() {
         CHECK(q.find("oot_fps_asked=true") != std::string::npos);
         CHECK(q.find("resolution_setup=3") != std::string::npos);        // RetroHub's other keys stay
         CHECK(fritchii_ini_pin(q) == q);                                  // idempotent
+        {   // every launch writes check_for_updates=false (even if the player switched it on); the pin never adds a what's-new key (the version string is unknown until CI)
+            const std::string l = lichii_ini_launch("[UI]\ncheck_for_updates\\default=false\ncheck_for_updates=true\n", hub::gs::Values{}, false, &nx_skip_keys(Kind::Fritchii));
+            CHECK(l.find("check_for_updates=false") != std::string::npos && l.find("check_for_updates=true") == std::string::npos);
+            CHECK(q.find("whats_new") == std::string::npos);
+        }
         const std::string old = "revision=3\nglobal.gpu_accuracy=1\nglobal.use_vsync=2\ngame.0400486024DEC000.resolution_setup=2\n# note\n";
         const std::string n = frizti_ini_pin(old);
         CHECK(n.find("revision=999") != std::string::npos);
@@ -475,14 +527,14 @@ int main() {
         e.key = "switch:0400486024dec000";
         hub::gs::Values v;
         v["switch.runner"] = "fritchii";
-        CHECK(nx_emulator_for(e, v, false) == Kind::Fritchii);
-        CHECK(nx_emulator_for(e, v, true) == Kind::Lichii);
+        CHECK(nx_emulator_for(e, v, false, 2, true) == Kind::Fritchii);
+        CHECK(nx_emulator_for(e, v, true, 2, true) == Kind::Lichii);
         v["switch.runner"] = "lichii";
-        CHECK(nx_emulator_for(e, v, false) == Kind::Lichii);
+        CHECK(nx_emulator_for(e, v, false, 2, true) == Kind::Lichii);
         hub::GameEntry gc;
         gc.system = hub::System::GC;
         v["switch.runner"] = "fritchii";
-        CHECK(nx_emulator_for(gc, v, false) == Kind::Lichii);
+        CHECK(nx_emulator_for(gc, v, false, 2, true) == Kind::Lichii);
     }
 
     // ---- update leftovers of Fritchii's own updater
