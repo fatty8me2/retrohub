@@ -481,6 +481,7 @@ std::string fritchii_ini_pin(const std::string& in) {
     std::string t = in;
     t = ini_put(t, "Renderer", "frizti_settings_revision", std::to_string(kFriztiPinRevision));
     t = ini_put(t, "Renderer", "oot_fps_asked", "true");
+    t = ini_put(t, "UI", "fritchii_whats_new_seen", kFritchiiWhatsNewSeen);   // v5: no one-time What's new window
     return t;
 }
 
