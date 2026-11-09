@@ -1,4 +1,6 @@
 #include "app.h"
+#include "gb_cart.h"
+#include "winutil.h"
 #include "friends_ui.h"
 #include "party_ui.h"
 #include "profile.h"
@@ -185,11 +187,19 @@ void host_launch_selected() {
                 bool same_app = true;   // N64 drop-in changes what the game sees from boot (all four pads plugged in): every PC must run this exact build
                 for (auto& pi : peers) if (pi.slot != 0 && hubui::guest_version_action(HUB_VERSION_STR, pi.app, true) != hubui::GuestVersionAction::None) same_app = false;
                 const bool dropin_adv = (rg->system == hub::System::NES || rg->system == hub::System::SNES || (rg->system == hub::System::N64 && same_app && hubui::n64_dropin_game(rg->catalog_id))) && !share && !with_match && cheats_launch_fragment(*rg).empty();   // !with_match: with a --match spec only the founders' ports are human (match.cpp write_vs); every other port is "none", so a drop-in joiner there would have no fighter
-                std::string lmsg = hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, A.st.gb_core, share, &plan, with_match ? &spec : nullptr, np_extra, dropin_adv, dropin_adv && rg->system == hub::System::N64 ? 2 : 3);   /* the joiner would be refused with a shared host save or cheats: do not advertise a free port then */
+                std::string room_gb_core = A.st.gb_core;   /* Gambatte cannot keep a cartridge clock in step between PCs: such a game uses SameBoy online (guests follow the launch message) */
+                if ((rg->system == hub::System::GB || rg->system == hub::System::GBC) && !hub::link_cable_game(rg->catalog_id) && room_gb_core == "gambatte") {
+                    uint8_t ct = 0;
+                    if (gbcart::read_cart_type(winutil::to_wide(rg->path), &ct) && gbcart::gb_cart_has_clock(ct)) {
+                        room_gb_core = gbcart::online_gb_core(room_gb_core, true);
+                        set_notice(rg->title + " keeps its own clock, which Gambatte can't keep in step between PCs, so this online game uses SameBoy.", 10.0);
+                    }
+                }
+                std::string lmsg = hubui::launch_json(A.selected_game, A.launch_counter, delay, seed, room_gb_core, share, &plan, with_match ? &spec : nullptr, np_extra, dropin_adv, dropin_adv && rg->system == hub::System::N64 ? 2 : 3);   /* the joiner would be refused with a shared host save or cheats: do not advertise a free port then */
                 { hubui::Json lj; g_room_dropin = json::parse(lmsg, &lj) && lj.num("dropin", 0) >= 1; }   // host launch_online() gets no launch_msg
                 shot_trace("host-msg", lmsg);
                 A.lobby.send_msg(lmsg);
-                launch_online(*rg, A.launch_counter, delay, true, A.st.gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
+                launch_online(*rg, A.launch_counter, delay, true, room_gb_core, share, &plan, nullptr, with_match ? &spec : nullptr);
                 g_room_dropin = false;   // set per launch, never left over for another
                 /* OF-M8: the launch message is out before launch_online() validates anything. If nothing started - and nothing is starting - the
                  * guests' runners would wait for a game that never comes: tell them (they show the reason and close a runner that is already up). */
