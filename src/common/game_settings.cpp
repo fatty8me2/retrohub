@@ -160,6 +160,13 @@ std::vector<Option> build() {
     // 32 GB of RAM or more." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Read by the launch only, never written to Lichii's ini.
     v.push_back(mk("switch.preload_shaders", "Shaders at start", "Video", SWITCH, K::Choice, S::Visual, "auto",
                    {{"auto", "Auto"}, {"all", "All cached shaders"}, {"recent", "Recently used"}}));
+    // "Faster GPU reads" (default on): sets EDEN_NX2_NO_REACTIVE=1 for every Lichii-family launch (hubemu::lichii_fast_reads, lichii.cpp). Lichii build 125 drops
+    // its read traps on Switch 2 programs, so a CPU read of GPU-written memory no longer waits for the whole GPU (Ocarina of Time fell from ~60 to ~17 fps in
+    // places; upstream Lichii issues #944 and #416). Rarely a CPU read can see stale data. Lichii's own use_reactive_flushing is left alone.
+    // Help text: "Lichii skips waiting for the GPU when a game reads back graphics memory. Much faster in parts of Ocarina of Time. Rarely a small glitch: turn
+    // it off if something looks wrong." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Read by the launch only, never written to Lichii's ini.
+    v.push_back(mk("switch.fast_reads", "Faster GPU reads", "Video", SWITCH, K::Choice, S::Visual, "on",
+                   {{"on", "On"}, {"off", "Off"}}));
     // Which program plays a Switch game: Lichii (default), Fritchii (Frizti's Ocarina-of-Time fork of Lichii, opt-in, RetroHub's own download) or Hookshot (experimental native
     // PC build RetroHub makes from the player's own Ocarina of Time; that game only, falls back to Lichii otherwise).
     // Shown ONLY for that game (settings_games_ui.cpp); offline only, ignored by online / sync code.

@@ -138,7 +138,14 @@ int main() {
         // Lichii: exactly lichii_env
         CHECK(nx_env(Kind::Lichii, v, 32 * GiB) == lichii_env(v, 32 * GiB));
         CHECK(has(nx_env(Kind::Lichii, v, 32 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"));
-        CHECK(nx_env(Kind::Lichii, v, 16 * GiB).empty());
+        CHECK(nx_env(Kind::Lichii, v, 16 * GiB).size() == 1 && has(nx_env(Kind::Lichii, v, 16 * GiB), "EDEN_NX2_NO_REACTIVE", "1"));   // only the fast-reads var
+        CHECK(has(nx_env(Kind::Fritchii, v, 16 * GiB), "EDEN_NX2_NO_REACTIVE", "1"));
+        {
+            hub::gs::Values off = v;
+            off["switch.fast_reads"] = "off";
+            CHECK(nx_env(Kind::Lichii, off, 16 * GiB).empty());
+            CHECK(!has(nx_env(Kind::Fritchii, off, 16 * GiB), "EDEN_NX2_NO_REACTIVE") && has(nx_env(Kind::Lichii, off, 32 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"));
+        }
         CHECK(!has(nx_env(Kind::Lichii, v, 32 * GiB), "EDEN_UPDATE_URL"));
         // Fritchii: "auto" never preloads (29k pipelines = ~13 GB), "all" does, "recent" does not; the updater URL is always pinned
         CHECK(!has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
@@ -148,7 +155,7 @@ int main() {
         v["switch.preload_shaders"] = "recent";
         CHECK(!has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
         CHECK(has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_UPDATE_URL"));
-        CHECK(nx_env(Kind::Fritchii, hub::gs::Values{}, 0).size() == 1);   // no setting at all: just the updater pin
+        CHECK(nx_env(Kind::Fritchii, hub::gs::Values{}, 0).size() == 2);   // no setting at all: the updater pin and fast reads (missing counts as on)
         // never these
         for (const char* mode : {"auto", "all", "recent"}) {
             v["switch.preload_shaders"] = mode;

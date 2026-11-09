@@ -43,7 +43,7 @@ std::string prepare_fritchii(const std::string& install_dir);
 /* Fritchii's updater is neutralised twice: check_for_updates=false in qt-config.ini (lichii_ini_defaults) and this variable, so even Help > Check for Updates
  * cannot replace RetroHub's vetted build. RetroHub is the only updater. */
 constexpr const char* kFritchiiUpdateUrl = "http://127.0.0.1:9/x";
-/* Environment added to the child: Lichii = lichii_env (unchanged). Fritchii = EDEN_UPDATE_URL, and EDEN_NX2_PRELOAD_ALL_PIPELINES only for "Shaders at start = All" (the
+/* Environment added to the child: Lichii = lichii_env (unchanged). Both get EDEN_NX2_NO_REACTIVE=1 from lichii_fast_reads (unless switch.fast_reads is "off"). Fritchii = EDEN_UPDATE_URL, and EDEN_NX2_PRELOAD_ALL_PIPELINES only for "Shaders at start = All" (the
  * merged cache holds ~29k pipelines = ~13 GB of driver memory: "auto" does NOT preload there; "recent" never does). Never EDEN_NX2_DEBUG_SERVER / EDEN_NX2_CRASH_DUMP, and
  * RetroHub never creates or copies an nx2_switches.txt (Fritchii accepts any variable name from it): everything goes through the process environment. */
 std::vector<std::pair<std::string, std::string>> nx_env(Kind k, const hub::gs::Values& v, uint64_t physical_ram);

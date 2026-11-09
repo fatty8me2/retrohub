@@ -669,10 +669,10 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
                          : hubemu::is_nx(kind) ? hubemu::lichii_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
         if (hubemu::is_nx(kind)) { hubemu::NxSetup ns = hubemu::lichii_setup_status(inst.dir); a0 += std::string(" | keys ") + (ns.prod_keys ? "yes" : "no") + " firmware " + (ns.firmware ? "yes" : "no"); }
         if (hubemu::is_nx(kind)) {
-            bool pre = false, upd = false;
-            for (const auto& kv : hubemu::nx_env(kind, gv, hubemu::physical_ram_bytes())) { if (kv.first == "EDEN_NX2_PRELOAD_ALL_PIPELINES") pre = true; if (kv.first == "EDEN_UPDATE_URL") upd = true; }
-            a0 += std::string(" | preload all shaders ") + (pre ? "yes" : "no");
-            std::string line = std::string(kind == hubemu::Kind::Fritchii ? "fritchii" : "lichii") + ": EDEN_NX2_PRELOAD_ALL_PIPELINES " + (pre ? "set" : "not set");
+            bool pre = false, upd = false, fast = false;
+            for (const auto& kv : hubemu::nx_env(kind, gv, hubemu::physical_ram_bytes())) { if (kv.first == "EDEN_NX2_PRELOAD_ALL_PIPELINES") pre = true; if (kv.first == "EDEN_UPDATE_URL") upd = true; if (kv.first == "EDEN_NX2_NO_REACTIVE") fast = true; }
+            a0 += std::string(" | preload all shaders ") + (pre ? "yes" : "no") + " | fast GPU reads " + (fast ? "yes" : "no");
+            std::string line = std::string(kind == hubemu::Kind::Fritchii ? "fritchii" : "lichii") + ": EDEN_NX2_PRELOAD_ALL_PIPELINES " + (pre ? "set" : "not set") + ", EDEN_NX2_NO_REACTIVE " + (fast ? "set" : "not set");
             if (kind == hubemu::Kind::Fritchii) line += std::string(", EDEN_UPDATE_URL ") + (upd ? "pinned" : "missing") + ", leftover update files: " + (hubemu::update_leftovers(kind, inst.dir).empty() ? "none" : hubemu::update_leftovers(kind, inst.dir));
             autotest_log(line);
         }

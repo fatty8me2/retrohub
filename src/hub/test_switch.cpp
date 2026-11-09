@@ -469,7 +469,9 @@ static void test_env() {
     const uint64_t G = 1024ull * 1024 * 1024;
     auto set = [](const hub::gs::Values& v, uint64_t ram) {
         auto e = hubemu::lichii_env(v, ram);
-        return e.size() == 1 && e[0].first == "EDEN_NX2_PRELOAD_ALL_PIPELINES" && e[0].second == "1";
+        bool pre = false;
+        for (auto& kv : e) if (kv.first == "EDEN_NX2_PRELOAD_ALL_PIPELINES" && kv.second == "1") pre = true;
+        return pre;
     };
     hub::gs::Values v = hub::gs::defaults_for(hub::System::Switch);
     const hub::gs::Option* o = hub::gs::find_option("switch.preload_shaders");
@@ -482,11 +484,42 @@ static void test_env() {
     v["switch.preload_shaders"] = "all";
     CHECK(set(v, 8 * G));
     v["switch.preload_shaders"] = "recent";
-    CHECK(hubemu::lichii_env(v, 64 * G).empty());
+    {   // "recent": no preload var (the fast-reads var is separate)
+        auto e = hubemu::lichii_env(v, 64 * G);
+        bool pre = false;
+        for (auto& kv : e) if (kv.first == "EDEN_NX2_PRELOAD_ALL_PIPELINES") pre = true;
+        CHECK(!pre);
+    }
     CHECK(set(hub::gs::Values{}, 32 * G));
     CHECK(!set(hub::gs::Values{}, 8 * G));
     v["switch.preload_shaders"] = "bogus";
     CHECK(set(v, 32 * G) && !set(v, 8 * G));
+}
+
+/* switch.fast_reads: default on, global + per game, and EDEN_NX2_NO_REACTIVE in the launch environment. */
+static void test_fast_reads() {
+    auto has = [](const std::vector<std::pair<std::string, std::string>>& e, const char* k, const char* val) { for (auto& kv : e) if (kv.first == k && kv.second == val) return true; return false; };
+    auto hask = [](const std::vector<std::pair<std::string, std::string>>& e, const char* k) { for (auto& kv : e) if (kv.first == k) return true; return false; };
+    const uint64_t G = 1024ull * 1024 * 1024;
+    const hub::gs::Option* o = hub::gs::find_option("switch.fast_reads");
+    CHECK(o && o->def == "on" && o->label == "Faster GPU reads" && o->choices.size() == 2);
+    hub::gs::Values v = hub::gs::defaults_for(hub::System::Switch);
+    CHECK(v["switch.fast_reads"] == "on");
+    CHECK(has(hubemu::lichii_env(v, 8 * G), "EDEN_NX2_NO_REACTIVE", "1"));
+    CHECK(has(hubemu::lichii_env(hub::gs::Values{}, 8 * G), "EDEN_NX2_NO_REACTIVE", "1"));   // missing counts as on
+    CHECK(has(hubemu::nx_env(hubemu::Kind::Fritchii, v, 8 * G), "EDEN_NX2_NO_REACTIVE", "1"));
+    v["switch.fast_reads"] = "off";
+    CHECK(!hask(hubemu::lichii_env(v, 8 * G), "EDEN_NX2_NO_REACTIVE") && !hask(hubemu::nx_env(hubemu::Kind::Fritchii, v, 8 * G), "EDEN_NX2_NO_REACTIVE"));
+    {   // per game "off" beats a global "on"; the preload var is unaffected
+        const std::string g = "switch:0400486024dec000", other = "switch:0100abcd12340000";
+        hub::gs::Store st;
+        CHECK(st.set_system(hub::System::Switch, "switch.fast_reads", "on"));
+        CHECK(st.set_game(g, hub::System::Switch, "switch.fast_reads", "off"));
+        CHECK(!hask(hubemu::lichii_env(st.resolve(hub::System::Switch, g), 32 * G), "EDEN_NX2_NO_REACTIVE"));
+        CHECK(hask(hubemu::lichii_env(st.resolve(hub::System::Switch, g), 32 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+        CHECK(has(hubemu::lichii_env(st.resolve(hub::System::Switch, other), 32 * G), "EDEN_NX2_NO_REACTIVE", "1"));
+        CHECK(!st.set_game(g, hub::System::Switch, "switch.fast_reads", "bogus"));
+    }
 }
 
 /* switch.runner: three choices, per-game overrides, and what Fritchii gets in its environment. */
@@ -546,6 +579,7 @@ int main(int argc, char** argv) {
     test_prepare_nopad(d);
     test_saves(d);
     test_env();
+    test_fast_reads();
     test_runner();
     std::error_code ec;
     fs::remove_all(d, ec);
