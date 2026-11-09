@@ -3893,7 +3893,7 @@ int Frontend::run(const Args& args) {
         uint8_t ctype = 0;
         if (gln.find("gambatte") != std::string::npos && gbcart::read_cart_type(fs::u8path(a.rom).wstring(), &ctype) && gbcart::gb_cart_has_clock(ctype)) {
             rlog("net: refused: Gambatte with a real-time clock cartridge (type 0x%02x)", (unsigned)ctype);
-            net_fail("This game has a real-time clock that the Gambatte core can't keep in step between PCs. Choose SameBoy as the Game Boy core in Settings to play it online.");
+            net_fail("This game keeps its own clock, and the room's Game Boy core (Gambatte) can't keep it in step between PCs. The host can switch to SameBoy in Settings, or update RetroHub, and start the game again.");
             return net_rc;
         }
     }

@@ -1,6 +1,6 @@
 // Console test for the pure launch decisions and command-line pieces (launch_logic.h, launch_guard_logic.h, launch_settings.h).
 // The core each retrorun system uses, quoting of titles/paths, the resume rules, and the
-// guard that stops a second game from starting. No processes, no files.
+// guard that stops a second game from starting. No processes; the cartridge-header check writes one small temp file.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -98,8 +98,8 @@ int main() {
         uint8_t ct = 0;
         CHECK(!gbcart::read_cart_type(L"C:/no/such/game.gb", &ct));
         CHECK(!gbcart::read_cart_type(L"C:/x/game.zip", &ct));
-        const char* tmp = std::getenv("TEMP");
-        std::wstring p = std::wstring(tmp ? std::wstring(tmp, tmp + std::strlen(tmp)) : L".") + L"/gbcart_test.gb";
+        const wchar_t* tmp = _wgetenv(L"TEMP");
+        std::wstring p = std::wstring(tmp ? tmp : L".") + L"/gbcart_test.gb";
         FILE* f = nullptr;
         if (_wfopen_s(&f, p.c_str(), L"wb") == 0 && f) {
             unsigned char h[0x150] = {0}; h[0x147] = 0x10;
