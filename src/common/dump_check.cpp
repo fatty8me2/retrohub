@@ -15,15 +15,6 @@ namespace fs = std::filesystem;
 namespace hub::dumpcheck {
 namespace {
 
-/* One row per known title. Sizes are of the container named in `ext`.
- * Ocarina of Time (Switch 2): the owner's incomplete copy is 25,020,741,061 bytes (23.30 GB) and renders the Water Temple without walls; a
- * clean re-dump is about 25.62e9 bytes (23.86 GB). Evidence: Lichii issue tracker #577, #624, #685 (a clean re-dump fixed it on every
- * build) and #487 (version 1.1.1 files show it too, 2.0.0 fixed it). 25.4e9 sits between the two. */
-const KnownSize kKnownSizes[] = {
-    {0x0400486024DEC000ull, "The Legend of Zelda: Ocarina of Time (Switch 2)", ".nup", 25400000000ull, 25620000000ull,
-     "Some areas, like the Water Temple, will be missing walls or textures.", "Lichii issues #577 #624 #685 #487; owner's dump"},
-};
-
 uint32_t rd32(const uint8_t* d, size_t at) { return (uint32_t)d[at] | ((uint32_t)d[at + 1] << 8) | ((uint32_t)d[at + 2] << 16) | ((uint32_t)d[at + 3] << 24); }
 uint64_t rd64(const uint8_t* d, size_t at) { return (uint64_t)rd32(d, at) | ((uint64_t)rd32(d, at + 4) << 32); }
 
@@ -34,7 +25,7 @@ Result truncated(uint64_t have, uint64_t expected) {
     r.v = Verdict::Truncated;
     r.have = have;
     r.expected = expected;
-    r.reason = "This file looks cut short (" + format_gb(have) + " of " + format_gb(expected) + "). The copy may have been interrupted.";
+    r.reason = "This copy looks cut short (" + format_gb(have) + " of " + format_gb(expected) + "). The copy may have been interrupted.";
     return r;
 }
 
@@ -80,31 +71,10 @@ std::string lower(std::string s) { for (char& c : s) if (c >= 'A' && c <= 'Z') c
 
 }  // namespace
 
-const KnownSize* known_sizes(size_t* count) {
-    if (count) *count = sizeof(kKnownSizes) / sizeof(kKnownSizes[0]);
-    return kKnownSizes;
-}
-
 std::string format_gb(uint64_t bytes) {
     char b[48];
     std::snprintf(b, sizeof b, "%.2f GB", (double)bytes / (1024.0 * 1024.0 * 1024.0));
     return b;
-}
-
-Result check_size(uint64_t title_id, const std::string& ext, uint64_t file_size) {
-    if (!title_id) return {};
-    for (const KnownSize& k : kKnownSizes) {
-        if (k.title_id != title_id || ext != k.ext) continue;
-        if (file_size >= k.complete_at_least) return {};
-        Result r;
-        r.v = Verdict::LooksIncomplete;
-        r.have = file_size;
-        r.expected = k.typical_complete;
-        r.area_note = k.area_note ? k.area_note : "";
-        r.reason = "This copy looks incomplete (" + format_gb(file_size) + "). Complete copies are about " + format_gb(k.typical_complete) + ".";
-        return r;
-    }
-    return {};
 }
 
 Result check_structure(const ReadFn& read, uint64_t file_size, const std::string& ext) {
@@ -134,16 +104,13 @@ Result check_file(const std::string& path, uint64_t title_id) {
         out->resize((size_t)std::max<std::streamsize>(0, f.gcount()));
         return !f.bad();
     };
-    Result r = check_structure(rd, fsz, ext);
-    if (r.v == Verdict::Truncated) return r;
-    return check_size(title_id, ext, fsz);
+    (void)title_id;
+    return check_structure(rd, fsz, ext);
 }
 
 std::string warning_text(const Result& r) {
     if (r.v == Verdict::Ok) return "";
-    if (r.v == Verdict::Truncated)
-        return r.reason + " Parts of the game may be missing or crash. To fix it, copy or re-dump your own copy of the game again.";
-    return r.reason + (r.area_note.empty() ? "" : " " + r.area_note) + " To fix it, re-dump your own copy of the game.";
+    return r.reason + " To fix it, re-dump your own copy of the game.";
 }
 
 /* ---- Cache ---- */
