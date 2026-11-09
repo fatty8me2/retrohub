@@ -55,6 +55,7 @@ namespace slot2 = retrorun::slot2;
 #include "miniz.h"
 #include "joinfp.h"
 #include "joinid.h"
+#include "gb_cart.h"
 
 constexpr uint8_t kPktCfg = 0x60;
 constexpr uint8_t kPktCfg2 = 0x61;   // PS2: {type, slot, u64 total, u32 core, u32 bios, u32 disc, u32 options}: which part differs is reported   // {type, slot, u64 PlayStation setup fingerprint}; unknown to lockstep/rollback (ignored there)
@@ -710,7 +711,16 @@ class Frontend {
         return false;
     }
     /* Exit code when the session dies: 8 when a partner (usually the host) left on purpose or the host is gone, 4 for a plain connection loss. */
-    int lost_code() { std::string s = session.status(); return (s.find("host left") != std::string::npos || s.find("partner ended") != std::string::npos) ? 8 : 4; }
+    int lost_code()
+    {
+        auto left = [&] { std::string s = session.status(); return s.find("host left") != std::string::npos || s.find("partner ended") != std::string::npos; };
+        if (!left() && session.my_slot() != 0) {
+            /* A crashed host's seat is held ~10 s by the server; its verdict ("host left") lands just after our own timer. Cached per session start. */
+            if (session.await_host_verdict(3500)) rlog("net: the server says the host left");
+            else rlog("net: no word about the host from the server: connection lost");
+        }
+        return left() ? 8 : 4;
+    }
     bool link_active = false;
     uint16_t link_msg_id = 0;
     dslink::Reassembler link_reasm;
@@ -2497,9 +2507,11 @@ int Frontend::dj_attempt(int slot_try, bool first) {
         if (session.failed()) {
             const std::string st = session.status();
             rlog("net: session failed: %s", st.c_str());
+            const bool seat_gone = st.find("taken") != std::string::npos || st.find("full") != std::string::npos;
+            const int lost = (!seat_gone && st.find("free controller port") == std::string::npos && st.find("busy") == std::string::npos) ? lost_code() : 4;   // before stop(): the host verdict needs the live lobby socket
             session.stop();
-            if (st.find("taken") != std::string::npos || st.find("full") != std::string::npos) { owner[my_port] = plan_slot; return 1; }
-            net_rc = st.find("free controller port") != std::string::npos ? 9 : st.find("busy") != std::string::npos ? 11 : lost_code();
+            if (seat_gone) { owner[my_port] = plan_slot; return 1; }
+            net_rc = st.find("free controller port") != std::string::npos ? 9 : st.find("busy") != std::string::npos ? 11 : lost;
             return 2;
         }
         uint32_t now = hubnet::now_ms();
@@ -3885,6 +3897,15 @@ int Frontend::run(const Args& args) {
             rlog("qa: port %lu device 0x%lx (RETRORUN_SET_DEVICES)", port, dev);
             p = *e2 == ',' ? e2 + 1 : e2;
             if (e2 == e1 + 1) break;
+        }
+    }
+    if (!a.net.empty() && !a.link && !a.synctest) {   /* Gambatte keeps a cartridge clock on wall time: two PCs would drift apart. Normally the hub picks SameBoy; this catches an older host. */
+        std::string gln = lower(core.info().library_name ? core.info().library_name : "");
+        uint8_t ctype = 0;
+        if (gln.find("gambatte") != std::string::npos && gbcart::read_cart_type(fs::u8path(a.rom).wstring(), &ctype) && gbcart::gb_cart_has_clock(ctype)) {
+            rlog("net: refused: Gambatte with a real-time clock cartridge (type 0x%02x)", (unsigned)ctype);
+            net_fail("This game keeps its own clock, and the room's Game Boy core (Gambatte) can't keep it in step between PCs. The host can switch to SameBoy in Settings, or update RetroHub, and start the game again.");
+            return net_rc;
         }
     }
     if (a.rollback && !a.synctest) {

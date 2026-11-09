@@ -28,6 +28,8 @@ Recommendation: **SameBoy** as the default for GB and GBC.
 
 Fallback: **Gambatte** for weaker hardware. The `.info` describes it as accurate enough to run nearly all games with no visible bugs and "blisteringly fast" [verified: `gambatte_libretro.info`]. Keep it as a per-system override, not the default.
 
+Online, Gambatte is never used for a game with a real-time clock (Pokemon Gold/Silver/Crystal and other MBC3+TIMER or HuC3 carts): it keeps the clock on each PC's wall time, so the emulations drift apart and the savestates differ. The hub switches such a game to SameBoy (which RetroHub runs with a cycle-based clock online) and says so; retrorun also refuses `--net` with Gambatte on a clock cartridge (exit 12). Offline play is unchanged.
+
 Note: mGBA also runs GB/GBC. Using it for everything would mean one core, but SameBoy is the better GB/GBC choice by the upstream accuracy claims.
 
 ### Nintendo DS: melonDS DS

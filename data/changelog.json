@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.40.2",
+      "date": "2026-11-08",
+      "title": "Clearer online endings and steadier Game Boy clocks",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "If the host's game crashes or their PC drops off during an online game, the other players are now told the host left instead of \"Connection lost\"",
+        "Game Boy games that keep their own clock (like Pokémon Crystal ROM hacks) now use SameBoy in online rooms even if you picked Gambatte, because Gambatte can't keep that clock in step between PCs. The host sees a short note when this happens"
+      ]
+    },
+    {
       "version": "1.40.1",
       "date": "2026-11-08",
       "title": "Lichii build 125 and a warning for incomplete game files",

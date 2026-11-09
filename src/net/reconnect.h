@@ -70,4 +70,26 @@ class WsReconnect {
  * server's roster; it only really counts as departed once its direct path went stale too. */
 inline bool member_departed(bool ws_gone, bool udp_fresh) { return ws_gone && !udp_fresh; }
 
+/* After a guest's session gave up ("lost the host"), ask the server whether the host is really gone: a crashed host's seat is held
+ * for a grace period (hub.js HOST_GRACE_MS ~10 s), and the server's verdict ("host-left-game" / close 4001) arrives about when the
+ * guest's own silence timer runs out. The guest then wants to say "the host left" (exit 8), not "connection lost" (exit 4).
+ * Pure rules; the caller measures time and reports what arrived. */
+enum class HostVerdict { Wait, HostLeft, Lost };
+constexpr uint32_t kVerdictAckMs = 1500;   // no word at all from the server this long: our own link is down too
+struct VerdictInput {
+    bool host_left_signal = false;   // error host-left-game, a close with code 4001, or a members list without slot 0
+    bool socket_dead_other = false;  // the lobby socket failed with any other close
+    bool any_text_seen = false;      // keepalive_ack or any other text frame arrived since we asked
+    uint32_t elapsed_ms = 0;         // since the question was sent
+    uint32_t max_ms = 0;             // the caller's total budget
+};
+inline HostVerdict host_verdict(const VerdictInput& in)
+{
+    if (in.host_left_signal) return HostVerdict::HostLeft;
+    if (in.socket_dead_other) return HostVerdict::Lost;
+    if (in.elapsed_ms >= in.max_ms) return HostVerdict::Lost;
+    if (!in.any_text_seen && in.elapsed_ms >= kVerdictAckMs) return HostVerdict::Lost;
+    return HostVerdict::Wait;
+}
+
 } // namespace hubnet

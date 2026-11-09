@@ -120,6 +120,11 @@ class Session {
     /* Host: slots that a broadcast (send(-1)) skips although they are members (a drop-in candidate that is still downloading the state has no use for the players' input stream). */
     void set_broadcast_exclude(uint32_t mask);
     bool is_spectator() const;
+    /* A guest's session has given up: ask the lobby server whether the host is really gone (its seat is held ~10 s after a crash, so
+     * the verdict can arrive just after our own silence timer fired). Works after failed(). Guests only (host: false at once).
+     * Sends one keepalive and listens up to max_ms; true = the server says the host left (status() then says "The host left"),
+     * false = no such word (our own link is down, or the deadline passed). Cached after the first call. */
+    bool await_host_verdict(uint32_t max_ms);
 
     /* RTT samples since the last clear (last 32), for the auto input delay. */
     bool ping_stats(int slot, PingStats* out) const;
