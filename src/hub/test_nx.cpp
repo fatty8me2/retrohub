@@ -553,18 +553,9 @@ static dcx::ReadFn bytes_reader(const Bytes& b) {
 }
 static void test_dump_check() {
     const uint64_t kOot = 0x0400486024DEC000ull;
-    // known-title table
-    dcx::Result r = dcx::check_size(kOot, ".nup", 25020741061ull);   // the owner's file
-    CHECK(r.v == dcx::Verdict::LooksIncomplete && r.have == 25020741061ull && r.expected == 25620000000ull);
+    dcx::Result r;
     CHECK(dcx::format_gb(25020741061ull) == "23.30 GB" && dcx::format_gb(25620000000ull) == "23.86 GB");
-    CHECK(dcx::warning_text(r).find("Water Temple") != std::string::npos && dcx::warning_text(r).find("re-dump") != std::string::npos);
-    CHECK(dcx::check_size(kOot, ".nup", 25620000000ull).v == dcx::Verdict::Ok);
-    CHECK(dcx::check_size(kOot, ".nup", 25400000000ull).v == dcx::Verdict::Ok);
-    CHECK(dcx::check_size(kOot, ".nup", 25399999999ull).v == dcx::Verdict::LooksIncomplete);
-    CHECK(dcx::check_size(0x0100ABCD12340000ull, ".nup", 1).v == dcx::Verdict::Ok);   // unknown title
-    CHECK(dcx::check_size(kOot, ".nsp", 1).v == dcx::Verdict::Ok);                     // not the container the numbers are for
-    CHECK(dcx::check_size(0, ".nup", 1).v == dcx::Verdict::Ok);
-    CHECK(dcx::warning_text(dcx::check_size(kOot, ".nup", 25620000000ull)).empty());
+    CHECK(dcx::warning_text(dcx::Result{}).empty());
 
     // PFS0: header says two entries, 100 + 50 bytes of data
     Bytes p = make_pfs0({"a.nca", "b.nca"});
@@ -574,6 +565,8 @@ static void test_dump_check() {
     CHECK(dcx::check_structure(bytes_reader(p), full + 7, ".nsz").v == dcx::Verdict::Ok);
     r = dcx::check_structure(bytes_reader(p), full - 1, ".nsp");
     CHECK(r.v == dcx::Verdict::Truncated && r.have == full - 1 && r.expected == full && !dcx::warning_text(r).empty());
+    CHECK(dcx::warning_text(r).find("cut short") != std::string::npos && dcx::warning_text(r).find("re-dump your own copy") != std::string::npos);
+    CHECK(dcx::warning_text(r).find("Water Temple") == std::string::npos && dcx::warning_text(r).find("Complete copies") == std::string::npos);
     CHECK(dcx::check_structure(bytes_reader(p), hdr, ".nsp").v == dcx::Verdict::Truncated);
     CHECK(dcx::check_structure(bytes_reader(p), full - 1, ".xcz").v == dcx::Verdict::Ok);   // compressed: can't tell
     CHECK(dcx::check_structure(bytes_reader(p), 3, ".txt").v == dcx::Verdict::Ok);
@@ -593,6 +586,14 @@ static void test_dump_check() {
     le64(n, 0x40, 1000);
     CHECK(dcx::check_structure(bytes_reader(n), 1000, ".nup").v == dcx::Verdict::Ok);
     CHECK(dcx::check_structure(bytes_reader(n), 999, ".nup").v == dcx::Verdict::Truncated);
+    // the owner's Ocarina of Time (Switch 2) file: header declares exactly its own size, so no warning (no "typical size" rule exists)
+    Bytes owner = n; le64(owner, 0x40, 25020741061ull);
+    CHECK(dcx::check_structure(bytes_reader(owner), 25020741061ull, ".nup").v == dcx::Verdict::Ok);
+    CHECK(dcx::check_structure(bytes_reader(owner), 25020741062ull, ".nup").v == dcx::Verdict::Ok);   // longer than declared is not truncation
+    r = dcx::check_structure(bytes_reader(owner), 25020741060ull, ".nup");
+    CHECK(r.v == dcx::Verdict::Truncated && r.have == 25020741060ull && r.expected == 25020741061ull);
+    // a PFS0 entry beyond the end of the file and an XCI end beyond the file are the other two proofs (above); a NUP with no data at all
+    CHECK(dcx::check_structure(bytes_reader(n), 0, ".nup").v == dcx::Verdict::Truncated);
 
     // fuzz: short, random and mutated headers never crash and never claim a huge file is missing for nonsense
     uint32_t seed = 12345;
@@ -625,7 +626,7 @@ static void test_dump_check() {
     CHECK(dcx::check_file(U8(d / "small.nup"), kOot).v == dcx::Verdict::Truncated);
     Bytes okn = n; le64(okn, 0x40, 0x80);
     CHECK(write_file(d / "ok.nup", okn));
-    CHECK(dcx::check_file(U8(d / "ok.nup"), kOot).v == dcx::Verdict::LooksIncomplete);   // right structure, far below the known size
+    CHECK(dcx::check_file(U8(d / "ok.nup"), kOot).v == dcx::Verdict::Ok);   // header declares exactly its own size: complete, however small
     CHECK(dcx::check_file(U8(d / "ok.nup"), 0).v == dcx::Verdict::Ok);
 
     dcx::Cache cache;
