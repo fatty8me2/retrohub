@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.40.3",
+      "date": "2026-11-08",
+      "title": "Faster GPU reads for Switch, start animation and menu sounds off",
+      "new": [
+        "New Switch setting Faster GPU reads, on by default: Lichii no longer waits for the GPU every time a game reads graphics memory back, which can make parts of Ocarina of Time much faster. If something looks wrong in a game, turn it off in Settings or in the game's Settings tab"
+      ],
+      "improved": [
+        "Switch games start much faster on PCs with less than 64 GB of memory: Shaders at start on Auto now builds the shaders you used recently instead of every cached one (a big Ocarina of Time cache could take minutes, and much longer right after a Lichii update). Pick All cached shaders to get the old behaviour",
+        "The game start animation and all menu sounds are turned off for now",
+        "The incomplete game file warning now only shows on the game's page, next to its description. It no longer pops up when you press Play, and Library health no longer lists it"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.40.2",
       "date": "2026-11-08",
       "title": "Clearer online endings and steadier Game Boy clocks",
