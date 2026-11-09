@@ -39,21 +39,21 @@ void home_shelves() {
     float max_w = std::max(sp(25.f), std::min(sp(37.5f), avail * 0.2f));
     float tw = hubui::shelf_tile_w(avail, sp(24.f), max_w, gap);
     float th = tw / kTileAspect;
-    /* Home order: Resume hero (above), Continue playing, Friends are playing, the other shelves, Your stats. */
+    /* Home order: Resume hero (above), Favorites, Recently played, Friends are playing, the other shelves, Your stats. */
     int recent_si = -1;
     for (size_t si = 0; si < A.shelves.size(); ++si) if (A.shelves[si].id == "recent") { recent_si = (int)si; break; }
     if (recent_si < 0) fr_home_shelf(avail, tw, th, gap, bleed);
     for (size_t si = 0; si < A.shelves.size(); ++si) {
         const hubui::Shelf& sh0 = A.shelves[si];
-        /* Continue Playing becomes "Jump back in" (<= 6 games from the last 30 days, continue_ui.cpp) while the Continue hero is showing */
+        /* Recently played (compose_shelves "recent") becomes the slimmer row (<= 6 games from the last 30 days, continue_ui.cpp) while the Continue hero is showing */
         std::vector<int> jump_items;
         const bool jump = sh0.id == "recent" && continue_row_items(&jump_items);
         hubui::Shelf sh_jump;
-        if (jump) { sh_jump = sh0; sh_jump.title = "Jump back in"; sh_jump.items = jump_items; }
+        if (jump) { sh_jump = sh0; sh_jump.title = "Recently played"; sh_jump.items = jump_items; }
         const hubui::Shelf& sh = jump ? sh_jump : sh0;
         bool is_console = sh.id.compare(0, 8, "console:") == 0 && sh.id != "console:other";   // unknown systems have no filter chip
         bool see_all = false;
-        const float stw = jump ? tw * 0.8f : tw, sth = stw / kTileAspect;   // the Jump back in row is slimmer than the other shelves
+        const float stw = jump ? tw * 0.8f : tw, sth = stw / kTileAspect;   // the Recently played row is slimmer than the other shelves
         bool overflow = hubui::shelf_max_scroll((int)sh.items.size() + (si == 0 && add_lead ? 1 : 0), stw, gap, bleed, avail) > 0;
         shelf_header(sh.title.c_str(), is_console ? "See all" : "", bleed, (int)sh.items.size(), is_console ? &see_all : nullptr, overflow);
         if (see_all) {   // jump to All Games filtered to this console

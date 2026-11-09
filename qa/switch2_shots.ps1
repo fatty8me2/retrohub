@@ -100,6 +100,7 @@ try {
     function M([hashtable]$x) { $h = @{} + $base; foreach ($k in $x.Keys) { $h[$k] = $x[$k] }; return $h }
     foreach ($s in $Sizes) {
         Shot "home-hero-switch2" $run $s (M @{ HUB_SELECT_GAME = $OOTKEY }) 
+        Shot "home-recently-played" $run $s (@{ HUB_SHOT_FAKE_LIB = "12"; HUB_SHOT_CONTINUE = "1"; HUB_SHOT_PLAYTIME = "1" }) 6
         Shot "home-hero-switch" $run $s (M @{ HUB_SELECT_GAME = "switch:01007ef00011e000" })
         Shot "library-chips-grid" $run $s (M @{ HUB_START_VIEW = "all"; HUB_SHOT_LIBVIEW = "grid" })
         Shot "library-chips-list" $run $s (M @{ HUB_START_VIEW = "all"; HUB_SHOT_LIBVIEW = "list" })

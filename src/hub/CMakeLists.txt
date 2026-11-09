@@ -80,7 +80,7 @@ target_include_directories(hub_username_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 add_executable(hub_homefun_test test_homefun.cpp)
 target_link_libraries(hub_homefun_test PRIVATE hublogic)
 
-# Home Continue hero + Jump back in row: hero pick, backdrop source, relative time, Continue/Play label (pure header).
+# Home Continue hero + Recently played row: hero pick, backdrop source, relative time, Continue/Play label (pure header).
 add_executable(hub_continue_test test_continue.cpp)
 target_include_directories(hub_continue_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hub_continue_test PRIVATE cxx_std_17)

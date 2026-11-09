@@ -1,4 +1,4 @@
-# Headless screenshots of the Home Continue hero + "Jump back in" row (fake library, made-up history and thumbnails, procedural covers).
+# Headless screenshots of the Home Continue hero + "Recently played" row (fake library, made-up history and thumbnails, procedural covers).
 # Scratch vault + scratch userdata history, muted, SDL dummy driver: no window is ever shown, no real saves/screenshots are read.
 # Usage: powershell -NoProfile -File qa\continue_shots.ps1 [outdir] [sizes]     (BMPs are converted to PNG; trace.txt has the hero lines)
 param([string]$Out = "$env:TEMP\continue_shots", [string]$Sizes = '1280x800,1600x1000')
