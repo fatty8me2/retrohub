@@ -224,10 +224,10 @@ int main() {
         CHECK(q.find("oot_fps_asked=true") != std::string::npos);
         CHECK(q.find("resolution_setup=3") != std::string::npos);        // RetroHub's other keys stay
         CHECK(fritchii_ini_pin(q) == q);                                  // idempotent
-        {   // every launch writes check_for_updates=false (even if the player switched it on); the pin never adds a what's-new key (the version string is unknown until CI)
+        {   // every launch writes check_for_updates=false (even if the player switched it on); the pin marks the pinned build's What's new as seen
             const std::string l = lichii_ini_launch("[UI]\ncheck_for_updates\\default=false\ncheck_for_updates=true\n", hub::gs::Values{}, false, &nx_skip_keys(Kind::Fritchii));
             CHECK(l.find("check_for_updates=false") != std::string::npos && l.find("check_for_updates=true") == std::string::npos);
-            CHECK(q.find("whats_new") == std::string::npos);
+            CHECK(q.find("fritchii_whats_new_seen=build-3") != std::string::npos && fritchii_ini_pin(q) == q);
         }
         const std::string old = "revision=3\nglobal.gpu_accuracy=1\nglobal.use_vsync=2\ngame.0400486024DEC000.resolution_setup=2\n# note\n";
         const std::string n = frizti_ini_pin(old);

@@ -1386,12 +1386,12 @@ static void test_fritchii_install(const fs::path& root) {
     CHECK(hubemu::managed_dir(K, root.string()) != hubemu::managed_dir(hubemu::Kind::Lichii, root.string()));
     CHECK(fs::u8path(hubemu::managed_dir(K, root.string())).filename() == "fritchii");
     CHECK(std::wstring(hubemu::release(K).exe) == L"lichii.exe" && std::string(hubemu::release(K).license) == "GPL-3.0" && std::string(hubemu::release(K).version) == "v5");
-    // the v5 pin is wired; size and SHA-256 are still placeholders until RetroHub's CI build of v5 is pinned (TODO in emulators.cpp), so nothing downloads yet
+    // the v5 pin is real: RetroHub's own CI build of Fritchii v5 (emulators.cpp, fritchii_pin)
     {
         const hubemu::Release& r = hubemu::release(K);
-        CHECK(hubemu::release_is_placeholder(K) && !hubemu::release_is_placeholder(hubemu::Kind::Lichii));
+        CHECK(!hubemu::release_is_placeholder(K) && !hubemu::release_is_placeholder(hubemu::Kind::Lichii));
         CHECK(std::wstring(r.host) == L"github.com" && std::wstring(r.path) == L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5/Fritchii-v5-RetroHub-windows-x64.zip");
-        CHECK(r.size == 0 && std::string(r.sha256) == std::string(64, '0'));
+        CHECK(r.size == 119936811ull && std::string(r.sha256) == "30ad7db5ee8141647d388f741c7d64afefbb75009aaa647a3409b88797810d24");
     }
     // a placeholder pin (all-zero sha) still refuses with a plain message and creates nothing
     {
