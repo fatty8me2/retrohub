@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -70,6 +71,41 @@ std::string device_tag() {
 }
 }  // namespace
 
+std::string playlog_device() { return device_tag(); }
+
+namespace {
+/* Every "<pc>.log" in one game's playlog folder, appended to v (device = the file name without ".log"). */
+void read_playlog_dir(const fs::path& pl, const std::string& sys, const std::string& key, std::vector<Session>* v) {
+    std::error_code e3;
+    if (!fs::is_directory(pl, e3)) return;
+    for (fs::directory_iterator fi(pl, e3), fe; !e3 && fi != fe; fi.increment(e3)) {
+        std::error_code e4;
+        if (!fi->is_regular_file(e4)) continue;
+        std::wstring ext = fi->path().extension().wstring();   // only "<pc>.log": a sync tool's temp or backup copy would count twice
+        for (auto& c : ext) c = (wchar_t)towlower(c);
+        if (ext != L".log") continue;
+        std::ifstream in(fi->path(), std::ios::binary);
+        const auto stem = fi->path().stem().u8string();   // std::string in C++17, std::u8string in C++20
+        const std::string device(stem.begin(), stem.end());
+        std::string line;
+        while (std::getline(in, line)) {
+            Session s;
+            s.system = sys;
+            s.key = key;
+            s.device = device;
+            if (parse_playlog_line(line, &s.start, &s.secs)) v->push_back(s);
+        }
+    }
+}
+}  // namespace
+
+std::vector<Session> playlog_read_game(const std::string& system, const std::string& key) {
+    std::vector<Session> v;
+    if (system.empty() || key.empty()) return v;
+    read_playlog_dir(fs::u8path(game_dir_path(system, key)) / "playlog", system, key, &v);
+    return v;
+}
+
 void playlog_append(const std::string& system, const std::string& key, int64_t start, int64_t secs) {
     if (start <= 0 || secs <= 0) return;
     fs::path d = fs::u8path(game_dir(system, key)) / "playlog";
@@ -88,20 +124,7 @@ std::vector<Session> playlog_read_all() {
         if (!si->is_directory(ec) || sys.empty() || sys[0] == '.' || sys[0] == '_') continue;
         std::error_code e2;
         for (fs::directory_iterator gi(si->path(), e2), ge; !e2 && gi != ge; gi.increment(e2)) {
-            fs::path pl = gi->path() / "playlog";
-            std::error_code e3;
-            if (!fs::is_directory(pl, e3)) continue;
-            std::string key = gi->path().filename().string();
-            for (fs::directory_iterator fi(pl, e3), fe; !e3 && fi != fe; fi.increment(e3)) {
-                std::ifstream in(fi->path(), std::ios::binary);
-                std::string line;
-                while (std::getline(in, line)) {
-                    Session s;
-                    s.system = sys;
-                    s.key = key;
-                    if (parse_playlog_line(line, &s.start, &s.secs)) v.push_back(s);
-                }
-            }
+            read_playlog_dir(gi->path() / "playlog", sys, gi->path().filename().string(), &v);
         }
     }
     return v;

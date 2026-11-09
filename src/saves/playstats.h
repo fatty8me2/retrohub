@@ -10,7 +10,8 @@
 
 namespace hub::saves {
 
-struct Session { std::string system, key; int64_t start = 0, secs = 0; };
+/* device: the PC that logged the session (its playlog file name without ".log", see playlog_device()); "" = unknown (tests, fakes). */
+struct Session { std::string system, key; int64_t start = 0, secs = 0; std::string device; };
 struct GameTotal { std::string system, key; int64_t secs = 0; };   // lifetime play time (library.json play_seconds)
 
 struct StatsTop { std::string system, key; int64_t secs = 0; };
@@ -33,6 +34,10 @@ bool parse_playlog_line(const std::string& line, int64_t* start, int64_t* secs);
 
 /* I/O */
 void playlog_append(const std::string& system, const std::string& key, int64_t start, int64_t secs);   // this PC's file in the game folder
-std::vector<Session> playlog_read_all();   // every game in the vault, every PC's file
+std::vector<Session> playlog_read_all();   // every game in the vault, every PC's file (device filled)
+/* This PC's playlog file name without ".log" (the computer name, characters other than letters, digits and '-' as '_'). */
+std::string playlog_device();
+/* One game's sessions from every PC's file (device filled), in file order. Read-only: never creates the game's vault folder. */
+std::vector<Session> playlog_read_game(const std::string& system, const std::string& key);
 
 } // namespace hub::saves

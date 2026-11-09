@@ -23,6 +23,8 @@ void set_vault_dir(const std::string& dir);  // advanced setting; default is dat
 
 /* Directories for one game (created on demand). Runners are pointed at these. */
 std::string game_dir(const std::string& system_short, const std::string& game_key);
+/* The same folder as game_dir() (trailing backslash), but never created: for readers that must not leave empty game folders behind. */
+std::string game_dir_path(const std::string& system_short, const std::string& game_key);
 std::string battery_dir(const std::string& system_short, const std::string& game_key);
 std::string states_dir(const std::string& system_short, const std::string& game_key);
 /* Call after a play session: refreshes meta.json (title, updated, device). */

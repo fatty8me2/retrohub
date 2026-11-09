@@ -435,6 +435,9 @@ std::string game_dir(const std::string& system_short, const std::string& game_ke
     mkdirs(d);
     return U(d) + "\\";
 }
+std::string game_dir_path(const std::string& system_short, const std::string& game_key) {
+    return U(vault_w() + L"\\" + sanitize_component(system_short) + L"\\" + sanitize_component(game_key)) + "\\";
+}
 std::string battery_dir(const std::string& system_short, const std::string& game_key) {
     ws d = W(game_dir(system_short, game_key)) + L"battery";
     mkdirs(d);
