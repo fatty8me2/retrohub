@@ -147,49 +147,6 @@ std::string warning_text(const Result& r) {
     return r.reason + (r.area_note.empty() ? "" : " " + r.area_note) + " To fix it, re-dump your own copy of the game.";
 }
 
-std::string short_line(const Result& r) {
-    if (r.v == Verdict::Truncated) return "Cut short: " + format_gb(r.have) + " of " + format_gb(r.expected);
-    if (r.v == Verdict::LooksIncomplete) return "Looks incomplete: " + format_gb(r.have) + ", complete copies are about " + format_gb(r.expected);
-    return "";
-}
-
-/* ---- DismissList ---- */
-bool DismissList::has(const std::string& path, uint64_t size) const {
-    auto it = m_.find(lower(path));
-    return it != m_.end() && it->second == size;
-}
-void DismissList::add(const std::string& path, uint64_t size) {
-    if (path.empty() || path.find_first_of("\t\r\n") != std::string::npos) return;
-    m_[lower(path)] = size;
-}
-std::string DismissList::serialize() const {
-    std::string o;
-    for (const auto& kv : m_) o += std::to_string(kv.second) + "\t" + kv.first + "\n";
-    return o;
-}
-void DismissList::parse(const std::string& text) {
-    size_t p = 0;
-    while (p < text.size()) {
-        size_t e = text.find('\n', p);
-        if (e == std::string::npos) e = text.size();
-        std::string line = text.substr(p, e - p);
-        p = e + 1;
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        const size_t t = line.find('\t');
-        if (t == std::string::npos || t == 0 || t + 1 >= line.size()) continue;
-        bool digits = true;
-        for (size_t i = 0; i < t; ++i) if (line[i] < '0' || line[i] > '9') digits = false;
-        if (!digits || t > 19) continue;
-        add(line.substr(t + 1), std::strtoull(line.c_str(), nullptr, 10));
-    }
-}
-
-bool play_gate_shows(const PlayGateIn& in) {
-    if (in.game_running || in.party_round) return false;
-    if (in.pass_fresh || in.hookshot || in.dismissed) return false;
-    return in.verdict != Verdict::Ok;
-}
-
 /* ---- Cache ---- */
 struct Cache::State {
     struct Entry {

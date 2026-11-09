@@ -747,8 +747,6 @@ void party_couch_open() {
     if (R.couch.rounds < 1) R.couch.rounds = 5;
 }
 
-bool party_couch_launching() { return R.couch_launching; }
-
 bool party_couch_active() { return R.have && R.st.couch && R.st.phase != pl::Phase::Off && R.st.phase != pl::Phase::Done; }
 
 /* launch.cpp (Opus-only) asks for this when it starts a LOCAL Smash game during a couch round, and passes it as the result file
