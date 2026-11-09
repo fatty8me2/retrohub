@@ -239,6 +239,7 @@ add_test(NAME hub_switch_test COMMAND hub_switch_test)               # Switch (L
 add_test(NAME hub_hookshot_saves_qa COMMAND hub_hookshot_saves_qa)   # QA: Hookshot <-> Lichii saves through one vault (temp dirs; qa\hookshot_saves.ps1)
 add_test(NAME hub_hookshot_build_test COMMAND hub_hookshot_build_test)   # Hookshot build: protocol parser, jobs, hashes, pins, requirement texts, folder swap keeps user\ (temp dirs, no network)
 add_test(NAME hub_psp_test COMMAND hub_psp_test)                   # PSP: SFO/ISO/CSO/CHD/PBP ids (synthetic), PS1-vs-PSP, scan, SAVEDATA session, PPSSPP config (no network)
+add_test(NAME nuprepair_test COMMAND nuprepair_test)           # Switch .nup damaged-file repair: synthetic NUPs, stand-in rule, apply / ensure / remove, manifest (temp dirs)
 add_test(NAME hub_nx_test COMMAND hub_nx_test)                     # Switch / Switch 2: PFS0/XCI/NRO/NPDM ids, loose exefs dumps, scan + cache nx2 (synthetic, no network)
 add_test(NAME hub_np3ds_test COMMAND hub_np3ds_test)
 add_test(NAME stream_core_test COMMAND stream_core_test)            # remote play: packetizer, FEC, NACK, jitter buffer, codecs, bitrate

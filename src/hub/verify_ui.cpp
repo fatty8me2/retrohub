@@ -9,6 +9,8 @@
 #include "verify.h"
 #include "dump_check.h"
 #include "nx.h"
+#include "nup_repair.h"
+#include "emulators.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -261,6 +263,40 @@ void dumpwarn_details_section(const hub::GameEntry& e) {   // an incomplete Swit
     ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
     ImGui::PushTextWrapPos(0.f);
     ImGui::TextWrapped("%s", dc::warning_text(r).c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));
+}
+
+void nuprepair_details_section(const hub::GameEntry& e) {   // a Switch .nup copy RetroHub repairs at launch: say so (the manifest it wrote), under the incomplete-dump warning
+    if (e.system != hub::System::Switch || e.path.size() < 4 || e.key == kNativeKey) return;
+    std::string ext = e.path.substr(e.path.size() - 4);
+    for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+    if (ext != ".nup") return;
+    struct Cached { std::string text; double at = -100.0; };
+    static std::map<std::string, Cached> cache;   // per (game, title id): re-read at most every 5 s (this runs every frame)
+    const uint64_t tid = hub::nx::title_id_from_key(e.key);
+    const std::string ck = e.key + "|" + e.path;
+    Cached& c = cache[ck];
+    const double now = ImGui::GetTime();
+    if (now - c.at >= 5.0) {
+        c.at = now;
+        c.text.clear();
+        if (tid) {
+            for (hubemu::Kind k : {hubemu::Kind::Fritchii, hubemu::Kind::Lichii}) {
+                const hubemu::Install inst = hubemu::find(k, "", "");
+                if (inst.exe.empty()) continue;
+                hub::nuprepair::Manifest m;
+                if (!hub::nuprepair::read_manifest(inst.dir + "\\user", tid, &m)) continue;
+                c.text = hub::nuprepair::page_text(m);
+                if (!c.text.empty()) break;
+            }
+        }
+    }
+    if (c.text.empty()) return;
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+    ImGui::PushTextWrapPos(0.f);
+    ImGui::TextWrapped("%s", c.text.c_str());
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
     ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));

@@ -969,6 +969,7 @@ void draw_details_modal() {
     ImGui::BeginChild("##tabbody", ImVec2(0, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AutoResizeY);
     if (tab == TabAbout) {
         dumpwarn_details_section(e);   // first: a copy that looks incomplete must be seen without scrolling
+        nuprepair_details_section(e);   // a damaged .nup copy RetroHub fills in at launch
         gameinfo_ui_section(e, cat ? cat->title : std::string(), 2);
         achievements_ui_section(e);   // RetroAchievements progress (only when signed in)
         if (e.system == hub::System::WiiU) {
