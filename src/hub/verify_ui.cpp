@@ -117,7 +117,7 @@ void refresh_bios() {
     if (nds) optional(hub::System::NDS, "Nintendo DS");
 }
 
-/* ---- Switch dump check (dump_check.h), shown only as the About tab warning: dumps cut short or smaller than any complete copy ---- */
+/* ---- Switch dump check (dump_check.h), shown only as the About tab warning: dumps whose own header proves they are cut short ---- */
 namespace dc = hub::dumpcheck;
 dc::Cache g_dump_cache;
 /* The cached verdict (never blocks: the first ask starts a background check and answers "nothing yet"). */
