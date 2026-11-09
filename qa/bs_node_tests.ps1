@@ -1,54 +1,52 @@
-# Runs every BattleShip server/cloudflare node test, each against a FRESH local `wrangler dev` (isolated registry, short persist dir
-# C:\rhq\<port>, ports 9900+). Tests that start their own wrangler (stats, r2budget, saves) run bare. Kills only the PIDs it started.
-# Usage: powershell -File qa\bs_node_tests.ps1 [-Cf <BattleShip\server\cloudflare>] [-BasePort 9900] [-Only test_room4.mjs,...]
-param([string]$Cf = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'qa-124-bs\server\cloudflare'), [int]$BasePort = 9900, [string[]]$Only = @())
+# Runs the BattleShip server/cloudflare node test suite through its own runner, run_all_tests.mjs.
+# Every ws/http test gets a FRESH local `wrangler dev` with the per-test --var flags from run_all_tests.mjs's SUITE table.
+# Never production: the runner starts local wranglers only, and it kills only the wranglers it started, by PID
+# (run_all_tests.mjs and test_v2_lib.mjs). Runs node inline (no new windows).
+# Usage:
+#   powershell -NoProfile -File qa\bs_node_tests.ps1                              all test files
+#   powershell -NoProfile -File qa\bs_node_tests.ps1 -Only test_hostgrace.mjs     one file (or any name substring)
+#   powershell -NoProfile -File qa\bs_node_tests.ps1 -Only a.mjs,b.mjs -Cf <dir> -PortBase 10300
+# -Cf defaults to $env:BS_WORKER_DIR, else BattleShip\server\cloudflare. -PortBase moves every port (default 10300, so a run never
+# collides with a plain `node run_all_tests.mjs` on its historic ports 10100+).
+# Exit 0 only if every run exits 0 and at least one test file ran. Exit 2 if node or wrangler is missing.
+param(
+    [string]$Cf = 'C:\Users\fatty\Desktop\SmashClassicPort\BattleShip\server\cloudflare',
+    [Alias('BasePort')][int]$PortBase = 10300,
+    [string[]]$Only = @()
+)
 $ErrorActionPreference = 'Continue'
-$self = @('test_stats.mjs', 'test_r2budget.mjs', 'test_saves.mjs')
-$tests = Get-ChildItem $Cf -Filter 'test_*.mjs' | Sort-Object Name
-if ($Only.Count) { $tests = $tests | Where-Object { $Only -contains $_.Name } }
-$port = $BasePort
-$results = @()
-$env:WRANGLER_REGISTRY_PATH = Join-Path $env:TEMP ('wr_reg_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
-New-Item -ItemType Directory -Force $env:WRANGLER_REGISTRY_PATH | Out-Null
-function Kill-Tree([int]$id) { if ($id) { & taskkill /PID $id /T /F 2>&1 | Out-Null } }
-foreach ($t in $tests) {
-    $port++
-    $log = Join-Path $env:TEMP "bsn_$($t.BaseName).log"
-    $wp = $null
-    $isSelf = $self -contains $t.Name
-    $head = (Get-Content $t.FullName -TotalCount 10) -join "`n"   # the header documents the --var flags and the URL scheme each test needs
-    $vars = @(); foreach ($m in [regex]::Matches($head, '--var\s+(\S+)')) { $vars += '--var'; $vars += $m.Groups[1].Value }
-    $scheme = if ($head -match 'node \S+\.mjs \[http://') { 'http' } else { 'ws' }
-    if (-not $isSelf) {
-        $persist = "C:\rhq\$port"
-        Remove-Item -Recurse -Force $persist -ErrorAction SilentlyContinue
-        New-Item -ItemType Directory -Force $persist | Out-Null
-        $wp = Start-Process node -PassThru -WindowStyle Hidden -WorkingDirectory $Cf -RedirectStandardOutput "$log.wr" -RedirectStandardError "$log.wre" `
-            -ArgumentList (@('node_modules/wrangler/bin/wrangler.js', 'dev', '-c', 'wrangler.jsonc', '--ip', '127.0.0.1', '--port', "$port", '--persist-to', $persist) + $vars)
-        $up = $false
-        for ($i = 0; $i -lt 90 -and -not $up; $i++) {
-            Start-Sleep -Milliseconds 1000
-            try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', $port); $c.Close(); $up = $true } catch { }
-        }
-        if (-not $up) { Kill-Tree $wp.Id; $results += [pscustomobject]@{ Test = $t.Name; Result = 'FAIL'; Note = 'wrangler did not start' }; continue }
-        Start-Sleep -Milliseconds 1500
-    }
-    $args = @($t.Name); if (-not $isSelf) { $args += "${scheme}://127.0.0.1:$port" }
-    $envPorts = @{ BUDGET_TEST_PORT = "$($port + 500)"; SAVES_TEST_PORT = "$($port + 500)"; STATS_TEST_PORT = "$($port + 500)" }
-    foreach ($k in $envPorts.Keys) { Set-Item "env:$k" $envPorts[$k] }
-    $np = Start-Process node -PassThru -WindowStyle Hidden -WorkingDirectory $Cf -RedirectStandardOutput $log -RedirectStandardError "$log.err" -ArgumentList $args
-    $null = $np.Handle
-    if (-not $np.WaitForExit(240000)) { Kill-Tree $np.Id; $res = 'FAIL'; $note = 'timeout' }
-    else { $res = if ($np.ExitCode -eq 0) { 'PASS' } else { 'FAIL' }; $note = "exit $($np.ExitCode)" }
-    $out = (Get-Content $log -ErrorAction SilentlyContinue) -join "`n"
-    $fails = ([regex]::Matches($out, '(?m)^FAIL')).Count
-    if ($fails) { $res = 'FAIL'; $note += ", $fails FAIL lines" }
-    $oks = ([regex]::Matches($out, '(?m)^ok')).Count
-    $results += [pscustomobject]@{ Test = $t.Name; Result = $res; Note = "$note, $oks ok" }
-    if ($wp) { Kill-Tree $wp.Id }
-    Remove-Item "$Cf\wrangler.test.jsonc", "$Cf\wrangler.budget.jsonc" -ErrorAction SilentlyContinue
+if (-not $PSBoundParameters.ContainsKey('Cf') -and $env:BS_WORKER_DIR) { $Cf = $env:BS_WORKER_DIR }
+
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Host 'bs_node_tests: node was not found on PATH.'; exit 2 }
+if (-not (Test-Path "$Cf\node_modules\wrangler\bin\wrangler.js")) {
+    Write-Host "bs_node_tests: wrangler is not installed in $Cf (run npm install there first)."; exit 2
 }
-$results | Format-Table -AutoSize
-$bad = @($results | Where-Object { $_.Result -ne 'PASS' }).Count
-Write-Host "bs_node_tests: $($results.Count - $bad)/$($results.Count) passed"
-if ($bad) { exit 1 }
+if (-not (Test-Path "$Cf\run_all_tests.mjs")) { Write-Host "bs_node_tests: $Cf\run_all_tests.mjs not found."; exit 2 }
+
+$Only = @($Only | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })   # `powershell -File ... -Only a,b` binds one string
+$filters = if ($Only.Count) { $Only } else { @('') }
+$env:SUITE_PORT_BASE = "$PortBase"
+$total = 0; $passed = 0; $worst = 0
+Push-Location $Cf
+try {
+    foreach ($f in $filters) {
+        if ($f) { Write-Host "=== bs_node_tests filter: $f ===" }
+        $captured = @()
+        if ($f) { & node run_all_tests.mjs $f | Tee-Object -Variable captured | Out-Host }
+        else { & node run_all_tests.mjs | Tee-Object -Variable captured | Out-Host }
+        $rc = $LASTEXITCODE
+        if ($rc -ne 0) { $worst = $rc }   # a crash comes back as a negative code: never let a later pass hide it
+        $summary = @($captured | Where-Object { $_ -match '(\d+)/(\d+) test files passed' })
+        if ($summary.Count) {
+            $m = [regex]::Match($summary[-1], '(\d+)/(\d+) test files passed')
+            $passed += [int]$m.Groups[1].Value; $total += [int]$m.Groups[2].Value
+        } else {
+            Write-Host "bs_node_tests: runner printed no summary for filter '$f' (exit $rc)."
+            if ($worst -eq 0) { $worst = 1 }
+        }
+    }
+} finally { Pop-Location }
+
+Write-Host "bs_node_tests: $passed/$total test files passed"
+if ($worst -ne 0 -or $total -eq 0) { exit 1 }
+exit 0
