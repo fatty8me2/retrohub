@@ -176,44 +176,48 @@ int main() {
             S(now - 3000, 60, "PC-C"),
         };
         GameStats g = game_stats(20000, (uint64_t)(now - 5), v, "PC-A", now);
-        CHECK(g.sessions == 5);
+        CHECK(g.sessions == 5 + 3);                           // every PC's valid sessions: 5 here, 3 elsewhere
         CHECK(g.longest_secs == 7200);
-        CHECK(g.recent_secs == 3600 + 7200 + 10 + 3000);
+        CHECK(g.recent_secs == 3600 + 7200 + 10 + 3000 + 500 + 700 + 60);
         CHECK(g.other_secs == 500 + 700 + 60);
         CHECK(g.other_pcs == 2);
-        CHECK(g.total_secs == 20000);                         // library.json bigger than the log: library wins
+        CHECK(g.this_pc_secs == 20000);                       // library.json bigger than this PC's log: library wins
+        CHECK(g.total_secs == 20000 + 1260);                  // every PC: this PC + the others
         CHECK(g.last_played == (uint64_t)(now - 5));          // library.json newer than the newest session (now - 10)
         CHECK(g.played());
-        g = game_stats(0, 0, v, "PC-A", now);                 // library.json younger than the vault: the log wins
-        CHECK(g.total_secs == 3600 + 7200 + 100 + 4000 + 100);
-        CHECK(g.last_played == (uint64_t)(now - 10));
+        g = game_stats(0, 0, v, "PC-A", now);                 // library.json younger than the vault: this PC's log wins
+        CHECK(g.this_pc_secs == 3600 + 7200 + 100 + 4000 + 100);
+        CHECK(g.total_secs == 15000 + 1260);
+        CHECK(g.last_played == (uint64_t)(now - 10));         // newest start of any PC's session
         CHECK(g.played());
         g = game_stats(100, 5, v, "PC-A", now);
-        CHECK(g.total_secs == 15000 && g.last_played == (uint64_t)(now - 10));
+        CHECK(g.this_pc_secs == 15000 && g.total_secs == 16260 && g.last_played == (uint64_t)(now - 10));
         g = game_stats(15000, 0, v, "pc-a", now);             // this_pc compares case-insensitively; equal totals
-        CHECK(g.total_secs == 15000 && g.sessions == 5 && g.other_pcs == 2);
-        g = game_stats(0, 0, v, "PC-B", now);                 // seen from the other PC: PC-B's two sessions are "this PC" ... plus the empty-device one
-        CHECK(g.sessions == 3 && g.total_secs == 7200 + 500 + 700);   // the empty-device session counts as this PC
+        CHECK(g.this_pc_secs == 15000 && g.total_secs == 16260 && g.sessions == 8 && g.other_pcs == 2);
+        g = game_stats(0, 0, v, "PC-B", now);                 // seen from PC-B: its two sessions plus the empty-device one are "this PC"
+        CHECK(g.this_pc_secs == 7200 + 500 + 700);
         CHECK(g.other_pcs == 2 && g.other_secs == 3600 + 100 + 4000 + 100 + 60);   // PC-A (4 sessions) and PC-C
+        CHECK(g.total_secs == 16260 && g.sessions == 8);      // the account-wide total is the same from every PC
         g = game_stats(0, 0, v, "PC-A", now, 86400);          // a one-day window
-        CHECK(g.recent_secs == 7200 + 10);                    // the 100000 s old session ended 96400 s ago: out
+        CHECK(g.recent_secs == 7200 + 10 + 500 + 700 + 60);   // the 100000 s old session ended 96400 s ago: out
         g = game_stats(0, 0, v, "PC-A", now, 1000000000);     // a huge window clips nothing
-        CHECK(g.recent_secs == 3600 + 7200 + 10 + 4000 + 100);
+        CHECK(g.recent_secs == 3600 + 7200 + 10 + 4000 + 100 + 1260);
     }
     {
         const int64_t now = ts(2026, 11, 9, 12);
         std::vector<Session> none;
         GameStats g = game_stats(5, 0, none, "PC-A", now);
-        CHECK(g.total_secs == 5 && g.last_played == 0 && g.sessions == 0 && g.recent_secs == 0 && g.longest_secs == 0 && g.other_secs == 0 && g.other_pcs == 0 && g.played());
+        CHECK(g.total_secs == 5 && g.this_pc_secs == 5 && g.last_played == 0 && g.sessions == 0 && g.recent_secs == 0 && g.longest_secs == 0 && g.other_secs == 0 && g.other_pcs == 0 && g.played());
         g = game_stats(0, 0, none, "PC-A", now);
         CHECK(!g.played());
         g = game_stats(0, 77, none, "PC-A", now);
         CHECK(g.played() && g.total_secs == 0 && g.last_played == 77);
         Session o; o.start = now - 100; o.secs = 100; o.device = "PC-B";
-        g = game_stats(0, 0, {o}, "PC-A", now);               // only other PCs: never added to this PC's numbers
-        CHECK(!g.played() && g.total_secs == 0 && g.last_played == 0 && g.sessions == 0 && g.other_secs == 100 && g.other_pcs == 1);
+        g = game_stats(0, 0, {o}, "PC-A", now);               // played only on another PC: it still counts for the game
+        CHECK(g.played() && g.total_secs == 100 && g.this_pc_secs == 0 && g.last_played == (uint64_t)(now - 100) && g.sessions == 1 && g.other_secs == 100 && g.other_pcs == 1);
+        CHECK(g.recent_secs == 100 && g.longest_secs == 100);
         g = game_stats(3600, (uint64_t)now, {o}, "PC-A", now);
-        CHECK(g.total_secs == 3600 && g.other_secs == 100);
+        CHECK(g.this_pc_secs == 3600 && g.total_secs == 3700 && g.other_secs == 100 && g.last_played == (uint64_t)now);
         CHECK(!GameStats().played());
     }
 
@@ -224,21 +228,45 @@ int main() {
         std::vector<Session> v = {S(now - 100000, 3600, "PC-A"), S(now - 50000, 7200, "PC-A"), S(now - 10, 100, "PC-A"), S(now - 5000, 500, "PC-B"),
                                   S(now - 4000, 700, "pc-b"), S(now - 3000, 60, "PC-C")};
         GameStats g = game_stats(20000, (uint64_t)(now - 5), v, "PC-A", now);
-        // recent = 3600 + 7200 + 10 = 10810 s -> (10990 / 360 = 30) "3.0 hours"; other = 1260 s -> 1440 / 360 = 4 "0.4 hours"; total 20000 s -> 20180 / 360 = 56 "5.6 hours"
+        // total = 20000 + 1260 = 21260 s -> 21440 / 360 = 59 "5.9 hours"; recent = 3600 + 7200 + 10 + 1260 = 12070 s -> 12250 / 360 = 34 "3.4 hours";
+        // this PC 20000 s -> 20180 / 360 = 56 "5.6 hours"; other 1260 s -> 1440 / 360 = 4 "0.4 hours"
         std::vector<Cell> c = strip_cells(g, now, 0);
-        CHECK(c.size() == 5);
-        CHECK(c.size() == 5 && c[0].label == "Play time" && c[0].value == "5.6 hours");
-        CHECK(c.size() == 5 && c[1].label == "Last played" && c[1].value == "Today");
-        CHECK(c.size() == 5 && c[2].label == "Sessions" && c[2].value == "3");
-        CHECK(c.size() == 5 && c[3].label == "Last 2 weeks" && c[3].value == "3.0 hours");
-        CHECK(c.size() == 5 && c[4].label == "Other PCs" && c[4].value == "0.4 hours");
+        CHECK(c.size() == 6);
+        CHECK(c.size() == 6 && c[0].label == "Play time" && c[0].value == "5.9 hours");
+        CHECK(c.size() == 6 && c[1].label == "Last played" && c[1].value == "Today");
+        CHECK(c.size() == 6 && c[2].label == "Sessions" && c[2].value == "6");
+        CHECK(c.size() == 6 && c[3].label == "Last 2 weeks" && c[3].value == "3.4 hours");
+        CHECK(c.size() == 6 && c[4].label == "This PC" && c[4].value == "5.6 hours");
+        CHECK(c.size() == 6 && c[5].label == "Other PCs" && c[5].value == "0.4 hours");
 
         std::vector<Session> one = {S(now - 100, 3600, "PC-B")};
-        c = strip_cells(game_stats(3600, (uint64_t)(now - 86400), one, "PC-A", now), now, 0);   // one other PC, no own sessions
-        CHECK(c.size() == 3);
-        CHECK(c.size() == 3 && c[0].label == "Play time" && c[0].value == "1.0 hours");
-        CHECK(c.size() == 3 && c[1].label == "Last played" && c[1].value == "Yesterday");
-        CHECK(c.size() == 3 && c[2].label == "Other PC" && c[2].value == "1.0 hours");
+        c = strip_cells(game_stats(3600, (uint64_t)(now - 86400), one, "PC-A", now), now, 0);   // one other PC
+        // total 7200 s -> 7380 / 360 = 20 "2.0 hours"; recent 100 s -> 280 / 360 = 0 -> min "0.1 hours"
+        CHECK(c.size() == 6);
+        CHECK(c.size() == 6 && c[0].label == "Play time" && c[0].value == "2.0 hours");
+        CHECK(c.size() == 6 && c[1].label == "Last played" && c[1].value == "Today");   // the other PC's session is newer than library.json's stamp
+        CHECK(c.size() == 6 && c[2].label == "Sessions" && c[2].value == "1");
+        CHECK(c.size() == 6 && c[3].label == "Last 2 weeks" && c[3].value == "0.1 hours");
+        CHECK(c.size() == 6 && c[4].label == "This PC" && c[4].value == "1.0 hours");
+        CHECK(c.size() == 6 && c[5].label == "Other PC" && c[5].value == "1.0 hours");
+
+        {   // played only on another PC (library.json 0 / 0): no "This PC" cell
+            std::vector<Session> lap = {S(now - 3 * 86400, 5400, "LAPTOP")};   // Nov 6 12:00, 1.5 h
+            GameStats lg = game_stats(0, 0, lap, "PC-A", now);
+            CHECK(lg.played() && lg.total_secs == 5400 && lg.this_pc_secs == 0);
+            c = strip_cells(lg, now, 0);
+            CHECK(c.size() == 5);
+            CHECK(c.size() == 5 && c[0].label == "Play time" && c[0].value == "1.5 hours");   // 5580 / 360 = 15
+            CHECK(c.size() == 5 && c[1].label == "Last played" && c[1].value == "Nov 6");
+            CHECK(c.size() == 5 && c[2].label == "Sessions" && c[2].value == "1");
+            CHECK(c.size() == 5 && c[3].label == "Last 2 weeks" && c[3].value == "1.5 hours");
+            CHECK(c.size() == 5 && c[4].label == "Other PC" && c[4].value == "1.5 hours");
+            CHECK(header_line(lg.total_secs, lg.last_played, now, 0, " | ") == "1.5 hours played | Last played: Nov 6");
+            lap = {S(now - 30 * 86400, 5400, "LAPTOP")};                              // Oct 10: outside the two weeks
+            c = strip_cells(game_stats(0, 0, lap, "PC-A", now), now, 0);
+            CHECK(c.size() == 4);
+            CHECK(c.size() == 4 && c[0].label == "Play time" && c[1].label == "Last played" && c[1].value == "Oct 10" && c[2].label == "Sessions" && c[3].label == "Other PC");
+        }
 
         CHECK(strip_cells(GameStats(), now, 0).empty());                       // never played
         GameStats only_other; only_other.other_secs = 5000; only_other.other_pcs = 1;
@@ -250,13 +278,20 @@ int main() {
         GameStats b; b.last_played = (uint64_t)ts(2026, 11, 7, 12);             // date only: no play time cell
         c = strip_cells(b, now, 0);
         CHECK(c.size() == 1 && c[0].label == "Last played" && c[0].value == "Nov 7");
-        GameStats d; d.total_secs = 1234ull * 3600; d.last_played = (uint64_t)ts(2025, 12, 31, 12); d.sessions = 1234; d.recent_secs = 7200; d.other_secs = 3600 * 100; d.other_pcs = 3;
+        GameStats d; d.total_secs = 1234ull * 3600; d.this_pc_secs = 1134ull * 3600; d.last_played = (uint64_t)ts(2025, 12, 31, 12); d.sessions = 1234; d.recent_secs = 7200; d.other_secs = 3600 * 100; d.other_pcs = 3;
         c = strip_cells(d, now, 0);
-        CHECK(c.size() == 5);
-        CHECK(c.size() == 5 && c[0].value == "1,234 hours" && c[1].value == "Dec 31, 2025" && c[2].value == "1,234" && c[3].value == "2.0 hours" && c[4].label == "Other PCs" && c[4].value == "100 hours");
+        CHECK(c.size() == 6);
+        CHECK(c.size() == 6 && c[0].value == "1,234 hours" && c[1].value == "Dec 31, 2025" && c[2].value == "1,234" && c[3].value == "2.0 hours");
+        CHECK(c.size() == 6 && c[4].label == "This PC" && c[4].value == "1,134 hours" && c[5].label == "Other PCs" && c[5].value == "100 hours");
         d.sessions = 0; d.recent_secs = 0;                                      // sessions / recent drop out when zero
         c = strip_cells(d, now, 0);
-        CHECK(c.size() == 3 && c[0].label == "Play time" && c[1].label == "Last played" && c[2].label == "Other PCs");
+        CHECK(c.size() == 4 && c[0].label == "Play time" && c[1].label == "Last played" && c[2].label == "This PC" && c[3].label == "Other PCs");
+        d.this_pc_secs = 0;                                                     // nothing played here: no "This PC"
+        c = strip_cells(d, now, 0);
+        CHECK(c.size() == 3 && c[2].label == "Other PCs");
+        d.other_secs = 0;                                                       // no other PC: no "This PC" / "Other PC" at all
+        c = strip_cells(d, now, 0);
+        CHECK(c.size() == 2 && c[0].label == "Play time" && c[1].label == "Last played");
     }
 
     std::printf(fails ? "hub_playtime_test: %d FAILED\n" : "hub_playtime_test: all ok\n", fails);
