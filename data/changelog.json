@@ -1,6 +1,21 @@
 {
   "versions": [
     {
+      "version": "1.40.5",
+      "date": "2026-11-08",
+      "title": "Fritchii v5 for Ocarina of Time",
+      "new": [
+        "Ocarina of Time now plays with Fritchii v5 by default. The first time, a Preparing shaders screen builds the game's shaders once (about 10 to 15 minutes); after that, new areas load without shader stutter. Other Switch games keep Lichii, and you can pick Lichii for Ocarina in its Settings tab"
+      ],
+      "improved": [
+        "Fritchii v5 uses less memory and runs the heaviest Ocarina of Time areas, like the Water Temple, more smoothly",
+        "NVIDIA tip: set Shader Cache Size to Unlimited in the NVIDIA Control Panel (Manage 3D settings) so the prepared shaders are kept"
+      ],
+      "fixed": [
+        "The incomplete game file warning no longer flags complete copies: it only appears when the file itself shows it was cut short"
+      ]
+    },
+    {
       "version": "1.40.4",
       "date": "2026-11-08",
       "title": "Recently used shaders by default",
