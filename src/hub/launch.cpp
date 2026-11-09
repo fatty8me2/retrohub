@@ -783,7 +783,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         for (char& ch : ext) ch = (char)std::tolower((unsigned char)ch);
         if (ext == ".nup") {
             auto rp = gsv.find("switch.repair_damaged");
-            const hub::nuprepair::Ensure er = hub::nuprepair::ensure(game, inst.dir + "\\user", rp == gsv.end() || rp->second != "off");
+            const hub::nuprepair::Ensure er = hub::nuprepair::ensure(game, inst.dir + "\\user", rp == gsv.end() || rp->second != "off", hub::data_dir() + "nup-repair");   // (the "healthy copy" record lives in RetroHub's own data folder, never the emulator's)
             autotest_log(er.summary);
         }
     }

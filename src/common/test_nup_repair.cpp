@@ -741,6 +741,100 @@ static void test_text_and_manifest() {
     CHECK(exists(user + "\\outside.txt"));
 }
 
+static void test_followups() {
+    // 1. a healthy copy is scanned once: the record lives in the state dir, never in the emulator's folders
+    {
+        const std::string nup = put_nup("state_healthy", build_nup({base_pkg(kTid, D("romfs", {}, {D("Tex", {F("A_Nrm.bntx.zs", good_body(100, 'a'))})}))}));
+        const std::string user = fresh("user"), state = fresh("state") + "\\nup-repair";
+        np::Ensure e1 = np::ensure(nup, user, true, state);
+        CHECK(e1.scanned && e1.applied.ok && e1.summary.find("nothing to repair") != std::string::npos);
+        const std::string rec = state + "\\nup-repair-0400486024DEC000.txt";
+        std::string txt;
+        CHECK(winutil::read_file(rec, &txt));
+        CHECK(txt.find("nup " + std::to_string(e1.scan.file_size) + " " + std::to_string(e1.scan.mtime) + " " + e1.scan.toc_sha256 + " rule " + std::to_string(np::kRuleVersion) + "\n") == 0);
+        CHECK(txt.find("\npath " + nup + "\n") != std::string::npos);
+        CHECK(!exists(user + "\\load"));
+        np::Ensure e2 = np::ensure(nup, user, true, state);
+        CHECK(!e2.scanned && e2.applied.ok && e2.summary.find("unchanged") != std::string::npos);
+        CHECK(np::ensure(nup, user, true).scanned);   // without a state dir it rescans
+        CHECK(set_mtime(nup, e1.scan.mtime + 30000000ull));
+        CHECK(np::ensure(nup, user, true, state).scanned);   // another time -> rescan (and the record follows)
+        CHECK(!np::ensure(nup, user, true, state).scanned);
+        // the copy changes and now needs repairs: the record goes, the manifest takes over
+        write_all(nup, make_oot(kTid));
+        np::Ensure e3 = np::ensure(nup, user, true, state);
+        CHECK(e3.scanned && e3.applied.written == 2);
+        CHECK(!exists(rec));
+        CHECK(!np::ensure(nup, user, true, state).scanned);
+        // the setting off removes the files and any record; healthy again -> record again
+        CHECK_EQ(np::ensure(nup, user, false, state).applied.removed, 2);
+        write_all(nup, build_nup({base_pkg(kTid, D("romfs", {}, {D("Tex", {F("A_Nrm.bntx.zs", good_body(100, 'a'))})}))}));
+        CHECK(np::ensure(nup, user, true, state).scanned && exists(rec));
+        CHECK(np::ensure(nup, user, false, state).applied.ok && !exists(rec));
+        // only unrepairable members also count as clean
+        const std::string n2 = put_nup("state_unrep", build_nup({base_pkg(kTid, D("romfs", {}, {D("Tex", {F("Lone_Alb.bntx.zs", zero_body(50))})}))}));
+        CHECK(np::ensure(n2, user, true, state).scanned && exists(rec));
+        CHECK(!np::ensure(n2, user, true, state).scanned);
+        CHECK(!exists(mod_of(user, kTid)));
+    }
+    // 2. rollback restores pre-existing files byte for byte and deletes only what it created
+    {
+        TFile bad = F("Q_Z.bntx.zs", good_body(80, 'z'));
+        bad.bad_sha = true;
+        TDir tex = D("Tex", {F("Aa_X.bntx.zs", zero_body(100)), F("Bb_Y.bntx.zs", zero_body(100)), F("Cc_Z.bntx.zs", zero_body(100)),
+                             F("Q_X.bntx.zs", good_body(90, 'x')), F("Q_Y.bntx.zs", good_body(91, 'y')), bad});
+        const std::string nup = put_nup("rollback", build_nup({base_pkg(kTid, D("romfs", {}, {tex}))}));
+        np::Scan s = np::scan(nup);
+        CHECK(s.ok && s.repairs.size() == 3);
+        const std::string user = fresh("user"), mod = mod_of(user, kTid);
+        const Bytes same = good_body(90, 'x'), other = Bytes{9, 8, 7, 6, 5};
+        write_all(mod + "\\romfs\\Tex\\Aa_X.bntx.zs", same);    // identical to its stand-in
+        write_all(mod + "\\romfs\\Tex\\Bb_Y.bntx.zs", other);   // different
+        np::Applied a = np::apply(nup, s, user);
+        CHECK(!a.ok && a.written == 0 && a.kept == 0);
+        Bytes got;
+        CHECK(read_all(mod + "\\romfs\\Tex\\Aa_X.bntx.zs", &got) && got == same);
+        CHECK(read_all(mod + "\\romfs\\Tex\\Bb_Y.bntx.zs", &got) && got == other);
+        CHECK(!exists(mod + "\\romfs\\Tex\\Cc_Z.bntx.zs") && !exists(mod + "\\" + np::kManifestName));
+        CHECK_EQ(list_files(user).size(), 2u);
+    }
+    // 3. a near-maximal first block must not look damaged
+    {
+        TDir tex = D("Tex", {F("Big1_Nrm.bntx.zs", good_body(131072, 'k')), F("Big2_Nrm.bntx.zs", zero_body(131072)), F("Big3_Nrm.bntx.zs", good_body(131000, 'm'))});
+        const std::string nup = put_nup("bigblock", build_nup({base_pkg(kTid, D("romfs", {}, {tex}))}));
+        np::Scan s = np::scan(nup);
+        CHECK(s.ok && s.checked == 3 && s.repairs.size() == 1);
+        CHECK(s.repairs.size() == 1 && s.repairs[0].damaged.path == "Tex/Big2_Nrm.bntx.zs" && s.repairs[0].stand_in.path == "Tex/Big1_Nrm.bntx.zs");
+    }
+    // 4. Windows device names are never paths
+    {
+        const std::string user = fresh("user");
+        const std::string mp = mod_of(user, kTid) + "\\" + np::kManifestName;
+        const std::string sha = std::string(64, 'b'), toc = std::string(64, 'c');
+        auto accepts = [&](const std::string& dmg) {
+            write_text(mp, "RetroHub damaged-file repair 1\nnup 1 2 " + toc + " rule 1\nrepair " + sha + " 5\t" + dmg + "\tTex/b.zs\n");
+            np::Manifest m;
+            return np::read_manifest(user, kTid, &m);
+        };
+        for (const char* bad : {"Tex/NUL.zs", "Tex/con", "Tex/Aux.bntx.zs", "Tex/COM1.zs", "Tex/lpt9", "CON/x.zs", "Tex/prn.a.b"}) CHECK(!accepts(bad));
+        for (const char* ok : {"Tex/Console.zs", "Tex/COM0.zs", "Tex/COM10.zs", "Tex/LPT.zs", "Tex/Null_Nrm.zs", "Tex/a_CON.zs"}) CHECK(accepts(ok));
+        // a damaged member with a device name is reported without a stand-in and never written
+        TDir tex = D("Tex", {F("NUL.zs", zero_body(50)), F("A_NUL.zs", good_body(60, 'a'))});
+        const std::string nup = put_nup("devname", build_nup({base_pkg(kTid, D("romfs", {}, {tex}))}));
+        np::Scan s = np::scan(nup);
+        CHECK(s.ok && s.repairs.size() == 1 && s.repairs[0].stand_in.path.empty());
+        const std::string u2 = fresh("user");
+        CHECK(np::apply(nup, s, u2).unrepaired == 1 && !exists(u2 + "\\load"));
+    }
+    // 5. an oversized manifest is not read
+    {
+        const std::string user = fresh("user");
+        write_all(mod_of(user, kTid) + "\\" + np::kManifestName, Bytes((17u << 20), 'x'));
+        np::Manifest m;
+        CHECK(!np::read_manifest(user, kTid, &m));
+    }
+}
+
 // ---------------------------------------------------------------- real-file QA modes
 static std::string file_sha(const std::string& p) { Bytes b; return read_all(p, &b) ? sha_hex(b) : std::string("(unreadable)"); }
 
@@ -827,6 +921,7 @@ int main(int argc, char** argv) {
     test_ensure();
     test_unicode();
     test_text_and_manifest();
+    test_followups();
 
     fs::remove_all(FP(g_root), ec);
     std::printf("nuprepair_test: %d checks, %d failed\n", g_checks, g_fail);

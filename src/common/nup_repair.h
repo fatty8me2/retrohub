@@ -125,14 +125,18 @@ bool read_manifest(const std::string& user_dir, uint64_t title_id, Manifest* out
 /* Launch-time entry point (launch.cpp: Lichii and Fritchii, .nup games only). enabled = false -> remove(). Otherwise cheap when nothing
  * changed: reads the superblock, the TOC header + package records (for the title id), the manifest, and checks each listed file's size and
  * SHA-256; scan() + apply() only when the manifest is missing, for another copy (size / time / TOC hash), another rule version, or a listed
- * file is missing or different. Never throws; errors only end up in summary (the launch goes on regardless). */
+ * file is missing or different. state_dir (RetroHub's own folder, e.g. <data dir>\nup-repair; never one of the emulator's): when non-empty and a scan
+ * finds no repair that has a stand-in (none at all, or only unrepairable ones), "<state_dir>\nup-repair-<TITLE ID 16 hex>.txt" is written (atomic) holding
+ * the manifest's identity line ("nup <size> <mtime> <toc sha256> rule <kRuleVersion>") and "path <nup path>"; with no mod-folder manifest, a matching record
+ * is the fast path too (scanned = false), so a healthy copy is scanned once, not at every launch. A copy that later gets repairs, or the setting off, drops
+ * the record. Never throws; errors only end up in summary (the launch goes on regardless). */
 struct Ensure {
     bool scanned = false;   // a full scan ran
     Scan scan;              // valid when scanned
     Applied applied;        // valid when scanned (or when enabled = false: removed holds the count)
     std::string summary;    // one line for the log: "nup repair: 3 repaired (0 written, 3 kept), 1083 checked" / "unchanged" / "off: 3 removed" / "error: ..."
 };
-Ensure ensure(const std::string& nup_path, const std::string& user_dir, bool enabled);
+Ensure ensure(const std::string& nup_path, const std::string& user_dir, bool enabled, const std::string& state_dir = "");
 
 /* Plain words for the game page from a manifest: "" when it lists nothing. Names the places it knows (Water Temple, fairy fountains,
  * Ganon's Castle) from the damaged paths, else says "some rooms". */
