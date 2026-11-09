@@ -324,15 +324,28 @@ The vault side never contains the user uuid (`SaveSession::vault_rels`), so any 
 Fritchii is Frizti's Ocarina-of-Time fork of Lichii. RetroHub downloads it itself (one pinned build, `fritchii_pin` in `src/hub/emulators.cpp`: version, path, size, SHA-256)
 into `<data>\emulators\fritchii`, with its own `user\` folder, and runs it through the same code as Lichii (keys, firmware, controls, saves, hang watch).
 
-- **Version.** The pin is **v5** (`retrohub-fritchii-v5` on `fatty8me2/Fritchii`). Until its size and SHA-256 are filled in (TODO in `emulators.cpp`) `release_is_placeholder()` is true and nothing downloads;
-  Ocarina of Time then keeps playing with Lichii unless Fritchii is already installed.
-- **Upgrading from v4.1.** Like Lichii's in-place upgrade: `install_core` replaces the program files and keeps `user\` (keys, saves, settings, shader cache). Fritchii v5 migrates its own old shader cache.
+- **Version.** The pin is **v5.5** (`retrohub-fritchii-v5.5` on `fatty8me2/Fritchii`): RetroHub's own GitHub Actions build of Frizti's tagged source plus build-only commits
+  (MSVC warning flags; Windows only; no `-DLICHII_BUILD_TAG`), so the binary is named and versioned like Frizti's release, "Fritchii v5.5". Builds before v5.5 passed
+  `-DLICHII_BUILD_TAG=build-N`, which names the binary "Lichii build-N" (`CMakeModules/GenerateSCMRev.cmake`) and turns off every `FritchiiUi::Enabled()` path,
+  the Preparing shaders screen included: v5's preparation then ran on idle threads beside the game, which cost about 15 fps in Ocarina of Time until it finished.
+  A pin whose size and SHA-256 are zero (`release_is_placeholder()`) downloads nothing; Ocarina of Time then keeps playing with Lichii unless Fritchii is already installed.
+- **Upgrading (from v4.1 or v5).** Like Lichii's in-place upgrade: `install_core` replaces the program files and keeps `user\` (keys, saves, settings, shader cache).
+  The first start after a version change shows the full Preparing shaders screen once (Fritchii's "prepared" stamp includes its build version).
+- **What's new.** Fritchii opens a one-time What's new window (after the game stops) while `[UI] fritchii_whats_new_seen` differs from its build version; RetroHub writes
+  the pinned build's version (`kFritchiiWhatsNewSeen` in `lichii.h`, "v5.5") on every launch. Change it with every pin.
 - **Default for Ocarina of Time.** Ocarina of Time (Switch 2, `0400486024DEC000`) plays with Fritchii by default. The rule is one pure function, `hubemu::nx_emulator_for` (`nx_runner.cpp`):
   no `switch.runner` choice for the game or for Switch as a whole (`Store::source` is 0) means Fritchii for that title only; any explicit choice (even `lichii`) wins. Other Switch games stay on
   Lichii. Online and room launches always use Lichii. If Fritchii is not installed, Play shows the usual download prompt. Hookshot is still opt-in and is decided first.
-- **Shader preparation.** On its first start v5 prepares all shaders once (a "Preparing shaders" screen, about 15 minutes, once). RetroHub does nothing to skip or shorten it: it never sets
+- **Shader preparation.** On its first start Fritchii prepares all shaders once: the "Preparing shaders" screen holds the game paused and prepares at full speed (about 15 minutes on
+  an 8-core CPU, once per version); "Play now" lets the game run and the rest continue on idle threads (slower, and the game runs worse until it is done). RetroHub pins
+  `[Renderer] dyna_state=2` (EDS2) and `vertex_input_dynamic_state=true` in `fritchii_ini_pin`: the recipe is recorded with them, other values make the preparation skip
+  almost every pipeline, and Fritchii's own one-time repair of them (tuned-settings revision 5) is held off by RetroHub's revision pin. RetroHub does nothing to skip or shorten it: it never sets
   `EDEN_NX2_PRELOAD_ALL_PIPELINES` for Fritchii (not even for "Shaders at start = All": v5 builds without keeping pipelines, preloading would double the work and memory), never `FRITCHII_CLASSIC_UI` or `EDEN_NX2_PRECOMPILE=0`, keeps `EDEN_UPDATE_URL=http://127.0.0.1:9/x` and `EDEN_NX2_NO_REACTIVE=1`, and copies Lichii's v54 and v53 caches in as before (v5 merges them into its own cache and never writes Lichii's files). It runs on its own at `-g` launches when a recipe is found (`recipes*.nx2recipe` beside the exe, so the install keeps that folder).
-- **NVIDIA tip.** If the game stutters on an NVIDIA card, set the driver's Shader Cache Size to Unlimited (NVIDIA Control Panel > Manage 3D settings).
+- **NVIDIA.** Since v5.5 Fritchii sets `__GL_SHADER_DISK_CACHE_SIZE` (10 GiB) and `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1` in its own process environment (only if not set
+  already; nothing is written to the driver or the registry), so the prepared shaders stay in the driver's cache; RetroHub never sets a smaller value. On older drivers the
+  NVIDIA Control Panel's Shader Cache Size (Manage 3D settings) can still be set to Unlimited.
+- **Frame generation.** A build named Fritchii never runs frame generation (`Settings::FrameGenActive`), so RetroHub's frame-generation and "smooth60" pacing settings have no
+  frame generation under Fritchii ("smooth60" still sets Target_60 pacing).
 
 ### Hookshot (native Ocarina of Time)
 

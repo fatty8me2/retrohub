@@ -104,22 +104,26 @@ static const InstallTestHooks* g_test_hooks = nullptr;
 void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
 
 /* ======================================================================================================================================================
- * FRITCHII PIN (v5). The one place the Fritchii download is defined: kPath, kSize, kSha256 (kVersion is the text the marker, Settings and the dialogs show).
- * Provenance: built on GitHub Actions, run 42557579406 (run number 3, so BUILD_VERSION = "build-3") on fatty8me2/Fritchii, branch retrohub/v5-msvc.
- * That branch is Frizti's fritchii-v5 (62194f3) plus commit 843ab8e, a build-flags-only change (the v4.1 flags commit 2a1f611, cherry-picked). The zip adds
- * one DATA file from Frizti's official v5 release asset (sha256 f152f436...a149a): recipes\OoT v131072 (cache v54).nx2recipe (1,821,351 bytes, sha256
- * 85d944c8...c3a1), the shader-preparation recipe v5 needs; it is not in the source tree. Release asset 119,936,811 bytes, SHA-256 30ad7db5ee8141647d388f741c7d64afefbb75009aaa647a3409b88797810d24.
- * Defender clean. Vetted 2026-11-08 (source audits of fritchii-v4.1..fritchii-v5: clean).
- * (The previous pin, v4.1, was run 42450099783 on retrohub/v4.1-msvc: Frizti's fritchii-v4.1 f6d42b8 plus build-flags-only commit 2a1f611, 119612370 bytes,
+ * FRITCHII PIN (v5.5). The one place the Fritchii download is defined: kPath, kSize, kSha256 (kVersion is the text the marker, Settings and the dialogs show).
+ * Provenance: built on GitHub Actions, run 42635153252 (run number 4) on fatty8me2/Fritchii, branch retrohub/v5.5-msvc = Frizti's fritchii-v5.5 (4012e52)
+ * plus two build-only commits: 5d3389f (the MSVC warning flags commit, as for v4.1 / v5) and 64f21c0 (the Windows configure no longer passes
+ * -DLICHII_BUILD_TAG, so the binary is named and versioned like Frizti's own release, "Fritchii v5.5", and FritchiiUi::Enabled() is true: Fritchii's own
+ * UI, Preparing shaders screen included; the v5 CI build was named "Lichii build-3" and had all of that off). Artifact 13685542559 (sha256 073484be...89c8),
+ * repackaged unchanged plus one DATA file: recipes\OoT v131072 (cache v54).nx2recipe (1,821,351 bytes, sha256 85d944c8...c3a1), the shader-preparation
+ * recipe, unchanged since v5 (from Frizti's official v5 asset, sha256 f152f436...a149a; his v5.5 zip carries the same file). It is not in the source tree.
+ * Release asset 120,118,919 bytes, SHA-256 960ff5c4e1dd5119ff1cf526100f2e0fe263f22e5e12d0de0a07d6caed4ea831. Defender clean. Vetted 2026-11-09
+ * (source audit fritchii-v5..fritchii-v5.5: clean with notes; Fritchii-UI audit: kFritchiiWhatsNewSeen "v5.5" and the EDS2 pins in fritchii_ini_pin).
+ * (Earlier pins: v5 = run 42557579406 on retrohub/v5-msvc, 62194f3 + 843ab8e, 119,936,811 bytes, SHA-256 30ad7db5ee8141647d388f741c7d64afefbb75009aaa647a3409b88797810d24;
+ * v4.1 = run 42450099783 on retrohub/v4.1-msvc: Frizti's fritchii-v4.1 f6d42b8 plus build-flags-only commit 2a1f611, 119612370 bytes,
  * SHA-256 068fb4c66b2e32447ac7690393039043854de4b189aa7e95b34c4bf0d2a4080e.) The zip is expected to hold the same layout as v4.1: lichii.exe, eden-cli.exe, the Qt DLLs and plugin folders, lichii.pdb, eden-cli.pdb, vc_redist.x64.exe and
  * Frizti's nx2_switches.txt (his default tuning, part of the vetted build: it is kept as shipped, RetroHub never writes to it or adds its own) at the ROOT;
  * the install deletes the two .pdb files and vc_redist like Lichii's, and keeps the recipes folder.
  * ====================================================================================================================================================== */
 namespace fritchii_pin {
-static const char* const kVersion = "v5";
-static const wchar_t* const kPath = L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5/Fritchii-v5-RetroHub-windows-x64.zip";
-static const uint64_t kSize = 119936811ull;
-static const char* const kSha256 = "30ad7db5ee8141647d388f741c7d64afefbb75009aaa647a3409b88797810d24";
+static const char* const kVersion = "v5.5";
+static const wchar_t* const kPath = L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5.5/Fritchii-v5.5-RetroHub-windows-x64.zip";
+static const uint64_t kSize = 120118919ull;
+static const char* const kSha256 = "960ff5c4e1dd5119ff1cf526100f2e0fe263f22e5e12d0de0a07d6caed4ea831";
 }   // namespace fritchii_pin
 
 const Release& release(Kind k) {
