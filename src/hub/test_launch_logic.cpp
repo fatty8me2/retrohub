@@ -2,8 +2,11 @@
 // The core each retrorun system uses, quoting of titles/paths, the resume rules, and the
 // guard that stops a second game from starting. No processes, no files.
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
+#include "gb_cart.h"
 #include "launch_guard_logic.h"
 #include "launch_logic.h"
 #include "launch_settings.h"
@@ -84,6 +87,27 @@ int main() {
     CHECK(std::string(launch_busy_reason(true)) == "A game is already running.");
     CHECK(std::string(launch_busy_reason(false)) == "An online game is running.");
     CHECK(cheats_return_focus(true, true) && !cheats_return_focus(true, false) && !cheats_return_focus(false, true));
+
+    // ---- Game Boy cartridges with a clock never run on Gambatte online ----
+    CHECK(gbcart::gb_cart_has_clock(0x0F) && gbcart::gb_cart_has_clock(0x10) && gbcart::gb_cart_has_clock(0xFE));
+    CHECK(!gbcart::gb_cart_has_clock(0x00) && !gbcart::gb_cart_has_clock(0x13) && !gbcart::gb_cart_has_clock(0x1B) && !gbcart::gb_cart_has_clock(0xFD));
+    CHECK(gbcart::online_gb_core("gambatte", true) == "sameboy");
+    CHECK(gbcart::online_gb_core("gambatte", false) == "gambatte");
+    CHECK(gbcart::online_gb_core("sameboy", true) == "sameboy" && gbcart::online_gb_core("sameboy", false) == "sameboy");
+    {
+        uint8_t ct = 0;
+        CHECK(!gbcart::read_cart_type(L"C:/no/such/game.gb", &ct));
+        CHECK(!gbcart::read_cart_type(L"C:/x/game.zip", &ct));
+        const char* tmp = std::getenv("TEMP");
+        std::wstring p = std::wstring(tmp ? std::wstring(tmp, tmp + std::strlen(tmp)) : L".") + L"/gbcart_test.gb";
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, p.c_str(), L"wb") == 0 && f) {
+            unsigned char h[0x150] = {0}; h[0x147] = 0x10;
+            fwrite(h, 1, sizeof h, f); fclose(f);
+            CHECK(gbcart::read_cart_type(p, &ct) && ct == 0x10);
+            _wremove(p.c_str());
+        } else CHECK(false);
+    }
 
     // ---- command-line quoting used by every runner ----
     CHECK(cmd_quote("") == "\"\"");
