@@ -35,6 +35,7 @@ void resume_details_section(const hub::GameEntry& e);                           
 void progress_details_section(const hub::GameEntry& e);                                  // details modal, Info tab
 
 void verify_details_section(const hub::GameEntry& e);                                    // details modal, Info tab
+void dumpwarn_details_section(const hub::GameEntry& e);                                  // details modal, top of the About tab: an incomplete Switch dump
 void verify_library_card();                                                              // All Games page, above the grid
 
 void save_import_section();                                                              // Saves page
