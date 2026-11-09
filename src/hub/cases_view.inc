@@ -1207,7 +1207,7 @@ void draw_cases(Disp& D) {
             if (ghost) CS.played_txt = "From a friend's library";
             else {
                 const hub::GameState& gs = gstate(A.lib[(size_t)idx].key);
-                CS.played_txt = hubui::cont::last_played_line((uint64_t)std::time(nullptr), gs.last_played, gs.play_seconds, dot);
+                CS.played_txt = cf_played_line(gs, dot);
             }
         }
         if (CS.played_clamp != CS.played_txt) { CS.played_clamp = CS.played_txt; CS.played_txt = ui::ellipsize(cf, cf->FontSize, CS.played_txt.c_str(), maxw); CS.played_clamp = CS.played_txt; }

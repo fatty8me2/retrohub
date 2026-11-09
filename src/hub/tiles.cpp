@@ -2,6 +2,7 @@
 #include "progress_ui.h"
 #include "libview_ui.h"
 #include "hack_ui.h"
+#include "playtime_logic.h"
 
 #include <atomic>
 #include <memory>
@@ -340,6 +341,7 @@ TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_
     const GameInfo* cat = catalog_for(e);
     t.online = entry_online(e);
     if (recent_sub && gs.last_played) t.subtitle = fmt_ago(gs.last_played);
+    else if (!recent_sub && A.sort_mode == hubui::SortMode::MostPlayed) t.subtitle = hubui::pt::sort_tile_text(gs.play_seconds);   // Steam-style hours while sorted by play time
     else if (gs.play_seconds) t.subtitle = hubui::format_play_time(gs.play_seconds) + " played";
     else t.subtitle = cat && cat->year ? std::to_string(cat->year) : std::string("Not played yet");
     return t;
