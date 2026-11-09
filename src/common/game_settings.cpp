@@ -155,9 +155,10 @@ std::vector<Option> build() {
                    {{"low", "Low (faster)"}, {"high", "High (more accurate, slower)"}, {"lichii", "Use Lichii's setting"}}));
     // Lichii builds only the cached shaders recent sessions used at start (at most 3000 without a used-list); the rest are built in the background or
     // when first needed, which hitches. "all" sets EDEN_NX2_PRELOAD_ALL_PIPELINES=1 (hubemu::lichii_env): every cached shader is built at start (about
-    // 0.45 MB of driver memory each, ~9.5 GB for a 21k cache). "auto" does that on PCs with 30 GiB or more of RAM (a "32 GB" PC reports ~31.7 GiB).
+    // 0.45 MB of driver memory each, ~19 GB for a 43k cache). "auto" does that on PCs with 60 GiB or more of RAM (a "64 GB" PC reports ~63.7 GiB);
+    // until 1.40.3 it was 30 GiB, which on a 32 GB PC meant ~19 GB of driver memory and, after a Lichii update, ~27 minutes before the first frame.
     // Help text: "All loads every shader Lichii has cached when the game starts: a longer start and more memory, fewer hitches. Auto does this on PCs with
-    // 32 GB of RAM or more." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Read by the launch only, never written to Lichii's ini.
+    // 64 GB of RAM or more." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Read by the launch only, never written to Lichii's ini.
     v.push_back(mk("switch.preload_shaders", "Shaders at start", "Video", SWITCH, K::Choice, S::Visual, "auto",
                    {{"auto", "Auto"}, {"all", "All cached shaders"}, {"recent", "Recently used"}}));
     // "Faster GPU reads" (default on): sets EDEN_NX2_NO_REACTIVE=1 for every Lichii-family launch (hubemu::lichii_fast_reads, lichii.cpp). Lichii build 125 drops
