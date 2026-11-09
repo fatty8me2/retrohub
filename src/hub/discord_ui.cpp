@@ -37,7 +37,7 @@ hubdiscord::Presence build() {
         p.playing = true;
         p.title = A.proc_title;
         for (auto& g : A.lib)
-            if (g.title == A.proc_title) { p.console = hub::system_name(g.system); p.console_key = console_key(g.system); break; }
+            if (g.title == A.proc_title) { p.console = hub::console_name(g); p.console_key = console_key(g.system); break; }
         if (p.title.empty()) p.playing = false;
         if (p.playing && D.play_title != p.title) { D.play_title = p.title; D.play_start = (int64_t)std::time(nullptr); }
         p.start_unix = D.play_start;

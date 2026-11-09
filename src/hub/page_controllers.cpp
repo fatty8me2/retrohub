@@ -39,8 +39,9 @@ struct Tab { const char* key; const char* label; const char* long_name; };
 const Tab kTabs[] = {{"n64", "N64", "Nintendo 64"}, {"retro", "GB / GBA / DS", "Game Boy, GBA and DS"},
                      {"ps1", "PlayStation", "PlayStation (DualShock)"},
                      {"gc", "GameCube", "GameCube"}, {"wiiu", "Wii U", "Wii U"}, {"3ds", "3DS", "Nintendo 3DS"}, {"ps2", "PS2", "PlayStation 2"},
-                     {"nes", "NES", "Nintendo Entertainment System"}, {"snes", "SNES", "Super Nintendo"}, {"psp", "PSP", "PlayStation Portable"}, {"switch", "Switch", "Nintendo Switch / Switch 2"}};
-constexpr int kNumTabs = 10;
+                     {"nes", "NES", "Nintendo Entertainment System"}, {"snes", "SNES", "Super Nintendo"}, {"psp", "PSP", "PlayStation Portable"}, {"switch", "Switch", "Nintendo Switch"},
+                     {"switch2", "Switch 2", "Nintendo Switch 2"}};   // Switch 2 is its own console; it uses the Switch controls until it has its own
+constexpr int kNumTabs = (int)(sizeof(kTabs) / sizeof(kTabs[0]));
 constexpr double kCaptureSecs = 8.0;
 
 struct CtlState {
@@ -603,7 +604,7 @@ void draw_test_panel() {
 /* Library details -> "Controls for this game". */
 std::string CTL_game_for_trace() { return CTL.game; }
 void open_controls_for(const hub::GameEntry& e) {
-    std::string sys = hubctl::system_key(e.system);
+    std::string sys = hubctl::console_key(e);
     if (sys.empty()) { set_notice("There are no controller settings for this system."); return; }
     CTL.game = e.key;
     CTL.game_title = e.title;
@@ -760,7 +761,7 @@ void page_controllers() {
         hubctl::load_bundled_db();
         if (const char* t = std::getenv("HUB_SHOT_CTL_SYS")) CTL.tab = tab_for_key(t);
         if (const char* g = std::getenv("HUB_SHOT_CTL_GAME")) {
-            if (const hub::GameEntry* e = find_entry(g)) { CTL.game = e->key; CTL.game_title = e->title; CTL.tab = tab_for_key(hubctl::system_key(e->system)); }
+            if (const hub::GameEntry* e = find_entry(g)) { CTL.game = e->key; CTL.game_title = e->title; CTL.tab = tab_for_key(hubctl::console_key(*e)); }
         }
     }
     double now = ImGui::GetTime();
@@ -810,7 +811,7 @@ void page_controllers() {
         const std::string live = controls_live_note();
         if (!live.empty()) {
             const hub::GameEntry* re = find_entry(A.run.key);
-            const std::string rs = re ? hubctl::system_key(re->system) : std::string();
+            const std::string rs = re ? hubctl::console_key(*re) : std::string();
             if (rs == kTabs[CTL.tab].key || game_mode) {   // only for the system being edited
                 ImGui::PushStyleColor(ImGuiCol_Text, A.run.controls_path.empty() ? ui::WARN : ui::GOOD);
                 ImGui::TextWrapped("%s", live.c_str());

@@ -2,7 +2,7 @@
 
 A Windows desktop hub for playing retro games with friends: a single library, room codes, and one-click launch.
 
-Consoles: NES, SNES, N64, GB / GBC / GBA, DS, 3DS, GameCube, Wii U, PS1, PS2, PSP and Switch / Switch 2.
+Consoles: NES, SNES, N64, GB / GBC / GBA, DS, 3DS, GameCube, Wii U, PS1, PS2, PSP, Nintendo Switch and Nintendo Switch 2 (two consoles in the UI, one `System::Switch` underneath: see docs/EMULATORS.md "Two consoles in the UI").
 
 - **Native ports** run as-is. Smash Classic (BattleShip) keeps its own rollback netplay.
 - **N64 games** run through mupen64plus, embedded in our own runner (`n64run.exe`), with lockstep input netplay over our own transport.

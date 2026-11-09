@@ -313,7 +313,7 @@ void render(ImDrawList* dl, ImVec2 disp, hub::System sys, const Timeline& tl, fl
             std::string title = ui::ellipsize(ui::F.h2, ui::F.h2->FontSize * 1.4f, G.title, W * 0.8f);
             float ty = H * 0.88f;
             text_center(dl, ui::F.h2, ui::F.h2->FontSize * 1.4f, ImVec2(W * 0.5f, ty), ui::scale_alpha(ui::TEXT, ta), title.c_str());
-            text_center(dl, ui::F.cap, ui::F.cap->FontSize * 1.2f, ImVec2(W * 0.5f, ty + ui::F.h2->FontSize * 1.7f), ui::scale_alpha(ui::TEXT2, ta), hub::system_name(sys));
+            text_center(dl, ui::F.cap, ui::F.cap->FontSize * 1.2f, ImVec2(W * 0.5f, ty + ui::F.h2->FontSize * 1.7f), ui::scale_alpha(ui::TEXT2, ta), hub::console_name(hub::console_id(sys, G.nx2)));
         }
     }
     /* skip hint */

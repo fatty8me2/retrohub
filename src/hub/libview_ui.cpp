@@ -95,12 +95,13 @@ const hubui::fg::Ghost& ghost_of(int idx) { return A.ghosts[idx - A.lib.size()];
 std::string selected_key();
 std::string item_key(int idx) { return is_ghost(idx) ? "ghost:" + ghost_of(idx).id : A.lib[idx].key; }
 const std::string& item_title(int idx) { return is_ghost(idx) ? ghost_of(idx).title : A.lib[idx].title; }
-std::string item_sys(int idx) { return is_ghost(idx) ? ghost_of(idx).sys : sys_short(A.lib[idx]); }
+/* The item's console id (library.h): a system short, or "switch2" for a Switch 2 game. Friends' ghosts are catalog games, never Switch 2. */
+std::string item_sys(int idx) { return is_ghost(idx) ? ghost_of(idx).sys : hub::console_id(A.lib[idx]); }
 bool item_pinned(int idx) { return !is_ghost(idx) && is_native(A.lib[idx]); }
 /* Short console name for pills and the strip. */
 std::string short_sys(const std::string& s) {
     static const char* m[][2] = {{"n64", "N64"}, {"gc", "GC"}, {"ps1", "PS1"}, {"wiiu", "Wii U"}, {"3ds", "3DS"}, {"nds", "DS"}, {"ps2", "PS2"},
-                                 {"psp", "PSP"}, {"switch", "Switch"}, {"nes", "NES"}, {"snes", "SNES"}, {"gba", "GBA"}, {"gbc", "GBC"}, {"gb", "GB"}};
+                                 {"psp", "PSP"}, {"switch", "Switch"}, {"switch2", "Switch 2"}, {"nes", "NES"}, {"snes", "SNES"}, {"gba", "GBA"}, {"gbc", "GBC"}, {"gb", "GB"}};
     for (auto& e : m) if (s == e[0]) return e[1];
     std::string o = s;
     for (char& c : o) c = (char)std::toupper((unsigned char)c);
@@ -284,7 +285,7 @@ void draw_grid_item(int idx, ImVec2 sz, bool in_view, bool show_sys) {
 ArtRef art_of(int idx) { return is_ghost(idx) ? art_for_ghost(ghost_of(idx)) : art_for_entry(A.lib[idx]); }
 void colors_of(int idx, ImU32* c0, ImU32* c1) {
     if (!is_ghost(idx)) { entry_colors(A.lib[idx], c0, c1); return; }
-    system_colors(hub::system_from_short(ghost_of(idx).sys), c0, c1);
+    console_colors(ghost_of(idx).sys, c0, c1);
     *c0 = ui::mix(*c0, IM_COL32(92, 95, 104, 255), 0.72f);
     *c1 = ui::mix(*c1, IM_COL32(70, 73, 82, 255), 0.72f);
 }
@@ -366,11 +367,9 @@ void draw_list_row(int idx, float w, float h, const hubui::ListCols& C, bool odd
     const std::string& title = item_title(idx);
     dl->AddText(bf, bf->FontSize, ImVec2(p0.x + C.title_x, cy - bf->FontSize * 0.5f), tcol, ui::ellipsize(bf, bf->FontSize, title, C.title_w - sp(0.5f)).c_str());
     if (C.console) {
-        hub::System sy = hub::system_from_short(item_sys(idx));
         ImU32 a, b;
-        system_colors(sy, &a, &b);
+        console_colors(item_sys(idx), &a, &b);
         std::string badge = short_sys(item_sys(idx));
-        if (!ghost && idx >= 0 && idx < (int)A.lib.size() && A.lib[idx].nx2) badge = "Switch 2";
         ui::pill_at(dl, ImVec2(p0.x + C.console_x, cy - (cf->FontSize + sp(1.f)) * 0.5f), badge.c_str(), ui::mix(a, ui::PANEL, ghost ? 0.7f : 0.45f), IM_COL32_WHITE);
     }
     if (C.players) {
@@ -709,9 +708,8 @@ void draw_showcase(Disp& D) {
         // meta pills, centred
         std::vector<std::pair<std::string, ImU32>> pills;
         ImU32 a, b;
-        hub::System sy = hub::system_from_short(item_sys(idx));
-        system_colors(sy, &a, &b);
-        pills.push_back({hub::system_name(sy), ui::mix(a, IM_COL32_BLACK, 0.3f)});
+        console_colors(item_sys(idx), &a, &b);
+        pills.push_back({hub::console_name(item_sys(idx)), ui::mix(a, IM_COL32_BLACK, 0.3f)});
         int np = item_players(idx);
         pills.push_back({np >= 2 ? "1-" + std::to_string(np) + " players" : std::string("1 player"), IM_COL32(255, 255, 255, 34)});
         if (!ghost) {
@@ -876,7 +874,7 @@ void draw_shelf(Disp& D) {
                 label = D.sec_title[(size_t)sec];
                 if (lay.row_first[(size_t)r]) count = std::to_string(D.sec_size[(size_t)sec]);
                 ImU32 a, b;
-                system_colors(hub::system_from_short(D.sec_sys[(size_t)sec]), &a, &b);
+                console_colors(D.sec_sys[(size_t)sec], &a, &b);
                 chip = a;
             } else if (r == 0) { label = "All games"; count = std::to_string(n); }
             shelfdraw::bay(dl, geo, cabinet_x0, cabinet_x1, ry, label, count, chip, lay.row_first[(size_t)r] != 0);

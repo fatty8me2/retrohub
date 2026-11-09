@@ -51,7 +51,7 @@ std::string progress_tag(const std::string& key, std::string* tip) {
 hubui::prog::Facts progress_facts(const hub::GameEntry& e) {
     hubui::prog::Facts f;
     f.key = e.key;
-    f.system = sys_short(e);
+    f.system = hub::console_id(e);   // a console id: smart-shelf rules tell Switch and Switch 2 apart
     f.genre = genre_of_entry(e);
     std::pair<int, int> yp = year_players(e);
     f.year = yp.first;

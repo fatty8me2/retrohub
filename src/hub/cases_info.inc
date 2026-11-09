@@ -155,7 +155,6 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
     const float x0 = org.x + mx, x1 = org.x + W - mx;
     const float H = y1 - y0;
     const bool ghost = is_ghost(idx);
-    const hub::System sy = sys_of(idx);
     // the screenshot (the game's own title screen / in-game picture; the player's own pictures are on the back of the case)
     SDL_Texture* pic = nullptr; int pw = 0, ph = 0;
     const bool dwelled = CFX.key.focus == CS.focus && CFX.key.idx == idx && (CFX.info_t >= cf::kMediaDwell || cases_shot_instant());   // the 420 ms dwell of the disc: scrolling past does not request pictures
@@ -196,9 +195,9 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
             if (desc.empty() && cat) desc = cat->blurb;
             if (g_headless && cases_fake_lib() && desc.empty()) { desc = "Race, battle and trade across a colourful world. Collect every cup, unlock hidden tracks and challenge friends in split-screen for up to four players."; if (genre.empty()) genre = "Racing"; if (year == 0) year = 2001; if (maker.empty()) maker = "Retro Studio"; }
         }
-        const char* lab = tab_label(item_sys(idx));
-        std::string con = lab ? lab : hub::system_name(sy);
-        if (sy == hub::System::Switch && !ghost && A.lib[(size_t)idx].nx2) con = "Switch 2";
+        const std::string csys = item_sys(idx);   // console id
+        const char* lab = tab_label(csys);
+        std::string con = lab ? lab : hub::console_name(csys);
         CFX.eyebrow = con + "  \xC2\xB7  " + count_text(CS.focus, n);
         cf_upper(CFX.eyebrow);
         {
@@ -227,8 +226,8 @@ void cf_info_panel(ImDrawList* dl, ImVec2 org, float W, float y0, float y1, bool
         CFX.desc_lines.clear();
         if (!desc.empty()) CFX.desc_lines = ui::wrap_lines(cap, cfs * 1.06f, desc, text_w, 2);
         ImU32 c0 = ui::ACCENT, c1 = ui::ACCENT;
-        system_colors(sy, &c0, &c1);
-        if (sy == hub::System::Switch && !ghost && A.lib[(size_t)idx].nx2) c0 = IM_COL32(228, 0, 18, 255);
+        console_colors(csys, &c0, &c1);
+        if (hub::console_is_switch2(csys)) c0 = c1;   // the charcoal half would not read as accent text: use the Nintendo red half
         {   // the accent also colours small text: a dark console colour is lifted until it reads on the dark room
             const float l = (0.2126f * (float)(c0 & 255) + 0.7152f * (float)((c0 >> 8) & 255) + 0.0722f * (float)((c0 >> 16) & 255)) / 255.f;
             CFX.accent = l < 0.55f ? ui::mix(c0, IM_COL32_WHITE, std::min(0.7f, (0.55f - l) * 1.6f)) : c0;

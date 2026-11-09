@@ -373,7 +373,7 @@ void hidden_strip_draw() {
         ImGui::PushID((int)i);
         ImGui::AlignTextToFramePadding();
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);   // dimmed
-        ImGui::Text("%s  -  %s", g.title.c_str(), hub::system_name(g.system));
+        ImGui::Text("%s  -  %s", g.title.c_str(), hub::console_name(g));
         ImGui::PopStyleColor();
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - ui::sp(10.f) + ImGui::GetCursorPosX());
         if (button("Unhide", ImVec2(ui::sp(10.f), ui::sp(4.f)), false, true)) unhide = g.key;

@@ -254,6 +254,23 @@ None. PSP is offline only (`system_has_online_launch` is false for PSP, so the l
 
 # Nintendo Switch / Switch 2 (Lichii)
 
+## Two consoles in the UI, one system underneath
+
+The player sees **Nintendo Switch** and **Nintendo Switch 2** as two consoles. Underneath a Switch 2 game is still `System::Switch` with `GameEntry::nx2 == true`, so the emulator family
+(Lichii / Fritchii / Hookshot), the keys and firmware, the game key `switch:<16 hex>`, the save vault layout and every storage path are shared and unchanged (existing saves,
+play history, favourites and per-game settings keep working). Everything the player sees or chooses per console uses a **console id** (`library.h`: `console_id(e)`,
+`console_system(id)`, `console_name(id | e)`, `console_ids()`; `"switch2"` sits right after `"switch"`):
+- names, badges and colours (Switch 2 has its own charcoal / Nintendo red colours and the badge `SWITCH 2`), library console chips and their counts, group-by / sort-by console,
+  Cases tabs, Home console shelves, smart-shelf console rules, Wrapped / play-history console rows, the Saves page and Library health / online-picker / match chips;
+- Add games puts new Switch 2 files in a `Switch 2` folder (existing files never move);
+- Settings > Video & Games > Game defaults lists "Nintendo Switch 2" right after "Nintendo Switch". Its defaults are their own entry (`systems.switch2` in `game_settings.json`,
+  stamp `s:switch2`, same sync / tombstone rules) layered ON TOP of the Switch defaults: option default, then Switch defaults, then Switch 2 defaults, then the game's own overrides
+  (`Store::resolve_console` / `resolve_game`). A Switch 2 game inherits what was set for Switch until it is set for Switch 2 itself (the UI shows "from Switch");
+- Controllers page has a "Switch 2" tab after "Switch". Its `switch2` profile falls back to the `switch` profile (also a Switch game's older per-game override), then to a built-in
+  default that maps exactly like Switch (`hubctl::console_key(e)`);
+- the emulator setup (keys, firmware, Lichii / Fritchii install and update, Settings > Playing "Switch and Switch 2 games play with") stays ONE shared section.
+Emulator, launch, save, key, path, art-lookup and dump / NUP logic keeps using `System` and never a console id. `gamepack.cpp` keeps Switch packs as `"switch"`.
+
 ## Library
 
 Identification is header-only (`src/common/nx.h`, `nx.cpp`): no keys, no decryption. Key `switch:<title id, 16 lowercase hex>` (no id: `switch:file-<name>`); serial = the title id in upper case. Update and DLC packages (title id low 12 bits not zero) are not listed.

@@ -416,12 +416,12 @@ inline float jump_start(float pos, int target, float max_glide) {
 struct Tab { std::string sys; std::string label; int count = 0; };   // sys "" = All
 inline const char* tab_label(const std::string& sys) {
     static const char* m[][2] = {{"n64", "N64"}, {"gc", "GameCube"}, {"ps1", "PS1"}, {"wiiu", "Wii U"}, {"3ds", "3DS"}, {"nds", "DS"}, {"ps2", "PS2"},
-                                 {"psp", "PSP"}, {"switch", "Switch"}, {"nes", "NES"}, {"snes", "SNES"}, {"gba", "GBA"}, {"gbc", "GBC"}, {"gb", "Game Boy"}};
+                                 {"psp", "PSP"}, {"switch", "Switch"}, {"switch2", "Switch 2"}, {"nes", "NES"}, {"snes", "SNES"}, {"gba", "GBA"}, {"gbc", "GBC"}, {"gb", "Game Boy"}};
     for (auto& e : m) if (sys == e[0]) return e[1];
     return nullptr;
 }
 inline int console_rank(const std::string& sys) {
-    static const char* o[] = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "psp", "switch", "nes", "snes", "gba", "gbc", "gb"};
+    static const char* o[] = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "psp", "switch", "switch2", "nes", "snes", "gba", "gbc", "gb"};
     for (int i = 0; i < (int)(sizeof(o) / sizeof(o[0])); ++i) if (sys == o[i]) return i;
     return 100;
 }

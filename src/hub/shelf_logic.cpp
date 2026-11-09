@@ -24,6 +24,7 @@ Media media_for(const std::string& s) {
     if (s == "wiiu") return Media::WiiUCase;
     if (s == "psp") return Media::PspCase;
     if (s == "switch") return Media::SwitchCase;
+    if (s == "switch2") return Media::SwitchCase;   // a console id: the Switch 2 case is the Switch case with the Switch 2 banner
     return Media::Generic;
 }
 

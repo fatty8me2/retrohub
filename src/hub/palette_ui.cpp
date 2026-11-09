@@ -54,7 +54,7 @@ void build_items() {
     add(Kind::Setting, "Settings: Account", "", "set:3");
     add(Kind::Setting, "Help and FAQ", "Greyed-out games, BIOS, controllers", "set:4");
     add(Kind::Setting, "Updates", "", "page:about");
-    for (auto& g : A.lib) add(Kind::Game, "", std::string(sys_short(g)), "game:" + g.key), P.items.back().title = g.title;
+    for (auto& g : A.lib) add(Kind::Game, "", hub::console_id(g), "game:" + g.key), P.items.back().title = g.title;
     for (auto& f : fr_friends()) add(Kind::Friend, "", "Friend", "friend:" + f.uid), P.items.back().title = f.name;
 }
 

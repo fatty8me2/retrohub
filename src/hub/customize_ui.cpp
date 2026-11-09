@@ -375,17 +375,18 @@ void draw_smart() {
 
     sub_heading("Consoles");
     {
-        static const char* const kSys[] = {"n64", "gc", "wiiu", "3ds", "nds", "gba", "gbc", "gb", "ps1", "ps2", "psp", "switch"};
+        static const char* const kSys[] = {"n64", "gc", "wiiu", "3ds", "nds", "gba", "gbc", "gb", "ps1", "ps2", "psp", "switch", "switch2"};
         bool first = true;
         for (const char* sy : kSys) {
             bool have = false;
-            for (const auto& e : A.lib) if (sys_short(e) == sy) { have = true; break; }
+            for (const auto& e : A.lib) if (hub::console_id(e) == sy) { have = true; break; }
             const bool on = std::find(r.systems.begin(), r.systems.end(), sy) != r.systems.end();
             if (!have && !on) continue;   // only consoles the player has games for
             if (!first) ImGui::SameLine(0, sp(0.75f));
             first = false;
             std::string up = sy;
             for (auto& c : up) c = (char)std::toupper((unsigned char)c);
+            if (hub::console_is_switch2(sy)) up = "SWITCH 2";
             ImGui::PushID(sy);
             if (ui::button(up.c_str(), ImVec2(0, sp(3.5f)), on, true, on ? ui::Icon::Check : ui::Icon::None)) hubui::prog::toggle_system(&r, sy);
             ImGui::PopID();

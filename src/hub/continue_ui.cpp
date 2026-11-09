@@ -273,7 +273,7 @@ void draw_continue_hero(const hub::GameEntry& e, float h) {
             pill_at(dl, ImVec2(x, ty), s.c_str(), ui::scale_alpha(bg, ha), ui::scale_alpha(IM_COL32_WHITE, ha));
             x += pw + sp(0.75f);
         };
-        put(hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.3f));
+        put(hub::console_name(e), mix(c0, IM_COL32_BLACK, 0.3f));
         if (is_hack(e)) put(hack_ribbon(e), ui::ACCENT);
         if (is_native(e)) put("Native port", IM_COL32(255, 255, 255, 40));
         ty += cf->FontSize + sp(1.f) + sp(1.25f);

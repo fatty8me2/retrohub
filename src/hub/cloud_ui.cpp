@@ -53,7 +53,10 @@ void refresh_cache(bool force = false) {
     }
     std::sort(C.games.begin(), C.games.end(), game_before);
 }
-std::string system_label(const hs::GameId& id) { return hub::system_name(hub::system_from_short(id.system)); }
+std::string system_label(const hs::GameId& id) {   // cloud ids are keyed by system short: a Switch 2 game in the library reads "Nintendo Switch 2"
+    const hub::GameEntry* e = id.system == "switch" ? find_entry(id.key) : nullptr;
+    return e ? std::string(hub::console_name(*e)) : std::string(hub::console_name(id.system));
+}
 const std::vector<CatalogName>& catalog_names() {
     static std::vector<CatalogName> v;
     if (v.empty()) for (auto& g : hub::catalog()) v.push_back({g.id, g.title, g.system});

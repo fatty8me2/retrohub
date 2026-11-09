@@ -196,14 +196,14 @@ static void fritchii_settings_ui() {
         import_buttons(LOOK_F, "setf");
         ASK.kind = Kind::Lichii;
     }
-    // which program Switch games play with: the system default; a game can still override it on its own Settings tab (Ocarina of Time)
+    // which program Switch and Switch 2 games play with: the Nintendo Switch default (Switch 2 inherits it unless set for Switch 2 itself); a game can still override it on its own Settings tab (Ocarina of Time)
     ImGui::Dummy(ImVec2(0, 4 * S));
     const hub::gs::Values rv = GSTORE.resolve(hub::System::Switch, "");
     auto it = rv.find(hubemu::kRunnerKey);
     const std::string cur = it == rv.end() ? "lichii" : it->second;
     const hub::gs::Option* o = hub::gs::find_option(hubemu::kRunnerKey);
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("Switch games play with");
+    ImGui::TextUnformatted("Switch and Switch 2 games play with");
     ImGui::SameLine();
     std::string shown = cur;
     if (o) for (const auto& c : o->choices) if (c.value == cur) shown = c.label;
@@ -224,12 +224,12 @@ void switch_settings_ui() {
     Look& LOOK = LOOK_L;
     const hubemu::Install& li = LOOK.inst;
     if (li.exe.empty()) {
-        text_wrapped_disabled("Lichii (Switch / Switch 2, " + std::string(hubemu::release(hubemu::Kind::Lichii).version) + "): not installed - downloads the first time you play a Switch game (about " +
+        text_wrapped_disabled("Lichii (Nintendo Switch & Switch 2, " + std::string(hubemu::release(hubemu::Kind::Lichii).version) + "): not installed - downloads the first time you play a Switch game (about " +
                               std::to_string((int)(hubemu::release(hubemu::Kind::Lichii).size / 1048576)) + " MB). Very experimental.");
         fritchii_settings_ui();
         return;
     }
-    text_wrapped_disabled("Lichii (Switch / Switch 2): " + li.exe);
+    text_wrapped_disabled("Lichii (Nintendo Switch & Switch 2): " + li.exe);
     if (li.outdated) {
         const hubemu::Release& rel = hubemu::release(hubemu::Kind::Lichii);
         text_wrapped_disabled(std::string("A newer Lichii is available (") + rel.version + ", about " + std::to_string((int)(rel.size / 1048576)) +

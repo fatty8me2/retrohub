@@ -179,7 +179,10 @@ after_sync:
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(r.m.title.empty() ? r.m.key.c_str() : r.m.title.c_str());
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(hub::system_name(hub::system_from_short(r.m.system)));
+            {   // the vault is keyed by system short: a Switch 2 game in the library reads "Nintendo Switch 2"
+                const hub::GameEntry* ge = r.m.system == "switch" ? find_entry(r.m.key) : nullptr;
+                ImGui::TextUnformatted(ge ? hub::console_name(*ge) : hub::console_name(r.m.system));
+            }
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(fmt_time(r.m.updated).c_str());
             ImGui::TableNextColumn();

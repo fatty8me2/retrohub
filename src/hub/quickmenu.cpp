@@ -590,7 +590,7 @@ void send_osd(const std::string& text) {
 void pad_load(const hub::GameEntry* e) {
     g_pad_loaded = true;
     g_pad_note.clear();
-    std::string sys = g_shot_fake ? std::string("n64") : (e ? hubctl::system_key(e->system) : std::string());
+    std::string sys = g_shot_fake ? std::string("n64") : (e ? hubctl::console_key(*e) : std::string());
     hubctl::Store st;
     hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
     g_pad_prof = hubctl::resolve(st, sys, g_shot_fake ? std::string() : g_key);
@@ -1442,7 +1442,7 @@ static void qm_body() {
     if (ctl && online && (g_shot_fake || (room_connected() && my_port() >= 0)) && !pass_targets().empty()) {   // Plan 4 P4: hand the controller to another player
         if (menu_button("Pass controller", g_ho_wait == false, ui::Icon::Refresh)) { g_page = QPage::Pass; g_nav.sel.clear(); }
     }
-    if (g_shot_fake || (e && !hubctl::system_key(e->system).empty())) {
+    if (g_shot_fake || (e && !hubctl::console_key(*e).empty())) {
         if (menu_button("How do I play", true, ui::Icon::Play)) { g_pad_loaded = false; g_page = QPage::Pad; g_nav.sel.clear(); }
     }
     if (menu_button("Quit to RetroHub", true, ui::Icon::Close)) {

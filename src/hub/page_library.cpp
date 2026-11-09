@@ -244,7 +244,7 @@ void draw_hero(const hub::GameEntry& e, float h) {
             pill_at(dl, ImVec2(x, ty), s.c_str(), ui::scale_alpha(bg, ha), ui::scale_alpha(IM_COL32_WHITE, ha));
             x += pw + sp(0.75f);
         };
-        put(e.nx2 ? "Nintendo Switch 2" : hub::system_name(e.system), mix(c0, IM_COL32_BLACK, 0.3f));
+        put(hub::console_name(e), mix(c0, IM_COL32_BLACK, 0.3f));
         if (is_hack(e)) put(hack_ribbon(e), ui::ACCENT);
         if (is_native(e)) put("Native port", IM_COL32(255, 255, 255, 30));
         if (cat && cat->year) put(std::to_string(cat->year), IM_COL32(255, 255, 255, 30));
@@ -332,17 +332,17 @@ void empty_library_state() {
     y += sp(1.5f);
     // supported systems
     {
-        struct Sy { const char* label; hub::System s; };
-        static const Sy sys[] = {{"N64", hub::System::N64}, {"GameCube", hub::System::GC}, {"GBA", hub::System::GBA}, {"GBC", hub::System::GBC}, {"Game Boy", hub::System::GB},
-                                {"Nintendo DS", hub::System::NDS},
-                                {"3DS", hub::System::N3DS}, {"Wii U", hub::System::WiiU}, {"PS2", hub::System::PS2}, {"PSP", hub::System::PSP}, {"Switch", hub::System::Switch},
-                                {"NES", hub::System::NES}, {"SNES", hub::System::SNES}};
+        struct Sy { const char* label; const char* con; };   // con: a console id (library.h)
+        static const Sy sys[] = {{"N64", "n64"}, {"GameCube", "gc"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"},
+                                {"Nintendo DS", "nds"},
+                                {"3DS", "3ds"}, {"Wii U", "wiiu"}, {"PS2", "ps2"}, {"PSP", "psp"}, {"Switch", "switch"}, {"Switch 2", "switch2"},
+                                {"NES", "nes"}, {"SNES", "snes"}};
         float tot = 0;
         for (auto& s2 : sys) tot += ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, s2.label).x + sp(2.5f) + sp(0.75f);
         float x = cx - (tot - sp(0.75f)) * 0.5f;
         for (auto& s2 : sys) {
             ImU32 a, b;
-            system_colors(s2.s, &a, &b);
+            console_colors(s2.con, &a, &b);
             x += pill_at(dl, ImVec2(x, y), s2.label, mix(a, IM_COL32_BLACK, 0.2f)) + sp(0.75f);
         }
         y += ui::F.cap->FontSize + sp(4.f);
@@ -531,7 +531,7 @@ void selected_bar(const hub::GameEntry& e) {
     float text_w = std::max(sp(8.f), p1.x - sp(2.f) - row_w - tx - sp(2.f));
     const hub::GameState& gs = gstate(e.key);
     dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(tx, p0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.h2, ui::F.h2->FontSize, e.title, text_w).c_str());
-    std::string sub = std::string(hub::system_name(e.system)) + "  -  " + hubui::format_play_time(gs.play_seconds);
+    std::string sub = std::string(hub::console_name(e)) + "  -  " + hubui::format_play_time(gs.play_seconds);
     dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.25f) + ui::F.h2->FontSize + sp(0.5f)), ui::TEXT2,
                 ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, text_w).c_str());
     action_row(e, bh, true, ImVec2(p1.x - sp(2.f) - row_w, p0.y + (h - bh) * 0.5f), true);
@@ -544,7 +544,7 @@ void selected_bar(const hub::GameEntry& e) {
 void library_filter_chips() {
     struct Chip { const char* label; const char* sys; };
     static const Chip chips[] = {{"All", ""}, {"N64", "n64"}, {"GameCube", "gc"}, {"PlayStation", "ps1"}, {"Wii U", "wiiu"}, {"3DS", "3ds"},
-                                {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"PSP", "psp"}, {"Switch", "switch"}, {"NES", "nes"}, {"SNES", "snes"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
+                                {"Nintendo DS", "nds"}, {"PS2", "ps2"}, {"PSP", "psp"}, {"Switch", "switch"}, {"Switch 2", "switch2"}, {"NES", "nes"}, {"SNES", "snes"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"}};
     std::map<std::string, int>& counts = A.chip_counts;
     /* At big UI sizes the wrapped chip rows alone could fill the page and push the grid out of view: the rows live in a child that is as tall as
      * its rows, up to about a quarter of the page, and scrolls past that. (Padding-free, so at normal sizes it looks exactly like before.) */
@@ -572,7 +572,7 @@ void library_filter_chips() {
         if (!first) chip_same_line(lab, -1.f);
         first = false;
         ImU32 a = COL_ACCENT, b2;
-        if (c.sys[0]) system_colors(hub::system_from_short(c.sys), &a, &b2);
+        if (c.sys[0]) console_colors(c.sys, &a, &b2);
         if (chip(lab, A.sys_filter == c.sys, a)) { A.sys_filter = c.sys; A.vis_dirty = true; A.grid_scroll_top = true; }
     }
     {   // Online filter chip
@@ -965,7 +965,7 @@ void draw_details_modal() {
     ImGui::PopTextWrapPos();
     {   /* one short line of key facts */
         const char* dot = "  \xC2\xB7  ";
-        std::string facts = e.nx2 ? std::string("Nintendo Switch 2") : std::string(hub::system_name(e.system));
+        std::string facts = hub::console_name(e);
         if (native) facts += std::string(dot) + "Native port";
         if (local_players_for(e) >= 2) facts += std::string(dot) + "1-" + std::to_string(local_players_for(e)) + " players";
         if (supports_online(e)) facts += std::string(dot) + "Online";
@@ -1236,7 +1236,7 @@ void draw_details_modal() {
         place(label_w("Cheats", true));
         button("Cheats", ImVec2(0, bh2), false, false, ui::Icon::Bolt);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Cheats aren't available for %s yet", hub::system_name(e.system));
+            ImGui::SetTooltip("Cheats aren't available for %s yet", hub::console_name(e));
     }
     if (cheats_supported(e)) {
         int cn = cheats_enabled_count(e);
@@ -1244,11 +1244,11 @@ void draw_details_modal() {
         place(label_w(cl.c_str(), true));
         if (button(cl.c_str(), ImVec2(0, bh2), cn > 0, true, ui::Icon::Bolt) || forced("cheats")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; cheats_open(c); shot_trace("cheats", "opened " + e.key); }
     }
-    tr("controls", hubctl::system_key(e.system).empty() ? "hidden" : "enabled:" + hubctl::system_key(e.system));
+    tr("controls", hubctl::console_key(e).empty() ? "hidden" : "enabled:" + hubctl::console_key(e));
     tr("settings", hub::gs::options_for(e.system).empty() ? "none" : "options=" + std::to_string(hub::gs::options_for(e.system).size()));
-    if (!hubctl::system_key(e.system).empty()) {
+    if (!hubctl::console_key(e).empty()) {
         place(label_w("Controls", true));
-        if (button("Controls", ImVec2(0, bh2), false, true, ui::Icon::Gamepad) || forced("controls")) { ImGui::CloseCurrentPopup(); open_controls_for(e); shot_trace("controls", "tab-for " + hubctl::system_key(e.system) + " game=" + CTL_game_for_trace()); }
+        if (button("Controls", ImVec2(0, bh2), false, true, ui::Icon::Gamepad) || forced("controls")) { ImGui::CloseCurrentPopup(); open_controls_for(e); shot_trace("controls", "tab-for " + hubctl::console_key(e) + " game=" + CTL_game_for_trace()); }
     }
     tr("desktop", "enabled");
     place(label_w("Add to desktop", true));

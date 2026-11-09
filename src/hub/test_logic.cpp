@@ -257,8 +257,17 @@ int main() {
 
     /* All Games: grouped by console */
     {
-        const std::vector<std::string> want = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "psp", "switch", "nes", "snes", "gba", "gbc", "gb"};
+        const std::vector<std::string> want = {"n64", "gc", "ps1", "wiiu", "3ds", "nds", "ps2", "psp", "switch", "switch2", "nes", "snes", "gba", "gbc", "gb"};   // Nintendo Switch 2 is its own console right after Switch
         CHECK(console_order() == want);
+        CHECK(system_shelf_title("switch") == "Nintendo Switch" && system_shelf_title("switch2") == "Nintendo Switch 2");
+        {   // Switch and Switch 2 games: two sections, two filters, and the Switch 2 one sorts right after Switch
+            std::vector<ListItem> sw = {{"switch:a", "Zelda TotK", "switch", false}, {"switch:b", "Ocarina of Time", "switch2", false}, {"switch:c", "Astral Chain", "switch", false}, {"gb:1", "Tetris", "gb", false}};
+            auto ss = group_by_console(sw);
+            CHECK(ss.size() == 3 && ss[0].system == "switch" && ss[1].system == "switch2" && ss[2].system == "gb");
+            CHECK(ss[0].title == "Nintendo Switch" && ss[1].title == "Nintendo Switch 2" && ss[0].items == std::vector<int>({2, 0}) && ss[1].items == std::vector<int>({1}));
+            CHECK(filter_sort(sw, "switch", "").size() == 2 && filter_sort(sw, "switch2", "") == std::vector<int>({1}));
+            CHECK(console_index("switch2") == console_index("switch") + 1);
+        }
         std::vector<ListItem> it = {
             {"gb:1", "Tetris", "gb", false},          // 0
             {"gbc:1", "Crystal", "gbc", false},       // 1

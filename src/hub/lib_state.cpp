@@ -205,6 +205,16 @@ void apply_scan() {
                 g.path = std::string("C:/fake/") + ids[i] + ".nsp";
                 A.lib.push_back(g);
             }
+            if (std::string(std::getenv("HUB_SHOT_SWITCH")) == "2") {   // HUB_SHOT_SWITCH=2 also seeds Ocarina of Time (a Switch 2 game): the Home hero / console chips / Switch 2 page shots (qa\switch2_shots.ps1)
+                hub::GameEntry g;
+                g.system = hub::System::Switch;
+                g.key = "switch:0400486024dec000";
+                g.serial = "0400486024DEC000";
+                g.title = "The Legend of Zelda: Ocarina of Time";
+                g.nx2 = true;
+                g.path = "C:/fake/0400486024dec000.nup";
+                A.lib.push_back(g);
+            }
         }
         if (!only_native && g_headless && std::getenv("HUB_SHOT_HOOKSHOT")) {   // Hookshot card screenshots (hookshot_ui.h): Ocarina of Time (Switch 2)
             hub::GameEntry g;
@@ -524,7 +534,7 @@ void rebuild_vis() {
     items.reserve(A.lib.size() + A.ghosts.size());
     for (auto& e : A.lib) {
         const hub::GameState& g0 = gstate(e.key);
-        hubui::ListItem li{e.key, e.title, sys_short(e), is_native(e), g0.last_played, g0.play_seconds, added_unix(e.path)};
+        hubui::ListItem li{e.key, e.title, hub::console_id(e), is_native(e), g0.last_played, g0.play_seconds, added_unix(e.path)};
         li.favorite = g0.favorite;
         if (need_year) li.year = lib_year_of((int)items.size());
         if (custom_is_renamed(e.key)) li.alt_title = custom_original_title(e);   // search also matches the scanned name
@@ -589,7 +599,7 @@ void rebuild_vis() {
         hubui::ShelfGame g;
         g.key = e.key;
         g.title = e.title;
-        g.system = sys_short(e);
+        g.system = hub::console_id(e);   // a console id: Switch 2 is its own shelf / chip / group
         g.favorite = gs.favorite;
         g.last_played = gs.last_played;
         g.online = entry_online(e);

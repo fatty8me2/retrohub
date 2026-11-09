@@ -235,9 +235,15 @@ const char* sys_badge(hub::System s) {
         default: return "?";
     }
 }
-const char* sys_badge(const hub::GameEntry& e) { return e.system == hub::System::Switch && e.nx2 ? "SWITCH 2" : sys_badge(e.system); }
+/* Console-id variants (library.h): Nintendo Switch 2 is its own console with its own colours (charcoal into Nintendo red) and badge. */
+void console_colors(const std::string& console, ImU32* a, ImU32* b) {
+    if (hub::console_is_switch2(console)) { *a = IM_COL32(38, 40, 48, 255); *b = IM_COL32(225, 20, 40, 255); return; }
+    system_colors(hub::system_from_short(console), a, b);
+}
+const char* console_badge(const std::string& console) { return hub::console_is_switch2(console) ? "SWITCH 2" : sys_badge(hub::system_from_short(console)); }
+const char* sys_badge(const hub::GameEntry& e) { return console_badge(hub::console_id(e)); }
 void entry_colors(const hub::GameEntry& e, ImU32* a, ImU32* b) {
     if (e.system == hub::System::N64 && !e.catalog_id.empty() && hub::find_game(e.catalog_id)) game_colors(e.catalog_id, a, b);
-    else system_colors(e.system, a, b);
+    else console_colors(hub::console_id(e), a, b);
 }
 

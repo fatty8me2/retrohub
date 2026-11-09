@@ -231,17 +231,21 @@ static void member_row(const hubui::PeerInfo* p, int slot, ImVec2 size) {
             if (sel && !remote_play_entry(*sel)) chips.push_back({"No copy of this game", COL_BAD});
         }
         if (!p->keys.empty()) {
-            std::map<int, int> per;
+            std::map<std::string, int> per;   // console id -> games (a Switch key we also own as a Switch 2 game counts as Switch 2)
             int other = 0;
             for (auto& k : p->keys) {
                 size_t c = k.find(':');
                 hub::System sy = c == std::string::npos ? hub::System::Unknown : hub::system_from_short(k.substr(0, c));
-                if (sy == hub::System::Unknown) ++other; else ++per[(int)sy];
+                if (sy == hub::System::Unknown) { ++other; continue; }
+                const hub::GameEntry* pe = sy == hub::System::Switch ? find_entry(k) : nullptr;
+                ++per[hub::console_id(sy, pe && pe->nx2)];
             }
-            for (auto& kv : per) {
+            for (const std::string& cid : hub::console_ids()) {
+                auto it = per.find(cid);
+                if (it == per.end()) continue;
                 ImU32 a, b;
-                system_colors((hub::System)kv.first, &a, &b);
-                chips.push_back({std::string(sys_badge((hub::System)kv.first)) + " " + std::to_string(kv.second), mix(a, IM_COL32_BLACK, 0.15f)});
+                console_colors(cid, &a, &b);
+                chips.push_back({std::string(console_badge(cid)) + " " + std::to_string(it->second), mix(a, IM_COL32_BLACK, 0.15f)});
             }
             if (other) chips.push_back({"OTHER " + std::to_string(other), grey});
         } else {
@@ -406,18 +410,22 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
             if (sel && !remote_play_entry(*sel)) chip("No copy of this game", COL_BAD);
         }
         if (!p->keys.empty()) {   // v2 peers: games per system; keys without a known system prefix count as "Other"
-            std::map<int, int> per;
+            std::map<std::string, int> per;   // console id -> games (a Switch key we also own as a Switch 2 game counts as Switch 2)
             int other = 0;
             for (auto& k : p->keys) {
                 size_t c = k.find(':');
                 hub::System s = c == std::string::npos ? hub::System::Unknown : hub::system_from_short(k.substr(0, c));
-                if (s == hub::System::Unknown) ++other; else ++per[(int)s];
+                if (s == hub::System::Unknown) { ++other; continue; }
+                const hub::GameEntry* pe = s == hub::System::Switch ? find_entry(k) : nullptr;
+                ++per[hub::console_id(s, pe && pe->nx2)];
             }
-            for (auto& kv : per) {
+            for (const std::string& cid : hub::console_ids()) {
+                auto it = per.find(cid);
+                if (it == per.end()) continue;
                 ImU32 a, b;
-                system_colors((hub::System)kv.first, &a, &b);
+                console_colors(cid, &a, &b);
                 char lab[48];
-                std::snprintf(lab, sizeof lab, "%s %d", sys_badge((hub::System)kv.first), kv.second);
+                std::snprintf(lab, sizeof lab, "%s %d", console_badge(cid), it->second);
                 first = false;
                 chip(lab, mix(a, IM_COL32_BLACK, 0.15f));
             }
