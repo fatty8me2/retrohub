@@ -58,6 +58,17 @@ Result check_structure(const ReadFn& read, uint64_t file_size, const std::string
 /* Both checks on a real file (path is UTF-8). Cheap: a few small reads. Missing or unreadable file = Ok (the library handles that). */
 Result check_file(const std::string& path, uint64_t title_id);
 
+/* ---- the Play-gate decision, pure so it can be tested: does Play open the incomplete-dump note? ---- */
+struct PlayGateIn {
+    Verdict verdict = Verdict::Ok;   // the cached answer for the file (Ok when not checked yet)
+    bool dismissed = false;          // "Don't warn about this file again" for this path and size
+    bool pass_fresh = false;         // "Play anyway" was pressed for this game less than 20 s ago
+    bool game_running = false;       // a game is already running: never open anything
+    bool party_round = false;        // a couch party round is launching: the note would block the round
+    bool hookshot = false;           // Hookshot plays this game, not the file the check is about
+};
+bool play_gate_shows(const PlayGateIn& in);
+
 /* "23.30 GB" (binary gigabytes, the unit file explorers show). */
 std::string format_gb(uint64_t bytes);
 
@@ -81,7 +92,7 @@ private:
 /* ---- cache: one background check per file, keyed by path + size + modified time ---- */
 class Cache {
 public:
-    Cache();
+    explicit Cache(int recheck_ms = 30000);   // recheck_ms: how often size / time are re-read (tests pass 0)
     /* Non-blocking. false = not known yet (a worker thread was started if none is running). true = *out holds the last answer. The file's
      * size / time are re-read at most every 30 s, on the worker, and the check only re-runs when one of them changed. */
     bool get(const std::string& path, uint64_t title_id, Result* out);

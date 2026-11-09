@@ -904,9 +904,9 @@ void play_entry(const hub::GameEntry& e_in) {
     A.st.last_game = room_id(e);
     mark_dirty();
     hub::rom_cache_touch(e);   // LRU stamp for the unpacked copy (no-op for plain files)
-    hub::rom_cache_pin(&e);    // and never trimmed while it runs (library-14)
     if (rom_missing(e)) { missing_rom_ask(e.key); return; }   // the file is gone: Locate / Rescan / Remove popup
-    if (dumpwarn_play_gate(e)) return;   // an incomplete Switch dump: one note in the hub first (Play anyway / Don't warn again)
+    if (dumpwarn_play_gate(e, party_couch_launching())) return;   // an incomplete Switch dump: one note in the hub first (Play anyway / Don't warn again); never in a couch round. Before the pin below, so a note that opens or is cancelled leaves nothing pinned
+    hub::rom_cache_pin(&e);    // and never trimmed while it runs (library-14)
     RunInfo ri = run_info_for(e, false);
     std::string sys = sys_short(e);
     if (is_kanto(e)) { kt_play(e); return; }

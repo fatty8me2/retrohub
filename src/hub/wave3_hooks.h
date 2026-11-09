@@ -39,5 +39,6 @@ void verify_library_card();                                                     
 
 void save_import_section();                                                              // Saves page
 
-bool dumpwarn_play_gate(const hub::GameEntry& e);                                        // Play: a Switch dump that looks incomplete asks once (hub window, before launch)
+bool dumpwarn_play_gate(const hub::GameEntry& e, bool party_round);   // Play: a Switch dump that looks incomplete asks once (hub window, before launch); never in a couch round
+bool party_couch_launching();   // party_ui.cpp: a couch round was just launched and has not started yet; the dump note must not open then
 void dumpwarn_draw();                                                                    // once per frame, with the other dialogs
