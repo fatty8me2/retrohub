@@ -1,5 +1,7 @@
 #include "app.h"
 #include "wave3_hooks.h"
+#include <cctype>
+#include <cstdlib>
 #include <ctime>
 #include "library_scan_info.h"
 #include "online_caps.h"
@@ -266,6 +268,24 @@ void apply_scan() {
             if (i % 9 == 2) gs.favorite = true;
             if (i % 4 == 1) { gs.last_played = (unsigned long long)std::time(nullptr) - (i % 40) * 86400ull - 3600; gs.play_seconds = 600 + (i * 977) % 90000; }
             if (gs.favorite || gs.last_played) A.lib_state[A.lib[i].key] = gs;
+        }
+    }
+    if (std::getenv("HUB_SHOT_PLAYTIME") && g_headless) {   // game-page play time screenshots (with HUB_SHOT_FAKE_LIB): fake:0..4 are fixed cases, the rest alternate; the game page generates matching sessions (page_library.cpp)
+        const unsigned long long now = (unsigned long long)std::time(nullptr);
+        for (size_t i = 0; i < A.lib.size(); ++i) {
+            const std::string& k = A.lib[i].key;
+            if (k.compare(0, 5, "fake:") != 0 || k.size() < 6 || !std::isdigit((unsigned char)k[5])) continue;
+            const unsigned long long n = std::strtoull(k.c_str() + 5, nullptr, 10);
+            unsigned long long secs = 0, ago = 0;
+            if (n == 0) { secs = 153360; ago = 7200; }
+            else if (n == 1) { secs = 1234ull * 3600; ago = 200 * 86400ull; }
+            else if (n == 2) { secs = 1440; ago = 86400; }
+            else if (n == 4) { secs = 45000; ago = 9 * 86400ull; }
+            else if (n >= 5 && n % 2 == 1) { secs = 1800 + (n * 7919) % 200000; ago = n * 3 * 86400ull + 3600; }
+            if (!secs) continue;
+            hub::GameState& gs = A.lib_state[k];
+            gs.play_seconds = secs;
+            gs.last_played = now - ago;
         }
     }
     if (std::getenv("HUB_SHOT_FAKE_TITLES") && g_headless) {   // picker screenshots: some favourites and recently played games
