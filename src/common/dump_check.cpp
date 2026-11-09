@@ -5,6 +5,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -42,7 +43,7 @@ Result check_pfs0(const ReadFn& read, uint64_t fsz) {
     std::vector<uint8_t> h;
     if (!read(0, 16, &h) || h.size() < 16 || std::memcmp(h.data(), "PFS0", 4) != 0) return {};
     const uint32_t count = rd32(h.data(), 4), strsz = rd32(h.data(), 8);
-    if (count == 0 || count > 0x10000) return {};
+    if (count == 0 || count > 0x1000) return {};   // real dumps have a few dozen entries; 4096 caps the table read at ~100 KB
     const uint64_t hdr = 16 + (uint64_t)count * 0x18 + strsz;
     std::vector<uint8_t> t;
     const size_t tl = (size_t)count * 0x18;
@@ -183,6 +184,12 @@ void DismissList::parse(const std::string& text) {
     }
 }
 
+bool play_gate_shows(const PlayGateIn& in) {
+    if (in.game_running || in.party_round) return false;
+    if (in.pass_fresh || in.hookshot || in.dismissed) return false;
+    return in.verdict != Verdict::Ok;
+}
+
 /* ---- Cache ---- */
 struct Cache::State {
     struct Entry {
@@ -196,9 +203,10 @@ struct Cache::State {
     std::condition_variable cv;
     std::map<std::string, Entry> m;
     int pending = 0, runs = 0;
+    int recheck_ms = 30000;
 };
 
-Cache::Cache() : s_(std::make_shared<State>()) {}
+Cache::Cache(int recheck_ms) : s_(std::make_shared<State>()) { s_->recheck_ms = recheck_ms; }
 
 static void worker(std::shared_ptr<Cache::State> s, std::string path, uint64_t tid) {
     std::error_code ec;
@@ -235,7 +243,7 @@ bool Cache::get(const std::string& path, uint64_t title_id, Result* out) {
         auto& e = s_->m[path];
         have = e.have;
         if (have && out) *out = e.res;
-        if (!e.pending && (!e.have || std::chrono::steady_clock::now() - e.checked > std::chrono::seconds(30))) {
+        if (!e.pending && (!e.have || std::chrono::steady_clock::now() - e.checked >= std::chrono::milliseconds(s_->recheck_ms))) {
             e.pending = true;
             ++s_->pending;
             spawn = true;

@@ -127,6 +127,7 @@ dc::Cache g_dump_cache;
 dc::DismissList g_dump_off;
 bool g_dump_off_loaded = false;
 std::string g_dump_pass_key;   // "Play anyway": the next play_entry for this game skips the note once
+ULONGLONG g_dump_pass_at = 0;   // set with it: the pass expires after 20 s, so a launch that stopped early cannot skip the note on a later Play
 
 std::string dump_off_path() { return hub::data_dir() + "dump_warn_off.txt"; }
 void dump_off_load() {
@@ -406,14 +407,18 @@ void verify_library_card() {
 
 /* Play: a Switch dump that looks incomplete gets one note in the hub, BEFORE anything starts. true = the note is open, the caller stops;
  * its buttons call play_entry again. Never while a game runs; "Don't warn again" is remembered per file path and size. */
-bool dumpwarn_play_gate(const hub::GameEntry& e) {
-    if (e.system != hub::System::Switch || A.proc || game_active()) return false;
-    if (g_dump_pass_key == e.key) { g_dump_pass_key.clear(); return false; }
-    if (hookshot::use_for(e, gs_values_for(e))) return false;
+bool dumpwarn_play_gate(const hub::GameEntry& e, bool party_round) {
+    if (e.system != hub::System::Switch || A.proc || game_active() || party_round) return false;
+    dc::PlayGateIn in;
+    in.pass_fresh = g_dump_pass_key == e.key && GetTickCount64() - g_dump_pass_at < 20000;
+    if (g_dump_pass_key == e.key) g_dump_pass_key.clear();   // used (or stale): one pass only
+    in.hookshot = hookshot::use_for(e, gs_values_for(e));
     dc::Result r;
     if (!dump_result(e, &r)) return false;
     dump_off_load();
-    if (g_dump_off.has(e.path, r.have)) return false;
+    in.verdict = r.v;
+    in.dismissed = g_dump_off.has(e.path, r.have);
+    if (!dc::play_gate_shows(in)) return false;
     DA = DumpAsk();
     DA.open = true;
     DA.key = e.key;
@@ -443,9 +448,10 @@ void dumpwarn_draw() {
             runctl::write_text_atomic(dump_off_path(), g_dump_off.serialize());
         }
         g_dump_pass_key = DA.key;
+        g_dump_pass_at = GetTickCount64();
         DA.open = false;
         if (g) { hub::GameEntry copy = *g; play_entry(copy); }
-        else g_dump_pass_key.clear();
+        if (!g || (A.cloud_gate.phase == CloudGate::Idle && !A.job.running)) g_dump_pass_key.clear();   // cleared whatever play_entry did, unless the launch was deferred (cloud check / save sync re-enters play_entry; the 20 s expiry covers that)
     };
     if (ui::button("Play anyway", bs, true, true)) go(false);
     if (ui::button("Don't warn about this file again", bs, false, true)) go(true);
