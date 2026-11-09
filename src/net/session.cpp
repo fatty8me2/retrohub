@@ -814,6 +814,7 @@ bool Session::start(const SessionConfig& cfg)
     d.rc.reset();
     d.failed = d.ready_ever = d.welcomed = d.endpoint_sent = d.ws_retrying = d.relay_busy = false;
     d.inbox.clear();
+    d.verdict_done = d.verdict_left = false;
     d.ended = d.departing = false;   // a restarted session (the drop-in joiner tries the next slot) starts clean
     for (bool& b : d.bye_from) b = false;
     for (Peer& p : d.peers) p = Peer();
@@ -958,6 +959,7 @@ bool Session::qa_offline(const SessionConfig& cfg)
     d.spectator = false;
     d.spec_mask = 0;
     d.failed = d.ended = d.departing = false;
+    d.verdict_done = d.verdict_left = false;
     d.ready_ever = true;
     d.inbox.clear();
     for (bool& b : d.bye_from) b = false;
