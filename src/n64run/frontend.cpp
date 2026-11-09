@@ -2091,6 +2091,11 @@ int main(int argc, char** argv) {
             logf_("n64run", "dropin: could not join (exit %d)", code);
         }
         else if (g_run.lockstep && g_run.lockstep->connection_lost()) {
+            if (session.my_slot() != 0 && session.status().find("host left") == std::string::npos && session.status().find("partner ended") == std::string::npos) {
+                /* a crashed host's seat is held ~10 s by the server; its verdict arrives just after our own timer: ask once */
+                if (session.await_host_verdict(3500)) logf_("n64run", "net: the server says the host left");
+                else logf_("n64run", "net: no word about the host from the server: connection lost");
+            }
             std::string why = session.status();   // 8: the host/partner left (exit_code_text), 4: plain connection loss
             code = (why.find("host left") != std::string::npos || why.find("partner ended") != std::string::npos) ? 8 : 4;
             logf_("n64run", code == 8 ? "A player left, game ended" : "Connection lost");

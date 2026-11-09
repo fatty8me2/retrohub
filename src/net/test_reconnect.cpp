@@ -276,6 +276,21 @@ int main()
     CHECK(member_departed(true, false));
     CHECK(!member_departed(false, false));
 
+    // host verdict rules
+    {
+        VerdictInput v; v.max_ms = 3500;
+        CHECK(host_verdict(v) == HostVerdict::Wait);
+        v.host_left_signal = true; CHECK(host_verdict(v) == HostVerdict::HostLeft);
+        v.socket_dead_other = true; CHECK(host_verdict(v) == HostVerdict::HostLeft);   // the signal wins
+        v = VerdictInput(); v.max_ms = 3500; v.socket_dead_other = true; CHECK(host_verdict(v) == HostVerdict::Lost);
+        v = VerdictInput(); v.max_ms = 3500; v.elapsed_ms = 1499; CHECK(host_verdict(v) == HostVerdict::Wait);
+        v.elapsed_ms = 1500; CHECK(host_verdict(v) == HostVerdict::Lost);              // silence: our link is down too
+        v.any_text_seen = true; CHECK(host_verdict(v) == HostVerdict::Wait);           // the ack came: keep waiting for the verdict
+        v.elapsed_ms = 3499; CHECK(host_verdict(v) == HostVerdict::Wait);
+        v.elapsed_ms = 3500; CHECK(host_verdict(v) == HostVerdict::Lost);
+        v.elapsed_ms = 100; v.host_left_signal = true; CHECK(host_verdict(v) == HostVerdict::HostLeft);
+    }
+
     printf(fails ? "hubreconnect_test: %d FAILED\n" : "hubreconnect_test: all ok\n", fails);
     return fails ? 1 : 0;
 }
