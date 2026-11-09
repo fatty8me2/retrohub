@@ -830,7 +830,8 @@ static const hubui::pt::GameStats& pt_stats_for(const hub::GameEntry& e, const h
     const double t = ImGui::GetTime();
     const int fr = ImGui::GetFrameCount();
     if (!C.ok || C.key != e.key || C.ps != gs.play_seconds || C.lp != gs.last_played || t - C.at > 30.0 || fr - C.frame > 2) {
-        static const bool fake = g_headless && std::getenv("HUB_SHOT_PLAYTIME") != nullptr;
+        static const bool fake_on = g_headless && std::getenv("HUB_SHOT_PLAYTIME") != nullptr;
+        const bool fake = fake_on && e.key.compare(0, 5, "fake:") == 0;   // only the made-up games get made-up sessions
         std::vector<hub::saves::Session> sessions = fake ? pt_fake_sessions(e.key, gs) : hub::saves::playlog_read_game(sys_short(e), e.key);
         C.st = hubui::pt::game_stats(gs.play_seconds, gs.last_played, sessions, hub::saves::playlog_device(), now);
         C.key = e.key;
@@ -843,16 +844,8 @@ static const hubui::pt::GameStats& pt_stats_for(const hub::GameEntry& e, const h
     return C.st;
 }
 
-/* shorten text with "..." until it is at most w wide in the current font (last resort only) */
-static std::string pt_fit(const std::string& s, float w) {
-    if (ImGui::CalcTextSize(s.c_str()).x <= w) return s;
-    std::string t = s;
-    while (t.size() > 1) {
-        t.pop_back();
-        if (ImGui::CalcTextSize((t + "...").c_str()).x <= w) break;
-    }
-    return t + "...";
-}
+/* shorten text with "..." until it is at most w wide in the current font (last resort only; UTF-8 safe) */
+static std::string pt_fit(const std::string& s, float w) { return ui::ellipsize(ImGui::GetFont(), ImGui::GetFontSize(), s, w); }
 
 /* The stats strip: one rounded panel, cells = small caption over a bold value, hairline separators; cells wrap greedily into rows
  * when they do not fit max_w. Draw-only (one Dummy reserves the space), no focusable items. */
@@ -984,7 +977,9 @@ void draw_details_modal() {
         ImGui::PopTextWrapPos();
         /* Steam-style play time: prominent header line, then (when played) the stats strip */
         const int64_t pt_now = (int64_t)std::time(nullptr);
-        const int pt_tz = pt_local_tz();
+        static int pt_tz = 0;
+        static double pt_tz_at = -1e9;
+        if (ImGui::GetTime() - pt_tz_at > 30.0) { pt_tz = pt_local_tz(); pt_tz_at = ImGui::GetTime(); }   // mktime twice: not every frame
         const hubui::pt::GameStats& pst = pt_stats_for(e, gs, pt_now);
         if (!pst.played()) {
             ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
