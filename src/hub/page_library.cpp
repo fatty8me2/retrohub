@@ -12,7 +12,12 @@
 #include "continue_logic.h"
 #include "hidden_games.h"
 #include "hidden_ui.h"
+#include "playtime_logic.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <ctime>
 #include <mutex>
 #include <thread>
 
@@ -767,6 +772,150 @@ static std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
     return s_lines;
 }
 
+/* ---------- game page play time (Steam-style header line + stats strip) ---------- */
+
+/* local time minus UTC in seconds (same recipe as wrapped_ui.cpp) */
+static int pt_local_tz() {
+    std::time_t t = std::time(nullptr);
+    std::tm lt{}, gm{};
+    localtime_s(&lt, &t);
+    gmtime_s(&gm, &t);
+    int tz = (int)std::difftime(std::mktime(&lt), std::mktime(&gm));
+    if (lt.tm_isdst > 0) tz += 3600;
+    return tz;
+}
+
+/* Screenshot aid (HUB_SHOT_PLAYTIME=1, headless): deterministic sessions instead of the vault. This PC's sessions add up to exactly
+ * the seeded total (lib_state.cpp), the newest starts at the seeded last-played time. */
+static std::vector<hub::saves::Session> pt_fake_sessions(const std::string& key, const hub::GameState& gs) {
+    std::vector<hub::saves::Session> v;
+    if (!gs.play_seconds || !gs.last_played) return v;
+    const int n = key == "fake:1" ? 30 : key == "fake:0" ? 8 : 3;
+    const int64_t T = (int64_t)gs.play_seconds, last = (int64_t)gs.last_played;
+    const int64_t gap = key == "fake:1" ? (int64_t)(5.5 * 86400) : key == "fake:0" ? 129600 : 86400;
+    int64_t left = T;
+    for (int j = 0; j < n; ++j) {
+        hub::saves::Session s;
+        s.system = "fake";
+        s.key = key;
+        s.start = last - (int64_t)j * gap;
+        s.secs = (j == n - 1) ? left : T / n;
+        left -= s.secs;
+        v.push_back(s);
+    }
+    if (key == "fake:0") {   // a second PC, about 3.1 hours
+        hub::saves::Session a, b;
+        a.system = b.system = "fake";
+        a.key = b.key = key;
+        a.device = b.device = "LAPTOP";
+        a.start = (int64_t)gs.last_played - 20 * 86400; a.secs = 5400;
+        b.start = (int64_t)gs.last_played - 30 * 86400; b.secs = 5760;
+        v.push_back(a);
+        v.push_back(b);
+    }
+    return v;
+}
+
+/* The shown game's numbers, cached: recomputed when the game changes, when library.json's numbers for it changed (a session just
+ * ended), when the modal was closed in between, and otherwise every 30 s. Never reads files every frame. */
+static const hubui::pt::GameStats& pt_stats_for(const hub::GameEntry& e, const hub::GameState& gs, int64_t now) {
+    static struct {
+        std::string key;
+        unsigned long long ps = 0, lp = 0;
+        double at = -1e9;
+        int frame = -100;
+        bool ok = false;
+        hubui::pt::GameStats st;
+    } C;
+    const double t = ImGui::GetTime();
+    const int fr = ImGui::GetFrameCount();
+    if (!C.ok || C.key != e.key || C.ps != gs.play_seconds || C.lp != gs.last_played || t - C.at > 30.0 || fr - C.frame > 2) {
+        static const bool fake = g_headless && std::getenv("HUB_SHOT_PLAYTIME") != nullptr;
+        std::vector<hub::saves::Session> sessions = fake ? pt_fake_sessions(e.key, gs) : hub::saves::playlog_read_game(sys_short(e), e.key);
+        C.st = hubui::pt::game_stats(gs.play_seconds, gs.last_played, sessions, hub::saves::playlog_device(), now);
+        C.key = e.key;
+        C.ps = gs.play_seconds;
+        C.lp = gs.last_played;
+        C.at = t;
+        C.ok = true;
+    }
+    C.frame = fr;
+    return C.st;
+}
+
+/* shorten text with "..." until it is at most w wide in the current font (last resort only) */
+static std::string pt_fit(const std::string& s, float w) {
+    if (ImGui::CalcTextSize(s.c_str()).x <= w) return s;
+    std::string t = s;
+    while (t.size() > 1) {
+        t.pop_back();
+        if (ImGui::CalcTextSize((t + "...").c_str()).x <= w) break;
+    }
+    return t + "...";
+}
+
+/* The stats strip: one rounded panel, cells = small caption over a bold value, hairline separators; cells wrap greedily into rows
+ * when they do not fit max_w. Draw-only (one Dummy reserves the space), no focusable items. */
+static void draw_playtime_strip(const std::vector<hubui::pt::Cell>& cells, float max_w) {
+    if (cells.empty()) return;
+    const float padx = sp(1.5f), pady = sp(0.9f), gap_y = sp(0.25f), rad = sp(1.25f);
+    float cap_h = 0.f, val_h = 0.f;
+    ImGui::PushFont(ui::F.cap); cap_h = ImGui::GetTextLineHeight(); ImGui::PopFont();
+    ImGui::PushFont(ui::F.bold); val_h = ImGui::GetTextLineHeight(); ImGui::PopFont();
+    struct Item { std::string label, cap, val; float w = 0.f; };
+    std::vector<Item> items;
+    bool has_other = false;
+    for (const hubui::pt::Cell& c : cells) {
+        Item it;
+        it.label = c.label;
+        it.cap = c.label;
+        for (char& ch : it.cap) ch = (char)std::toupper((unsigned char)ch);
+        it.val = c.value;
+        const float inner = std::max(sp(4.f), max_w - 2.f * padx);
+        ImGui::PushFont(ui::F.cap); it.cap = pt_fit(it.cap, inner); const float cw = ImGui::CalcTextSize(it.cap.c_str()).x; ImGui::PopFont();
+        ImGui::PushFont(ui::F.bold); it.val = pt_fit(it.val, inner); const float vw = ImGui::CalcTextSize(it.val.c_str()).x; ImGui::PopFont();
+        it.w = std::max(cw, vw) + 2.f * padx;
+        if (c.label.compare(0, 8, "Other PC") == 0) has_other = true;
+        items.push_back(it);
+    }
+    /* greedy rows */
+    std::vector<std::vector<size_t>> rows(1);
+    float used = 0.f, panel_w = 0.f;
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (!rows.back().empty() && used + items[i].w > max_w) { rows.emplace_back(); used = 0.f; }
+        rows.back().push_back(i);
+        used += items[i].w;
+        panel_w = std::max(panel_w, used);
+    }
+    const float row_h = 2.f * pady + cap_h + gap_y + val_h;
+    const float panel_h = row_h * (float)rows.size();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1(p0.x + panel_w, p0.y + panel_h);
+    ImGui::Dummy(ImVec2(panel_w, panel_h));
+    dl->AddRectFilled(p0, p1, ui::PANEL2, rad);
+    dl->AddRect(p0, p1, ui::HAIRLINE, rad, 0, 1.f);
+    const bool hov_ok = ImGui::IsWindowHovered();
+    for (size_t r = 0; r < rows.size(); ++r) {
+        const float y = p0.y + row_h * (float)r;
+        if (r > 0) dl->AddLine(ImVec2(p0.x + 1.f, y), ImVec2(p1.x - 1.f, y), ui::HAIRLINE, 1.f);
+        float x = p0.x;
+        for (size_t k = 0; k < rows[r].size(); ++k) {
+            const Item& it = items[rows[r][k]];
+            if (k > 0) dl->AddLine(ImVec2(x, y + pady * 0.7f), ImVec2(x, y + row_h - pady * 0.7f), ui::HAIRLINE, 1.f);
+            ImGui::PushFont(ui::F.cap);
+            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(x + padx, y + pady), ui::TEXT3, it.cap.c_str());
+            ImGui::PopFont();
+            ImGui::PushFont(ui::F.bold);
+            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(x + padx, y + pady + cap_h + gap_y), ui::TEXT, it.val.c_str());
+            ImGui::PopFont();
+            if (has_other && hov_ok && it.label == "Play time" && ImGui::IsMouseHoveringRect(ImVec2(x, y), ImVec2(x + it.w, y + row_h)))
+                ImGui::SetTooltip("Time played on this PC. Other PCs are listed separately.");
+            x += it.w;
+        }
+    }
+}
+
 /* ---------- details modal (Y / right-click / "...") ---------- */
 
 void draw_details_modal() {
@@ -833,11 +982,46 @@ void draw_details_modal() {
         ImGui::TextWrapped("%s", facts.c_str());
         ImGui::PopStyleColor();
         ImGui::PopTextWrapPos();
-        std::string played = gs.last_played ? hubui::format_play_time(gs.play_seconds) + " played" + dot + "last played " + fmt_time(gs.last_played)
-                                            : std::string("Not played yet");
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
-        ImGui::TextWrapped("%s", played.c_str());
-        ImGui::PopTextWrapPos();
+        /* Steam-style play time: prominent header line, then (when played) the stats strip */
+        const int64_t pt_now = (int64_t)std::time(nullptr);
+        const int pt_tz = pt_local_tz();
+        const hubui::pt::GameStats& pst = pt_stats_for(e, gs, pt_now);
+        if (!pst.played()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+            ImGui::TextUnformatted("Not played yet");
+            ImGui::PopStyleColor();
+        } else {
+            const std::string full = hubui::pt::header_line(pst.total_secs, pst.last_played, pt_now, pt_tz, dot);
+            const std::string hp = hubui::pt::hours_played(pst.total_secs);
+            const bool has_hp = !hp.empty() && full.compare(0, hp.size(), hp) == 0;
+            std::string rest = has_hp ? full.substr(hp.size()) : full;
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
+            if (has_hp) {
+                ImGui::PushFont(ui::F.bold);
+                const float hw = ImGui::CalcTextSize(hp.c_str()).x;
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT);
+                ImGui::TextUnformatted(hp.c_str());
+                ImGui::PopStyleColor();
+                ImGui::PopFont();
+                if (!rest.empty()) {
+                    if (hw + ImGui::CalcTextSize(rest.c_str()).x <= tw) ImGui::SameLine(0, 0);
+                    else rest = rest.substr(std::min(rest.size(), std::strlen(dot)));   // too narrow: the rest wraps onto its own line, without the separator
+                    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+                    ImGui::TextWrapped("%s", rest.c_str());
+                    ImGui::PopStyleColor();
+                }
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
+                ImGui::TextWrapped("%s", rest.c_str());
+                ImGui::PopStyleColor();
+            }
+            ImGui::PopTextWrapPos();
+            const std::vector<hubui::pt::Cell> cells = hubui::pt::strip_cells(pst, pt_now, pt_tz);
+            if (!cells.empty()) {
+                ImGui::Dummy(ImVec2(0, sp(0.75f)));
+                draw_playtime_strip(cells, tw);
+            }
+        }
     }
     ImGui::EndGroup();
     if (with_art) ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(ah, ImGui::GetItemRectSize().y) + sp(1.f)));
