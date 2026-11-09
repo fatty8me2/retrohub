@@ -621,7 +621,8 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     hubemu::Kind kind = hubemu::kind_for(e.system);
     if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot_lichii_once_consume(e.key)) { /* "Play with Lichii this time": skip Hookshot once */ }
     else if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot::use_for(e, gs_values_for(e))) { launch_hookshot(e, ri, battery); return; }   // before any Lichii-only step: works without Lichii, keys or firmware
-    if (kind == hubemu::Kind::Lichii) kind = hubemu::nx_emulator_for(e, gs_values_for(e), ri.online || ri.room);   // opt-in per game (switch.runner), offline only like Hookshot: the same code path as Lichii, with Fritchii's own install folder
+    if (kind == hubemu::Kind::Lichii) kind = hubemu::nx_emulator_for(e, gs_values_for(e), ri.online || ri.room, GSTORE.source(e.system, e.key, hubemu::kRunnerKey),
+                                                                  !hubemu::release_is_placeholder(hubemu::Kind::Fritchii) || !hubemu::find(hubemu::Kind::Fritchii, A.st.cemu_exe, e.path).exe.empty());   // switch.runner (Ocarina of Time defaults to Fritchii unless chosen), offline only like Hookshot: the same code path as Lichii, with Fritchii's own install folder
     hubemu::Bios ps2_bios;
     if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is unpacked, downloaded or started
         ps2_bios = hubemu::pcsx2_find_bios(hubemu::pcsx2_bios_search_dirs(A.st.ps2_bios_dir, A.st.rom_folders));

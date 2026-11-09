@@ -26,8 +26,15 @@ NxRunner nx_runner_value(const hub::gs::Values& v);
 /* Play this Switch game with Fritchii: System::Switch and the runner is exactly "fritchii". (Hookshot is checked before this by launch.cpp.) */
 bool fritchii_selected(const hub::GameEntry& e, const hub::gs::Values& v);
 
-/* Lichii or Fritchii for a Switch game. Fritchii is offline only (like Hookshot): an online or room launch always gets Lichii, whatever the setting says. */
-Kind nx_emulator_for(const hub::GameEntry& e, const hub::gs::Values& v, bool online_or_room);
+constexpr uint64_t kOotTitleId = 0x0400486024DEC000ull;   // Ocarina of Time (Switch 2)
+/* True for the game that plays with Fritchii unless the player chose otherwise (Ocarina of Time). */
+bool nx_default_fritchii(const hub::GameEntry& e);
+/* Lichii or Fritchii for a Switch game. Fritchii is offline only (like Hookshot): an online or room launch always gets Lichii, whatever the setting says.
+ * runner_source = hub::gs::Store::source(Switch, game key, kRunnerKey): 0 = nobody chose (built-in default), 1 = the Switch-wide choice, 2 = this game's own choice.
+ * Source 0 + Ocarina of Time = Fritchii; any explicit choice (game or global, even "lichii") wins. The ONE place the default runner is decided.
+ * fritchii_obtainable = Fritchii is installed, or its release is pinned so Play can download it; false only gates the DEFAULT (an explicit choice still gets
+ * Fritchii and the normal install prompt). */
+Kind nx_emulator_for(const hub::GameEntry& e, const hub::gs::Values& v, bool online_or_room, int runner_source, bool fritchii_obtainable);
 
 /* ---- config / environment ---- */
 /* "Section.key" names RetroHub must NOT write into Fritchii's qt-config.ini. Fritchii resets its own tuned Ocarina keys at every start, so RetroHub's values would not
@@ -43,7 +50,7 @@ std::string prepare_fritchii(const std::string& install_dir);
 /* Fritchii's updater is neutralised twice: check_for_updates=false in qt-config.ini (lichii_ini_defaults) and this variable, so even Help > Check for Updates
  * cannot replace RetroHub's vetted build. RetroHub is the only updater. */
 constexpr const char* kFritchiiUpdateUrl = "http://127.0.0.1:9/x";
-/* Environment added to the child: Lichii = lichii_env (unchanged). Both get EDEN_NX2_NO_REACTIVE=1 from lichii_fast_reads (unless switch.fast_reads is "off"). Fritchii = EDEN_UPDATE_URL, and EDEN_NX2_PRELOAD_ALL_PIPELINES only for "Shaders at start = All" (the
+/* Environment added to the child: Lichii = lichii_env (unchanged). Both get EDEN_NX2_NO_REACTIVE=1 from lichii_fast_reads (unless switch.fast_reads is "off"). Fritchii = EDEN_UPDATE_URL only (v5 prepares its shaders itself: NEVER EDEN_NX2_PRELOAD_ALL_PIPELINES, FRITCHII_CLASSIC_UI or EDEN_NX2_PRECOMPILE=0; formerly the
  * merged cache holds ~29k pipelines = ~13 GB of driver memory: "auto" does NOT preload there; "recent" never does). Never EDEN_NX2_DEBUG_SERVER / EDEN_NX2_CRASH_DUMP, and
  * RetroHub never creates or copies an nx2_switches.txt (Fritchii accepts any variable name from it): everything goes through the process environment. */
 std::vector<std::pair<std::string, std::string>> nx_env(Kind k, const hub::gs::Values& v, uint64_t physical_ram);

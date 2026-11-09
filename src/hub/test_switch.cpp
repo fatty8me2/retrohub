@@ -559,7 +559,7 @@ static void test_runner() {
     auto envhas = [](const std::vector<std::pair<std::string, std::string>>& e2, const char* k) { for (auto& kv : e2) if (kv.first == k) return true; return false; };
     CHECK(envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 32 * G), "EDEN_UPDATE_URL") && !envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 32 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
     v["switch.preload_shaders"] = "all";
-    CHECK(envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 8 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+    CHECK(!envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 8 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // v5 prepares shaders itself
     CHECK(!envhas(hubemu::nx_env(hubemu::Kind::Lichii, v, 8 * G), "EDEN_UPDATE_URL"));   // Lichii's environment never gets it
 }
 

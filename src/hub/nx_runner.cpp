@@ -35,8 +35,21 @@ bool fritchii_selected(const hub::GameEntry& e, const hub::gs::Values& v) {
     return e.system == hub::System::Switch && nx_runner_value(v) == NxRunner::Fritchii;
 }
 
-Kind nx_emulator_for(const hub::GameEntry& e, const hub::gs::Values& v, bool online_or_room) {
-    return !online_or_room && fritchii_selected(e, v) ? Kind::Fritchii : Kind::Lichii;
+bool nx_default_fritchii(const hub::GameEntry& e) {
+    if (e.system != hub::System::Switch) return false;
+    // the exact key, or the same title id followed by "-" / "_" (a second copy of the game), like hookshot::supports
+    const size_t n = 7 + 16;   // "switch:" + 16 hex digits
+    if (e.key.size() < n || (e.key.size() > n && e.key[n] != '-' && e.key[n] != '_')) return false;
+    return title_id_from_key(e.key.substr(0, n)) == kOotTitleId;
+}
+
+Kind nx_emulator_for(const hub::GameEntry& e, const hub::gs::Values& v, bool online_or_room, int runner_source, bool fritchii_obtainable) {
+    if (online_or_room) return Kind::Lichii;
+    if (fritchii_selected(e, v)) return Kind::Fritchii;
+    // Nobody chose a runner (not for this game, not for Switch as a whole) and the stored value is just the built-in default: Ocarina of Time plays with Fritchii
+    // (when Fritchii is installed or can be downloaded; the default never leaves a player with a game that cannot start).
+    if (runner_source == 0 && fritchii_obtainable && nx_runner_value(v) == NxRunner::Lichii && nx_default_fritchii(e)) return Kind::Fritchii;
+    return Kind::Lichii;
 }
 
 const std::vector<std::string>& nx_skip_keys(Kind k) {
@@ -51,8 +64,9 @@ std::vector<std::pair<std::string, std::string>> nx_env(Kind k, const hub::gs::V
     if (k != Kind::Fritchii) return lichii_env(v, ram);   // Lichii: exactly as before
     std::vector<std::pair<std::string, std::string>> env;
     if (lichii_fast_reads(v)) env.push_back({"EDEN_NX2_NO_REACTIVE", "1"});   // same helper as lichii_env
-    auto it = v.find("switch.preload_shaders");
-    if (it != v.end() && it->second == "all") env.push_back({"EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"});
+    // Fritchii v5 prepares all shaders itself on the first start (no-retain build). EDEN_NX2_PRELOAD_ALL_PIPELINES would build AND keep every pipeline
+    // (~460 KB each): double the work and a huge memory bill. Never set it for Fritchii, whatever "Shaders at start" says. Also never FRITCHII_CLASSIC_UI
+    // (it hides the preparation screen) or EDEN_NX2_PRECOMPILE=0.
     env.push_back({"EDEN_UPDATE_URL", kFritchiiUpdateUrl});
     return env;
 }
