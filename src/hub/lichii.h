@@ -130,7 +130,8 @@ std::string prepare_lichii(const std::string& install_dir, const hubctl::Profile
                            const hub::gs::Values& v, bool fullscreen, const SdlBinds* binds = nullptr, const std::vector<std::string>* skip_keys = nullptr);
 /* Environment variables added to Lichii's own (the child inherits RetroHub's environment plus these; launch.cpp spawn()).
  * switch.preload_shaders: "all" -> EDEN_NX2_PRELOAD_ALL_PIPELINES=1 (Lichii builds every cached pipeline at start, ~0.45 MB driver memory each);
- * "auto" (also missing / unknown) -> the same when physical_ram_bytes >= 30 GiB (a PC sold as 32 GB reports ~31.7 GiB); "recent" -> nothing. Pure. */
+ * "auto" (also missing / unknown) -> the same when physical_ram_bytes >= 60 GiB (a PC sold as 64 GB reports ~63.7 GiB); "recent" -> nothing. Pure.
+ * switch.fast_reads: anything but "off" -> EDEN_NX2_NO_REACTIVE=1 (lichii_fast_reads). */
 std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t physical_ram_bytes);
 /* switch.fast_reads ("Faster GPU reads"): anything but "off" (missing counts as on) -> EDEN_NX2_NO_REACTIVE=1 (Lichii build 125 drops its read traps on Switch 2
  * programs; stale reads are possible but rare). One helper for every Lichii-family launch: lichii_env (Lichii) and nx_env (Fritchii) both call it. */
