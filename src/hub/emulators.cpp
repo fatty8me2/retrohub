@@ -148,14 +148,16 @@ const Release& release(Kind k) {
     static const Release pp = {
         "1.20.4", L"www.ppsspp.org", L"/files/1_20_4/ppsspp_win.zip",
         27658759ull, "a60f04ebdb0b5f1655422bd7f88349a46999b17ad5115d6ddb290c3934bd5163", L"PPSSPPWindows64.exe", "GPL-2.0+"};
-    /* Lichii build 95 (GPL-3.0), github.com/zortos293/Lichii. The release TAG is misnamed: it is `build-94`, but its notes and the CI run say build 95
-     * (nx2 @ 222877d, 2026-11-07); every file in the zip is byte-identical to the release-binaries CI artifact of that run. An Eden fork that adds
-     * Switch 2 games. The MSVC Windows zip holds lichii.exe at its root. Portable via a `user` folder beside the exe (lichii.h), which an upgrade
-     * from an older pin never touches (install_core). No games, keys or firmware are included: the player supplies their own.
-     * The version string is what the marker, Settings and the dialogs show, so it says "build 95"; only the URL uses the tag. */
+    /* Lichii build 125 (GPL-3.0), github.com/zortos293/Lichii, tag build-125 (nx2 @ cbb512e, a pre-release published 2026-11-09 UTC by CI run 42536398207). An Eden fork that
+     * adds Switch 2 games. Over build 95 it supports mesh-shader output topologies 0 and 1 (Lichii PR #515, a10e5f5): build 95 throws "Mesh output topology N ... is not
+     * implemented" for anything but 4, and logged that while Ocarina of Time's Water Temple walls were missing. Its Vulkan shader cache is v54, which lists v53 as compatible
+     * (CompatibleVulkanPipelineCacheVersions), so a build 95 cache carries over. lichii.exe is at the zip root and the zip no longer ships .pdb files (~87 MB).
+     * Portable via a `user` folder beside the exe (lichii.h), which an upgrade from an older pin never touches (install_core). The zip also holds lichii-updater.exe,
+     * Lichii's own self-updater: install_core deletes it, because RetroHub is the only updater (lichii_ini_launch also forces check_for_updates off). No games, keys or
+     * firmware are included: the player supplies their own. The version string is what the marker, Settings and the dialogs show. */
     static const Release li = {
-        "build 95", L"github.com", L"/zortos293/Lichii/releases/download/build-94/lichii-windows-x86_64.zip",
-        116143228ull, "1560b9d46a20b54a8494316a650bfef12a905fbd6c612758d4509dcefca61164", L"lichii.exe", "GPL-3.0"};
+        "build 125", L"github.com", L"/zortos293/Lichii/releases/download/build-125/lichii-windows-x86_64.zip",
+        87352192ull, "c55eaaedbdcd87eebcab5510a3d19c49545a4718b9355d95150150d5aeb67bb6", L"lichii.exe", "GPL-3.0"};
     /* Fritchii (GPL-3.0): Frizti's Ocarina-of-Time fork of Lichii, built by us on GitHub Actions (github.com/fatty8me2/Fritchii). Same exe name (lichii.exe at the ROOT
      * of the zip, plus eden-cli.exe), same portable `user` folder, same qt-config.ini and save layout as Lichii. It lives in its OWN folder (userdata\emulators\fritchii)
      * with its OWN user\, never linked to Lichii's. The values come from the one block fritchii_pin below. */
@@ -735,7 +737,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     if (ok && is_nx(k)) {   // (Lichii and Fritchii) a `user` folder beside lichii.exe = portable (a player's own %APPDATA%\eden is never touched); the debug symbols (~116 MB) and the bundled VC++ installer are not needed to play
         make_dirs(join(dir, "user"));
         std::error_code ec2;
-        for (const char* f : {"lichii.pdb", "eden-cli.pdb", "vc_redist.x64.exe"}) fs::remove(P(join(dir, f)), ec2);
+        for (const char* f : {"lichii.pdb", "eden-cli.pdb", "vc_redist.x64.exe", "lichii-updater.exe"}) fs::remove(P(join(dir, f)), ec2);   // lichii-updater.exe (build 125+) is Lichii's own self-updater: RetroHub is the only updater
     }
     if (ok && k == Kind::Dolphin) ok = write_text(join(dir, "portable.txt"), "");   // Dolphin keeps its User folder beside the exe
     if (ok) ok = write_text(join(dir, "retrohub-install.txt"), std::string(name(k)) + " " + rel.version + "\nsha256 " + rel.sha256 + "\n");   // the marker is last

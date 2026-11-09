@@ -1,7 +1,7 @@
 # Headless UI shots for the "Lichii is the default again + Lichii build 95" change, the parts hookshot_ui_shots.ps1 does not cover:
 #   1. the Hookshot card in every state (idle, problems, building, paused, failed, done = Play uses Lichii, done_on = Play uses Hookshot)
 #   2. the "newer Lichii" offer at Play (HUB_SHOT_EMU=lichiiupdate)
-#   3. Settings > Video & Games with an OUTDATED managed Lichii (build 88 on disk, build 95 offered): the newer-version text and the Update button.
+#   3. Settings > Video & Games with an OUTDATED managed Lichii (build 88 on disk, the pinned build offered): the newer-version text and the Update button.
 #      The fake install (lichii.exe, any bytes, and retrohub-install.txt naming build-88) lives only in the run's own copied data folder. Nothing is started.
 # Every run is hidden, muted, no network (HUB_SCREENSHOT mode) and killed by PID if it overruns. Nothing is written to -DataFrom.
 # Usage: qa\lichii_update_shots.ps1 [-DataFrom <userdata dir>] [-Build <bin\Release>] [-Out <dir>] [-Sizes 1280x800,1600x1000] [-Secs 12]
