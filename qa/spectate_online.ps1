@@ -3,31 +3,44 @@
 #   powershell -File qa\spectate_online.ps1 -Mode lockstep -Frames 3000
 #   powershell -File qa\spectate_online.ps1 -Mode rollback -Frames 3000 -LateSec 6        (spectator joins 6 s after the players started)
 #   powershell -File qa\spectate_online.ps1 -Mode rollback -Frames 3600 -LateSec 20 -ExpectLive   (live join: snapshot + catch-up)
+#   powershell -File qa\spectate_online.ps1 -Mode rollback -Frames 3000 -LateSec 6 -ReplayFromStart  (no live join: replay from frame 0 + fast-forward)
+#   -Exe <retrorun.exe> runs another build (default build\bin\Release\retrorun.exe under the repo root).
+# Defaults: lockstep = mGBA + sram.gba (gba); rollback = nestopia + netplay.nes (nes), because stock mGBA is not rollback-verified and
+# retrorun then silently falls back to lockstep. Pass -Core/-Rom/-System to override. A rollback run whose peers log
+# "staying on lockstep netplay" FAILS (it was not a rollback test).
 # -ExpectLive (rollback): the spectator must join from a live snapshot (not frame 0), be live within -MaxCatchupMs of asking, compare
 # agreeing hashes with the host, and no player frame may take longer than -MaxGapMs while it joins (players log frame-gap lines).
 # The local worker is started here from -WorkerDir (a BattleShip worktree that has the role=watch seats) on -Port with its own registry
 # and persist dir; only that PID is stopped afterwards. Use -Server to reuse an already running local worker instead.
 param(
     [ValidateSet('lockstep', 'rollback')][string]$Mode = 'lockstep',
-    [string]$Core = 'mgba_libretro.dll',
-    [string]$Rom = 'deps\testroms\sram.gba',
-    [string]$System = 'gba',
+    [string]$Core = '',
+    [string]$Rom = '',
+    [string]$System = '',
     [int]$Frames = 3000,
     [int]$Spectators = 1,
     [int]$LateSec = 0,
     [string]$Server = '',
-    [string]$WorkerDir = 'C:\Users\fatty\Desktop\SmashClassicPort\wt\p3-spectate-srv\server\cloudflare',
+    [string]$WorkerDir = 'C:\Users\fatty\Desktop\SmashClassicPort\BattleShip\server\cloudflare',
     [int]$Port = 8793,
     [string]$Tag = 'spec',
     [int]$TimeoutSec = 600,
     [switch]$Relay,
     [switch]$ExpectLive,
+    [switch]$ReplayFromStart,
+    [string]$Exe = '',
     [int]$MaxCatchupMs = 3000,
     [double]$MaxGapMs = 50
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+# rollback needs a rollback-verified core; stock mGBA would silently run lockstep. Only fill what the caller did not pass.
+$rb = ($Mode -eq 'rollback')
+if (-not $PSBoundParameters.ContainsKey('Core')) { $Core = if ($rb) { 'nestopia_libretro.dll' } else { 'mgba_libretro.dll' } }
+if (-not $PSBoundParameters.ContainsKey('Rom')) { $Rom = if ($rb) { 'deps\testroms\netplay.nes' } else { 'deps\testroms\sram.gba' } }
+if (-not $PSBoundParameters.ContainsKey('System')) { $System = if ($rb) { 'nes' } else { 'gba' } }
+if ($Rom -like '*netplay.nes' -and -not (Test-Path (Join-Path $root $Rom))) { python "$PSScriptRoot\make_nesnes_roms.py" (Join-Path $root 'deps\testroms') }
 $wr = $null
 if ($Server -eq '') {
     $Server = "ws://127.0.0.1:$Port"
@@ -48,9 +61,12 @@ if ($Server -eq '') {
 . "$PSScriptRoot\_guard.ps1"; Assert-LocalServer $Server
 if ($Relay) { $env:HUBNET_FORCE_RELAY = '1' }
 $env:RETRORUN_MUTE = '1'
+if ($ReplayFromStart) { $env:RETRORUN_NO_LIVE_SPECTATE = '1' }   # only spectators read it
 
-$exe = Join-Path $root 'build\bin\Release\retrorun.exe'
-$corePath = Join-Path $root ('build\bin\Release\cores\' + $Core)
+$exe = if ($Exe -ne '') { $Exe } else { Join-Path $root 'build\bin\Release\retrorun.exe' }
+if (-not (Test-Path $exe)) { throw "retrorun not found: $exe" }
+$corePath = Join-Path (Split-Path -Parent $exe) ('cores\' + $Core)
+if (-not (Test-Path $corePath)) { $corePath = Join-Path $root ('build\bin\Release\cores\' + $Core) }
 if (-not (Test-Path $corePath)) { $corePath = Join-Path $root ('deps\cores\' + $Core) }
 if (-not (Test-Path $corePath)) { $corePath = Join-Path 'C:\Users\fatty\Desktop\SmashClassicPort\RetroHub\deps\cores' $Core }
 $romPath = Join-Path $root $Rom
@@ -90,10 +106,20 @@ foreach ($x in $procs) {
     $lines = if (Test-Path $x.Log) { Get-Content $x.Log } else { @() }
     $final = $lines | Where-Object { $_ -match 'final:' } | Select-Object -Last 1
     $rc = $x.Proc.ExitCode
-    $ds = @($lines | Where-Object { $_ -match 'DESYNC' }).Count
+    $ds = @($lines | Where-Object { $_ -cmatch 'DESYNC' }).Count   # case-sensitive: "resync: desync recovery off" is harmless
+    if ($Mode -eq 'rollback' -and @($lines | Where-Object { $_ -match 'staying on lockstep netplay' }).Count -gt 0) {
+        $fail++; Write-Output "FAIL: $($x.Name) fell back to lockstep: the core ($Core) is not rollback-verified, so this run was not a rollback test."
+    }
     $sp = $lines | Where-Object { $_ -match 'spectate' } | Select-Object -Last 2
     $hv = if ($final) { ($final -replace '.*final: frame \d+ ', '') } else { 'NONE' }
-    $finals[$x.Name] = $hv
+    # a lockstep spectator that joined from a live snapshot (from frame > 0) only hashed the frames after its join: compare state only
+    $stateOnly = $false
+    if ($Mode -eq 'lockstep' -and $x.Name -like 's*') {
+        $dn = $lines | Where-Object { $_ -match 'spectate: done, \d+ frames \(from (\d+)\)' } | Select-Object -Last 1
+        if ($dn -and ($dn -match '\(from (\d+)\)') -and [int]$Matches[1] -gt 0) { $stateOnly = $true }
+    }
+    $finals[$x.Name] = [pscustomobject]@{ H = $hv; StateOnly = $stateOnly }
+    if ($stateOnly) { Write-Output "  $($x.Name): lockstep live join (snapshot), comparing the state hash only" }
     Write-Output ("{0} rc={1} desync={2} | {3}" -f $x.Name, $rc, $ds, $hv)
     foreach ($l in $sp) { Write-Output ("     " + $l) }
     if ($rc -ne 0 -or $ds -gt 0 -or $hv -eq 'NONE') { $fail++ }
@@ -127,10 +153,19 @@ if ($ExpectLive) {
         }
     }
 }
-# lockstep: state-hash and output-hash must be identical everywhere. rollback: players and spectator compare the output hash.
-# a lockstep live join skipped the frames before its snapshot, so its rolling output hash differs by design: compare the state there.
-$cmp = @($finals.Values | ForEach-Object { if ($Mode -eq 'lockstep' -and $ExpectLive) { $_ -replace ' output-hash \w+', '' -replace ' input-hash \w+', '' } elseif ($Mode -eq 'rollback') { ($_ -replace 'state-hash \w+ ', '') -replace ' input-hash \w+', '' } else { $_ -replace ' input-hash \w+', '' } } | Select-Object -Unique)
-if ($cmp.Count -ne 1) { $fail++; Write-Output "FAIL: final hashes differ: $($cmp -join ' || ')" }
+# Every peer must end on the players' state-hash AND output-hash, except a lockstep spectator that joined from a live snapshot:
+# its rolling output hash only covers the frames after the join (by design), so it is compared on the state hash only.
+# Rollback spectators are seeded from the host's confirmed output chain, so they are compared on both (state matched in every run).
+function HashOf([string]$h, [string]$name) { if ($h -match "$name (\w+)") { $Matches[1] } else { '' } }
+$ref = $finals['p0']
+$mismatch = @()
+foreach ($k in $finals.Keys) {
+    $v = $finals[$k]
+    if ($v.H -eq 'NONE') { continue }
+    if ((HashOf $v.H 'state-hash') -ne (HashOf $ref.H 'state-hash')) { $mismatch += "$k state-hash $(HashOf $v.H 'state-hash') vs p0 $(HashOf $ref.H 'state-hash')" }
+    if (-not $v.StateOnly -and (HashOf $v.H 'output-hash') -ne (HashOf $ref.H 'output-hash')) { $mismatch += "$k output-hash $(HashOf $v.H 'output-hash') vs p0 $(HashOf $ref.H 'output-hash')" }
+}
+if ($mismatch.Count) { $fail++; Write-Output "FAIL: final hashes differ: $($mismatch -join ' || ')" }
 if ($fail) { Write-Output "RESULT: FAIL"; exit 1 }
 Write-Output "RESULT: PASS (spectators ended on the players' hashes)"
 exit 0
