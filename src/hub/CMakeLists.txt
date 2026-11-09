@@ -85,6 +85,11 @@ add_executable(hub_continue_test test_continue.cpp)
 target_include_directories(hub_continue_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hub_continue_test PRIVATE cxx_std_17)
 
+# Steam-style play time (hours, last played, game page stats strip): pure header; playtime_logic.h only includes playstats.h for its Session type (no hubsaves link).
+add_executable(hub_playtime_test test_playtime.cpp)
+target_include_directories(hub_playtime_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
+target_compile_features(hub_playtime_test PRIVATE cxx_std_17)
+
 # Home scrolling: wheel axis routing + eased page spring (pure header).
 add_executable(hub_homescroll_test test_homescroll.cpp)
 target_include_directories(hub_homescroll_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
