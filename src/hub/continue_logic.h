@@ -1,5 +1,5 @@
 #pragma once
-/* Home "Continue" hero + "Jump back in" row, pure logic (no ImGui, no files): which game the hero shows, where its backdrop picture comes
+/* Home "Continue" hero + "Recently played" row, pure logic (no ImGui, no files): which game the hero shows, where its backdrop picture comes
  * from, the relative-time wording, the Continue-vs-Play label rules and which recently played games fill the row. Unit tested by
  * hub_continue_test. The UI is continue_ui.cpp. */
 #include <algorithm>
@@ -11,7 +11,7 @@
 namespace hubui::cont {
 
 constexpr int kRecentDays = 30;     // a game counts as "recent" for the Continue hero when played in the last N days
-constexpr size_t kRowMax = 6;       // "Jump back in" shows at most this many games
+constexpr size_t kRowMax = 6;       // "Recently played" shows at most this many games
 
 /* One library game as the picker sees it. */
 struct Cand {
@@ -38,7 +38,7 @@ inline int pick_hero_game(const std::vector<Cand>& g, uint64_t now, int days = k
     return best;
 }
 
-/* The "Jump back in" row: up to `n` recently played owned games, newest first (ties keep library order). The hero game is NOT removed:
+/* The "Recently played" row: up to `n` recently played owned games, newest first (ties keep library order). The hero game is NOT removed:
  * the hero follows the focused tile, so dropping the newest game would make it unreachable once another tile is focused. */
 inline std::vector<int> pick_row(const std::vector<Cand>& g, uint64_t now, size_t n = kRowMax, int days = kRecentDays) {
     std::vector<int> v;

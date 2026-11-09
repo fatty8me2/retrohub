@@ -285,11 +285,11 @@ struct ShelfGame {
     bool pinned = false;
     unsigned long long play_seconds = 0, added = 0;
     int year = 0;                       // release year (0 unknown); only filled when the sort needs it
-    bool ghost = false;                 // a friend's game you do not own: never in Continue Playing / Favorites / the hero, sorts last
+    bool ghost = false;                 // a friend's game you do not own: never in Recently played / Favorites / the hero, sorts last
 };
 struct Shelf {
     std::string id;      // "recent" "favs" or "console:<system_short>" ("console:other" for unknown systems)
-    std::string title;   // "Continue Playing" ...
+    std::string title;   // "Recently played" ...
     std::vector<int> items;   // indices into the ShelfGame vector
 };
 /* Consoles in display order: n64 gc wiiu 3ds nds gba gbc gb (the native Smash Classic entry is system "n64"). */

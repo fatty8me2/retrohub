@@ -312,12 +312,12 @@ int main() {
         auto sh = compose_shelves(g);
         std::vector<std::string> ids;
         for (auto& s2 : sh) ids.push_back(s2.id);
-        std::vector<std::string> want = {"recent", "favs", "console:n64", "console:gc", "console:gba", "console:gbc", "console:gb"};
+        std::vector<std::string> want = {"favs", "recent", "console:n64", "console:gc", "console:gba", "console:gbc", "console:gb"};
         CHECK(ids == want);
-        CHECK(sh[0].items == std::vector<int>({1, 4, 2}));          // newest first
-        CHECK(sh[1].items == std::vector<int>({1, 3}));             // favorites by title
+        CHECK(sh[1].items == std::vector<int>({1, 4, 2}));          // Recently played: newest first
+        CHECK(sh[0].items == std::vector<int>({1, 3}));             // Favorites (first) by title
         CHECK(sh[2].items == std::vector<int>({0, 2, 1, 8, 7}));    // n64: Smash pinned, then banjo, Mario Party, Unknown Rom, Zelda
-        CHECK(sh[0].title == "Continue Playing" && sh[2].title == "Nintendo 64" && sh[6].title == "Game Boy");
+        CHECK(sh[1].title == "Recently played" && sh[0].title == "Favorites" && sh[2].title == "Nintendo 64" && sh[6].title == "Game Boy");
         /* each game appears in exactly one console shelf */
         std::vector<int> seen(g.size(), 0);
         for (auto& s2 : sh)
@@ -909,7 +909,7 @@ int main() {
         CHECK(join_names({}) == "" && join_names({"A"}) == "A" && join_names({"A", "B", "C"}) == "A, B and C");
     }
 
-    {   // friends' games (ghosts): after owned games in their console, never in Continue Playing / Favorites / hero
+    {   // friends' games (ghosts): after owned games in their console, never in Recently played / Favorites / hero
         std::vector<ShelfGame> g(4);
         g[0].key = "a"; g[0].title = "Zebra"; g[0].system = "n64"; g[0].last_played = 100;
         g[1].key = "ghost:g1"; g[1].title = "Aardvark"; g[1].system = "n64"; g[1].ghost = true; g[1].last_played = 999; g[1].favorite = true;

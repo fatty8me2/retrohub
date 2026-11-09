@@ -1,5 +1,5 @@
 #pragma once
-/* Home "Continue" hero + "Jump back in" row (continue_ui.cpp; the pure rules are continue_logic.h). page_library.cpp only calls these. */
+/* Home "Continue" hero + "Recently played" row (continue_ui.cpp; the pure rules are continue_logic.h). page_library.cpp only calls these. */
 #include <vector>
 #include "app.h"
 

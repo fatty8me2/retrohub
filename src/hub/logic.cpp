@@ -1178,13 +1178,13 @@ std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_rece
     std::vector<Shelf> out;
     std::vector<unsigned long long> lp;
     for (auto& e : g) lp.push_back(e.ghost ? 0 : e.last_played);
-    Shelf recent{"recent", "Continue Playing", pick_recent(lp, max_recent)};
-    if (!recent.items.empty()) out.push_back(recent);
-    Shelf favs{"favs", "Favorites", {}};
+    Shelf favs{"favs", "Favorites", {}};   // Home order: Favorites first, then Recently played
     for (size_t i = 0; i < g.size(); ++i)
         if (g[i].favorite && !g[i].ghost) favs.items.push_back((int)i);
     by_title(favs.items);
     if (!favs.items.empty()) out.push_back(favs);
+    Shelf recent{"recent", "Recently played", pick_recent(lp, max_recent)};
+    if (!recent.items.empty()) out.push_back(recent);
     std::vector<ListItem> li;
     for (auto& e : g) { ListItem it{e.key, e.title, e.system, e.pinned, e.last_played, e.play_seconds, e.added}; it.ghost = e.ghost; it.favorite = e.favorite; it.year = e.year; li.push_back(it); }
     for (auto& cs : group_by_console(li, nullptr, mode)) {
