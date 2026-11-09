@@ -475,11 +475,13 @@ static void test_env() {
     };
     hub::gs::Values v = hub::gs::defaults_for(hub::System::Switch);
     const hub::gs::Option* o = hub::gs::find_option("switch.preload_shaders");
-    CHECK(o && o->def == "auto" && o->choices.size() == 3);
-    CHECK(v["switch.preload_shaders"] == "auto");
+    CHECK(o && o->def == "recent" && o->choices.size() == 3);   // 1.40.4: "Recently used" is the default
+    CHECK(v["switch.preload_shaders"] == "recent");
     hub::gs::Store st;
-    CHECK(st.resolve(hub::System::Switch, "switch:x")["switch.preload_shaders"] == "auto");
-    CHECK(!set(v, (uint64_t)(31.7 * G)));   // a "32 GB" PC no longer preloads everything on auto (1.40.3: 43k pipelines = ~19 GB, a 27-minute first start)
+    CHECK(st.resolve(hub::System::Switch, "switch:x")["switch.preload_shaders"] == "recent");
+    CHECK(!set(v, (uint64_t)(63.7 * G)) && !set(v, 128 * G));   // the default never preloads everything, whatever the RAM
+    v["switch.preload_shaders"] = "auto";
+    CHECK(!set(v, (uint64_t)(31.7 * G)));   // auto: a "32 GB" PC does not preload everything (1.40.3: 43k pipelines = ~19 GB, a 27-minute first start)
     CHECK(set(v, (uint64_t)(63.7 * G)));    // a "64 GB" PC does
     CHECK(!set(v, 16 * G));
     v["switch.preload_shaders"] = "all";
@@ -491,11 +493,10 @@ static void test_env() {
         for (auto& kv : e) if (kv.first == "EDEN_NX2_PRELOAD_ALL_PIPELINES") pre = true;
         CHECK(!pre);
     }
-    CHECK(set(hub::gs::Values{}, 64 * G));
-    CHECK(!set(hub::gs::Values{}, 32 * G));
+    CHECK(!set(hub::gs::Values{}, 64 * G));   // missing = the default "recent"
     CHECK(!set(hub::gs::Values{}, 8 * G));
     v["switch.preload_shaders"] = "bogus";
-    CHECK(set(v, 64 * G) && !set(v, 32 * G));
+    CHECK(!set(v, 64 * G) && !set(v, 8 * G));   // unknown preloads nothing
 }
 
 /* switch.fast_reads: default on, global + per game, and EDEN_NX2_NO_REACTIVE in the launch environment. */
@@ -518,6 +519,7 @@ static void test_fast_reads() {
         CHECK(st.set_system(hub::System::Switch, "switch.fast_reads", "on"));
         CHECK(st.set_game(g, hub::System::Switch, "switch.fast_reads", "off"));
         CHECK(!hask(hubemu::lichii_env(st.resolve(hub::System::Switch, g), 32 * G), "EDEN_NX2_NO_REACTIVE"));
+        CHECK(st.set_system(hub::System::Switch, "switch.preload_shaders", "all"));   // (the default "recent" preloads nothing)
         CHECK(hask(hubemu::lichii_env(st.resolve(hub::System::Switch, g), 64 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
         CHECK(has(hubemu::lichii_env(st.resolve(hub::System::Switch, other), 32 * G), "EDEN_NX2_NO_REACTIVE", "1"));
         CHECK(!st.set_game(g, hub::System::Switch, "switch.fast_reads", "bogus"));

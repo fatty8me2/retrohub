@@ -159,7 +159,8 @@ std::vector<Option> build() {
     // until 1.40.3 it was 30 GiB, which on a 32 GB PC meant ~19 GB of driver memory and, after a Lichii update, ~27 minutes before the first frame.
     // Help text: "All loads every shader Lichii has cached when the game starts: a longer start and more memory, fewer hitches. Auto does this on PCs with
     // 64 GB of RAM or more." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Read by the launch only, never written to Lichii's ini.
-    v.push_back(mk("switch.preload_shaders", "Shaders at start", "Video", SWITCH, K::Choice, S::Visual, "auto",
+    // Default "recent" since 1.40.4 (the owner's call: a full preload of a big cache took minutes and filled a 32 GB PC's memory); "auto" stays a choice.
+    v.push_back(mk("switch.preload_shaders", "Shaders at start", "Video", SWITCH, K::Choice, S::Visual, "recent",
                    {{"auto", "Auto"}, {"all", "All cached shaders"}, {"recent", "Recently used"}}));
     // "Faster GPU reads" (default on): sets EDEN_NX2_NO_REACTIVE=1 for every Lichii-family launch (hubemu::lichii_fast_reads, lichii.cpp). Lichii build 125 drops
     // its read traps on Switch 2 programs, so a CPU read of GPU-written memory no longer waits for the whole GPU (Ocarina of Time fell from ~60 to ~17 fps in

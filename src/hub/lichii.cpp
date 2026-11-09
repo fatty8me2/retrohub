@@ -718,11 +718,11 @@ std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Value
     std::vector<std::pair<std::string, std::string>> env;
     if (lichii_fast_reads(v)) env.push_back({"EDEN_NX2_NO_REACTIVE", "1"});
     auto it = v.find("switch.preload_shaders");
-    const std::string m = it == v.end() ? "auto" : it->second;
+    const std::string m = it == v.end() ? "recent" : it->second;   // the default since 1.40.4; an unknown value preloads nothing either
     const uint64_t kGiB = 1024ull * 1024 * 1024;
     // "auto" preloads everything only with 60 GiB+ of RAM (a "64 GB" PC). It used to be 30 GiB, but a cache of 43k pipelines needs ~19 GB of
     // driver memory, and after a Lichii update every pipeline is compiled again first: a 32 GB PC sat 27 minutes before the first frame on build 125.
-    const bool all = m == "all" || (m != "recent" && ram >= 60 * kGiB);
+    const bool all = m == "all" || (m == "auto" && ram >= 60 * kGiB);
     if (all) env.push_back({"EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"});
     return env;
 }
