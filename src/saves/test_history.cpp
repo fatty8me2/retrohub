@@ -2,6 +2,7 @@
 #include <windows.h>
 #include "history.h"
 #include "playstats.h"
+#include "savestore.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -95,6 +96,62 @@ int main() {
     // streak ending yesterday still counts; a gap breaks it
     Stats y = compute_stats({}, {{"n64", "g", now - 86400, 60}, {"n64", "g", now - 3 * 86400, 60}}, now, 0);
     CHECK(y.streak_days == 1);
+
+    // play log reader: playlog_read_game / playlog_read_all / playlog_append against a throwaway vault
+    {
+        fs::path vault = root / "vault";
+        set_vault_dir(U(vault));
+        const std::string key = "playkey_1";                    // nothing sanitize_component would change
+        fs::path pl = vault / "n64" / key / "playlog";
+        put(pl / "PC-A.log", "1700000000,100\nnot a line\n1700000500,200\n");
+        put(pl / "pc-b.log", "1700001000,300\n5,-1\n");
+        put(pl / "notes.txt", "1700009000,999\n");                // not a .log: ignored
+        put(pl / "PC-A.log.tmp", "1700009100,998\n");             // a sync tool's temp copy: ignored
+        put(pl / "x.log" / "inner.log", "1700009200,997\n");      // a folder named x.log: not a regular file, not read
+        std::vector<Session> g = playlog_read_game("n64", key);
+        CHECK(g.size() == 3);
+        int na = 0, nb = 0;
+        int64_t sum_a = 0, sum_b = 0;
+        bool meta_ok = true;
+        for (const Session& s : g) {
+            if (s.system != "n64" || s.key != key) meta_ok = false;
+            if (s.device == "PC-A") { ++na; sum_a += s.secs; }
+            else if (s.device == "pc-b") { ++nb; sum_b += s.secs; if (s.start != 1700001000) meta_ok = false; }
+            else meta_ok = false;
+        }
+        CHECK(meta_ok);                                           // device = the file name without ".log" (case kept), system/key = the arguments
+        CHECK(na == 2 && sum_a == 300);                           // the malformed line is skipped
+        CHECK(nb == 1 && sum_b == 300);
+
+        // a key with ':' lives in a folder with '_' on disk, found by the unsanitized key
+        const std::string gp = game_dir_path("n64", "n64:abc");
+        CHECK(gp.size() >= 12 && gp.substr(gp.size() - 12) == "n64\\n64_abc\\");
+        put(vault / "n64" / "n64_abc" / "playlog" / "PC-A.log", "1700002000,60\n");
+        std::vector<Session> c = playlog_read_game("n64", "n64:abc");
+        CHECK(c.size() == 1 && c[0].key == "n64:abc" && c[0].system == "n64" && c[0].device == "PC-A" && c[0].start == 1700002000 && c[0].secs == 60);
+
+        // read-only: no folder, no sessions, nothing created
+        CHECK(playlog_read_game("n64", "no_such_game").empty());
+        CHECK(!fs::exists(vault / "n64" / "no_such_game"));
+        CHECK(playlog_read_game("gba", "no_such_game").empty() && !fs::exists(vault / "gba"));
+        CHECK(playlog_read_game("", key).empty() && playlog_read_game("n64", "").empty() && playlog_read_game("", "").empty());
+
+        // every game, every PC (device filled)
+        std::vector<Session> all = playlog_read_all();
+        CHECK(all.size() == 4);
+        bool dev_ok = true;
+        for (const Session& s : all) if (s.device.empty()) dev_ok = false;
+        CHECK(dev_ok);
+
+        // append, then read it back: this PC's file
+        playlog_append("gba", "rt", 1700003000, 90);
+        std::vector<Session> rt = playlog_read_game("gba", "rt");
+        CHECK(rt.size() == 1 && rt[0].start == 1700003000 && rt[0].secs == 90 && rt[0].device == playlog_device() && rt[0].system == "gba" && rt[0].key == "rt");
+        playlog_append("gba", "rt", 1700004000, 10);
+        CHECK(playlog_read_game("gba", "rt").size() == 2);
+
+        set_vault_dir("");
+    }
 
     fs::remove_all(root);
     std::printf(g_fail ? "history_test: %d FAILED\n" : "history_test: all ok\n", g_fail);
