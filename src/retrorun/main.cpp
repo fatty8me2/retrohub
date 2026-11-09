@@ -710,7 +710,18 @@ class Frontend {
         return false;
     }
     /* Exit code when the session dies: 8 when a partner (usually the host) left on purpose or the host is gone, 4 for a plain connection loss. */
-    int lost_code() { std::string s = session.status(); return (s.find("host left") != std::string::npos || s.find("partner ended") != std::string::npos) ? 8 : 4; }
+    int lost_code()
+    {
+        auto left = [&] { std::string s = session.status(); return s.find("host left") != std::string::npos || s.find("partner ended") != std::string::npos; };
+        if (!left() && session.my_slot() != 0 && !host_verdict_asked_) {
+            /* A crashed host's seat is held ~10 s by the server; its verdict ("host left") lands just after our own timer. Ask once. */
+            host_verdict_asked_ = true;
+            if (session.await_host_verdict(3500)) rlog("net: the server says the host left");
+            else rlog("net: no word about the host from the server: connection lost");
+        }
+        return left() ? 8 : 4;
+    }
+    bool host_verdict_asked_ = false;
     bool link_active = false;
     uint16_t link_msg_id = 0;
     dslink::Reassembler link_reasm;

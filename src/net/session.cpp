@@ -121,6 +121,7 @@ struct Session::Impl {
     SessionConfig cfg;
     bool started = false, failed = false, ready_ever = false, ended = false;
     bool bye_from[kMaxSlots] = {};   // a partner said a clean 'bye' before leaving
+    bool verdict_done = false, verdict_left = false;   // await_host_verdict(): asked once
     bool departing = false;          // the host left without a bye yet: wait briefly for one, then fail
     uint32_t depart_deadline = 0;
     std::string depart_why;
@@ -866,6 +867,50 @@ bool Session::ready() const
     if (!d.started || d.failed || !d.ready_ever) return false;
     if (d.is_host()) return popcount(d.roster_mask) >= d.cfg.expected;
     return true;
+}
+bool Session::await_host_verdict(uint32_t max_ms)
+{
+    Impl& d = *impl_;
+    if (d.is_host() || !d.started) return false;
+    if (d.status.find("host left") != std::string::npos || d.status.find("partner ended") != std::string::npos) return true;
+    if (d.verdict_done) return d.verdict_left;
+    VerdictInput in;
+    in.max_ms = max_ms;
+    uint32_t t0 = now_ms();
+    if (d.ws.state() == WsState::Open) d.ws.send_text("{\"type\":\"keepalive\"}");
+    HostVerdict v = HostVerdict::Wait;
+    auto scan = [&](const std::string& text) {
+        in.any_text_seen = true;
+        Json j;
+        if (!json_parse(text, &j) || j.type != Json::Object) return;
+        std::string type = j.str("type");
+        if (type == "error" && j.str("reason") == "host-left-game") in.host_left_signal = true;
+        else if (type == "members") {
+            bool has0 = false;
+            const Json* a = j.get("members");
+            if (a) for (const Json& m : a->a) if (m.i64("slot", -1) == 0) has0 = true;
+            if (a && !has0) in.host_left_signal = true;
+        }
+    };
+    for (;;) {
+        std::string text;
+        while (d.ws.poll_text(&text)) scan(text);
+        std::vector<uint8_t> bin;
+        while (d.ws.poll_binary(&bin)) {}   // relayed game frames: not needed any more
+        if (d.ws.state() == WsState::Failed) {
+            while (d.ws.poll_text(&text)) scan(text);   // a verdict that came right before the close
+            if (d.ws.close_code() == 4001) in.host_left_signal = true; else in.socket_dead_other = true;
+        }
+        in.elapsed_ms = now_ms() - t0;
+        v = host_verdict(in);
+        if (v != HostVerdict::Wait) break;
+        Sleep(10);
+    }
+    d.verdict_done = true;
+    d.verdict_left = (v == HostVerdict::HostLeft);
+    net_log("Session %d: host verdict: %s (%u ms)", d.slot, d.verdict_left ? "the host left" : "no word", now_ms() - t0);
+    if (d.verdict_left) d.status = "The host left";
+    return d.verdict_left;
 }
 bool Session::failed() const { return impl_->failed; }
 bool Session::ended() const { return impl_->ended; }
