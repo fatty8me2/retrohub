@@ -1,6 +1,6 @@
 #pragma once
 /* "Does this game file look incomplete?" for Nintendo Switch / Switch 2 dumps. UI-free, no keys, header reads only: it never hashes or reads a
- * whole file. Used by the game's page, the Library health card and the Play note (src/hub/verify_ui.cpp).
+ * whole file. Used only by the game's page (About tab, src/hub/verify_ui.cpp).
  *
  * Two independent checks, worst verdict wins:
  *   1. Structure (check_structure): the container's own header says how long the file must be (PFS0 entry table for .nsp / .nsz, the XCI
@@ -58,37 +58,11 @@ Result check_structure(const ReadFn& read, uint64_t file_size, const std::string
 /* Both checks on a real file (path is UTF-8). Cheap: a few small reads. Missing or unreadable file = Ok (the library handles that). */
 Result check_file(const std::string& path, uint64_t title_id);
 
-/* ---- the Play-gate decision, pure so it can be tested: does Play open the incomplete-dump note? ---- */
-struct PlayGateIn {
-    Verdict verdict = Verdict::Ok;   // the cached answer for the file (Ok when not checked yet)
-    bool dismissed = false;          // "Don't warn about this file again" for this path and size
-    bool pass_fresh = false;         // "Play anyway" was pressed for this game less than 20 s ago
-    bool game_running = false;       // a game is already running: never open anything
-    bool party_round = false;        // a couch party round is launching: the note would block the round
-    bool hookshot = false;           // Hookshot plays this game, not the file the check is about
-};
-bool play_gate_shows(const PlayGateIn& in);
-
 /* "23.30 GB" (binary gigabytes, the unit file explorers show). */
 std::string format_gb(uint64_t bytes);
 
-/* The warning sentence(s) for the game page and the Play note; "" for Ok. */
+/* The warning sentence(s) for the game page; "" for Ok. */
 std::string warning_text(const Result& r);
-/* One short line for the Library health card list. */
-std::string short_line(const Result& r);
-
-/* ---- "Don't warn about this file again": remembered per path AND size, so a new dump of the same path warns again ---- */
-class DismissList {
-public:
-    bool has(const std::string& path, uint64_t size) const;
-    void add(const std::string& path, uint64_t size);
-    std::string serialize() const;           // one "<size>\t<path>" per line
-    void parse(const std::string& text);     // ignores bad lines
-    size_t size() const { return m_.size(); }
-private:
-    std::map<std::string, uint64_t> m_;      // lower-cased path -> size
-};
-
 /* ---- cache: one background check per file, keyed by path + size + modified time ---- */
 class Cache {
 public:
