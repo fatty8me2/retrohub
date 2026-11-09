@@ -1077,10 +1077,11 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
     const fs::path user = dir / "user";
 
     auto v1 = make_rel(root / "zips" / "v1.zip", "build-88", {{"lichii.exe", "EXE-1"}, {"Qt6Core.dll", "qt-1"}, {"old_only.dll", "gone-soon"},
-                                                                {"lichii.pdb", "pdb"}, {"vc_redist.x64.exe", "vc"}, {"platforms/qwindows.dll", "plat-1"}});
+                                                                {"lichii.pdb", "pdb"}, {"vc_redist.x64.exe", "vc"}, {"platforms/qwindows.dll", "plat-1"},
+                                                                {"lichii-updater.exe", "UPD-1"}});   // an older build that ships the updater: it is never kept
     auto v2 = make_rel(root / "zips" / "v2.zip", "build-94", {{"lichii.exe", "EXE-2"}, {"Qt6Core.dll", "qt-2"}, {"new.dll", "fresh"},
                                                                 {"lichii.pdb", "pdb2"}, {"eden-cli.pdb", "pdb3"}, {"platforms/qwindows.dll", "plat-2"},
-                                                                {"user/keys/prod.keys", "EVIL-FROM-ARCHIVE"}});
+                                                                {"user/keys/prod.keys", "EVIL-FROM-ARCHIVE"}, {"lichii-updater.exe", "UPD-2"}, {"qt.conf", "[Paths]\nPlugins=plugins\n"}});
     auto v3 = make_rel(root / "zips" / "v3.zip", "build-96", {{"lichii.exe", "EXE-3"}, {"Qt6Core.dll", "qt-3"}});
     const fs::path corrupt = root / "zips" / "v3-corrupt.zip";   // same size as v3, one byte different: the hash check must reject it
     {
@@ -1123,6 +1124,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
     std::string err;
     CHECK(run(&err));
     CHECK(marker_has(v1) && read_text(dir / "lichii.exe") == "EXE-1" && !fs::exists(dir / "lichii.pdb") && !fs::exists(dir / "vc_redist.x64.exe"));
+    CHECK(!fs::exists(dir / "lichii-updater.exe"));   // Lichii's own updater is never installed
     CHECK(fs::is_directory(user));
     write_text(user / "keys" / "prod.keys", "MY-KEYS");
     write_text(user / "config" / "qt-config.ini", "[UI]\nfirstStart=false\n");
@@ -1150,6 +1152,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
     CHECK(read_text(dir / "platforms" / "qwindows.dll") == "plat-2");
     CHECK(!fs::exists(dir / "old_only.dll"));   // stale file of the old build removed
     CHECK(!fs::exists(dir / "lichii.pdb") && !fs::exists(dir / "eden-cli.pdb") && !fs::exists(dir / "vc_redist.x64.exe"));
+    CHECK(!fs::exists(dir / "lichii-updater.exe") && read_text(dir / "qt.conf") == "[Paths]\nPlugins=plugins\n");   // the updater is gone after the upgrade too; qt.conf installs like any other file
     CHECK(marker_has(v2) && !marker_has(v1) && scratch_gone());
     CHECK(!hubemu::find(kind, "", "", root.string()).outdated && playable("EXE-2"));
     fetches = 0;
