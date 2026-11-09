@@ -74,13 +74,15 @@ std::string lichii_ini_defaults(const std::string& ini);
  * [UI] fullscreen; [System] current_user=0. */
 /* skip_keys: "Section.key" names the caller does not want written (Fritchii resets its own tuned graphics keys at every start: nx_runner.h kFritchiiSkipKeys). nullptr = write all (Lichii). */
 std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, bool fullscreen, const std::vector<std::string>* skip_keys = nullptr);
-/* Fritchii only (nx_runner.h): [Renderer] frizti_settings_revision=999 (+ the \default=false twin) and oot_fps_asked=true. Fritchii reapplies 15 "tuned" graphics keys at start
+/* Fritchii only (nx_runner.h): [Renderer] frizti_settings_revision=999 (+ the \default=false twin), oot_fps_asked=true, dyna_state=2 (EDS2) and
+ * vertex_input_dynamic_state=true (what Fritchii's shader recipe is recorded with), [UI] fritchii_whats_new_seen. Fritchii reapplies 15 "tuned" graphics keys at start
  * from its own settings revision; a revision above its own (3 in v4.1) means "already applied", so RetroHub's values stay what Lichii would get. Pure. */
 constexpr int kFriztiPinRevision = 999;
-/* Fritchii v5 shows a one-time "What's new" window when [UI] fritchii_whats_new_seen differs from its build version (Common::g_build_version, exact
- * string compare). The pinned CI build reports "build-3" (run number 3); writing it keeps the window from opening around RetroHub's -g launch.
- * Change it with every Fritchii pin. */
-constexpr const char* kFritchiiWhatsNewSeen = "build-3";
+/* Fritchii shows a one-time "What's new" window (when the game stops or fails to boot) while [UI] fritchii_whats_new_seen differs from its build
+ * version (Common::g_build_version, exact string compare). Since v5.5 RetroHub's CI build is named like Frizti's own ("Fritchii", version "v" +
+ * dist/frizti_version.txt), so the pinned build reports "v5.5"; writing it keeps the window shut. (v5's CI build reported "build-3": named "Lichii",
+ * every FritchiiUi::Enabled() path was off, the Preparing shaders screen included.) Change it with every Fritchii pin. */
+constexpr const char* kFritchiiWhatsNewSeen = "v5.5";
 std::string fritchii_ini_pin(const std::string& ini);
 /* [Controls] player 1 (player_0_*) from the RetroHub "switch" profile on one SDL pad (guid + port among same-guid pads); player_0_connected=true,
  * player_0_type=0 (Pro Controller), players 2-8 disconnected. Value format (Lichii sdl_driver.cpp):
