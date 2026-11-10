@@ -12,7 +12,8 @@
         "PS4/PS5/Switch Pro controllers: the D-pad works in Switch games without rebinding"
       ],
       "fixed": [
-        "Pressing buttons in a game no longer clicks things in RetroHub behind it (e.g. the folder picker popping up)"
+        "Pressing buttons in a game no longer clicks things in RetroHub behind it (e.g. the folder picker popping up)",
+        "Damaged-file repair now also fixes broken sound files (e.g. a missing voice line in Ocarina of Time), not just textures"
       ]
     },
     {
