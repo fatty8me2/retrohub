@@ -644,9 +644,10 @@ static void test_ensure() {
     {
         std::string mf;
         CHECK(winutil::read_file(mod + "\\" + np::kManifestName, &mf));
-        const size_t at = mf.find(" rule 1\n");
+        const std::string cur = " rule " + std::to_string(np::kRuleVersion) + "\n";
+        const size_t at = mf.find(cur);
         CHECK(at != std::string::npos);
-        mf.replace(at, 8, " rule 0\n");
+        if (at != std::string::npos) mf.replace(at, cur.size(), " rule 0\n");
         write_text(mod + "\\" + np::kManifestName, mf);
         CHECK(np::ensure(nup, user, true).scanned);
     }
@@ -835,6 +836,78 @@ static void test_followups() {
     }
 }
 
+// ---------------------------------------------------------------- sound files
+static Bytes bwav_body(size_t n, uint8_t fill) { Bytes b(n, fill); std::memcpy(b.data(), "BWAV", 4); b[4] = 0xFF; b[5] = 0xFE; return b; }
+static Bytes zero_prefix_body(size_t n) { Bytes b(n, 0x5A); std::fill(b.begin(), b.begin() + std::min<size_t>(n, 4096), (uint8_t)0); return b; }   // zeroed leading 4 KiB
+
+static void test_audio() {
+    // a damaged .bwav (codec 1, zeroed prefix) gets the closest sibling of its own scene: same prefix first, then closest size
+    const char* kBad = "Sound/Voice/EUde_Text_Dm_Time_0050_Text_001_b.bwav";
+    TDir snd = D("Voice", {
+        F("EUde_Text_Dm_Time_0050_Text_001_b.bwav", zero_prefix_body(5000)),                // damaged
+        F("EUde_Text_Dm_Time_0050_Text_000_b.bwav", bwav_body(9000, 'a')),                 // prefix 31, size gap 4000
+        F("EUde_Text_Dm_Time_0050_Text_002_b.bwav", bwav_body(5200, 'b'), 0),              // prefix 31, size gap 200, raw: the winner
+        F("USen_Text_Dm_Time_0050_Text_001_b.bwav", bwav_body(5000, 'c')),                 // exact size, shorter prefix
+        F("EUde_Text_Dm_Time_0050_Text_003_b.bwav", zero_prefix_body(5100)),               // also damaged: never a stand-in
+        F("EUde_Text_Dm_Time_0050_Text_004_b.bwav", zero_prefix_body(5200), 0),            // damaged, raw
+        F("Other_c.bwav", Bytes{'X', 'X', 'X', 'X', 1, 2, 3}),                             // unknown start, not zero: left alone
+        F("Short_d.bwav", Bytes{'B', 'W'}),                                              // too short to hold a header: left alone
+        F("Zero_e.bwav", Bytes()),                                                         // empty: ignored
+        F("Fine_f.bfstm", Bytes{'F', 'S', 'T', 'M', 9, 9}),
+        F("Bad_f.bfstm", zero_prefix_body(4200)),
+        F("Fine_g.ogg", Bytes{'O', 'g', 'g', 'S', 0, 2}),
+    });
+    TDir tex = D("Tex", {F("A_Nrm.bntx.zs", good_body(100, 'a')), F("B_Nrm.bntx.zs", zero_body(100))});
+    const std::string p = put_nup("audio", build_nup({base_pkg(kTid, D("romfs", {}, {D("Sound", {}, {snd}), tex}))}));
+    np::Scan s = np::scan(p);
+    CHECK(s.ok);
+    CHECK_EQ(s.repairs.size(), 5u);   // 001, 003, 004, Bad_f.bfstm and the texture B_Nrm
+    const np::Repair* r = find_repair(s, kBad);
+    CHECK(r && r->damaged.size == 5000 && r->stand_in.path == "Sound/Voice/EUde_Text_Dm_Time_0050_Text_002_b.bwav" && r->stand_in.size == 5200);
+    const np::Repair* r3 = find_repair(s, "Sound/Voice/EUde_Text_Dm_Time_0050_Text_003_b.bwav");
+    CHECK(r3 && r3->stand_in.path == "Sound/Voice/EUde_Text_Dm_Time_0050_Text_002_b.bwav");
+    const np::Repair* r4 = find_repair(s, "Sound/Voice/EUde_Text_Dm_Time_0050_Text_004_b.bwav");
+    CHECK(r4 && r4->stand_in.path == "Sound/Voice/EUde_Text_Dm_Time_0050_Text_002_b.bwav");
+    const np::Repair* rb = find_repair(s, "Sound/Voice/Bad_f.bfstm");
+    CHECK(rb && rb->stand_in.path == "Sound/Voice/Fine_f.bfstm");
+    CHECK(!find_repair(s, "Sound/Voice/Other_c.bwav") && !find_repair(s, "Sound/Voice/Short_d.bwav") && !find_repair(s, "Sound/Voice/Zero_e.bwav"));
+    CHECK(find_repair(s, "Tex/B_Nrm.bntx.zs") != nullptr && !find_repair(s, "Sound/Voice/Fine_g.ogg"));
+    CHECK_EQ(s.checked, 13u);   // 6 + Other_c + Short_d + 3 other sound members + 2 textures; the empty one is skipped
+
+    // apply writes the sibling's bytes under the damaged path; ensure then settles
+    const std::string user = fresh("user"), mod = mod_of(user, kTid);
+    np::Applied a = np::apply(p, s, user);
+    CHECK(a.ok && a.written == 5 && a.unrepaired == 0);
+    Bytes got;
+    CHECK(read_all(mod + "\\romfs\\Sound\\Voice\\EUde_Text_Dm_Time_0050_Text_001_b.bwav", &got) && got == bwav_body(5200, 'b'));
+    np::Manifest m;
+    CHECK(np::read_manifest(user, kTid, &m) && m.rule == np::kRuleVersion && m.entries.size() == 5);
+    CHECK(np::page_text(m).find("5 damaged files, so some rooms would be invisible and some sounds would be missing.") != std::string::npos);
+    CHECK(!np::ensure(p, user, true).scanned);
+    CHECK_EQ(np::remove(user, kTid), 5);
+    CHECK(!exists(mod));
+}
+
+static void test_audio_text_and_rule() {
+    np::Manifest only_sound = mf_of({"Sound/Voice/A_b.bwav", "Sound/Voice/C_b.bwav"});
+    CHECK_EQ(np::page_text(only_sound), std::string("This copy of the game has 2 damaged files, so some sounds or voice lines would be missing. RetroHub fills each one in with a matching file from the same copy when the game starts, so they show up. Only a fresh dump of your own copy restores them exactly."));
+    const std::string mixed = np::page_text(mf_of({"Tex/Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs", "Sound/Voice/A_b.bwav"}));
+    CHECK(mixed.find("some rooms would be invisible (the Water Temple) and some sounds would be missing.") != std::string::npos);
+    CHECK(np::kRuleVersion >= 2);
+
+    // an old clean record (rule 1) and an old manifest (rule 1) no longer count: the copy is scanned once more, and finds the sound
+    const Bytes nup_bytes = build_nup({base_pkg(kTid, D("romfs", {}, {D("Sound", {F("X_b.bwav", zero_prefix_body(4300)), F("Y_b.bwav", bwav_body(4400, 'y'))})}))});
+    const std::string nup = put_nup("audio_rule", nup_bytes);
+    const std::string user = fresh("user"), state = fresh("state") + "\\nup-repair";
+    np::Scan s0 = np::scan(nup);
+    CHECK(s0.ok);
+    const std::string rec = state + "\\nup-repair-0400486024DEC000.txt";
+    write_text(rec, "nup " + std::to_string(s0.file_size) + " " + std::to_string(s0.mtime) + " " + s0.toc_sha256 + " rule 1\npath " + nup + "\n");
+    np::Ensure e = np::ensure(nup, user, true, state);
+    CHECK(e.scanned && e.applied.written == 1);
+    CHECK(!np::ensure(nup, user, true, state).scanned);
+}
+
 // ---------------------------------------------------------------- real-file QA modes
 static std::string file_sha(const std::string& p) { Bytes b; return read_all(p, &b) ? sha_hex(b) : std::string("(unreadable)"); }
 
@@ -922,6 +995,8 @@ int main(int argc, char** argv) {
     test_unicode();
     test_text_and_manifest();
     test_followups();
+    test_audio();
+    test_audio_text_and_rule();
 
     fs::remove_all(FP(g_root), ec);
     std::printf("nuprepair_test: %d checks, %d failed\n", g_checks, g_fail);
