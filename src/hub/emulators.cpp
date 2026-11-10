@@ -104,26 +104,36 @@ static const InstallTestHooks* g_test_hooks = nullptr;
 void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
 
 /* ======================================================================================================================================================
- * FRITCHII PIN (v5.5). The one place the Fritchii download is defined: kPath, kSize, kSha256 (kVersion is the text the marker, Settings and the dialogs show).
- * Provenance: built on GitHub Actions, run 42635153252 (run number 4) on fatty8me2/Fritchii, branch retrohub/v5.5-msvc = Frizti's fritchii-v5.5 (4012e52)
- * plus two build-only commits: 5d3389f (the MSVC warning flags commit, as for v4.1 / v5) and 64f21c0 (the Windows configure no longer passes
- * -DLICHII_BUILD_TAG, so the binary is named and versioned like Frizti's own release, "Fritchii v5.5", and FritchiiUi::Enabled() is true: Fritchii's own
- * UI, Preparing shaders screen included; the v5 CI build was named "Lichii build-3" and had all of that off). Artifact 13685542559 (sha256 073484be...89c8),
- * repackaged unchanged plus one DATA file: recipes\OoT v131072 (cache v54).nx2recipe (1,821,351 bytes, sha256 85d944c8...c3a1), the shader-preparation
- * recipe, unchanged since v5 (from Frizti's official v5 asset, sha256 f152f436...a149a; his v5.5 zip carries the same file). It is not in the source tree.
- * Release asset 120,118,919 bytes, SHA-256 960ff5c4e1dd5119ff1cf526100f2e0fe263f22e5e12d0de0a07d6caed4ea831. Defender clean. Vetted 2026-11-09
- * (source audit fritchii-v5..fritchii-v5.5: clean with notes; Fritchii-UI audit: kFritchiiWhatsNewSeen "v5.5" and the EDS2 pins in fritchii_ini_pin).
- * (Earlier pins: v5 = run 42557579406 on retrohub/v5-msvc, 62194f3 + 843ab8e, 119,936,811 bytes, SHA-256 30ad7db5ee8141647d388f741c7d64afefbb75009aaa647a3409b88797810d24;
+ * FRITCHII PIN (v5.7). The one place the Fritchii download is defined: kPath, kSize, kSha256 (kVersion is the text the marker, Settings and the dialogs show).
+ * Provenance: built LOCALLY on the owner's PC on 2026-11-10 (Visual Studio 2026, MSVC 14.50, Qt 6.8.3 msvc2022_64, the same configure line as the release-binaries
+ * workflow's Windows job), because GitHub paused Actions on the fork ("Workflows are not currently being run on this fork due to the scale of GitHub Actions usage");
+ * the owner chose a local build, so no workflow run exists for it. Source: fatty8me2/Fritchii branch retrohub/msvc (the one long-lived build branch from now on),
+ * commit 6b21f52 = Frizti's fritchii-v5.7 (52317bf) + 75ab24c (the MSVC warning flags, Windows only) + 6b21f52 (the Windows configure passes no -DLICHII_BUILD_TAG, so the
+ * binary is named and versioned like Frizti's own release; the generated scm_rev says name "Fritchii", version "v5.7", and FritchiiUi::Enabled() is true: Fritchii's own
+ * UI, Preparing shaders screen included). v5.6 was skipped (never pinned). The "Convert to NX" tool is NOT in this build: the prebuilt nxformat-1.0.2-windows-x64.zip no
+ * longer matched the SHA-256 pinned in Fritchii's CMakeModules/NxFormat.cmake (upstream re-published the asset), so configure skipped it; loading .nx games is unaffected.
+ * The zip (50 entries, at the ROOT) holds lichii.exe, eden-cli.exe, the Qt DLLs and plugin folders, d3dcompiler_47.dll, dxcompiler.dll, dxil.dll, opengl32sw.dll, qt.conf,
+ * Frizti's nx2_switches.txt (his default tuning, part of the vetted build: it is kept as shipped, RetroHub never writes to it or adds its own), the shader-preparation
+ * recipe recipes\OoT v131072 (cache v54).nx2recipe (1,821,351 bytes, sha256 85d944c8...c3a1, unchanged since v5; Frizti's v5.7 zip carries the same file; it is not in the
+ * source tree), and NEW the Visual C++ 14.50 runtime DLLs app-local (concrt140, msvcp140, msvcp140_1, msvcp140_2, msvcp140_atomic_wait, msvcp140_codecvt_ids, vccorlib140,
+ * vcruntime140, vcruntime140_1, vcruntime140_threads), because MSVC 14.50 is newer than the runtime many PCs have installed. The install keeps every one of them (and the
+ * recipes folder); the zip no longer has lichii.pdb, eden-cli.pdb or vc_redist.x64.exe, and the install's delete of those is a no-op when they are absent.
+ * Release asset 66,270,008 bytes, SHA-256 43ad6f48d2a83f8a882ec5465daca4001dec9c6301e0fe4b90722dea62fa139a. Defender clean. Vetted 2026-11-10
+ * (source audits fritchii-v5.5..v5.6 and v5.6..v5.7: clean with notes; Fritchii-UI audit: kFritchiiWhatsNewSeen "v5.7" and the EDS2 pins in fritchii_ini_pin).
+ * v5.7 facts: shader cache still v54, recipe format unchanged, "Preparing shaders" runs once after the update (the prepared stamp holds the build version); the tuned-settings
+ * revision is 7 (RetroHub's 999 pin still holds it off); new built-in switches EDEN_NX2_JIT_WARM=1, EDEN_NX2_TC_CEILING_MIB=7680, EDEN_NX2_READ_THROTTLE=0 and experiment 49
+ * (async GPU read-back) on do not conflict with what RetroHub sets.
+ * (Earlier pins: v5.5 = GitHub Actions run 42635153252 on retrohub/v5.5-msvc, Frizti's fritchii-v5.5 4012e52 + 5d3389f + 64f21c0, 120,118,919 bytes,
+ * SHA-256 960ff5c4e1dd5119ff1cf526100f2e0fe263f22e5e12d0de0a07d6caed4ea831 (its zip also had lichii.pdb, eden-cli.pdb and vc_redist.x64.exe);
+ * v5 = run 42557579406 on retrohub/v5-msvc, 62194f3 + 843ab8e, 119,936,811 bytes, SHA-256 30ad7db5ee8141647d388f741c7d64afefbb75009aaa647a3409b88797810d24;
  * v4.1 = run 42450099783 on retrohub/v4.1-msvc: Frizti's fritchii-v4.1 f6d42b8 plus build-flags-only commit 2a1f611, 119612370 bytes,
- * SHA-256 068fb4c66b2e32447ac7690393039043854de4b189aa7e95b34c4bf0d2a4080e.) The zip is expected to hold the same layout as v4.1: lichii.exe, eden-cli.exe, the Qt DLLs and plugin folders, lichii.pdb, eden-cli.pdb, vc_redist.x64.exe and
- * Frizti's nx2_switches.txt (his default tuning, part of the vetted build: it is kept as shipped, RetroHub never writes to it or adds its own) at the ROOT;
- * the install deletes the two .pdb files and vc_redist like Lichii's, and keeps the recipes folder.
+ * SHA-256 068fb4c66b2e32447ac7690393039043854de4b189aa7e95b34c4bf0d2a4080e.)
  * ====================================================================================================================================================== */
 namespace fritchii_pin {
-static const char* const kVersion = "v5.5";
-static const wchar_t* const kPath = L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5.5/Fritchii-v5.5-RetroHub-windows-x64.zip";
-static const uint64_t kSize = 120118919ull;
-static const char* const kSha256 = "960ff5c4e1dd5119ff1cf526100f2e0fe263f22e5e12d0de0a07d6caed4ea831";
+static const char* const kVersion = "v5.7";
+static const wchar_t* const kPath = L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5.7/Fritchii-v5.7-RetroHub-windows-x64.zip";
+static const uint64_t kSize = 66270008ull;
+static const char* const kSha256 = "43ad6f48d2a83f8a882ec5465daca4001dec9c6301e0fe4b90722dea62fa139a";
 }   // namespace fritchii_pin
 
 const Release& release(Kind k) {

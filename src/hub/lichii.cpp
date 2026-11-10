@@ -482,7 +482,7 @@ std::string fritchii_ini_pin(const std::string& in) {
     t = ini_put(t, "Renderer", "frizti_settings_revision", std::to_string(kFriztiPinRevision));
     t = ini_put(t, "Renderer", "oot_fps_asked", "true");
     // Fritchii's recipe is recorded with EDS2 + dynamic vertex input: other values make "Preparing shaders" skip almost every pipeline. Its own
-    // one-time repair of them (tuned-settings revision 5, v5.5) is held off by the revision pin above, so RetroHub pins the two keys itself.
+    // one-time repair of them (tuned-settings revision 5, v5.5; revisions 6 and 7 of v5.6 / v5.7 only re-apply defaults) is held off by the revision pin above, so RetroHub pins the two keys itself.
     t = ini_put(t, "Renderer", "dyna_state", "2");
     t = ini_put(t, "Renderer", "vertex_input_dynamic_state", "true");
     t = ini_put(t, "UI", "fritchii_whats_new_seen", kFritchiiWhatsNewSeen);   // no What's new window after the game
