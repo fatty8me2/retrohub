@@ -35,12 +35,14 @@ function Shot([string]$name, [hashtable]$vars) {
 foreach ($sz in $Sizes) {
     $w = $sz.Split('x')[0]
     # The game page (details modal) with made-up play data: 42.6 h + other PC, 1,234 h, 0.4 h, never played, and an unplayed Switch 2 game.
-    $page = @{ HUB_SHOT_SIZE = $sz; HUB_SHOT_FAKE_LIB = '8'; HUB_SHOT_PLAYTIME = '1' }
-    Shot "page_42h_$w" ($page + @{ HUB_SHOT_DETAILS = 'fake:0' })
-    Shot "page_1234h_$w" ($page + @{ HUB_SHOT_DETAILS = 'fake:1' })
-    Shot "page_04h_$w" ($page + @{ HUB_SHOT_DETAILS = 'fake:2' })
-    Shot "page_unplayed_$w" ($page + @{ HUB_SHOT_DETAILS = 'fake:3' })
-    Shot "page_switch2_unplayed_$w" ($page + @{ HUB_SHOT_SWITCH = '1'; HUB_SHOT_DETAILS = 'switch:0400000000a1b000' })
+    # Select the game, then "i" opens its page (HUB_SHOT_DETAILS=<key> alone falls back to the first game: the selection is reset
+    # while the library loads).
+    $page = @{ HUB_SHOT_SIZE = $sz; HUB_SHOT_FAKE_LIB = '8'; HUB_SHOT_PLAYTIME = '1'; HUB_SHOT_KEYS = 'i' }
+    Shot "page_42h_$w" ($page + @{ HUB_SELECT_GAME = 'fake:0' })
+    Shot "page_1234h_$w" ($page + @{ HUB_SELECT_GAME = 'fake:1' })
+    Shot "page_04h_$w" ($page + @{ HUB_SELECT_GAME = 'fake:2' })
+    Shot "page_unplayed_$w" ($page + @{ HUB_SELECT_GAME = 'fake:3' })
+    Shot "page_switch2_unplayed_$w" ($page + @{ HUB_SHOT_SWITCH = '1'; HUB_SELECT_GAME = 'switch:0400000000a1b000' })
     # The library sorted by Most played (play time on a quarter of 60 made-up games).
     $lib = @{ HUB_SHOT_SIZE = $sz; HUB_SHOT_FAKE_LIB = '60'; HUB_SHOT_FAKE_AZ = '1'; HUB_START_VIEW = 'all'; HUB_SHOT_SORT = 'most_played' }
     foreach ($lay in 'grid', 'list', 'cases', 'showcase', 'shelf') { Shot "lib_${lay}_mostplayed_$w" ($lib + @{ HUB_SHOT_LIBVIEW = $lay }) }
