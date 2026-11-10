@@ -293,7 +293,7 @@ void lichii_hang_watch() {
     static ULONGLONG gone_since = 0;
     static ULONGLONG cpu_at_gone = 0, io_at_gone = 0, idle_since = 0;
     if (!A.proc) { g_hookshot_run = false; g_fritchii_run = false; }
-    if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { had_window = false; gone_since = 0; return; }   // Hookshot has its own exit; the hang is a Lichii issue (builds 88-95; build 125 unknown)
+    if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { had_window = false; gone_since = 0; return; }   // Hookshot has its own exit; the hang is a Lichii issue (builds 88-95; builds 125 and 130 unknown)
     const ULONGLONG now = GetTickCount64();
     if (game_main_window()) { had_window = true; gone_since = 0; return; }
     if (!had_window) return;
@@ -310,10 +310,13 @@ void lichii_hang_watch() {
     if (!gone_since) { gone_since = now; cpu_at_gone = cpu(); io_at_gone = io(); idle_since = now; return; }
     {   /* still busy (saving, draining the shader cache, shutting threads down): wait; only a process that stopped using both the CPU and the disk counts as hung */
         const ULONGLONG c = cpu(), b = io();
-        if (c > cpu_at_gone + 2000000) { cpu_at_gone = c; idle_since = now; }   // more than 0.2 s of CPU since the last check
-        if (b > io_at_gone + 65536) { io_at_gone = b; idle_since = now; }       // more than 64 KiB of I/O since the last check
+        if (c > cpu_at_gone + 2000000) { cpu_at_gone = c; idle_since = now; }   // more than 0.2 s of CPU since the last time it counted as busy
+        if (b > io_at_gone + 65536) { io_at_gone = b; idle_since = now; }       // more than 64 KiB of I/O since the last time it counted as busy
     }
-    if (now - gone_since < 15000 || now - idle_since < 10000) return;
+    /* Quiet for 10 s = hung. A process that never goes quiet (a hang that keeps logging or spinning) is still ended 3 minutes after its window closed, so the
+     * session (save copy-back, vault sync) can never wait forever; Lichii replaces its cache files atomically, so a cut-off write loses only that session's additions. */
+    const bool quiet = now - idle_since >= 10000, too_long = now - gone_since >= 180000;
+    if (now - gone_since < 15000 || (!quiet && !too_long)) return;
     autotest_log("lichii: window closed 15 s ago but the process is still running (Lichii exit hang): ending its job");
     if (A.job_h) TerminateJobObject(A.job_h, 0);
     else TerminateProcess(A.proc, 0);
