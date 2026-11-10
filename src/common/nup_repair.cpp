@@ -335,27 +335,61 @@ bool build_merged(const Nup& n, std::map<std::string, uint32_t>& merged, std::st
 
 bool ends_with(const std::string& s, const std::string& suf) { return s.size() >= suf.size() && s.compare(s.size() - suf.size(), suf.size(), suf) == 0; }
 
-bool has_magic(const uint8_t* p) { return p[0] == 0x28 && p[1] == 0xB5 && p[2] == 0x2F && p[3] == 0xFD; }
+/* What a healthy member of each type starts with. The damage seen in the wild zeroes the first 4 KiB or more of a member's content, so:
+ *  - ".zs" (game-compressed, already a zstd frame): damaged = no zstd magic. Only codec-1 members are checked (a game .zs is stored raw unless
+ *    a zeroed range makes it shrink, and there are ~100,000 raw ones: 1,083 codec-1 of 102,185 in the owner's OoT copy).
+ *  - sound files: damaged = no magic AND the first 4 bytes are zero (the observed signature; any other unknown start is left alone, so a
+ *    format variant this table does not know is never "repaired" away). Codec 0 members are checked too: only a few thousand, 4 bytes each.
+ * Formats: Nintendo BWAV (Switch 2 titles such as OoT), BFWAV / BFSTM (Switch), BCWAV / BCSTM (3DS), BARS (audio resource archive), Ogg.
+ * Not listed on purpose: WEM / BNK / Opus (several containers), movies (.webm: a sibling would be the wrong cutscene). */
+struct Kind {
+    const char* suffix;     // lower case, with the dot
+    uint8_t magic[4];
+    bool check_raw;         // codec-0 members too
+    bool zero_head;         // also require 4 zero bytes at the start before calling it damaged
+    bool audio;
+};
+const Kind kKinds[] = {
+    {".zs", {0x28, 0xB5, 0x2F, 0xFD}, false, false, false},
+    {".bwav", {'B', 'W', 'A', 'V'}, true, true, true},
+    {".bfwav", {'F', 'W', 'A', 'V'}, true, true, true},
+    {".bfstm", {'F', 'S', 'T', 'M'}, true, true, true},
+    {".bcwav", {'C', 'W', 'A', 'V'}, true, true, true},
+    {".bcstm", {'C', 'S', 'T', 'M'}, true, true, true},
+    {".bars", {'B', 'A', 'R', 'S'}, true, true, true},
+    {".ogg", {'O', 'g', 'g', 'S'}, true, true, true},
+};
 
-/* Does the member's uncompressed content start with the zstd frame magic? Reads at most 128 KiB, decompresses until 4 bytes. */
+const Kind* kind_of(const std::string& name) {
+    for (const Kind& k : kKinds) {
+        const size_t n = std::strlen(k.suffix);
+        if (name.size() < n) continue;
+        bool eq = true;
+        for (size_t i = 0; i < n && eq; ++i) eq = std::tolower((unsigned char)name[name.size() - n + i]) == (unsigned char)k.suffix[i];
+        if (eq) return &k;
+    }
+    return nullptr;
+}
+
+enum class Head { Good, Damaged, Unknown };   // Unknown: could not decide (does not decompress / too short for a zero_head type): never a repair
+
+/* The first 4 bytes of the member's uncompressed content. Reads at most 128 KiB (codec 0: 4 bytes), decompresses until 4 bytes. */
 struct HeadChecker {
     ZSTD_DCtx* dctx = ZSTD_createDCtx();
     std::vector<uint8_t> in;
     ~HeadChecker() { if (dctx) ZSTD_freeDCtx(dctx); }
-    // *io_error: the read itself failed (not a verdict)
-    bool magic(const Nup& n, const FileN& f, bool* io_error) {
+    // returns false: no 4 bytes obtained (*io_error: the read itself failed, not a verdict)
+    bool head4(const Nup& n, const FileN& f, uint8_t head[4], bool* io_error) {
         if (f.size == 0 || f.esize == 0) return false;
         if (f.codec == 0) {
-            uint8_t b[4];
             if (f.esize < 4) return false;
-            if (!n.f.read_at(f.eoff, b, 4)) { *io_error = true; return false; }
-            return has_magic(b);
+            if (!n.f.read_at(f.eoff, head, 4)) { *io_error = true; return false; }
+            return true;
         }
         if (!dctx) { *io_error = true; return false; }
         ZSTD_DCtx_reset(dctx, ZSTD_reset_session_only);
         // zstd outputs nothing before it holds the whole first block (up to 128 KiB + 3 + a frame header of up to 18 bytes): read 129 KiB,
         // and while there is still no output and more extent remains keep feeding, up to 1 MiB. Input running out early is never a verdict.
-        uint8_t head[4] = {};
         ZSTD_outBuffer ob{head, 4, 0};
         uint64_t read = 0;
         bool finished = false;
@@ -371,7 +405,14 @@ struct HeadChecker {
                 if (r == 0) { finished = true; break; }
             }
         }
-        return ob.pos >= 4 && has_magic(head);
+        return ob.pos >= 4;
+    }
+    Head verdict(const Nup& n, const FileN& f, const Kind& k, bool* io_error) {
+        uint8_t h[4] = {};
+        if (!head4(n, f, h, io_error)) return k.zero_head ? Head::Unknown : (*io_error ? Head::Unknown : Head::Damaged);   // a .zs that does not decompress is damaged, as before
+        if (std::memcmp(h, k.magic, 4) == 0) return Head::Good;
+        if (k.zero_head && (h[0] | h[1] | h[2] | h[3]) != 0) return Head::Unknown;
+        return Head::Damaged;
     }
 };
 
@@ -624,13 +665,13 @@ Scan scan(const std::string& nup_path, const std::atomic<bool>* cancel) {
         for (const auto& kv : merged) {
             if (cancel && cancel->load()) { s.error = "cancelled"; return s; }
             const FileN& f = n.files[kv.second];
-            if (f.codec != 1 || f.size == 0 || !ends_with(f.name, ".zs")) continue;
+            const Kind* k = kind_of(f.name);
+            if (!k || f.size == 0 || (f.codec != 1 && !(f.codec == 0 && k->check_raw))) continue;
             ++s.checked;
             bool io = false;
-            if (!hc.magic(n, f, &io)) {
-                if (io) { s.error = "cannot read the game file"; return s; }
-                damaged.push_back({kv.first, kv.second});
-            }
+            const Head v = hc.verdict(n, f, *k, &io);
+            if (io) { s.error = "cannot read the game file"; return s; }
+            if (v == Head::Damaged) damaged.push_back({kv.first, kv.second});
         }
         if (!damaged.empty()) {
             std::map<std::string, std::vector<std::pair<std::string, uint32_t>>> bydir;   // dir path ("" or "a/b/") -> (name, file) in name order
@@ -643,7 +684,8 @@ Scan scan(const std::string& nup_path, const std::atomic<bool>* cancel) {
                 auto it = magic_cache.find(idx);
                 if (it != magic_cache.end()) return it->second;
                 bool io = false;
-                const bool g = hc.magic(n, n.files[idx], &io);
+                const Kind* ck = kind_of(n.files[idx].name);
+                const bool g = ck && hc.verdict(n, n.files[idx], *ck, &io) == Head::Good;
                 magic_cache[idx] = g;
                 return g;
             };
@@ -899,7 +941,10 @@ std::string page_text(const Manifest& m) {
     const size_t cnt = m.entries.size();
     if (cnt == 0) return std::string();
     bool water = false, fairy = false, ganon = false;
+    size_t audio = 0;
     for (const ManifestEntry& e : m.entries) {
+        const Kind* k = kind_of(e.damaged_path);
+        if (k && k->audio) ++audio;
         if (e.damaged_path.find("WaterTemple") != std::string::npos) water = true;
         if (e.damaged_path.find("FairyFountain") != std::string::npos) fairy = true;
         if (e.damaged_path.find("GanonStage") != std::string::npos) ganon = true;
@@ -909,8 +954,14 @@ std::string page_text(const Manifest& m) {
     if (water) add("the Water Temple");
     if (fairy) add("the fairy fountains");
     if (ganon) add("Ganon's Castle");
-    std::string t = "This copy of the game has " + std::to_string(cnt) + (cnt == 1 ? " damaged file" : " damaged files") + ", so some rooms would be invisible";
-    if (!places.empty()) t += " (" + places + ")";
+    std::string t = "This copy of the game has " + std::to_string(cnt) + (cnt == 1 ? " damaged file" : " damaged files") + ", so ";
+    if (audio < cnt) {
+        t += "some rooms would be invisible";
+        if (!places.empty()) t += " (" + places + ")";
+        if (audio) t += " and some sounds would be missing";
+    } else {
+        t += "some sounds or voice lines would be missing";
+    }
     t += ". RetroHub fills ";
     t += cnt == 1 ? "it" : "each one";
     t += " in with a matching file from the same copy when the game starts, so ";
