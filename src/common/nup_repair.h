@@ -28,13 +28,19 @@
  * Merged RomFS (loader/nup.cpp ReadRomFS): the base package's romfs (first kind-0 package) with the best update's romfs over it
  * (FindBestUpdatePackage: the kind-1 package with the highest version); update paths win, directories merge. A standalone update alone.
  *
- * Detection (exactly PR #267): a member is damaged when its name ends in ".zs", its codec is zstd (1) and the first 4 bytes of its
- * decompressed content are not the zstd frame magic 28 B5 2F FD (or it does not decompress). Only codec-1 members are checked: a game .zs is
- * already compressed, so the NUP writer only recompresses one that shrinks, which a zeroed range does (the owner's OoT copy: 1,083 of
- * 102,185 .zs members, at most 128 KiB read from each, about 100 MB in all).
- * Stand-in (PR #267 FindStandIn): among the files of the SAME directory of the merged RomFS, those whose name ends with the damaged name's
+ * Detection, a per-type table (nup_repair.cpp kKinds). Textures (exactly PR #267): a member is damaged when its name ends in ".zs", its codec is
+ * zstd (1) and the first 4 bytes of its decompressed content are not the zstd frame magic 28 B5 2F FD (or it does not decompress). Only codec-1
+ * members are checked: a game .zs is already compressed, so the NUP writer only recompresses one that shrinks, which a zeroed range does (the
+ * owner's OoT copy: 1,083 of 102,185 .zs members, at most 128 KiB read from each, about 100 MB in all).
+ * Sound files (.bwav "BWAV", .bfwav, .bfstm, .bcwav, .bcstm, .bars, .ogg), any codec: damaged when the first 4 bytes are not the format's magic AND are
+ * all zero (the same zeroed-prefix damage; an unknown start is left alone). The owner's copy: 26,378 .bwav members (all start "BWAV") except
+ * EUde_EventFlowMsg-_Dm_TimeTemple_0050--Dm_TimeTemple_0050_Text_001_b.bwav, whose first 4096 bytes are zero. The TOC's per-file SHA-256 cannot
+ * find this: it was taken over the already-damaged dump, so every damaged member still matches it.
+ * Stand-in for every type (PR #267 FindStandIn): among the files of the SAME directory of the merged RomFS, those whose name ends with the damaged name's
  * last '_' token (e.g. "Nrm.bntx.zs") with a '_' right before it; the longest common name prefix wins, then the smallest uncompressed-size
- * difference; the candidate must itself start with the zstd magic (any codec). No candidate -> the member stays as it is (unrepaired).
+ * difference; the candidate must itself start with its type's magic (any codec). A sound member gets a sibling voice/sound file, not a synthesized
+ * silent one: a valid silent BWAV needs the codec, channel count, rate, DSP coefficients and data offsets of a header that is zeroed here, and an
+ * invalid one could crash the game. Owner's sound: the closest Text_NNN_b.bwav line of the same scene and language. No candidate -> the member stays as it is (unrepaired).
  * Owner's copy result: Gate_M_01_Nrm <- Rock_WaterTemple_Gate_P_01_Nrm.bntx.zs, Soil_FairyFountain_Floor_D_Nrm <-
  * CmnTex_Map_Sand_FairyFountain_Sand_A_Nrm.bntx.zs, GanonStage_G_2_1_d0_t0 <- RBake_Scene_GanonStage_G_2_2_d0_t0.bntx.zs.
  *
@@ -53,9 +59,9 @@
 
 namespace hub::nuprepair {
 
-constexpr const char* kModFolder = "RetroHub damaged-texture fix";
+constexpr const char* kModFolder = "RetroHub damaged-texture fix";   // (sound stand-ins live here too: the folder name is kept so an installed fix is still found)
 constexpr const char* kManifestName = "retrohub-repair.txt";
-constexpr int kRuleVersion = 1;   // bump when detection or the stand-in choice changes: every manifest is then stale and the copy is rescanned
+constexpr int kRuleVersion = 2;   // bump when detection or the stand-in choice changes: every manifest and clean record is then stale and the copy is rescanned (2: sound files)
 
 struct Member {
     std::string path;    // inside the merged romfs, '/' separated: "Tex/Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"
@@ -74,11 +80,11 @@ struct Scan {
     uint64_t file_size = 0;
     uint64_t mtime = 0;            // last-write time of the NUP, FILETIME ticks
     std::string toc_sha256;        // 64 lower-case hex, from the superblock (identifies the copy)
-    uint64_t checked = 0;          // codec-1 .zs members whose start was decompressed
+    uint64_t checked = 0;          // members whose first 4 bytes were read (codec-1 .zs, and sound files of any codec)
     std::vector<Repair> repairs;   // sorted by damaged.path; includes members with no stand-in
 };
 
-/* Full scan: superblock, TOC (SHA-256 checked), then up to 128 KiB of each codec-1 .zs member of the merged romfs, plus the starts of the
+/* Full scan: superblock, TOC (SHA-256 checked), then up to 128 KiB of each codec-1 .zs member and of each codec-1 sound member (4 bytes of a raw one) of the merged romfs, plus the starts of the
  * candidate stand-ins. cancel (optional) is polled between members; a cancelled scan returns ok = false, error "cancelled". */
 Scan scan(const std::string& nup_path, const std::atomic<bool>* cancel = nullptr);
 
