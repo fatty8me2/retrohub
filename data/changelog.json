@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.40.9",
+      "date": "2026-11-10",
+      "title": "Lichii build 130: faster Ocarina of Time, less memory",
+      "new": [],
+      "improved": [
+        "Switch games on Lichii now use Lichii build 130. Ocarina of Time runs faster on it (about 25% in Lichii's own measurements), Lichii uses about 6 GB less memory, and it no longer keeps a whole CPU core busy while it waits",
+        "Lichii's new shader cache builds far fewer shaders again when you come back to a game. Your existing cache is converted the first time you start a game after the update: with a big cache that one start can take longer and use a few GB of memory for a moment",
+        "To get it, press Play on a Switch game and choose Update. Your saves, settings and keys are not touched. Ocarina of Time still starts with Fritchii unless you picked Lichii for it"
+      ],
+      "fixed": [
+        "Closing a Switch game: when Lichii gets stuck while closing, RetroHub now waits until it has finished writing its shader cache before ending it"
+      ]
+    },
+    {
       "version": "1.40.8",
       "date": "2026-11-09",
       "title": "Nintendo Switch 2 on its own",
