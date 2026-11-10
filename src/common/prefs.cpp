@@ -219,6 +219,7 @@ json::Value shelf_json(const Shelf& s) {
         r.o.push_back({"favorites_only", json::make_bool(s.rule.favorites_only)});
         r.o.push_back({"not_played_days", json::make_int(s.rule.not_played_days)});
         r.o.push_back({"decade", json::make_int(s.rule.decade)});
+        r.o.push_back({"ver", json::make_int(s.rule.ver)});
         e.o.push_back({"rule", std::move(r)});
     }
     return e;
@@ -236,6 +237,12 @@ bool read_shelf(const json::Value& e, Shelf* s) {
         s->rule.favorites_only = r->boolean("favorites_only");
         s->rule.not_played_days = (int)r->i64("not_played_days");
         s->rule.decade = (int)r->i64("decade");
+        s->rule.ver = (int)r->i64("ver");
+        if (s->rule.ver < 1) {   // one-time migration: a Switch rule saved before Switch 2 was its own console also matches Switch 2
+            auto& sy = s->rule.systems;
+            if (std::find(sy.begin(), sy.end(), "switch") != sy.end() && std::find(sy.begin(), sy.end(), "switch2") == sy.end()) sy.push_back("switch2");
+            s->rule.ver = 1;
+        }
     }
     return !s->name.empty();
 }

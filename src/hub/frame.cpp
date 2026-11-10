@@ -270,7 +270,7 @@ static void shot_fake_running() {
     A.run.key = e->key;
     A.run.title = e->title;
     A.run.start_tick = GetTickCount64();
-    if (!ext) { A.run.ctl_path = "fake-control.json"; A.run.controls_path = "fake-controls.json"; A.run.controls_sys = hubctl::system_key(e->system); }
+    if (!ext) { A.run.ctl_path = "fake-control.json"; A.run.controls_path = "fake-controls.json"; A.run.controls_sys = hubctl::console_key(*e); }
 }
 
 void draw_frame() {

@@ -314,6 +314,11 @@ int main() {
         for (auto& s2 : sh) ids.push_back(s2.id);
         std::vector<std::string> want = {"favs", "recent", "console:n64", "console:gc", "console:gba", "console:gbc", "console:gb"};
         CHECK(ids == want);
+        {   // the Friends' shelf is always after Favorites and Recently played
+            CHECK(friends_shelf_anchor(sh) == 1);
+            std::vector<Shelf> only_favs = {sh[0], sh[2]}, only_recent = {sh[1], sh[2]}, none = {sh[2], sh[3]};
+            CHECK(friends_shelf_anchor(only_favs) == 0 && friends_shelf_anchor(only_recent) == 0 && friends_shelf_anchor(none) == -1 && friends_shelf_anchor({}) == -1);
+        }
         CHECK(sh[1].items == std::vector<int>({1, 4, 2}));          // Recently played: newest first
         CHECK(sh[0].items == std::vector<int>({1, 3}));             // Favorites (first) by title
         CHECK(sh[2].items == std::vector<int>({0, 2, 1, 8, 7}));    // n64: Smash pinned, then banjo, Mario Party, Unknown Rom, Zelda

@@ -28,6 +28,7 @@ struct ShelfRule {
     bool favorites_only = false;
     int not_played_days = 0;            // not played in N days (never played counts); 0 = any
     int decade = 0;                     // 1990 = the 1990s; 0 = any
+    int ver = 1;                        // rule format: 0 = saved before Nintendo Switch 2 became its own console id ("switch2"); read_shelf migrates a v0 rule that lists "switch" by adding "switch2" once. Not part of the comparison.
     bool operator==(const ShelfRule& o) const {
         return systems == o.systems && genre == o.genre && min_players == o.min_players && status == o.status &&
                favorites_only == o.favorites_only && not_played_days == o.not_played_days && decade == o.decade;

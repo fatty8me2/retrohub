@@ -1081,8 +1081,9 @@ const char* console_name(const GameEntry& e) { return e.system == System::Unknow
 const std::vector<std::string>& console_ids() {
     static const std::vector<std::string> v = [] {
         std::vector<std::string> r;
-        for (int i = (int)System::Unknown + 1; i <= (int)System::Switch; i++) {
+        for (int i = (int)System::Unknown + 1; i < 64; i++) {   // the whole enum: any System with a short code is listed (a future one is not silently dropped)
             System s = (System)i;
+            if (!*system_short(s)) continue;
             r.push_back(system_short(s));
             if (s == System::Switch) r.push_back(kConsoleSwitch2);
         }

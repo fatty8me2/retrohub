@@ -1194,6 +1194,12 @@ std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& g, int max_rece
     return out;
 }
 
+int friends_shelf_anchor(const std::vector<Shelf>& shelves) {
+    int at = -1;
+    for (size_t i = 0; i < shelves.size(); ++i) if (shelves[i].id == "favs" || shelves[i].id == "recent") at = (int)i;
+    return at;
+}
+
 int rect_hit(const std::vector<FRect>& rects, float x, float y) {
     for (size_t i = 0; i < rects.size(); ++i)
         if (x >= rects[i].x0 && x < rects[i].x1 && y >= rects[i].y0 && y < rects[i].y1) return (int)i;

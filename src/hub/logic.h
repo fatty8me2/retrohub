@@ -299,6 +299,9 @@ const std::vector<std::string>& console_order();
  * Empty shelves are omitted. Within a shelf: recent = newest first; the others pinned first then title
  * (case-insensitive). */
 std::vector<Shelf> compose_shelves(const std::vector<ShelfGame>& games, int max_recent = 12, SortSpec mode = SortSpec());
+/* Home order: Favorites, Recently played, then the Friends' shelves, then the console shelves. Returns the index of the shelf the Friends' shelf is drawn AFTER:
+ * the last of "favs" / "recent" present, or -1 (before every shelf) when neither is. */
+int friends_shelf_anchor(const std::vector<Shelf>& shelves);
 std::string system_shelf_title(const std::string& system_short);   // "Nintendo 64", ...
 /* Catalog entries to advertise ("Top picks you don't have yet"): indices where !owned[i], games
  * flagged online first, otherwise catalog order, at most max_n. */
