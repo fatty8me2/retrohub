@@ -23,7 +23,7 @@ std::string file_name(const std::string& p) {
 }
 
 bool picker_focus_ok() {
-    return inputgate::picker_may_open(g_headless, A.win && (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS));
+    return inputgate::picker_may_open(g_headless, osk::hub_input_blocked(), game_active());
 }
 
 /* IFileOpenDialog: folder or file picker. Returns "" on cancel (also when the hub lacks focus: a game owns the screen). */
