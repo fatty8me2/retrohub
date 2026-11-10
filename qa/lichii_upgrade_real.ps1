@@ -1,6 +1,6 @@
 # Real Lichii install / upgrade QA (downloads the pinned build from github.com/zortos293/Lichii; launches nothing, opens no window).
 # Runs RetroHub's own job through hub_lichii_upgrade_qa.exe on COPIES of a build-88 install and checks four scenarios:
-#   1. upgrade 88 -> the pinned build 125 (user\ byte-identical, program files match the pinned-build reference, no scratch left)
+#   1. upgrade 88 -> the pinned build 130 (user\ byte-identical, program files match the pinned-build reference, no scratch left)
 #   2. second run is a no-op (no download, nothing changes)
 #   3. fresh install into an empty root
 #   4. forced failure (<root>\_downloads is a FILE) keeps the old build and user\ intact
@@ -15,7 +15,7 @@ param(
 )
 $ErrorActionPreference = 'Continue'
 $Sha88 = '3405860a13f7b0729548ddb9402a355f4cfb1cd6a6d705fb8ea26f88879b0407'
-$ShaPin = 'c55eaaedbdcd87eebcab5510a3d19c49545a4718b9355d95150150d5aeb67bb6'   # build 125
+$ShaPin = 'f09893b3041596662d762959a103ae4af40d479631309fff9990bcc288078eed'   # build 130
 $Excluded = @('lichii.pdb', 'eden-cli.pdb', 'vc_redist.x64.exe', 'lichii-updater.exe')
 
 if ($Work -match 'smashClassic\\userdata') { Write-Error 'Refusing: -Work is under the real user data folder.'; exit 2 }
@@ -82,7 +82,7 @@ function New-Root88([string]$name) {
 
 Log "== Lichii real upgrade QA $(Get-Date -Format s) =="
 # ---- Scenario 1
-Log '== Scenario 1: upgrade 88 -> 125'
+Log '== Scenario 1: upgrade 88 -> 130'
 $r1 = New-Root88 's1'
 $lic1 = Join-Path $r1 'lichii'
 $userBefore = Snap $lic1 'user'
@@ -93,13 +93,13 @@ Check ($c -eq 0) 'exit 0'
 $txt = Get-Content (Join-Path $Work 's1_tool.txt') -Raw
 Check ($txt -match 'after: .*outdated=0') 'after shows outdated=0'
 $marker = Get-Content -LiteralPath (Join-Path $lic1 'retrohub-install.txt')
-Check (($marker -join "`n") -match "sha256 $ShaPin" -and ($marker -join "`n") -match 'build 125') 'marker has the pinned sha256 and mentions build 125'
+Check (($marker -join "`n") -match "sha256 $ShaPin" -and ($marker -join "`n") -match 'build 130') 'marker has the pinned sha256 and mentions build 130'
 $userAfter = Snap $lic1 'user'
 Check (($userBefore -join "`n") -eq ($userAfter -join "`n")) "user\ byte-identical ($($userBefore.Count) files, none missing or added)"
 Check-Rx $lic1
 Check-Clean $r1 $lic1
 $gone = @($progBefore | Where-Object { $_ -ne 'retrohub-install.txt' -and -not (Test-Path -LiteralPath (Join-Path $Rx $_)) -and (Test-Path -LiteralPath (Join-Path $lic1 $_)) })
-Check ($gone.Count -eq 0) 'build-88 program files not in build 125 are gone'
+Check ($gone.Count -eq 0) 'build-88 program files not in build 130 are gone'
 
 # ---- Scenario 2: second run on the same root
 Log '== Scenario 2: second run is a no-op'
