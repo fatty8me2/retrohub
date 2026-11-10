@@ -115,7 +115,7 @@ struct FocusGate {
 };
 /* Pad input for the hub UI: the open View+Y quick menu is exempt from the focus gate (Windows' foreground lock can refuse
  * raising the hub, and the menu must still answer the controller). Keys, text, chat and the OSK keep using the plain gate. */
-inline bool pad_blocked(bool input_blocked, bool quickmenu_open) { return input_blocked && !quickmenu_open; }
+inline bool pad_blocked(bool input_blocked, bool quickmenu_open, bool game_running = false) { return (input_blocked || game_running) && !quickmenu_open; }   // a running game owns the pad whatever has the focus
 inline unsigned gate_pad_mask(unsigned mask, bool blocked) { return blocked ? 0u : mask; }
 /* A chat line may be sent: not blocked, and not empty / whitespace only. */
 bool chat_may_send(const std::string& text, bool blocked);

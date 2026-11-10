@@ -87,11 +87,11 @@ int main() {
         f = frame(false, true, true);          // blocked now: release queued, purge keeps it
         CHECK(!f.down);
     }
-    // picker guard: only a focused hub (or headless) may open a file / folder dialog
-    CHECK(inputgate::picker_may_open(false, true));
-    CHECK(!inputgate::picker_may_open(false, false));
-    CHECK(inputgate::picker_may_open(true, false));
-
+    // picker guard: only a settled-focus hub with no game running (or headless) may open a file / folder dialog
+    CHECK(inputgate::picker_may_open(false, false, false));
+    CHECK(!inputgate::picker_may_open(false, true, false));    // unfocused / regain grace
+    CHECK(!inputgate::picker_may_open(false, false, true));    // a game runs, hub focused: still no dialog over it
+    CHECK(inputgate::picker_may_open(true, true, true));       // headless
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("hub_input_gate_test: ok\n");
     return 0;

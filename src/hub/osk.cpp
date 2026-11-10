@@ -477,7 +477,7 @@ bool hub_input_blocked() {
     return cached;
 }
 
-bool hub_pad_blocked() { return pad_blocked(hub_input_blocked(), qm_is_open()); }
+bool hub_pad_blocked() { return pad_blocked(hub_input_blocked(), qm_is_open(), A.proc != nullptr || A.job_h != nullptr); }   // a game process runs: its pad presses are never the hub's, focus or not
 
 void pre_frame(ImGuiIO& io) {
     static bool had_game = false;

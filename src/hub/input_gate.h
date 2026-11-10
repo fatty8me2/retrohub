@@ -10,7 +10,8 @@ namespace inputgate {
  * Call right after ImGui_ImplSDL2_NewFrame while osk::hub_pad_blocked(). Returns how many events were removed. */
 int purge_pad_presses(ImGuiContext* ctx);
 
-/* A file / folder picker may open only in a hub window that has input focus (headless runs have none and always may). */
-inline bool picker_may_open(bool headless, bool window_has_focus) { return headless || window_has_focus; }
+/* A file / folder picker may open only in a hub window that has settled input focus (osk::hub_input_blocked(): focus + regain grace) while no game runs
+ * (headless runs have neither and always may). */
+inline bool picker_may_open(bool headless, bool input_blocked, bool game_running) { return headless || (!input_blocked && !game_running); }
 
 }  // namespace inputgate

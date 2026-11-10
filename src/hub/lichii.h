@@ -116,10 +116,11 @@ bool lichii_guid_is_xinput(const std::string& guid);          // 32 hex digits w
 /* A Microsoft-vendor (045e) guid that is not XInput yet (SDL2 RAWINPUT 'r', WGI 'w'...) -> the same pad's XInput guid (subtype 1); "" otherwise. */
 std::string lichii_guid_to_xinput(const std::string& guid);
 SdlBinds lichii_xinput_binds();                               // the numbers above, per SDL_GameControllerButton / Axis
-/* HIDAPI pads (PlayStation 4/5, Switch Pro...: SDL guid driver byte 14 = 'h'). RetroHub's SDL2 (2.30) reports the D-pad of these as raw BUTTONS 11-14, but
- * SDL3 (3.2.x; Lichii's / Fritchii's SDL3 - the bundled SDL3.dll could not be version-checked offline) exposes it as HAT 0 (SDL_SendJoystickHat in its
- * ps4 / ps5 / switch HIDAPI drivers; ps4 has 11 buttons + 1 hat). Buttons 0-10 and the 6 axes keep SDL2's order. Misc / touchpad / paddle buttons (15+) are
- * not at those indices in SDL3, so they are left unbound. Xbox (XInput) and generic (DirectInput / RAWINPUT) pads are returned unchanged. */
+/* HIDAPI pads from Sony (054c) and Nintendo (057e): SDL guid driver byte 14 = 'h'. RetroHub's SDL2 (2.30.9) reports the D-pad of these as raw BUTTONS 11-14, but
+ * SDL3 (3.2.14 sources read for ps4 / ps5 / switch; Lichii's / Fritchii's bundled SDL3.dll could not be version-checked offline) exposes it as HAT 0
+ * (SDL_SendJoystickHat; 1 hat). Buttons 0-10 and the 6 axes (triggers are axes 4 / 5 in both versions) are unchanged. A D-pad bind that is neither unbound nor SDL2's
+ * default 11-14 is kept. SDL3 has no raw button 15+ on these pads: touchpad (Sony) / capture (Nintendo) move to 11, other misc / paddle binds are dropped.
+ * Xbox (XInput), other HIDAPI vendors and generic (DirectInput / RAWINPUT) pads are returned unchanged. */
 bool lichii_guid_is_hidapi(const std::string& guid);          // 32 hex digits with driver byte 'h'
 SdlBinds lichii_sdl3_binds(const std::string& guid, const SdlBinds& sdl2_binds);
 /* Player 1's button A guid + port as currently written in the ini; false when there is none. */
