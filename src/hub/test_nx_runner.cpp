@@ -227,7 +227,7 @@ int main() {
         {   // every launch writes check_for_updates=false (even if the player switched it on); the pin marks the pinned build's What's new as seen
             const std::string l = lichii_ini_launch("[UI]\ncheck_for_updates\\default=false\ncheck_for_updates=true\n", hub::gs::Values{}, false, &nx_skip_keys(Kind::Fritchii));
             CHECK(l.find("check_for_updates=false") != std::string::npos && l.find("check_for_updates=true") == std::string::npos);
-            CHECK(q.find("fritchii_whats_new_seen=v5.5") != std::string::npos && fritchii_ini_pin(q) == q);
+            CHECK(q.find("fritchii_whats_new_seen=v5.7") != std::string::npos && fritchii_ini_pin(q) == q);
         }
         {   // the recipe's dynamic state: EDS2 and dynamic vertex input, whatever the player set in Fritchii's own menus
             const std::string d = fritchii_ini_pin("[Renderer]\ndyna_state\\default=false\ndyna_state=0\nvertex_input_dynamic_state\\default=false\nvertex_input_dynamic_state=false\n");

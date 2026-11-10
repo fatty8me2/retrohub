@@ -80,9 +80,9 @@ std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, 
 constexpr int kFriztiPinRevision = 999;
 /* Fritchii shows a one-time "What's new" window (when the game stops or fails to boot) while [UI] fritchii_whats_new_seen differs from its build
  * version (Common::g_build_version, exact string compare). Since v5.5 RetroHub's CI build is named like Frizti's own ("Fritchii", version "v" +
- * dist/frizti_version.txt), so the pinned build reports "v5.5"; writing it keeps the window shut. (v5's CI build reported "build-3": named "Lichii",
+ * dist/frizti_version.txt), so the pinned build reports its version ("v5.7" now); writing it keeps the window shut. (v5's CI build reported "build-3": named "Lichii",
  * every FritchiiUi::Enabled() path was off, the Preparing shaders screen included.) Change it with every Fritchii pin. */
-constexpr const char* kFritchiiWhatsNewSeen = "v5.5";
+constexpr const char* kFritchiiWhatsNewSeen = "v5.7";
 std::string fritchii_ini_pin(const std::string& ini);
 /* [Controls] player 1 (player_0_*) from the RetroHub "switch" profile on one SDL pad (guid + port among same-guid pads); player_0_connected=true,
  * player_0_type=0 (Pro Controller), players 2-8 disconnected. Value format (Lichii sdl_driver.cpp):

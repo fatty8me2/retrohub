@@ -341,15 +341,20 @@ The vault side never contains the user uuid (`SaveSession::vault_rels`), so any 
 Fritchii is Frizti's Ocarina-of-Time fork of Lichii. RetroHub downloads it itself (one pinned build, `fritchii_pin` in `src/hub/emulators.cpp`: version, path, size, SHA-256)
 into `<data>\emulators\fritchii`, with its own `user\` folder, and runs it through the same code as Lichii (keys, firmware, controls, saves, hang watch).
 
-- **Version.** The pin is **v5.5** (`retrohub-fritchii-v5.5` on `fatty8me2/Fritchii`): RetroHub's own GitHub Actions build of Frizti's tagged source plus build-only commits
-  (MSVC warning flags; Windows only; no `-DLICHII_BUILD_TAG`), so the binary is named and versioned like Frizti's release, "Fritchii v5.5". Builds before v5.5 passed
+- **Version.** The pin is **v5.7** (`retrohub-fritchii-v5.7` on `fatty8me2/Fritchii`): RetroHub's own build of Frizti's tagged source plus build-only commits
+  (MSVC warning flags; Windows only; no `-DLICHII_BUILD_TAG`), so the binary is named and versioned like Frizti's release, "Fritchii v5.7". v5.7 was built LOCALLY on the owner's PC
+  (2026-11-10, VS 2026 / MSVC 14.50, Qt 6.8.3; branch `retrohub/msvc`, commit 6b21f52) because GitHub paused Actions on the fork; there is no workflow run for it. v5.6 was skipped.
+  The "Convert to NX" tool is not in this build (the prebuilt nxformat zip no longer matched the SHA-256 pinned in Fritchii's `CMakeModules/NxFormat.cmake`, so configure skipped it);
+  loading `.nx` games is unaffected. The zip carries the Visual C++ 14.50 runtime DLLs app-local (MSVC 14.50 is newer than the runtime many PCs have) and no `.pdb` files or `vc_redist.x64.exe`. Builds before v5.5 passed
   `-DLICHII_BUILD_TAG=build-N`, which names the binary "Lichii build-N" (`CMakeModules/GenerateSCMRev.cmake`) and turns off every `FritchiiUi::Enabled()` path,
   the Preparing shaders screen included: v5's preparation then ran on idle threads beside the game, which cost about 15 fps in Ocarina of Time until it finished.
   A pin whose size and SHA-256 are zero (`release_is_placeholder()`) downloads nothing; Ocarina of Time then keeps playing with Lichii unless Fritchii is already installed.
-- **Upgrading (from v4.1 or v5).** Like Lichii's in-place upgrade: `install_core` replaces the program files and keeps `user\` (keys, saves, settings, shader cache).
-  The first start after a version change shows the full Preparing shaders screen once (Fritchii's "prepared" stamp includes its build version).
+- **Upgrading (from v4.1, v5 or v5.5).** Like Lichii's in-place upgrade: `install_core` replaces the program files and keeps `user\` (keys, saves, settings, shader cache).
+  The first start after a version change shows the full Preparing shaders screen once (Fritchii's "prepared" stamp includes its build version). v5.7 keeps shader cache v54 and the
+  recipe format; its tuned-settings revision is 7 (RetroHub's revision pin 999 still holds it off); its new built-in switches (`EDEN_NX2_JIT_WARM`, `EDEN_NX2_TC_CEILING_MIB`,
+  `EDEN_NX2_READ_THROTTLE`, async GPU read-back) do not conflict with what RetroHub sets.
 - **What's new.** Fritchii opens a one-time What's new window (after the game stops) while `[UI] fritchii_whats_new_seen` differs from its build version; RetroHub writes
-  the pinned build's version (`kFritchiiWhatsNewSeen` in `lichii.h`, "v5.5") on every launch. Change it with every pin.
+  the pinned build's version (`kFritchiiWhatsNewSeen` in `lichii.h`, "v5.7") on every launch. Change it with every pin.
 - **Default for Ocarina of Time.** Ocarina of Time (Switch 2, `0400486024DEC000`) plays with Fritchii by default. The rule is one pure function, `hubemu::nx_emulator_for` (`nx_runner.cpp`):
   no `switch.runner` choice for the game or for Switch as a whole (`Store::source` is 0) means Fritchii for that title only; any explicit choice (even `lichii`) wins. Other Switch games stay on
   Lichii. Online and room launches always use Lichii. If Fritchii is not installed, Play shows the usual download prompt. Hookshot is still opt-in and is decided first.
