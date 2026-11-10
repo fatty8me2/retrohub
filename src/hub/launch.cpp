@@ -279,9 +279,10 @@ void pad_exit_watch() {
     request_game_close();
 }
 
-/* Lichii builds 88-95 (build 88 release notes, known issue; still unfixed in build 95; not known for build 125, so the watch stays on): a fence-worker shutdown race can leave lichii.exe waiting after its window closed. The session
+/* Lichii builds 88-95 (build 88 release notes, known issue; still unfixed in build 95; not known for builds 125 and 130, so the watch stays on): a fence-worker shutdown race can leave lichii.exe waiting after its window closed. The session
  * (save copy-back, vault sync) waits for the whole job, so once the game had a window and every window of the job has been gone for 15 s,
- * the job is ended. Only RetroHub's own Lichii runs in that job (Kind::Lichii is never a user's install); by handle, never by image name. */
+ * the job is ended, but only after the process also stopped using the CPU AND the disk for 10 s (build 130 drains its shader cache, may compact a multi-GB cache log and
+ * store a driver blob at exit: disk-bound work that barely uses the CPU must not be cut off). Only RetroHub's own Lichii runs in that job (Kind::Lichii is never a user's install); by handle, never by image name. */
 static bool g_hookshot_run = false;   // the running game is Hookshot (set by launch_hookshot)
 bool hookshot_running() { return g_hookshot_run && A.proc; }
 static bool g_fritchii_run = false;   // the running Switch game is Fritchii (set at spawn)
@@ -290,7 +291,7 @@ bool fritchii_running() { return g_fritchii_run && A.proc; }
 void lichii_hang_watch() {
     static bool had_window = false;
     static ULONGLONG gone_since = 0;
-    static ULONGLONG cpu_at_gone = 0, idle_since = 0;
+    static ULONGLONG cpu_at_gone = 0, io_at_gone = 0, idle_since = 0;
     if (!A.proc) { g_hookshot_run = false; g_fritchii_run = false; }
     if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { had_window = false; gone_since = 0; return; }   // Hookshot has its own exit; the hang is a Lichii issue (builds 88-95; build 125 unknown)
     const ULONGLONG now = GetTickCount64();
@@ -301,10 +302,16 @@ void lichii_hang_watch() {
         if (!GetProcessTimes(A.proc, &c, &x, &k, &u)) return 0;
         return (((ULONGLONG)k.dwHighDateTime << 32) | k.dwLowDateTime) + (((ULONGLONG)u.dwHighDateTime << 32) | u.dwLowDateTime);
     };
-    if (!gone_since) { gone_since = now; cpu_at_gone = cpu(); idle_since = now; return; }
-    {   /* still busy (saving, shutting threads down): wait; only a process that stopped using the CPU counts as hung */
-        const ULONGLONG c = cpu();
+    auto io = []() -> ULONGLONG {   // bytes read + written by the game process so far (disk-bound work, e.g. Lichii build 130's shader-cache writer / log compaction, uses little CPU)
+        IO_COUNTERS c;
+        if (!GetProcessIoCounters(A.proc, &c)) return 0;
+        return c.ReadTransferCount + c.WriteTransferCount;
+    };
+    if (!gone_since) { gone_since = now; cpu_at_gone = cpu(); io_at_gone = io(); idle_since = now; return; }
+    {   /* still busy (saving, draining the shader cache, shutting threads down): wait; only a process that stopped using both the CPU and the disk counts as hung */
+        const ULONGLONG c = cpu(), b = io();
         if (c > cpu_at_gone + 2000000) { cpu_at_gone = c; idle_since = now; }   // more than 0.2 s of CPU since the last check
+        if (b > io_at_gone + 65536) { io_at_gone = b; idle_since = now; }       // more than 64 KiB of I/O since the last check
     }
     if (now - gone_since < 15000 || now - idle_since < 10000) return;
     autotest_log("lichii: window closed 15 s ago but the process is still running (Lichii exit hang): ending its job");

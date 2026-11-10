@@ -1,5 +1,5 @@
 #pragma once
-/* Nintendo Switch / Switch 2 via Lichii (github.com/zortos293/Lichii, an Eden fork; Kind::Lichii in emulators.h, pinned to build 125, release tag build-125).
+/* Nintendo Switch / Switch 2 via Lichii (github.com/zortos293/Lichii, an Eden fork; Kind::Lichii in emulators.h, pinned to build 130, release tag build-130).
  * RetroHub's own portable download only: a `user` folder beside lichii.exe makes it portable (Lichii common/fs/fs_paths.h PORTABLE_DIR),
  * so a player's own Eden/yuzu/Ryujinx install is NEVER written to. UI-free; see docs/EMULATORS.md (Switch).
  *
@@ -142,13 +142,13 @@ bool lichii_pad_select(const std::vector<PadDesc>& by_port, const std::vector<Pa
 std::string prepare_lichii(const std::string& install_dir, const hubctl::Profile& profile, const std::string& sdl_guid, int port,
                            const hub::gs::Values& v, bool fullscreen, const SdlBinds* binds = nullptr, const std::vector<std::string>* skip_keys = nullptr);
 /* Environment variables added to Lichii's own (the child inherits RetroHub's environment plus these; launch.cpp spawn()).
- * switch.preload_shaders: "all" -> EDEN_NX2_PRELOAD_ALL_PIPELINES=1 (Lichii builds every cached pipeline at start, ~0.45 MB driver memory each);
+ * switch.preload_shaders: "all" -> EDEN_NX2_PRELOAD_ALL_PIPELINES=1 (Lichii builds every cached pipeline at start, ~0.45 MB driver memory each, unchanged in build 130; the 9000-frame eviction is skipped then);
  * "auto" -> the same when physical_ram_bytes >= 60 GiB (a PC sold as 64 GB reports ~63.7 GiB); "recent" (the default since 1.40.4; also missing / unknown)
  * -> nothing. Pure.
  * switch.fast_reads: anything but "off" -> EDEN_NX2_NO_REACTIVE=1 (lichii_fast_reads). */
 std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t physical_ram_bytes);
-/* switch.fast_reads ("Faster GPU reads"): anything but "off" (missing counts as on) -> EDEN_NX2_NO_REACTIVE=1 (Lichii build 125 drops its read traps on Switch 2
- * programs; stale reads are possible but rare). One helper for every Lichii-family launch: lichii_env (Lichii) and nx_env (Fritchii) both call it. */
+/* switch.fast_reads ("Faster GPU reads"): anything but "off" (missing counts as on) -> EDEN_NX2_NO_REACTIVE=1 (Lichii build 125+ drops its read traps on Switch 2
+ * programs, still read in build 130; stale reads are possible but rare). One helper for every Lichii-family launch: lichii_env (Lichii) and nx_env (Fritchii) both call it. */
 bool lichii_fast_reads(const hub::gs::Values& v);
 uint64_t physical_ram_bytes();   // GlobalMemoryStatusEx ullTotalPhys; 0 when unknown
 /* [-f] -u 0 -g "<game>" */

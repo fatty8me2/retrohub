@@ -153,6 +153,7 @@ std::vector<Option> build() {
     // DMA Unsafe added nothing on top of Low, so only this is exposed. "lichii" leaves whatever is set inside Lichii.
     v.push_back(mk("switch.gpu_accuracy", "GPU accuracy", "Video", SWITCH, K::Choice, S::Visual, "low",
                    {{"low", "Low (faster)"}, {"high", "High (more accurate, slower)"}, {"lichii", "Use Lichii's setting"}}));
+    // (Build 130: same variables and behaviour; its cache is now lichii-cache.v2.bin + .driver.bin per title, an old vulkan.fork-v5x.bin is converted once.)
     // Lichii builds only the cached shaders recent sessions used at start (at most 3000 without a used-list); the rest are built in the background or
     // when first needed, which hitches. "all" sets EDEN_NX2_PRELOAD_ALL_PIPELINES=1 (hubemu::lichii_env): every cached shader is built at start (about
     // 0.45 MB of driver memory each, ~19 GB for a 43k cache). "auto" does that on PCs with 60 GiB or more of RAM (a "64 GB" PC reports ~63.7 GiB);
@@ -162,7 +163,7 @@ std::vector<Option> build() {
     // Default "recent" since 1.40.4 (the owner's call: a full preload of a big cache took minutes and filled a 32 GB PC's memory); "auto" stays a choice.
     v.push_back(mk("switch.preload_shaders", "Shaders at start", "Video", SWITCH, K::Choice, S::Visual, "recent",
                    {{"auto", "Auto"}, {"all", "All cached shaders"}, {"recent", "Recently used"}}));
-    // "Faster GPU reads" (default on): sets EDEN_NX2_NO_REACTIVE=1 for every Lichii-family launch (hubemu::lichii_fast_reads, lichii.cpp). Lichii build 125 drops
+    // "Faster GPU reads" (default on): sets EDEN_NX2_NO_REACTIVE=1 for every Lichii-family launch (hubemu::lichii_fast_reads, lichii.cpp). Lichii build 125+ (still read in build 130) drops
     // its read traps on Switch 2 programs, so a CPU read of GPU-written memory no longer waits for the whole GPU (Ocarina of Time fell from ~60 to ~17 fps in
     // places; upstream Lichii issues #944 and #416). Rarely a CPU read can see stale data. Lichii's own use_reactive_flushing is left alone.
     // Help text: "Lichii skips waiting for the GPU when a game reads back graphics memory. Much faster in parts of Ocarina of Time. Rarely a small glitch: turn

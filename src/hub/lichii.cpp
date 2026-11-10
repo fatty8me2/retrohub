@@ -747,6 +747,9 @@ bool lichii_fast_reads(const hub::gs::Values& v) {
 }
 
 std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t ram) {
+    // Both variables are still read by Lichii build 130 and behave as before. Build 130 also releases all-zero guest pages (about 6 GB less RAM), which does not
+    // change the driver-memory cost below. Its shader cache is now "v2" (lichii-cache.v2.bin + .driver.bin; an old vulkan.fork-v5x.bin is converted once). Without a
+    // used-list "recent" still builds at most 3000 pipelines; the 9000-frame eviction is still hard-coded and is still skipped when PRELOAD_ALL is set.
     std::vector<std::pair<std::string, std::string>> env;
     if (lichii_fast_reads(v)) env.push_back({"EDEN_NX2_NO_REACTIVE", "1"});
     auto it = v.find("switch.preload_shaders");

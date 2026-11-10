@@ -156,16 +156,20 @@ const Release& release(Kind k) {
     static const Release pp = {
         "1.20.4", L"www.ppsspp.org", L"/files/1_20_4/ppsspp_win.zip",
         27658759ull, "a60f04ebdb0b5f1655422bd7f88349a46999b17ad5115d6ddb290c3934bd5163", L"PPSSPPWindows64.exe", "GPL-2.0+"};
-    /* Lichii build 125 (GPL-3.0), github.com/zortos293/Lichii, tag build-125 (nx2 @ cbb512e, a pre-release published 2026-11-09 UTC by CI run 42536398207). An Eden fork that
-     * adds Switch 2 games. Over build 95 it supports mesh-shader output topologies 0 and 1 (Lichii PR #515, a10e5f5): build 95 throws "Mesh output topology N ... is not
-     * implemented" for anything but 4, and logged that while Ocarina of Time's Water Temple walls were missing. Its Vulkan shader cache is v54, which lists v53 as compatible
-     * (CompatibleVulkanPipelineCacheVersions), so a build 95 cache carries over. lichii.exe is at the zip root and the zip no longer ships .pdb files (~87 MB).
+    /* Lichii build 130 (GPL-3.0), github.com/zortos293/Lichii, tag build-130 (nx2 @ 3dae119, a full release published 2026-11-09 17:55 UTC; the zip's 42 files are byte-identical
+     * to the CI artifact of Lichii's own run 42660458563, and the source diff cbb512e..3dae119 (build 125 to 130) was audited). An Eden fork that adds Switch 2 games. Over
+     * build 125 it brings: asynchronous GPU read-back and back-thread macro reads (Ocarina of Time is faster), HostTiming threads that sleep instead of spinning, all-zero
+     * guest pages released (about 6 GB less RAM), .nx archive support, and a new shipped nxformat.dll (prebuilt from github.com/fab918/nxformat V1.0.0, hash-pinned in Lichii's
+     * CMake; it must stay). The shader cache is now "v2" (user\cache\shader\<title>\lichii-cache.v2.bin + .driver.bin): an existing vulkan.fork-v54 / v53 / v52 .bin is converted
+     * once at the first start and left in place, never deleted. Its cache writer drains for ~3 s at exit, a queued log compaction of a big cache file can run on, and a
+     * driver-blob store may drain for up to 60 s: see lichii_hang_watch (launch.cpp), which also requires no disk I/O before it ends a Lichii that lost its window.
+     * Build 125 added mesh-shader output topologies 0 and 1 (Lichii PR #515) over build 95. lichii.exe is at the zip root and the zip ships no .pdb files (~89 MB).
      * Portable via a `user` folder beside the exe (lichii.h), which an upgrade from an older pin never touches (install_core). The zip also holds lichii-updater.exe,
      * Lichii's own self-updater: install_core deletes it, because RetroHub is the only updater (lichii_ini_launch also forces check_for_updates off). No games, keys or
      * firmware are included: the player supplies their own. The version string is what the marker, Settings and the dialogs show. */
     static const Release li = {
-        "build 125", L"github.com", L"/zortos293/Lichii/releases/download/build-125/lichii-windows-x86_64.zip",
-        87352192ull, "c55eaaedbdcd87eebcab5510a3d19c49545a4718b9355d95150150d5aeb67bb6", L"lichii.exe", "GPL-3.0"};
+        "build 130", L"github.com", L"/zortos293/Lichii/releases/download/build-130/lichii-windows-x86_64.zip",
+        89253414ull, "f09893b3041596662d762959a103ae4af40d479631309fff9990bcc288078eed", L"lichii.exe", "GPL-3.0"};
     /* Fritchii (GPL-3.0): Frizti's Ocarina-of-Time fork of Lichii, built by us on GitHub Actions (github.com/fatty8me2/Fritchii). Same exe name (lichii.exe at the ROOT
      * of the zip, plus eden-cli.exe), same portable `user` folder, same qt-config.ini and save layout as Lichii. It lives in its OWN folder (userdata\emulators\fritchii)
      * with its OWN user\, never linked to Lichii's. The values come from the one block fritchii_pin below. */
@@ -742,7 +746,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     const bool swapped = ok && upgrading;   // from here a failure must put the old build back
     if (ok && k == Kind::Pcsx2) ok = write_text(join(dir, "portable.ini"), "");   // portable mode: all data beside the exe, a user's own PCSX2 is never touched
     if (ok && k == Kind::Ppsspp) { std::error_code ec2; fs::remove(P(join(dir, "installed.txt")), ec2); make_dirs(join(dir, "memstick")); }   // no installed.txt = portable: PPSSPP keeps everything in <dir>\memstick
-    if (ok && is_nx(k)) {   // (Lichii and Fritchii) a `user` folder beside lichii.exe = portable (a player's own %APPDATA%\eden is never touched); the debug symbols (~116 MB) and the bundled VC++ installer are not needed to play
+    if (ok && is_nx(k)) {   // (Lichii and Fritchii) a `user` folder beside lichii.exe = portable (a player's own %APPDATA%\eden is never touched); the bundled VC++ installer is not needed to play (older zips also had ~116 MB of .pdb files; build 125+ has none, and a missing file is fine). nxformat.dll (build 130+) is kept
         make_dirs(join(dir, "user"));
         std::error_code ec2;
         for (const char* f : {"lichii.pdb", "eden-cli.pdb", "vc_redist.x64.exe", "lichii-updater.exe"}) fs::remove(P(join(dir, f)), ec2);   // lichii-updater.exe (build 125+) is Lichii's own self-updater: RetroHub is the only updater
