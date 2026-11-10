@@ -1,6 +1,26 @@
 {
   "versions": [
     {
+      "version": "1.40.10",
+      "date": "2026-11-10",
+      "title": "Fritchii v5.7 for Ocarina of Time",
+      "new": [
+        "Ocarina of Time (Switch 2) now plays with Fritchii v5.7. Press Play and choose Update to get it",
+        "In Fritchii you can press Ctrl+U in Ocarina of Time to go above 60 fps at normal game speed (experimental), and again to go back"
+      ],
+      "improved": [
+        "Fewer hitches: no more freezes of up to 3 seconds when the game swaps a shader, less stutter right after you enter a new area, and shorter pauses on loads",
+        "Less memory: graphics memory stays around 6 GB instead of climbing to 10 GB, and PCs with 16 GB of RAM no longer run out of memory",
+        "The opening cutscenes and the main menu video stay in sync with their sound"
+      ],
+      "fixed": [
+        "Stretched or glowing geometry and the huge glowing triangles that could build up over a long session should be gone or much rarer",
+        "Two missing objects in Kakariko graveyard are drawn again",
+        "The Song of Time no longer ends with a loud crackle, and opening the ocarina without a microphone no longer crashes the game",
+        "After the update, Preparing shaders runs once more before the game starts. Let it finish: the game runs worse while it is still preparing"
+      ]
+    },
+    {
       "version": "1.40.9",
       "date": "2026-11-10",
       "title": "Lichii build 130: faster Ocarina of Time, less memory",
