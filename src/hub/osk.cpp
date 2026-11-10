@@ -387,6 +387,7 @@ bool input(const char* id, const char* hint, char* buf, size_t size, ImGuiInputT
 }
 
 std::string folder(const char* tag, bool clicked) {
+    if (clicked && !picker_focus_ok()) clicked = false;   // never open a picker (Windows dialog or our own browser) unless the hub has focus
     if (clicked && !S.open && !S.fb_open) {
         if (A.pad_mode) {
             S.fb_tag = tag;
@@ -417,6 +418,7 @@ std::string folder(const char* tag, bool clicked) {
 }
 
 std::string file(const char* tag, bool clicked, const std::vector<std::string>& filters) {
+    if (clicked && !picker_focus_ok()) clicked = false;
     if (clicked && !S.open && !S.fb_open) {
         if (A.pad_mode) {
             S.fb_tag = tag;
@@ -475,7 +477,7 @@ bool hub_input_blocked() {
     return cached;
 }
 
-bool hub_pad_blocked() { return pad_blocked(hub_input_blocked(), qm_is_open()); }
+bool hub_pad_blocked() { return pad_blocked(hub_input_blocked(), qm_is_open(), A.proc != nullptr || A.job_h != nullptr); }   // a game process runs: its pad presses are never the hub's, focus or not
 
 void pre_frame(ImGuiIO& io) {
     static bool had_game = false;

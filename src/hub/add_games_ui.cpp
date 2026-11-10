@@ -41,6 +41,7 @@ std::string documents_dir() {
 /* Multi-select file dialog for every supported format. */
 std::vector<std::string> pick_game_files() {
     std::vector<std::string> out;
+    if (!picker_focus_ok()) return out;
     IFileOpenDialog* dlg = nullptr;
     if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return out;
     DWORD opts = 0;

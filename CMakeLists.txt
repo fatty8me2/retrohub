@@ -217,6 +217,7 @@ add_test(NAME hub_hack_test COMMAND hub_hack_test)             # Plan 4: ROM hac
 add_test(NAME rh_helper_test COMMAND rh_helper_test $<TARGET_FILE:rh-helper> ${CMAKE_SOURCE_DIR}/data/helpers)   # rh-helper: script allowlist, path rejection, command-line split, exit codes
 add_test(NAME hub_popup_guard_test COMMAND hub_popup_guard_test)   # never pop up over a game: guard logic + lint of every raise/show/MessageBox/synthetic-input site in src/hub and src/common
 add_test(NAME hub_display_test COMMAND hub_display_test)            # window placement (monitor gone / off screen / maximized), UI scale, reduce-motion default
+add_test(NAME hub_input_gate_test COMMAND hub_input_gate_test)   # a pad press polled by ImGui's SDL backend never reaches the UI while a game owns the pad; picker focus guard
 add_test(NAME hub_idle_test COMMAND hub_idle_test)                  # idle throttle: when the hub may skip drawing a frame (pumps keep their cadence)
 add_test(NAME hub_toast_test COMMAND hub_toast_test)                  # toast XML/activation/policy with a mock notifier (no real toasts)
 add_test(NAME hub_wizard_test COMMAND hub_wizard_test)
