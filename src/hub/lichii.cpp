@@ -543,6 +543,18 @@ SdlBinds lichii_xinput_binds() {
     return s;
 }
 
+bool lichii_guid_is_hidapi(const std::string& guid) { return hex32(guid) && std::tolower((unsigned char)guid[28]) == '6' && std::tolower((unsigned char)guid[29]) == '8'; }
+
+SdlBinds lichii_sdl3_binds(const std::string& guid, const SdlBinds& in) {
+    if (!in.valid || !lichii_guid_is_hidapi(guid)) return in;
+    SdlBinds s = in;
+    auto h = [&](int i, int mask) { s.button[i].type = 'h'; s.button[i].idx = 0; s.button[i].hat = mask; };
+    h(11, 1); h(12, 4); h(13, 8); h(14, 2);   // d-pad up down left right: hat 0 (SDL_HAT_UP / DOWN / LEFT / RIGHT)
+    for (int i = 15; i < 21; ++i) s.button[i] = SdlBinds::B();   // misc1, paddles, touchpad: not at SDL2's indices in SDL3
+    for (int i = 0; i < 6; ++i) { s.axis[i].type = 'a'; s.axis[i].idx = i; }   // LX LY RX RY LT RT
+    return s;
+}
+
 bool lichii_ini_player0(const std::string& ini, std::string* guid, int* port) {
     const std::string key = "player_0_button_a=\"";
     size_t p = ini.find(key);

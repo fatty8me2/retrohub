@@ -721,6 +721,7 @@ bool lichii_pad_for(const hubctl::Profile& prof, std::string* guid, int* port, h
     for (int i = 0; i < 21 && i < SDL_CONTROLLER_BUTTON_MAX; ++i) binds->button[i] = conv(SDL_GameControllerGetBindForButton(c, (SDL_GameControllerButton)i));
     for (int i = 0; i < 6; ++i) binds->axis[i] = conv(SDL_GameControllerGetBindForAxis(c, (SDL_GameControllerAxis)i));
     binds->valid = true;
+    *binds = hubemu::lichii_sdl3_binds(*guid, *binds);   // PlayStation / Switch Pro (HIDAPI): SDL3 reads the d-pad as hat 0, not SDL2's buttons 11-14
     return true;
 }
 
