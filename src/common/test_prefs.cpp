@@ -245,7 +245,7 @@ int main() {
         set_renames(&new_p, {{"n64:a", "Old A"}, {"n64:o", "Old O"}, {"n64:n", "New N"}}, 1000);
         set_progress(&new_p, {{"n64:a", {"beaten", "great"}}}, 1001);
         {   // Switch 2 migration: a v0 rule that lists "switch" also gets "switch2" once; a rule the player later sets to Switch only stays Switch only
-            Shelf s0; s0.name = "Sw"; s0.smart = true; s0.rule.systems = {"n64", "switch"}; s0.rule.ver = 0;
+            Shelf s0; s0.name = "Sw"; s0.smart = true; s0.rule.systems = {"n64", "switch"}; s0.rule.ver = 1;
             Prefs q; set_user_shelves(&q, {s0}, 1);
             std::string txt = serialize(q);
             Prefs back;
