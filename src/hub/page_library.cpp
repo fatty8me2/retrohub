@@ -40,8 +40,7 @@ void home_shelves() {
     float tw = hubui::shelf_tile_w(avail, sp(24.f), max_w, gap);
     float th = tw / kTileAspect;
     /* Home order: Resume hero (above), Favorites, Recently played, Friends are playing, the other shelves, Your stats. */
-    int recent_si = -1;
-    for (size_t si = 0; si < A.shelves.size(); ++si) if (A.shelves[si].id == "recent") { recent_si = (int)si; break; }
+    const int recent_si = hubui::friends_shelf_anchor(A.shelves);   // the Friends' shelf follows the last of Favorites / Recently played
     if (recent_si < 0) fr_home_shelf(avail, tw, th, gap, bleed);
     for (size_t si = 0; si < A.shelves.size(); ++si) {
         const hubui::Shelf& sh0 = A.shelves[si];

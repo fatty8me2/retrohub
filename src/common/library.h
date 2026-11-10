@@ -75,7 +75,10 @@ struct GameEntry {
  * Everything the player SEES or CHOOSES per console uses the console id instead of System: names, short names, badges, colours,
  * filter chips and their counts, group-by / sort-by console, console lists (Settings, Controllers, Saves, stats, Discover, add-games
  * folders, presence / room / notification text). There "switch" (Nintendo Switch) and "switch2" (Nintendo Switch 2) are distinct.
- * Emulator, launch, save, key and path logic keeps using System (never console ids) so nothing a player has moves. */
+ * Per-console SETTINGS (including the emulator choice "switch.runner" and fullscreen) resolve through the console layer (game_settings.h
+ * resolve_console / resolve_game): Switch 2 has its own defaults entry and inherits Switch's until it is set. The add-games "Switch 2" folder is
+ * only a convenience for new user ROMs (existing files never move). Keys, saves, the vault layout, game keys, storage paths and emulator
+ * selection logic stay on System (never console ids), so nothing a player has moves. */
 constexpr const char* kConsoleSwitch2 = "switch2";
 std::string console_id(System s, bool nx2);        // system_short(s), or "switch2" for System::Switch with nx2
 std::string console_id(const GameEntry& e);        // console_id(e.system, e.nx2)

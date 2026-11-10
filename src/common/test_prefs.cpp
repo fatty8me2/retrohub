@@ -244,6 +244,26 @@ int main() {
         Prefs new_p = old_p;
         set_renames(&new_p, {{"n64:a", "Old A"}, {"n64:o", "Old O"}, {"n64:n", "New N"}}, 1000);
         set_progress(&new_p, {{"n64:a", {"beaten", "great"}}}, 1001);
+        {   // Switch 2 migration: a v0 rule that lists "switch" also gets "switch2" once; a rule the player later sets to Switch only stays Switch only
+            Shelf s0; s0.name = "Sw"; s0.smart = true; s0.rule.systems = {"n64", "switch"}; s0.rule.ver = 0;
+            Prefs q; set_user_shelves(&q, {s0}, 1);
+            std::string txt = serialize(q);
+            Prefs back;
+            CHECK(parse(txt, &back) && back.user_shelves.size() == 1 && back.user_shelves[0].rule.ver == 1);
+            CHECK((back.user_shelves[0].rule.systems == V{"n64", "switch"}));   // written with ver 1: stable
+            std::string legacy = txt;
+            auto vp = legacy.find("\"ver\"");
+            CHECK(vp != std::string::npos);
+            legacy.replace(vp, 5, "\"vXr\"");   // an old file has no "ver"
+            Prefs mig;
+            CHECK(parse(legacy, &mig) && mig.user_shelves.size() == 1);
+            CHECK((mig.user_shelves[0].rule.systems == V{"n64", "switch", "switch2"}) && mig.user_shelves[0].rule.ver == 1);
+            Prefs again;
+            CHECK(parse(serialize(mig), &again) && (again.user_shelves[0].rule.systems == V{"n64", "switch", "switch2"}));
+            mig.user_shelves[0].rule.systems = {"switch"};   // the player later chooses Switch only: it is saved with ver 1 and stays
+            Prefs stay;
+            CHECK(parse(serialize(mig), &stay) && (stay.user_shelves[0].rule.systems == V{"switch"}));
+        }
         Shelf sm; sm.name = "Backlog"; sm.smart = true; sm.rule.status = "backlog"; sm.rule.min_players = 2; sm.rule.systems = {"n64", "gc"};
         std::vector<Shelf> shs = new_p.user_shelves; shs.push_back(sm);
         set_user_shelves(&new_p, shs, 1002);

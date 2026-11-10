@@ -773,7 +773,7 @@ void page_controllers() {
     if (!CTL.demo_done && std::getenv("HUB_SHOT_CTL_DEMO")) {   // screenshot aid: a few custom bindings (never saved)
         CTL.demo_done = true;
         for (const char* sys : {"n64", "retro", "gc"}) {
-            std::string gm = (CTL.game.empty() || hubctl::system_key(find_entry(CTL.game) ? find_entry(CTL.game)->system : hub::System::N64) != sys) ? "" : CTL.game;
+            std::string gm = (CTL.game.empty() || (find_entry(CTL.game) ? hubctl::console_key(*find_entry(CTL.game)) : std::string("n64")) != sys) ? "" : CTL.game;
             if (std::string(sys) == "n64") { hubctl::set_key(CTL.st, sys, gm, "a", "space|x"); hubctl::set_key(CTL.st, sys, gm, "start", "return|kp_enter"); hubctl::set_mapping(CTL.st, sys, gm, "a", "b"); hubctl::set_mapping(CTL.st, sys, gm, "z", "rightshoulder"); hubctl::set_analog(CTL.st, sys, gm, "stick", 0.15, 1.25); }
             else if (std::string(sys) == "gc") { hubctl::set_mapping(CTL.st, sys, gm, "x", "x|rightx+"); hubctl::set_analog(CTL.st, sys, gm, "main_stick", 0.12, 1.0); }
             else hubctl::set_mapping(CTL.st, sys, gm, "a", "a|y");
