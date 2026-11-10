@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.40.7",
+      "date": "2026-11-09",
+      "title": "Play time, Steam style",
+      "new": [
+        "Every game page shows how long you have played, like Steam: \"42.6 hours played\" and the day you last played it, right under the title, plus a small strip with your play time, last played, sessions and hours in the last 2 weeks",
+        "Play time counts every PC you play on. When another PC played the game too (its play log syncs with your saves), the strip shows how much was played on this PC and how much on the others",
+        "Sorted by Most played, the library shows each game's hours on its tile (\"12.5 hours\", or \"Not played yet\"), and in the Cases view the hours lead the line under the centred game"
+      ],
+      "improved": [
+        "The list view's Play time column and the Showcase view show play time in hours, the same way as the game page"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.40.6",
       "date": "2026-11-09",
       "title": "Fritchii v5.5, and damaged game files repaired automatically",
