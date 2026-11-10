@@ -488,6 +488,7 @@ std::string U(const std::wstring& w);
 bool file_exists(const std::string& p);
 std::string dir_of(const std::string& p);
 std::string file_name(const std::string& p);
+bool picker_focus_ok();   // a file / folder dialog may open only while the hub window has input focus (headless: always); never over a game
 std::string pick_path(HWND owner, bool folder, const wchar_t* filter_name, const wchar_t* filter_spec);
 std::string pick_save_path(HWND owner, const wchar_t* default_name, const wchar_t* filter_name,
                                   const wchar_t* filter_spec, const wchar_t* default_ext);

@@ -543,6 +543,33 @@ SdlBinds lichii_xinput_binds() {
     return s;
 }
 
+bool lichii_guid_is_hidapi(const std::string& guid) { return hex32(guid) && std::tolower((unsigned char)guid[28]) == '6' && std::tolower((unsigned char)guid[29]) == '8'; }
+
+SdlBinds lichii_sdl3_binds(const std::string& guid, const SdlBinds& in) {
+    // Sony (054c) and Nintendo (057e) only: those are the HIDAPI drivers whose SDL3 layout was checked. An Xbox pad on HIDAPI (045e) never gets here as such
+    // (lichii_pad_for turns Xbox pads into XInput guids first; Lichii's SDL3 has its HIDAPI Xbox driver off) and is left alone, like any other vendor.
+    if (!in.valid || !lichii_guid_is_hidapi(guid)) return in;
+    const unsigned vendor = le16(lichii_zero_guid_crc(guid), 8);
+    if (vendor != 0x054c && vendor != 0x057e) return in;
+    SdlBinds s = in;
+    // d-pad: SDL2 raw buttons 11-14 (SDL_CONTROLLER_BUTTON_DPAD_UP/DOWN/LEFT/RIGHT) -> SDL3 hat 0. Only a bind that is unbound or still SDL2's own default is
+    // replaced; a different bind (a button / axis the user chose) stays as it is.
+    const int masks[4] = {1, 4, 8, 2};   // SDL_HAT_UP, DOWN, LEFT, RIGHT
+    for (int k = 0; k < 4; ++k) {
+        SdlBinds::B& b = s.button[11 + k];
+        if (b.type == 0 || b.idx < 0 || (b.type == 'b' && b.idx == 11 + k)) { b.type = 'h'; b.idx = 0; b.hat = masks[k]; }
+    }
+    // Raw buttons 0-10 and the 6 axes (triggers are axes 4 / 5) are identical in SDL2 and SDL3 for the ps4 / ps5 / switch drivers: left as SDL2 reported them.
+    // SDL3 packs the raw buttons right after 10 (no d-pad buttons any more): ps4 / ps5 touchpad = 11, switch share (capture) = 11, so SDL2's 15+ no longer exist
+    // there. The touchpad and the Switch capture button are moved to 11; mic / paddles / function keys are left unbound (their SDL3 order was not verified per pad).
+    const bool sony = vendor == 0x054c;
+    SdlBinds::B misc1 = in.button[15], touch = in.button[20];
+    for (int i = 15; i < 21; ++i) s.button[i] = SdlBinds::B();
+    const SdlBinds::B& src = sony ? touch : misc1;
+    if (src.type == 'b' && src.idx >= 0) { s.button[sony ? 20 : 15].type = 'b'; s.button[sony ? 20 : 15].idx = 11; }
+    return s;
+}
+
 bool lichii_ini_player0(const std::string& ini, std::string* guid, int* port) {
     const std::string key = "player_0_button_a=\"";
     size_t p = ini.find(key);

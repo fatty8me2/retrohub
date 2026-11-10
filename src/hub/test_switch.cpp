@@ -194,6 +194,76 @@ static void test_lichii_sdl3() {
     const std::string ps0 = lichii_zero_guid_crc(ps);
     CHECK(ps != ps0 && lichii_controls_ini("", hubctl::default_profile("switch"), ps, 1, &ds) == lichii_controls_ini("", hubctl::default_profile("switch"), ps0, 1, &ds));
     CHECK(has(lichii_controls_ini("", hubctl::default_profile("switch"), ps, 1, &ds), "engine:sdl,port:1,guid:" + ps0 + ",button:2\"") && !has(lichii_controls_ini("", hubctl::default_profile("switch"), ps, 1, &ds), "22a5"));
+    // HIDAPI pads (PS4 / PS5 / Switch Pro): SDL2 reports the d-pad as buttons 11-14, SDL3 as hat 0
+    {
+        SdlBinds s2;
+        s2.valid = true;
+        for (int i = 0; i < 15; ++i) { s2.button[i].type = 'b'; s2.button[i].idx = i; }
+        for (int i = 0; i < 6; ++i) { s2.axis[i].type = 'a'; s2.axis[i].idx = i; }
+        s2.button[15].type = 'b'; s2.button[15].idx = 15;
+        const hubctl::Profile pr = hubctl::default_profile("switch");
+        const char* guids[] = {"030000004c050000cc09000000016800", "030000004c050000e60c000000016800", "030000007e0500000920000000016800"};   // DS4, DualSense, Switch Pro
+        for (const char* g : guids) {
+            CHECK(lichii_guid_is_hidapi(g));
+            const SdlBinds s3 = lichii_sdl3_binds(g, s2);
+            const std::string pre = "engine:sdl,port:0,guid:" + lichii_zero_guid_crc(g);
+            const std::string c3 = lichii_controls_ini("", pr, g, 0, &s3), c2 = lichii_controls_ini("", pr, g, 0, &s2);
+            CHECK(has(c3, "player_0_button_dup=\"" + pre + ",hat:0,direction:up\""));
+            CHECK(has(c3, "player_0_button_dright=\"" + pre + ",hat:0,direction:right\""));
+            CHECK(has(c3, "player_0_button_ddown=\"" + pre + ",hat:0,direction:down\""));
+            CHECK(has(c3, "player_0_button_dleft=\"" + pre + ",hat:0,direction:left\""));
+            CHECK(has(c2, "player_0_button_dup=\"" + pre + ",button:11\""));   // what SDL2's numbers alone would have written
+            for (const char* k : {"a", "b", "x", "y", "l", "r", "plus", "minus"}) {   // everything but the d-pad is as SDL2 gave it
+                const std::string key = std::string("player_0_button_") + k + "=";
+                auto ln = [&](const std::string& c) { size_t i = c.find(key); return i == std::string::npos ? std::string("?") : c.substr(i, c.find('\n', i) - i); };
+                CHECK(ln(c3) == ln(c2) && ln(c3) != "?");
+            }
+            CHECK(s3.button[15].type == 0 || s3.button[15].idx == 11);
+            for (int i = 0; i < 6; ++i) CHECK(s3.axis[i].type == s2.axis[i].type && s3.axis[i].idx == s2.axis[i].idx);   // axes exactly as SDL2 reported
+        }
+        // a digital-trigger pad: the SDL2 fallback is kept (no axis is invented)
+        {   SdlBinds dt = s2;
+            dt.axis[4].type = 'b'; dt.axis[4].idx = 6; dt.axis[5].type = 0; dt.axis[5].idx = -1;
+            const SdlBinds o = lichii_sdl3_binds(guids[2], dt);
+            CHECK(o.axis[4].type == 'b' && o.axis[4].idx == 6 && o.axis[5].type == 0);
+        }
+        // a custom d-pad bind is never overwritten; unbound or SDL2-default ones are replaced
+        {   SdlBinds cu = s2;
+            cu.button[11].type = 'b'; cu.button[11].idx = 3;                    // up -> some other button
+            cu.button[12].type = 'a'; cu.button[12].idx = 1;                    // down -> an axis
+            cu.button[13] = SdlBinds::B();                                      // left unbound
+            const SdlBinds o = lichii_sdl3_binds(guids[0], cu);
+            CHECK(o.button[11].type == 'b' && o.button[11].idx == 3 && o.button[12].type == 'a' && o.button[12].idx == 1);
+            CHECK(o.button[13].type == 'h' && o.button[13].hat == 8 && o.button[14].type == 'h' && o.button[14].hat == 2);
+        }
+        // touchpad (Sony) / capture (Nintendo) move to SDL3's raw button 11; paddles are dropped
+        {   SdlBinds m = s2;
+            m.button[20].type = 'b'; m.button[20].idx = 15; m.button[15].type = 'b'; m.button[15].idx = 16; m.button[16].type = 'b'; m.button[16].idx = 17;
+            const SdlBinds sony = lichii_sdl3_binds(guids[0], m), nin = lichii_sdl3_binds(guids[2], m);
+            CHECK(sony.button[20].type == 'b' && sony.button[20].idx == 11 && sony.button[15].type == 0 && sony.button[16].type == 0);
+            CHECK(nin.button[15].type == 'b' && nin.button[15].idx == 11 && nin.button[20].type == 0 && nin.button[16].type == 0);
+        }
+        // an Xbox pad on HIDAPI ('h', vendor 045e) and other vendors are untouched, d-pad buttons included
+        {   const char* other[] = {"030000005e040000130b000000006800", "030000000d0f00005500000000006800"};
+            for (const char* g : other) {
+                CHECK(lichii_guid_is_hidapi(g));
+                const SdlBinds o = lichii_sdl3_binds(g, s2);
+                for (int i = 0; i < 21; ++i) CHECK(o.button[i].type == s2.button[i].type && o.button[i].idx == s2.button[i].idx && o.button[i].hat == s2.button[i].hat);
+                CHECK(lichii_controls_ini("", pr, g, 0, &o) == lichii_controls_ini("", pr, g, 0, &s2));
+            }
+        }
+        // Xbox (XInput 'x') and a generic DirectInput pad ('d') with a hat: untouched
+        const std::string xg = "030000005e040000130b000017057801", dg = "030000006d0400001fc2000000006400";
+        CHECK(!lichii_guid_is_hidapi(xg) && !lichii_guid_is_hidapi(dg) && !lichii_guid_is_hidapi("") && !lichii_guid_is_hidapi("zz"));
+        const SdlBinds xb2 = lichii_xinput_binds(), xb3 = lichii_sdl3_binds(xg, xb2);
+        CHECK(lichii_controls_ini("", pr, xg, 0, &xb2) == lichii_controls_ini("", pr, xg, 0, &xb3));
+        SdlBinds dh = s2;
+        for (int i = 11; i < 15; ++i) { dh.button[i].type = 'h'; dh.button[i].idx = 0; dh.button[i].hat = i == 11 ? 1 : i == 12 ? 4 : i == 13 ? 8 : 2; }
+        dh.axis[4].idx = 2; dh.axis[2].idx = 3;
+        const SdlBinds dh3 = lichii_sdl3_binds(dg, dh);
+        CHECK(lichii_controls_ini("", pr, dg, 0, &dh) == lichii_controls_ini("", pr, dg, 0, &dh3));
+        CHECK(!lichii_sdl3_binds(guids[0], SdlBinds()).valid);
+    }
     // port among identical XInput pads (SDL3 lists them in slot order); an empty slot is skipped
     XinputId ids[4];
     ids[0].present = true; ids[0].vendor = 0x045e; ids[0].product = 0x0b13; ids[0].version = 0x0517; ids[0].subtype = 1;

@@ -38,6 +38,8 @@ int main() {
         const bool grace = g.blocked(true, 5.0);
         CHECK(grace && !pad_blocked(grace, true));
     }
+    // a running game blocks the pad whatever has the focus, except while the quick menu is open
+    CHECK(pad_blocked(false, false, true) && !pad_blocked(false, true, true) && !pad_blocked(false, false, false) && pad_blocked(true, false, true));
     for (unsigned m : {1u, 0xFFFu, 1u << 4, 1u << 8}) CHECK(gate_pad_mask(m, true) == 0 && gate_pad_mask(m, false) == m);
     CHECK(!chat_may_send("", false) && !chat_may_send("   	", false) && !chat_may_send("hi", true) && chat_may_send("hi", false));
     {   // injected pad presses while blocked never type into a keyboard session

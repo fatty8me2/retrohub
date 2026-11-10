@@ -15,6 +15,7 @@
 #include "wizard_logic.h"
 #include "display.h"
 #include "tv_mode.h"
+#include "input_gate.h"
 
 #include <cstring>
 
@@ -384,11 +385,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) { wx = -wx; wy = -wy; }
                 if (route_wheel(io.MousePos.x, io.MousePos.y, wx, wy)) { input_this_iter = true; continue; }   // Home: vertical = eased page scroll, horizontal / Shift = the row under the pointer
             }
-            if (osk::hub_input_blocked()) {   // game running / hub unfocused: no key, text or pad event may reach the UI (quit, window, drop, device events still pass)
-                if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_TEXTINPUT || e.type == SDL_TEXTEDITING) continue;
-                if (osk::hub_pad_blocked() && (e.type == SDL_CONTROLLERBUTTONDOWN || e.type == SDL_CONTROLLERBUTTONUP || e.type == SDL_CONTROLLERAXISMOTION ||
-                    e.type == SDL_JOYBUTTONDOWN || e.type == SDL_JOYBUTTONUP || e.type == SDL_JOYAXISMOTION || e.type == SDL_JOYHATMOTION)) continue;   // the open quick menu keeps its pad events even unfocused
-            }
+            if (osk::hub_input_blocked() && (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_TEXTINPUT || e.type == SDL_TEXTEDITING)) continue;   // hub unfocused: no key / text event may reach the UI (quit, window, drop, device events still pass)
+            if (osk::hub_pad_blocked() && (e.type == SDL_CONTROLLERBUTTONDOWN || e.type == SDL_CONTROLLERBUTTONUP || e.type == SDL_CONTROLLERAXISMOTION ||
+                e.type == SDL_JOYBUTTONDOWN || e.type == SDL_JOYBUTTONUP || e.type == SDL_JOYAXISMOTION || e.type == SDL_JOYHATMOTION)) continue;   // unfocused or a game runs: the pad is not the hub's (the open quick menu keeps its pad events)
             if (attract_swallow_event(e)) continue;   // attract mode: this event only wakes the hub
             input_this_iter = true;                   // only events that reach the UI count (a pad's axis noise behind a game is dropped above)
             ImGui_ImplSDL2_ProcessEvent(&e);
@@ -532,6 +531,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         tvmode::frame_begin(A.win, ren);
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
+        if (osk::hub_pad_blocked()) inputgate::purge_pad_presses(ImGui::GetCurrentContext());   // the backend polls the pad itself: a game owns it, drop the queued presses (releases stay)
         SH.pre_frame(io);
         if (osk::hub_input_blocked()) {   // also stop ImGui's own pad/keyboard nav so nothing is activated or typed
             if (osk::hub_pad_blocked()) io.ClearInputKeys();
