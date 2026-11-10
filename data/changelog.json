@@ -1,6 +1,21 @@
 {
   "versions": [
     {
+      "version": "1.40.8",
+      "date": "2026-11-09",
+      "title": "Nintendo Switch 2 on its own",
+      "new": [
+        "Nintendo Switch 2 is its own console everywhere: badges, filters, groups, settings, controllers and stats"
+      ],
+      "improved": [
+        "Home: Favorites now come first, and \"Jump back in\" is now \"Recently played\"",
+        "PS4/PS5/Switch Pro controllers: the D-pad works in Switch games without rebinding"
+      ],
+      "fixed": [
+        "Pressing buttons in a game no longer clicks things in RetroHub behind it (e.g. the folder picker popping up)"
+      ]
+    },
+    {
       "version": "1.40.7",
       "date": "2026-11-09",
       "title": "Play time, Steam style",
