@@ -15,6 +15,7 @@
 #include "wizard_logic.h"
 #include "display.h"
 #include "tv_mode.h"
+#include "input_gate.h"
 
 #include <cstring>
 
@@ -532,6 +533,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         tvmode::frame_begin(A.win, ren);
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
+        if (osk::hub_pad_blocked()) inputgate::purge_pad_presses(ImGui::GetCurrentContext());   // the backend polls the pad itself: a game owns it, drop the queued presses (releases stay)
         SH.pre_frame(io);
         if (osk::hub_input_blocked()) {   // also stop ImGui's own pad/keyboard nav so nothing is activated or typed
             if (osk::hub_pad_blocked()) io.ClearInputKeys();
