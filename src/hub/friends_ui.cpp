@@ -497,23 +497,24 @@ void fr_send_text(const std::string& uid, const std::string& text) {
     FR.cli.send_message(uid, text);
 }
 static hubui::group::HeldNotices FR_HELD;
-/* While a game or session runs: no chime, no toast card (held; counted for one quiet summary when play ends). */
-static hubui::group::InHubRoute fr_in_hub_route() {
-    const hubui::group::InHubRoute r = hubui::group::in_hub_route(game_active(), session_active(), g_headless);
-    if (r.hold) FR_HELD.note();
+static hubui::group::FriendToastDedup FR_FRIEND_TOAST;       // one "now friends" toast per person
+static std::map<std::string, std::string> FR_ACCEPTING;      // uid -> name of accepts waiting for the server's answer
+/* While a game or session runs: no chime, no toast card (held; counted for one quiet summary when play ends). `bell_item` = the item
+ * also sits in the bell. `ask`: the ask-to-join card may still show when the hub window itself is in front (never a sound). */
+static hubui::group::InHubRoute fr_in_hub_route(bool bell_item, bool ask = false) {
+    const hubui::group::InHubRoute r = hubui::group::in_hub_route(game_active(), session_active(), g_headless, hub_has_focus(), ask);
+    if (r.hold) FR_HELD.note(bell_item);
     return r;
 }
-void fr_notify_night(const std::string& night_id, const std::string& who) {
-    const hubui::group::InHubRoute rt = fr_in_hub_route();
-    if (rt.sound) ui_sound::play(ui_sound::Sfx::Notify);
+void fr_notify_night(const std::string& night_id, const std::string& who) {   // callers (gamenight_ui) only get here when quiet() is false
+    ui_sound::play(ui_sound::Sfx::Notify);
     Notif n;
     n.id = FR.next_id++; n.invite = false; n.night_id = night_id; n.name = who; n.t0 = ImGui::GetTime();
-    n.toast = rt.toast;
     FR.notifs.push_back(n);
 }
 
 void fr_notify(bool invite, const std::string& uid, const std::string& name, const hubnet::Invite& inv) {
-    const hubui::group::InHubRoute in_rt = fr_in_hub_route();
+    const hubui::group::InHubRoute in_rt = fr_in_hub_route(true);   // invites and friend requests both sit in the bell
     if (in_rt.sound) ui_sound::play(ui_sound::Sfx::Notify);
     for (auto& o : FR.notifs)
         if (!o.done && !o.ask && o.invite == invite && o.uid == uid && (!invite || o.inv.lobby_code == inv.lobby_code)) o.done = true;
@@ -656,7 +657,7 @@ static void fr_friend_online(const std::string& uid, const std::string& name) {
     const hubnet::Friend* f = fr_find(uid);
     const std::string who = !name.empty() ? name : (f ? f->name : std::string());
     group_note(hubui::group::Kind::FriendOnline, uid, who, "", "", "", "", 0);
-    if (fr_in_hub_route().toast) push_toast((who.empty() ? std::string("A friend") : who) + " came online", ui::ACCENT, 5.0);
+    if (fr_in_hub_route(true).toast) push_toast((who.empty() ? std::string("A friend") : who) + " came online", ui::ACCENT, 5.0);
     /* While a game or session runs "came online" goes to the bell only (above); otherwise the opt-in Windows toast (as before). */
     if (hubui::group::route_event(game_active(), session_active(), false, g_headless).windows_toast) hubtoast::notify_online(hubtoast::system_notifier(), A.st.notify_in_game, game_active(), who);
 }
@@ -728,7 +729,7 @@ void fr_adopt_identity_after_vault_change() {
 }
 
 void fr_tick() {
-    { const std::string sum = FR_HELD.tick(!g_headless && (game_active() || session_active())); if (!sum.empty()) push_toast(sum, ui::ACCENT, 6.0); }   // one quiet summary, no chime
+    { const std::string sum = FR_HELD.tick(!g_headless && (game_active() || session_active()), hub_has_focus()); if (!sum.empty()) push_toast(sum, ui::ACCENT, 6.0); }   // one quiet summary (only once the hub is in front), no chime
     fr_run_pending_join();
     hubui::attach_send_tick();
     if (FR.fake) { gn_tick(); return; }
@@ -741,7 +742,7 @@ void fr_tick() {
         switch (e.kind) {
             case hubnet::Event::RequestReceived: fr_notify(false, e.uid, e.name, hubnet::Invite()); break;
             case hubnet::Event::RequestResolved:
-                if (e.text == "accepted") set_toast((e.name.empty() ? std::string("Your request") : e.name) + " accepted your friend request.");
+                if (e.text == "accepted" && FR_FRIEND_TOAST.allow(e.uid, wall_ms())) set_toast((e.name.empty() ? std::string("Your request") : e.name) + " accepted your friend request.");
                 break;
             case hubnet::Event::UsernameChecked: case hubnet::Event::UsernameResult: case hubnet::Event::UsernameChanged: un_on_event(e); break;
             case hubnet::Event::IdentityAdopted:
@@ -749,7 +750,8 @@ void fr_tick() {
                 set_toast("Signed in as " + e.text + " (your account from your other PC)");
                 break;
             case hubnet::Event::FriendAdded:
-                set_toast(e.automatic ? hubui::auto_friend_text(e.name) : e.name + " is now your friend.");
+                FR_ACCEPTING.erase(e.uid);
+                if (FR_FRIEND_TOAST.allow(e.uid, wall_ms())) set_toast(e.automatic ? hubui::auto_friend_text(e.name) : e.name + " is now your friend.");   // the same person is told once
                 break;
             case hubnet::Event::MessageReceived:
                 if (!e.msg.card.empty()) hubui::challenge_on_message(e.msg);
@@ -760,7 +762,7 @@ void fr_tick() {
                     else if (!e.msg.card.empty() && e.text.empty()) shown = "sent you a challenge";
                     qm_chat_incoming(true, e.uid, e.name, shown);
                     if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
-                    else if (const hubui::group::InHubRoute rt = fr_in_hub_route(); rt.toast) { if (rt.sound) ui_sound::play(ui_sound::Sfx::Notify); push_toast(e.name + ": " + (shown.size() > 80 ? shown.substr(0, 77) + "..." : shown), ui::ACCENT, 5.0); }
+                    else if (const hubui::group::InHubRoute rt = fr_in_hub_route(false); rt.toast) { if (rt.sound) ui_sound::play(ui_sound::Sfx::Notify); push_toast(e.name + ": " + (shown.size() > 80 ? shown.substr(0, 77) + "..." : shown), ui::ACCENT, 5.0); }
                 }
                 break;
             case hubnet::Event::ReactionReceived:
@@ -788,6 +790,15 @@ void fr_tick() {
                 break;
             case hubnet::Event::Error:
                 if (e.name == "invite" || e.name == "ask") break;   // reported per target by InviteResult / AskResult
+                if (e.name == "accept") {   // the accept we showed "now friends" for was refused: say so, and put the request back in the bell to retry
+                    auto it = FR_ACCEPTING.find(e.detail);
+                    if (it == FR_ACCEPTING.end() && FR_ACCEPTING.size() == 1) it = FR_ACCEPTING.begin();   // the error did not name the person
+                    if (it != FR_ACCEPTING.end() && fr_error_text(e.text, e.detail).empty()) {   // internal failure: nothing else will tell the player, and a retry can work
+                        push_toast("Could not accept the request. Try again.", ui::WARN, 6.0);
+                        group_note(hubui::group::Kind::FriendRequest, it->first, it->second, "", "", "", "", 0);
+                        FR_ACCEPTING.erase(it);
+                    }
+                }
                 { std::string t = fr_error_text(e.text, e.detail); if (!t.empty()) push_toast(t, ui::WARN, 6.0); }
                 break;
             case hubnet::Event::InviteResult: {
@@ -1048,7 +1059,8 @@ void fr_accept(const std::string& uid, const std::string& name) {
     } else FR.cli.accept(uid);
     group_resolve(hubui::group::Kind::FriendRequest, uid);
     if (!FR.fake && !fr_connected()) return;   // offline: the outbox keeps it and says so (Event::Queued); no false "now friends"
-    if (FR.fake) set_toast("You and " + name + " are now friends.");   // live: the server's friend_added event (fr_tick) toasts once
+    if (!FR.fake) FR_ACCEPTING[uid] = name;
+    if (FR_FRIEND_TOAST.allow(uid, wall_ms())) set_toast("You and " + name + " are now friends.");   // the later friend_added event for this person is deduped
 }
 void fr_join_notif(Notif& n) {
     fr_join_lobby(n.inv.lobby_code, n.inv.game_id, n.inv.game_title, n.name);
@@ -1103,7 +1115,7 @@ void fr_notify_ask(const std::string& uid, const std::string& name, const hubnet
     for (auto& o : FR.notifs) if (o.ask && o.uid == uid) o.done = true;
     Notif n;
     n.id = FR.next_id++; n.invite = false; n.ask = true; n.ask_host = host; n.uid = uid; n.name = name; n.inv = game; n.t0 = ImGui::GetTime();
-    n.toast = fr_in_hub_route().toast;   // held while playing; the bell entry below keeps it
+    n.toast = fr_in_hub_route(true, true).toast;   // held while playing unless the hub window is in front; the bell entry below keeps it
     FR.notifs.push_back(n);
     FR.notifs.erase(std::remove_if(FR.notifs.begin(), FR.notifs.end(), [](const Notif& x) { return x.done; }), FR.notifs.end());
     if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
