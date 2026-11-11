@@ -41,7 +41,30 @@ void crash_note_session_ended(int emu_kind, const std::string& exe_path, const s
     autotest_log("crash note: " + hubcrash::headline(c) + " exit " + hubcrash::hex_code(c.exit_code) + (c.dump_path.empty() ? "" : " dump " + c.dump_path));
 }
 
+/* Screenshot aid, headless only: HUB_SHOT_CRASHNOTE=dump | nodump | start fakes one note. Touches no files and starts nothing. */
+static void shot_fake_note() {
+    static bool done = false;
+    const char* m = g_headless ? std::getenv("HUB_SHOT_CRASHNOTE") : nullptr;
+    if (done || !m || !*m) return;
+    done = true;
+    hubcrash::Crash c;
+    c.emulator = "Fritchii";
+    c.version = "5.7";
+    c.exe_name = "lichii.exe";
+    c.game = "The Legend of Zelda: Ocarina of Time";
+    c.exit_code = 0xC0000005u;
+    c.pid = 4242;
+    c.session_secs = 312;
+    c.time_unix = (long long)unix_now();
+    c.log_dir = "C:\RetroHub\emulators\fritchii\user\log";
+    if (std::string(m) == "dump") c.dump_path = "C:\Users\player\AppData\Local\CrashDumps\lichii.exe.4242.dmp";
+    if (std::string(m) == "start") { c.session_secs = 2; c.exit_code = 0xC0000135u; }
+    g_note = c;
+    g_pending = true;
+}
+
 void draw_crash_note() {
+    shot_fake_note();
     if (!g_pending) return;
     const char* id = "Emulator stopped";
     /* Checked before the window is submitted: never a frame of the card over a game. The note stays pending and comes back when the hub is in front. */
@@ -63,13 +86,21 @@ void draw_crash_note() {
     ImGui::PopFont();
     ImGui::TextDisabled("You can try the game again.");
     ImGui::Dummy(ImVec2(0, 4 * S));
-    if (!g_note.dump_path.empty() && ImGui::Button("Open crash file folder")) open_folder(hubcrash::folder_of(g_note.dump_path));
-    if (!g_note.dump_path.empty()) ImGui::SameLine();
-    if (!g_note.log_dir.empty() && ImGui::Button("Open emulator log")) open_folder(g_note.log_dir);
-    if (!g_note.log_dir.empty()) ImGui::SameLine();
-    if (ImGui::Button("Copy details")) SDL_SetClipboardText(hubcrash::details_text(g_note).c_str());
-    ImGui::SameLine();
-    if (ImGui::Button("Dismiss")) dismiss = true;
+    /* The buttons wrap onto a new line when the next one would not fit in the card (small windows, big UI size). */
+    bool first = true;
+    auto row_button = [&](const char* label) {
+        const float w = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.f;
+        if (!first) {
+            const float x_end = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+            if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + w <= x_end) ImGui::SameLine();
+        }
+        first = false;
+        return ImGui::Button(label);
+    };
+    if (!g_note.dump_path.empty() && row_button("Open crash file folder")) open_folder(hubcrash::folder_of(g_note.dump_path));
+    if (!g_note.log_dir.empty() && row_button("Open emulator log")) open_folder(g_note.log_dir);
+    if (row_button("Copy details")) SDL_SetClipboardText(hubcrash::details_text(g_note).c_str());
+    if (row_button("Dismiss")) dismiss = true;
     if (dismiss) {
         g_pending = false;
         ImGui::CloseCurrentPopup();

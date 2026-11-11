@@ -160,7 +160,8 @@ View make_view(const hub::GameEntry& e) {
         v.built = s_stamp.built;
         const hs::Values gv = gs_values_for(e);
         const auto rit = gv.find(hs::kRunnerSetting);
-        v.runner = rit != gv.end() && (rit->second == "hookshot" || rit->second == "fritchii") ? rit->second : "lichii";
+        if (rit != gv.end() && rit->second == "hookshot") v.runner = "hookshot";
+        else v.runner = nx_planned_emulator(e, false) == hubemu::Kind::Fritchii ? "fritchii" : "lichii";   // same decision as Play (Ocarina defaults to Fritchii)
         v.use_hookshot = v.runner == "hookshot";
     } else if (v.st.state == hs::BuildState::Failed) {
         v.mode = Mode::Failed;
