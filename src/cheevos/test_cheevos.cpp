@@ -117,6 +117,7 @@ static void test_session(const fs::path& d, bool hardcore) {
     CHECK(s.cache().total == 2 && s.cache().unlocked == 0 && s.cache().title == "Mock Quest");
     CHECK(s.hardcore() == hardcore);
     CHECK(s.allow(cheevos::Feature::LoadState) == !hardcore);
+    CHECK(cheevos::auto_state_allowed(s.hardcore()) == !hardcore);   // auto.state write/load follows the hardcore rule
     CHECK(s.allow_speed(1.0));
     CHECK(s.allow_speed(2.0) == !hardcore);
 

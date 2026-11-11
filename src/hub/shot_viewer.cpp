@@ -6,6 +6,7 @@
 #include "savestore.h"
 #include "attach_xfer.h"
 #include "friend_pick_ui.h"
+#include "recycle_bin.h"
 
 #include <filesystem>
 #include <map>
@@ -18,8 +19,9 @@
 /* ---------- Full-size screenshot viewer (modal) ----------
  * Opened by the screenshots strip (quickmenu.cpp shots_gallery, which also serves the details modal's Screenshots tab).
  * Pad: left/right (or LB/RB) = previous/next picture, B = close (or cancel the delete question), up/down + A = actions.
- * Actions: Copy to clipboard (CF_DIB), Set as cover (prefs covers[key]; shown by the L3 "make it yours" work later), Delete (asks),
- * Open in viewer (the default Windows image app), Send to a friend (STUB, see shot_send_to_friend). */
+ * Actions: Copy to clipboard (CF_DIB), Set as cover (custom_set_cover: copied into the synced vault and stored as the game's cover),
+ * Delete (asks, then moves the file to the Recycle Bin where the drive has one; queued and run at the start of the next frame), Open in viewer (the default Windows image app),
+ * Send to a friend (friend picker, then upload + DM, see shot_send_to_friend). */
 
 namespace {
 
@@ -30,6 +32,7 @@ struct Viewer {
     std::string game_key, game_name;
     ShotTexFn tex;
     bool confirm_delete = false;
+    std::vector<std::string> del_queue;   // confirmed deletes, run at the start of the next frame (outside any Begin/End: the shell can pump messages)
     bool focus_first = false;   // land the pad on the first action each time the viewer (or its delete question) shows
 };
 Viewer V;
@@ -96,7 +99,7 @@ bool shot_copy_to_clipboard(const std::string& path) {
     return ok;
 }
 
-/* prefs covers[key] = path (field-wise merge keeps this PC's other prefs; L3 reads it later). */
+/* Set the game's cover to this picture (customize_ui.cpp custom_set_cover: copies it into the vault so it syncs). */
 bool shot_set_cover(const std::string& game_key, const std::string& path) {
     return custom_set_cover(game_key, path);   // customize_ui.cpp: copies it into the vault (synced) and stores that path
 }
@@ -163,8 +166,24 @@ void shot_viewer_open(const hub::GameEntry& e, const std::vector<std::string>& p
     V.focus_first = true;
 }
 
-/* Returns true if a picture was deleted (the strip should refresh). */
+static bool shot_viewer_draw_inner();
+
+/* Returns true if a picture was deleted (the strip should refresh). The delete itself runs here, at the start of the frame after the
+ * confirm click, before any ImGui window of the viewer is open. */
 bool shot_viewer_draw() {
+    bool deleted = false;
+    if (!V.del_queue.empty()) {
+        std::vector<std::string> q; q.swap(V.del_queue);
+        int failed = 0;
+        for (const std::string& f : q) if (!hubrb::delete_user_file(f)) ++failed;
+        deleted = true;   // rescan either way: a file that could not be deleted shows up again
+        if (failed) push_toast("Couldn't delete that picture", COL_BAD, 4.0);
+    }
+    shot_viewer_draw_inner();
+    return deleted;
+}
+
+static bool shot_viewer_draw_inner() {
     static const char* kName = "Screenshot##viewer";
     bool deleted = false;
     if (V.want_open) { ImGui::OpenPopup(kName); V.want_open = false; }
@@ -253,20 +272,18 @@ bool shot_viewer_draw() {
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         ImGui::TextDisabled("Left / Right: next picture\nB: close");
     } else {
-        ImGui::TextWrapped("Delete this picture for good?");
+        /* Network and removable drives (or a switched-off bin) delete for good: say so instead of promising the Recycle Bin. */
+        const bool to_bin = hubrb::recycle_expected(path);
+        ImGui::TextWrapped("%s", to_bin ? "Move this picture to the Recycle Bin?" : "Delete this picture? This cannot be undone.");
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         if (V.focus_first) { ImGui::SetKeyboardFocusHere(0); V.focus_first = false; }
-        if (ui::button("Yes, delete", bsz, true)) {
-            std::error_code ec;
-            std::filesystem::remove(std::filesystem::u8path(path), ec);
-            if (is_clip) { std::error_code ec2; std::filesystem::remove(std::filesystem::u8path(path + ".jpg"), ec2); }
+        if (ui::button(to_bin ? "Yes, move it" : "Yes, delete", bsz, true)) {
+            V.del_queue.push_back(path);   // the shell delete runs at the start of the next frame (shot_viewer_draw), outside Begin/End
+            if (is_clip) V.del_queue.push_back(path + ".jpg");
             V.confirm_delete = false;
-            if (!ec) {
-                deleted = true;
-                V.files.erase(V.files.begin() + V.idx);
-                if (V.files.empty()) { ImGui::EndChild(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return true; }
-                if (V.idx >= (int)V.files.size()) V.idx = (int)V.files.size() - 1;
-            } else push_toast("Couldn't delete that picture", COL_BAD, 4.0);
+            V.files.erase(V.files.begin() + V.idx);
+            if (V.files.empty()) { ImGui::EndChild(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return false; }
+            if (V.idx >= (int)V.files.size()) V.idx = (int)V.files.size() - 1;
         }
         if (ui::button("Cancel", bsz)) { V.confirm_delete = false; V.focus_first = true; }
     }

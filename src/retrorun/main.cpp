@@ -3137,7 +3137,9 @@ void Frontend::finish() {
             if (rm && nr && !guest_save_ro && !is_ds && !rtc_saved.empty() && (rtc_saved.size() != nr || memcmp(rtc_saved.data(), rm, nr) != 0))
                 write_atomic(rtc_path(), rm, nr);
         }
-        if (!a.selftest && !is_ds && core.serialize_size()) {   // DS states are ~19 MB and the hub never resumes them
+        if (ra_.active() && !cheevos::auto_state_allowed(ra_.hardcore())) {
+            rlog("state: hardcore is on; auto.state not written");   // hardcore rules forbid save states, the resume point included
+        } else if (!a.selftest && !is_ds && core.serialize_size()) {   // DS states are ~19 MB and the hub never resumes them
             size_t n = core.serialize_size();
             std::vector<uint8_t> buf(n);
             if (core.serialize(buf.data(), n) && write_atomic(state_path("auto"), buf.data(), n)) {

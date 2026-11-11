@@ -1,4 +1,15 @@
+#include <chrono>
 #include <cstdio>
+#include <thread>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <filesystem>
 
 #include "runner_ctl.h"
@@ -111,6 +122,48 @@ int main() {
         CHECK(send_command_ex(c2, in) == 3);          // acked: commands flow again
         fs::remove_all(d2);
     }
+#ifdef _WIN32
+    {   // a reader holding the ack file open (no delete sharing) blocks the rename: no sleeping, no lost ack
+        fs::path d3 = fs::temp_directory_path() / "runctl_test_held";
+        fs::remove_all(d3);
+        fs::create_directories(d3);
+        std::string ctl3 = (d3 / "control.json").u8string();
+        std::string ap = ack_path_for(ctl3);
+        CHECK(write_text_atomic(ap, make_ack({1, true, "old"})));
+        CHECK(send_command(ctl3, Cmd::Screenshot) == 1);
+        Poller pl(ctl3);   // seq 1 is already there: handled
+        CHECK(send_command(ctl3, Cmd::Pause, 0) == 2);
+        Command got;
+        CHECK(pl.poll(1000, &got) && got.seq == 2);
+        HANDLE h = CreateFileW((d3 / "control_ack.json").c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(h != INVALID_HANDLE_VALUE);
+        auto t0 = std::chrono::steady_clock::now();
+        CHECK(!write_text_atomic(ap, make_ack({9, true, "x"})));   // single attempt: fails fast while held
+        pl.ack(true, "paused");                                    // held: the ack is kept, not written
+        CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(200));   // nothing slept
+        std::string tt; Ack aa;
+        CHECK(read_text(ap, &tt) && parse_ack(tt, &aa) && aa.seq == 1 && aa.msg == "old");   // old file intact
+        CHECK(!fs::exists(d3 / "control_ack.json.tmp"));
+        CHECK(!pl.poll(1300, &got));   // next tick, still held: still not written
+        CHECK(read_text(ap, &tt) && parse_ack(tt, &aa) && aa.seq == 1);
+        CloseHandle(h);
+        CHECK(!pl.poll(1600, &got));   // released: this tick writes the pending ack
+        CHECK(read_text(ap, &tt) && parse_ack(tt, &aa) && aa.seq == 2 && aa.ok && aa.msg == "paused");
+        CHECK(!fs::exists(d3 / "control_ack.json.tmp"));
+        // held for good: the retry gives up after kAckRetryTicks, the old ack stays, the poll never blocks
+        CHECK(send_command(ctl3, Cmd::Pause, 0) == 3);
+        CHECK(pl.poll(2000, &got) && got.seq == 3);
+        h = CreateFileW((d3 / "control_ack.json").c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        pl.ack(true, "never");
+        t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < kAckRetryTicks + 5; ++i) pl.poll(3000 + (uint64_t)i * 300, &got);
+        CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2));
+        CloseHandle(h);
+        pl.poll(20000, &got);   // gave up: the abandoned ack does not appear later
+        CHECK(read_text(ap, &tt) && parse_ack(tt, &aa) && aa.seq == 2);
+        fs::remove_all(d3);
+    }
+#endif
     if (!fails) std::printf("runner_ctl_test: all passed\n");
     return fails ? 1 : 0;
 }
