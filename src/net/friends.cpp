@@ -1,4 +1,5 @@
 #include "friends.h"
+#include "winutil.h"
 #include "liveness_logic.h"
 #include "log.h"
 #include "outbox_logic.h"
@@ -244,7 +245,7 @@ std::string identity_backup_path()
 {
     if (const char* o = std::getenv("RETROHUB_IDENTITY_BACKUP"); o && *o) return o;   // tests point this at a temp file
     if (env_set("RETROHUB_QA") || env_set("RETROHUB_AUTOTEST") || env_set("RETROHUB_TEST_SERVER") || env_set("RETROHUB_TEST")) return "";
-    const char* la = std::getenv("LOCALAPPDATA");
+    const std::string la_s = winutil::getenv_utf8("LOCALAPPDATA"); const char* la = la_s.empty() ? nullptr : la_s.c_str();
     if (!la || !*la) return "";
     return with_sep(la) + "RetroHub\\identity-backup.json";
 }

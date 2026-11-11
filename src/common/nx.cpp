@@ -271,8 +271,8 @@ bool identify_file(const std::string& path, Ident* out) {
     if (!out) return false;
     *out = Ident();
     fs::path p = fs::u8path(path);
-    std::string ext = lower(p.extension().string());
-    std::string stem = p.stem().string();
+    std::string ext = lower(p.extension().u8string());
+    std::string stem = p.stem().u8string();
     std::vector<uint8_t> b;
     uint64_t fsz = 0;
     Ident id;
@@ -317,11 +317,11 @@ bool identify_file(const std::string& path, Ident* out) {
             }
         }
         if (id.title.empty()) id.title = clean_title(stem);
-    } else if (p.filename().string() == "main" && lower(p.parent_path().filename().string()) == "exefs") {
+    } else if (p.filename().u8string() == "main" && lower(p.parent_path().filename().u8string()) == "exefs") {
         fs::path npdm = p.parent_path() / "main.npdm";
         if (!read_at(npdm, 0, 0x10000, &b)) return false;
         ok = parse_npdm(b.data(), b.size(), &id);
-        const std::string top = p.parent_path().parent_path().filename().string();
+        const std::string top = p.parent_path().parent_path().filename().u8string();
         if (ok) {
             std::string folder = clean_title(top);
             if (!folder.empty()) id.title = folder;   // players name dumps; the NPDM name is a fallback

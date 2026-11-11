@@ -1,4 +1,5 @@
 #include "app.h"
+#include "winutil.h"
 
 #include "ps1.h"
 #include "ps2_online.h"
@@ -28,8 +29,8 @@ struct Ps2Ask {
 std::string staging_dir() { return hub::data_dir() + "system\\ps1"; }
 
 std::vector<hub::ps1::BiosFound> find_all() {
-    const char* home = std::getenv("USERPROFILE");
-    const char* appdata = std::getenv("APPDATA");
+    const std::string home_s = winutil::getenv_utf8("USERPROFILE"); const char* home = home_s.empty() ? nullptr : home_s.c_str();
+    const std::string appdata_s = winutil::getenv_utf8("APPDATA"); const char* appdata = appdata_s.empty() ? nullptr : appdata_s.c_str();
     return hub::ps1::find_bios(hub::ps1::bios_search_dirs(A.st.rom_folders, A.st.ps1_bios, staging_dir(), home ? home : "", hub::exe_dir(), appdata ? appdata : ""));
 }
 

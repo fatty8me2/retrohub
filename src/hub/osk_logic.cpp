@@ -1,4 +1,5 @@
 #include "osk_logic.h"
+#include "winutil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -274,7 +275,7 @@ void FolderBrowser::refresh() {
     std::error_code ec;
     if (cwd.empty()) {
 #ifdef _WIN32
-        const char* up = std::getenv("USERPROFILE");
+        const std::string up_s = winutil::getenv_utf8("USERPROFILE"); const char* up = up_s.empty() ? nullptr : up_s.c_str();
         if (up) {
             for (const char* n : {"Desktop", "Documents", "Downloads"}) {
                 std::string p = std::string(up) + "\\" + n;

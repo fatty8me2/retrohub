@@ -180,7 +180,18 @@ int main() {
     }
 
     /* ANSI (narrow) paths */
+    /* Needs a temp folder the ANSI code page can represent AND whose narrow bytes widen back to the real wide path (byte-wise
+     * widening below). With TEMP inside a non-ANSI folder the narrow path names another folder: SKIP, never fail or crash. */
+    bool ansi_ok = false;
     {
+        char tpa[MAX_PATH];
+        DWORD n = GetTempPathA(MAX_PATH, tpa);
+        ansi_ok = n > 0 && n < MAX_PATH;
+        for (DWORD i = 0; ansi_ok && i < n; ++i) if ((unsigned char)tpa[i] >= 0x80 || tpa[i] == '?') ansi_ok = false;
+        if (ansi_ok) { std::string a(tpa); ansi_ok = std::wstring(a.begin(), a.end()) == std::wstring(tp); }
+    }
+    if (!ansi_ok) std::printf("SKIP: ANSI (narrow) path checks: the temp folder is not representable in the ANSI code page\n");
+    else {
         char tpa[MAX_PATH];
         GetTempPathA(MAX_PATH, tpa);
         std::string dir = std::string(tpa) + "durable_test_" + std::to_string(GetCurrentProcessId());

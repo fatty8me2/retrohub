@@ -747,7 +747,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     } else if (inst.managed) {
         { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw)); }
     } else if (A.st.cemu_manage_controls) {   // the user's own Cemu: backed up once, then RetroHub's controls (setting is ON by default)
-        const char* ad = std::getenv("APPDATA");
+        const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str();
         hubctl::Profile pw = controls_profile("wiiu", e.key);
         hubemu::prepare_cemu_own(hubemu::cemu_user_data_dir(inst.dir, ad ? ad : ""), pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw), true);
     } else if (ri.dsu_players > 0) {
@@ -764,7 +764,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     uint64_t wiiu_tid = 0;
     std::string cemu_user;   // Cemu's user data folder (portable\ / beside settings.xml / %APPDATA%\Cemu)
     if (kind == hubemu::Kind::Cemu) {
-        const char* ad = std::getenv("APPDATA");
+        const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str();
         cemu_user = inst.managed ? inst.dir + "\\portable" : hubemu::cemu_user_data_dir(inst.dir, ad ? ad : "");
         wiiu_tid = hubemu::title_id_from_key(e.key);
         if (!wiiu_tid) wiiu_tid = hubemu::wiiu_title_id_of_file(game);   // archives / disc-less keys: read from the unpacked .wua

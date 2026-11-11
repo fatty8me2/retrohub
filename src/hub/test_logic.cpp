@@ -99,7 +99,7 @@ static void test_settings_robust() {
     using hubui::Settings;
     const fs::path base = fs::temp_directory_path() / "hub_utf8paths_test2";
     std::error_code ec; fs::remove_all(base, ec); fs::create_directories(base, ec);
-    const std::string file = (base / "hub.json").string();   // ASCII path
+    const std::string file = (base / "hub.json").u8string();   // ASCII path
     const std::wstring wfile = durable::utf8_to_wide(file);
     Settings s; s.name = "exact"; s.games_dest = "D:\\g";
     CHECK(hubui::save_settings(file, s));
@@ -593,12 +593,12 @@ int main() {
     }
     {   // retrorun exit 12: the real reason, never "Emulator files are missing"
         CHECK(exit_code_text(12).find("Couldn't connect") != std::string::npos && exit_code_text(12).find("Emulator") == std::string::npos);
-        std::string f = (std::filesystem::temp_directory_path() / "rh_net_reason_test.txt").string();
-        { std::ofstream o(f, std::ios::binary); o << "Room is full or slot taken" << char(13) << char(10); }
+        std::string f = (std::filesystem::temp_directory_path() / "rh_net_reason_test.txt").u8string();
+        { std::ofstream o(std::filesystem::u8path(f), std::ios::binary); o << "Room is full or slot taken" << char(13) << char(10); }
         set_net_reason_file(f);
         CHECK(exit_code_text(12) == "Couldn't connect: Room is full or slot taken");
         set_net_reason_file("");
-        std::filesystem::remove(f);
+        std::filesystem::remove(std::filesystem::u8path(f));
     }
     CHECK(exit_code_text(2).find("couldn't start") != std::string::npos);
 
