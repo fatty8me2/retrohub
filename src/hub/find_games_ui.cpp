@@ -191,7 +191,7 @@ static void find_games_modal() {
             };
             for (size_t i = 0; i < FG.found.size(); ++i) if (FG.tick[i]) add(FG.found[i].path);
             for (size_t i = 0; i < FG.extra.size(); ++i) if (FG.extra_tick[i]) add(FG.extra[i]);
-            if (added) { mark_dirty(); start_scan(); set_toast("Scanning your games..."); }
+            if (added) { mark_dirty(); start_scan(true); set_toast("Scanning your games..."); }
             close_flow(true);
         }
         if (any) ImGui::SameLine();

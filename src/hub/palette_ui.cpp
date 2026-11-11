@@ -61,7 +61,7 @@ void build_items() {
 void run(const std::string& id) {
     auto starts = [&](const char* p) { return id.rfind(p, 0) == 0; };
     if (id == "act:host" || id == "act:join" || id == "page:online") A.page = Page::Online;
-    else if (id == "act:rescan") { if (!A.scanning) start_scan(); }
+    else if (id == "act:rescan") { if (!A.scanning) start_scan(true); }
     else if (id == "act:party") party_couch_open();
     else if (id == "act:tournament") bracket_open();
     else if (id == "act:hack") {
