@@ -560,6 +560,75 @@ int main(int argc, char** argv) {
         std::filesystem::remove_all(d, ec);
     }
 
+    // --- free disk space: arithmetic, wording, and reading the unpacked size from a zip ---
+    {
+        const unsigned long long MB = 1ull << 20, GB = 1ull << 30;
+        CHECK(kSpaceMargin >= 64 * MB && kSpaceMargin <= 2 * GB);
+        CHECK(space_needed_for_download(100 * MB, 0) == 100 * MB + 100 * MB + kSpaceMargin);              // zip + unpacked estimate + margin
+        CHECK(space_needed_for_download(100 * MB, 40 * MB) == 60 * MB + 100 * MB + kSpaceMargin);         // a resumed partial file already holds part of the zip
+        CHECK(space_needed_for_download(100 * MB, 100 * MB) == 100 * MB + kSpaceMargin);
+        CHECK(space_needed_for_download(100 * MB, 900 * MB) == 100 * MB + kSpaceMargin);                  // a bogus "have" never makes the sum wrap
+        CHECK(space_needed_for_unpack(500 * MB) == 500 * MB + kSpaceMargin && space_needed_for_unpack(0) == kSpaceMargin);
+        CHECK(enough_space(100, 100) && enough_space(100, 101) && !enough_space(100, 99) && !enough_space(100, 0));
+        CHECK(enough_space(100, -1) && enough_space(~0ull >> 1, -1));                                      // unknown free space never blocks an update
+        CHECK(format_bytes(300 * MB, false) == "300 MB" && format_bytes(300 * MB + 1, true) == "301 MB" && format_bytes(300 * MB + 1, false) == "300 MB");
+        CHECK(format_bytes(GB + GB / 2, false) == "1.5 GB" && format_bytes(GB + 1, true) == "1.1 GB" && format_bytes(GB + 1, false) == "1.0 GB");
+        CHECK(format_bytes(10, false) == "under 1 MB" && format_bytes(0, true) == "under 1 MB" && format_bytes(10, true) == "1 MB");
+        std::string m = low_space_message(GB + GB / 2 + 1, 300 * MB + 5, "C:\\Games\\RetroHub\\updates");
+        CHECK(m == "There is not enough free space to install this update. It needs about 1.6 GB free on drive C: but only 300 MB is free. Free up some space and try again.");
+        CHECK(low_space_message(10 * MB, 1, "\\\\server\\share\\x").find("on the install drive") != std::string::npos);
+        CHECK(m.find("\xE2\x80\x94") == std::string::npos);                                                // plain English, no em dash
+        { const long long fb = free_bytes_on(std::filesystem::temp_directory_path().u8string()); CHECK(fb > 0); }
+        CHECK(free_bytes_on("Q:\\no\\such\\drive\\at all\\") == -1 || free_bytes_on("Q:\\no\\such\\drive\\at all\\") >= 0);   // either way, no crash
+
+        // zip_unpacked_size: a hand-built central directory (names, extra field, comment all skipped correctly)
+        auto le16 = [](std::string& o, unsigned v) { o += (char)(v & 255); o += (char)((v >> 8) & 255); };
+        auto le32 = [](std::string& o, unsigned long long v) { for (int i = 0; i < 4; i++) o += (char)((v >> (8 * i)) & 255); };
+        auto build_zip = [&](const std::vector<std::pair<std::string, unsigned long long>>& files, unsigned eocdCount, unsigned long long cdOffOverride) {
+            std::string cd;
+            for (const auto& fe : files) {
+                le32(cd, 0x02014b50ull); le16(cd, 20); le16(cd, 20); le16(cd, 0); le16(cd, 0); le16(cd, 0); le16(cd, 0);
+                le32(cd, 0); le32(cd, 5); le32(cd, fe.second);
+                le16(cd, (unsigned)fe.first.size()); le16(cd, 4); le16(cd, 3); le16(cd, 0); le16(cd, 0); le32(cd, 0); le32(cd, 0);
+                cd += fe.first; cd += "EXTR"; cd += "cmt";
+            }
+            std::string z = "junk-before-the-index";
+            const unsigned long long off = z.size();
+            z += cd;
+            le32(z, 0x06054b50ull); le16(z, 0); le16(z, 0); le16(z, eocdCount); le16(z, eocdCount); le32(z, cd.size());
+            le32(z, cdOffOverride == ~0ull ? off : cdOffOverride); le16(z, 0);
+            return z;
+        };
+        std::filesystem::path d = std::filesystem::temp_directory_path() / ("hub_updater_space_test_" + std::to_string(_getpid()));
+        std::error_code ec; std::filesystem::remove_all(d, ec); std::filesystem::create_directories(d, ec);
+        auto put = [](const std::filesystem::path& p, const std::string& s) { std::ofstream o(p, std::ios::binary | std::ios::trunc); o << s; };
+        const std::string zp = (d / "t.zip").u8string();
+        put(d / "t.zip", build_zip({{"RetroHub.exe", 1000}, {"dir/", 0}, {"dir/data.bin", 2500000000ull}}, 3, ~0ull));
+        CHECK(zip_unpacked_size(zp) == 1000 + 2500000000ll);                                               // sums sizes above 2 GB without wrapping
+        put(d / "t.zip", build_zip({}, 0, ~0ull));
+        CHECK(zip_unpacked_size(zp) == 0);
+        put(d / "t.zip", build_zip({{"a", 7}, {"b", 0xFFFFFFFFull}}, 2, ~0ull));
+        CHECK(zip_unpacked_size(zp) == -1);                                                                // zip64 marker: the caller estimates instead
+        put(d / "t.zip", build_zip({{"a", 7}}, 2, ~0ull));
+        CHECK(zip_unpacked_size(zp) == -1);                                                                // the record promises more entries than exist
+        put(d / "t.zip", build_zip({{"a", 7}}, 1, 99999));
+        CHECK(zip_unpacked_size(zp) == -1);                                                                // an index offset outside the file
+        put(d / "t.zip", "not a zip at all, just some bytes that are long enough to be read");
+        CHECK(zip_unpacked_size(zp) == -1);
+        put(d / "t.zip", "tiny");
+        CHECK(zip_unpacked_size(zp) == -1 && zip_unpacked_size((d / "missing.zip").u8string()) == -1);
+        // a real zip, made by Windows' own tar.exe (the same tool that unpacks the update)
+        {
+            std::filesystem::create_directories(d / "src" / "sub", ec);
+            put(d / "src" / "a.bin", std::string(4000, 'a')); put(d / "src" / "sub" / "b.bin", std::string(123, 'b'));
+            std::string tarExe, terr;
+            CHECK(find_system_tool("tar.exe", &tarExe, &terr));
+            int rc = run_command("\"" + tarExe + "\" -a -c -f \"" + (d / "real.zip").u8string() + "\" -C \"" + (d / "src").u8string() + "\" a.bin sub", [](const std::string&) {}, 60000);
+            CHECK(rc == 0 && zip_unpacked_size((d / "real.zip").u8string()) == 4123);
+        }
+        std::filesystem::remove_all(d, ec);
+    }
+
     // --- download robustness: no hard cap, stall detector, retries, resume only for the same release ---
     {
         const std::string fl = download_flags(false), flr = download_flags(true);
