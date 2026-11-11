@@ -1,5 +1,6 @@
 #include "json.h"
 #include "controls.h"
+#include "cfg_write.h"
 
 #include <algorithm>
 #include <cmath>
@@ -731,6 +732,17 @@ bool from_json(const std::string& json, Store* out) {
 
 /* ------------------------------------------------------------------ files */
 
+AnalogOut clamp_analog(AnalogTarget target, double deadzone, double sensitivity) {
+    AnalogOut o;
+    o.deadzone = std::min(0.95, std::max(0.0, deadzone));
+    switch (target) {
+        case AnalogTarget::N64Run: o.sensitivity = std::min(4.0, std::max(0.1, sensitivity)); break;
+        case AnalogTarget::Lichii: o.sensitivity = std::min(1.5, std::max(0.25, sensitivity)); break;
+        default: o.sensitivity = 1.0; break;
+    }
+    return o;
+}
+
 static std::string slurp(const fs::path& p) {
     std::ifstream f(p, std::ios::binary);
     std::stringstream ss;
@@ -738,14 +750,7 @@ static std::string slurp(const fs::path& p) {
     return ss.str();
 }
 static bool spit(const fs::path& p, const std::string& t) {
-    std::error_code ec;
-    fs::create_directories(p.parent_path(), ec);
-    fs::path tmp = p;
-    tmp += ".tmp";
-    { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); if (!f) return false; f << t; if (!f) return false; }
-    fs::rename(tmp, p, ec);
-    if (ec) { fs::remove(p, ec); fs::rename(tmp, p, ec); }
-    return !ec;
+    return hubcfg::write_file(p, t, false);   // durable: flush + one atomic replace, destination untouched on failure
 }
 static fs::path store_path(const std::string& dir) { return fs::u8path(dir) / "controls.json"; }
 

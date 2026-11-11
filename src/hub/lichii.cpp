@@ -19,6 +19,7 @@
 #include "logic.h"
 #include "miniz.h"
 #include "winutil.h"
+#include "cfg_write.h"
 
 namespace hubemu {
 
@@ -34,14 +35,7 @@ static std::string read_text(const std::string& p) {
     std::ifstream f(P(p), std::ios::binary);
     return f ? std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()) : std::string();
 }
-static bool write_bytes(const std::string& p, const std::string& t) {
-    std::error_code ec;
-    fs::create_directories(P(p).parent_path(), ec);
-    std::ofstream f(P(p), std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f.write(t.data(), (std::streamsize)t.size());
-    return (bool)f;
-}
+static bool write_bytes(const std::string& p, const std::string& t) { return hubcfg::write_utf8(p, t); }   // durable: flush + one atomic replace; skipped when unchanged
 static bool is_file(const std::string& p) { std::error_code ec; return fs::is_regular_file(P(p), ec); }
 static bool is_dir(const std::string& p) { std::error_code ec; return fs::is_directory(P(p), ec); }
 static uintmax_t file_size(const std::string& p) { std::error_code ec; auto n = fs::file_size(P(p), ec); return ec ? 0 : n; }
@@ -717,8 +711,9 @@ static std::string stick_value(const hubctl::Profile& prof, const std::string& c
     if (it != prof.analogs.end()) {
         if (hubctl::axis_index(it->second.x) >= 0) ax = hubctl::axis_index(it->second.x);
         if (hubctl::axis_index(it->second.y) >= 0) ay = hubctl::axis_index(it->second.y);
-        dz = std::min(0.95, std::max(0.0, it->second.deadzone));
-        range = std::min(1.5, std::max(0.25, it->second.sensitivity));
+        hubctl::AnalogOut c = hubctl::clamp_analog(hubctl::AnalogTarget::Lichii, it->second.deadzone, it->second.sensitivity);
+        dz = c.deadzone;
+        range = c.sensitivity;
     }
     if (binds && binds->valid) {   // GameController axis -> the pad's raw joystick axis
         if (ax >= 0 && ax < 6 && binds->axis[ax].type == 'a') ax = binds->axis[ax].idx;
