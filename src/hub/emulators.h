@@ -87,8 +87,10 @@ void recover_interrupted(Kind k, const std::string& root = managed_root());
 /* One conservative leftover pass over the managed root (call once at startup, off the UI thread: cleanup_leftovers_async). Removes `_downloads\*` files older than
  * a day, and an `_old` / `_extract` folder of any install that has no upgrade journal beside it and is not fresh. Never follows a reparse point, never touches a
  * `user` folder, and does nothing while an install job runs. Returns the number of items removed. */
-int cleanup_leftovers(const std::string& root = managed_root());
-void cleanup_leftovers_async(const std::string& root = managed_root());
+int cleanup_leftovers(const std::string& root = managed_root());   // refuses any root but <data dir>\emulators (or the test root below)
+void cleanup_leftovers_async(const std::string& root = managed_root());   // joinable background pass, one at a time
+void cleanup_leftovers_stop();                                              // cancel + join it (also done by ~Installer)
+void set_cleanup_test_root(const std::string& root);                        // console tests only: one extra root the pass accepts ("" = none)
 /* Test seam (console tests only; nullptr clears): replaces release(kind), the HTTPS download and the "is it running" check, so installs and upgrades run
  * from a local archive with no network and no process. */
 struct InstallTestHooks {

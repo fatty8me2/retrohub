@@ -364,8 +364,9 @@ struct Progress {
 
 /* ---- install log + plain-English messages ----
  * The player sees a short sentence; the Windows error code goes to <managed root>\install-log.txt (and the debugger), never into the sentence. */
-static std::mutex g_log_mu;
-static std::string g_log_path;
+/* (heap-allocated and never freed: a straggler thread at process exit must not touch a destroyed object) */
+static std::mutex& g_log_mu = *new std::mutex;
+static std::string& g_log_path = *new std::string;
 static void set_log_path(const std::string& p) { std::lock_guard<std::mutex> lk(g_log_mu); g_log_path = p; }
 static void emu_log(const std::string& line) {
     OutputDebugStringA(("RetroHub emulator install: " + line + "\n").c_str());
@@ -406,7 +407,7 @@ static std::string reason_text(const std::error_code& ec) {
 }
 
 /* Only one install job (or leftover pass) touches the managed folders at a time. */
-static std::mutex g_job_mu;
+static std::mutex& g_job_mu = *new std::mutex;
 
 /* ---- download: one GET at a time over a small transport, so the resume logic runs the same against WinHTTP and against the test hook ---- */
 struct NetReply {
@@ -945,6 +946,15 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     auto setp = [&](int p) { if (phase) *phase = p; };
 
     setp(0);
+    /* A partial file is only resumed when it belongs to THIS pin: a sidecar beside it holds the pinned SHA-256 and size. A part from an older pin that happens to have
+     * the same file name (or one with no sidecar) is wiped up front instead of being resumed into a hash failure. */
+    const std::string pin_file = archive + ".part.pin";
+    if (!(g_test_hooks && g_test_hooks->fetch)) {
+        const std::string pin_text = std::string(rel.sha256) + " " + std::to_string((unsigned long long)rel.size) + "\n";
+        std::error_code ec;
+        if (read_text(pin_file) != pin_text) fs::remove(P(archive + ".part"), ec);
+        write_text(pin_file, pin_text);
+    }
     /* Room for the zip, its unpacked copy and some slack (about 2.5 x the pinned size + 100 MB), less what a resumable partial file already holds. Checked before
      * anything is downloaded so a nearly full drive says so at once instead of failing at the end. */
     {
@@ -1037,6 +1047,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     fs::remove(P(archive), ec);
     if (!download_cut_short) fs::remove(P(archive + ".part"), ec);   // a failed check deletes the file for good: it is never resumed
     else if (fs::is_regular_file(P(archive + ".part"), ec) && fs::file_size(P(archive + ".part"), ec) == 0) fs::remove(P(archive + ".part"), ec);
+    if (!fs::exists(P(archive + ".part"), ec)) fs::remove(P(pin_file), ec);
     return ok;
 }
 
@@ -1059,7 +1070,25 @@ static bool plain_tree(const fs::path& d, int depth = 0) {
     return !ec;
 }
 
-int cleanup_leftovers(const std::string& root) {
+static std::string g_cleanup_test_root;   // console tests only (set_cleanup_test_root)
+void set_cleanup_test_root(const std::string& root) { g_cleanup_test_root = root; }
+
+/* The leftover pass deletes things, so it only accepts the hub's own emulators folder (<data dir>\emulators) or the test root: an absolute path, never a drive root,
+ * a sane length, and the leaf name exactly `emulators` for the real one. */
+static bool cleanup_root_ok(const std::string& root) {
+    if (root.size() < 12) return false;
+    const fs::path p = P(root).lexically_normal();
+    if (!p.is_absolute() || p == p.root_path() || p.filename().empty()) return false;
+    auto same = [](const fs::path& a, const fs::path& b) { return _wcsicmp(a.lexically_normal().wstring().c_str(), b.lexically_normal().wstring().c_str()) == 0; };
+    if (!g_cleanup_test_root.empty() && same(p, P(g_cleanup_test_root))) return true;
+    return _wcsicmp(p.filename().wstring().c_str(), L"emulators") == 0 && same(p, P(managed_root()));
+}
+
+static std::atomic<bool> g_cleanup_cancel{false};
+
+static int cleanup_impl(const std::string& root, const std::atomic<bool>* cancel) {
+    auto stop = [&] { return cancel && cancel->load(); };
+    if (!cleanup_root_ok(root)) { emu_log("leftover pass refused the folder " + root); return 0; }
     std::unique_lock<std::mutex> job(g_job_mu, std::try_to_lock);
     if (!job.owns_lock()) return 0;   // an install job is running: it owns these folders
     set_log_path(join(root, "install-log.txt"));
@@ -1079,12 +1108,14 @@ int cleanup_leftovers(const std::string& root) {
             if (!e2 && now - t > std::chrono::hours(24)) old_files.push_back(it->path());
         }
         for (const fs::path& f : old_files) {
+            if (stop()) return removed;
             std::error_code e2;
             if (fs::remove(f, e2) && !e2) { ++removed; emu_log("removed a stale download: " + S(f.filename())); }
         }
     }
     // 2. an `_old` / `_extract` folder with no upgrade journal beside it, in each emulator's own folder
     for (Kind k : {Kind::Azahar, Kind::Cemu, Kind::Dolphin, Kind::Pcsx2, Kind::Lrps2, Kind::Ppsspp, Kind::Lichii, Kind::Fritchii}) {
+        if (stop()) return removed;
         const fs::path dir = P(managed_dir(k, root));
         if (!fs::is_directory(dir, ec) || is_reparse_point(dir)) continue;
         if (fs::exists(dir / kJournal, ec) || fs::exists(dir / kJournalTmp, ec)) continue;   // recover_interrupted owns those
@@ -1093,7 +1124,11 @@ int cleanup_leftovers(const std::string& root) {
             std::error_code e2;
             if (!fs::is_directory(s, e2) || is_reparse_point(s)) continue;
             const auto t = fs::last_write_time(s, e2);
-            if (e2 || now - t < std::chrono::minutes(10)) continue;   // too fresh to be sure it is abandoned
+            if (e2 || now - t < std::chrono::minutes(10)) continue;
+            if (n == kOldDir && !(fs::is_regular_file(dir / release(k).exe, e2) && fs::is_regular_file(dir / "retrohub-install.txt", e2))) {
+                emu_log("left alone (the live install beside it is incomplete, so this may be the only working copy): " + S(s));
+                continue;
+            }   // too fresh to be sure it is abandoned
             if (!plain_tree(s)) { emu_log(std::string("left alone (a link or a user folder inside): ") + S(s)); continue; }
             remove_tree(S(s));
             if (!fs::exists(s, e2)) { ++removed; emu_log("removed a leftover folder: " + S(s)); }
@@ -1103,8 +1138,21 @@ int cleanup_leftovers(const std::string& root) {
     return removed;
 }
 
+int cleanup_leftovers(const std::string& root) { return cleanup_impl(root, nullptr); }
+
+/* The background pass is a joinable thread that is cancelled and joined when the installer object goes away (~Installer) or when the next pass starts. */
+static std::mutex& g_cleanup_mu = *new std::mutex;
+static std::thread*& g_cleanup_th = *new std::thread*(nullptr);
+void cleanup_leftovers_stop() {
+    std::lock_guard<std::mutex> lk(g_cleanup_mu);
+    g_cleanup_cancel = true;
+    if (g_cleanup_th) { if (g_cleanup_th->joinable()) g_cleanup_th->join(); delete g_cleanup_th; g_cleanup_th = nullptr; }
+}
 void cleanup_leftovers_async(const std::string& root) {
-    std::thread([root] { cleanup_leftovers(root); }).detach();
+    cleanup_leftovers_stop();
+    std::lock_guard<std::mutex> lk(g_cleanup_mu);
+    g_cleanup_cancel = false;
+    g_cleanup_th = new std::thread([root] { cleanup_impl(root, &g_cleanup_cancel); });
 }
 
 bool install_blocking(Kind k, const std::string& root, std::string* err,
@@ -1125,7 +1173,7 @@ bool install_blocking(Kind k, const std::string& root, std::string* err,
     return ok;
 }
 
-Installer::~Installer() { if (th.joinable()) th.join(); }
+Installer::~Installer() { cleanup_leftovers_stop(); if (th.joinable()) th.join(); }
 
 void Installer::start(Kind k, const std::string& managed_root_dir) {
     if (th.joinable()) th.join();
