@@ -53,6 +53,8 @@
 #include "hookshot_build.h"
 #include "nup_repair.h"
 #include "hub_log.h"
+#include "env_scope.h"
+#include "proc_spawn.h"
 #include <thread>
 #include <xinput.h>
 
@@ -92,35 +94,30 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     }
     if (!hubui::launch_allowed(A.proc != nullptr, session_active(), /*system_launch=*/true)) { set_notice(hubui::launch_busy_reason(true)); return false; }   // rooms start their own game inside their own session: only A.proc refuses
     if (!file_exists(exe)) { set_notice("Cannot find " + file_name(exe) + " (" + exe + ")"); return false; }
-    std::vector<std::pair<std::string, std::string>> env_all = env;   // + the instant-replay switch for n64run (set below, cleared again after the spawn)
+    std::vector<std::pair<std::string, std::string>> env_all = env;   // + the instant-replay switch for n64run (set below, put back after the spawn)
     if (file_name(exe) == "n64run.exe") for (auto& kv : hubui::n64_clips_env(A.st.n64_clips)) env_all.push_back(kv);
-    if (!A.st.start_hint) SetEnvironmentVariableW(L"RETROHUB_START_HINT", L"0");   // retrorun / n64run read it (inherited by the child)
+    std::vector<std::pair<std::wstring, std::wstring>> wenv;   // the child inherits these; a variable the player already had is given back with its own value afterwards, not removed
+    if (!A.st.start_hint) wenv.push_back({L"RETROHUB_START_HINT", L"0"});   // retrorun / n64run read it
+    for (auto& e : env_all) wenv.push_back({W(e.first), W(e.second)});
     std::wstring cmd = L"\"" + W(exe) + L"\" " + W(args);
-    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
-    buf.push_back(0);
-    for (auto& e : env_all) SetEnvironmentVariableW(W(e.first).c_str(), W(e.second).c_str());
+    const std::vector<hubenv::Saved> env_saved = hubenv::apply(wenv);
     const std::string exe_name = file_name(exe);
     const bool own_runner = exe_name == "retrorun.exe" || exe_name == "n64run.exe" || exe_name == "streamrun.exe" || exe == smash_exe_path();   // our own processes that open /hub: they prove the account (strict rooms); emulators never get it
     if (own_runner) fr_ident_env(true);
-    STARTUPINFOW si{};
-    si.cb = sizeof si;
-    PROCESS_INFORMATION pi{};
     /* CREATE_NO_WINDOW: n64run / retrorun are console-subsystem programs (they log to files). Without the flag Windows gives them a
      * console, which on PCs where Windows Terminal is the default console host opens a visible terminal window over the game.
-     * GUI emulators (Dolphin, PCSX2, Azahar, Cemu) ignore the flag. */
-    BOOL ok = CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(cwd).c_str(), &si, &pi);
-    DWORD err = GetLastError();
-    for (auto& e : env_all) SetEnvironmentVariableW(W(e.first).c_str(), nullptr);
+     * GUI emulators (Dolphin, PCSX2, Azahar, Cemu) ignore the flag.
+     * The child starts suspended and joins its job (external emulators: follow every process it starts, so a relaunch / hand-off keeps the
+     * session open) before it runs its first instruction, so nothing it spawns early can escape the job. */
+    hubproc::SpawnResult sr;
+    const bool want_job = ri.after_exit != nullptr;
+    const bool ok = hubproc::spawn(W(exe), cmd, W(cwd), CREATE_NO_WINDOW, want_job, nullptr, &sr);
+    const DWORD err = sr.error;
+    hubenv::restore(env_saved);
     if (own_runner) fr_ident_env(false);
-    SetEnvironmentVariableW(L"RETROHUB_START_HINT", nullptr);
     if (!ok) { set_notice("Could not start " + file_name(exe) + " (error " + std::to_string(err) + ")"); return false; }
-    CloseHandle(pi.hThread);
-    if (ri.after_exit) {   // external emulator: follow every process it starts, so a relaunch / hand-off keeps the session open
-        HANDLE job = CreateJobObjectW(nullptr, nullptr);
-        if (job && !AssignProcessToJobObject(job, pi.hProcess)) { CloseHandle(job); job = nullptr; }
-        A.job_h = job;
-    }
-    A.proc = pi.hProcess;
+    if (want_job) A.job_h = sr.job;
+    A.proc = sr.process;
     A.proc_title = ri.title;
     A.run = ri;
     A.run.controls_path.clear();
