@@ -298,4 +298,62 @@ struct CmdPacer {
     void ack(long long seq) { if (seq > acked_seq) acked_seq = seq; }
 };
 
+/* ---- extra runner rows: Rewind, Screen filter, Save a clip ----
+ * Rewind and the screen filter are offline only (runctl::offline_only) and retrorun only (n64run answers "unsupported"). A clip is
+ * cosmetic, so it is allowed online, and n64run supports it too. External emulators have no control channel: no rows at all.
+ * A row is HIDDEN (not just disabled) when it cannot work; a row the runner answered "unsupported" for stays hidden for the session. */
+enum class QmFeature { Rewind = 0, Filter = 1, Clip = 2 };
+constexpr int kQmFeatures = 3;
+/* Rewind has no row: retrorun rewinds while LT + View is HELD (fixed binding), so the menu only says so. Not offered in RetroAchievements hardcore. */
+constexpr const char* kRewindHint = "To rewind, hold LT + View while you play. Not available in RetroAchievements hardcore.";
+inline runctl::Cmd feature_cmd(QmFeature f) { return f == QmFeature::Rewind ? runctl::Cmd::Rewind : f == QmFeature::Filter ? runctl::Cmd::Shader : runctl::Cmd::Clip; }
+inline bool feature_row_visible(QmFeature f, bool has_ctl, bool online, bool is_n64, bool runner_unsupported) {
+    if (!has_ctl || runner_unsupported) return false;
+    if (runctl::offline_only(feature_cmd(f)) && online) return false;
+    if (f != QmFeature::Clip && is_n64) return false;   // n64run replies "unsupported" to rewind / shader
+    return true;
+}
+/* Does a failed ack mean "this runner / game cannot do it" (as opposed to a passing problem such as "Instant replay is off")? */
+inline bool ack_means_unsupported(const std::string& msg) {
+    std::string m;
+    for (char c : msg) m += (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
+    return m == "unsupported" || m == "unknown command" || m == "not supported for this system" || m.find("is not available for this game") != std::string::npos;
+}
+struct FeatureHide {
+    bool hidden[kQmFeatures] = {false, false, false};
+    void mark(QmFeature f) { hidden[(int)f] = true; }
+    bool is(QmFeature f) const { return hidden[(int)f]; }
+    void reset() { for (bool& h : hidden) h = false; }   // a new game session
+    /* A failed ack for `c`: hide the row it belongs to when the answer means unsupported. Returns true if a row was hidden. */
+    bool on_fail(runctl::Cmd c, const std::string& msg) {
+        if (!ack_means_unsupported(msg)) return false;
+        for (int i = 0; i < kQmFeatures; ++i) if (feature_cmd((QmFeature)i) == c) { hidden[i] = true; return true; }
+        return false;
+    }
+};
+
+/* ---- Save-state slot page: replacing a USED slot takes two presses ----
+ * An empty slot saves at once. A used slot: the first press arms it (the card says "Press again to replace"), the second press on the
+ * same slot within kExpiryMs saves. Moving the selection (any navigation), pressing another slot, or waiting cancels it. */
+struct OverwriteConfirm {
+    static constexpr long long kExpiryMs = 5000;
+    int armed = -2;                 // armed slot, -2 = none
+    std::string armed_sel;          // the pad selection when it was armed
+    long long armed_ms = 0;
+    enum class Result { Save, Armed };
+    Result press(int slot, bool used, long long now_ms, const std::string& sel) {
+        if (!used) { armed = -2; return Result::Save; }
+        if (armed == slot && now_ms - armed_ms <= kExpiryMs) { armed = -2; return Result::Save; }
+        armed = slot; armed_sel = sel; armed_ms = now_ms;
+        return Result::Armed;
+    }
+    /* Every frame with the current pad selection / time: navigation or the expiry disarms. */
+    void tick(const std::string& sel, long long now_ms) {
+        if (armed == -2) return;
+        if (sel != armed_sel || now_ms - armed_ms > kExpiryMs) armed = -2;
+    }
+    bool is_armed(int slot) const { return armed == slot && armed != -2; }
+    void cancel() { armed = -2; }
+};
+
 }  // namespace hubqm
