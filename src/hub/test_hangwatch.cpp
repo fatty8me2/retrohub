@@ -34,6 +34,16 @@ int main()
         for (uint64_t t = T0; t < T0 + 600000; t += 1000) s.step(t, false);
         CHECK(s.end_at == 0);
     }
+    // heavy CPU and I/O before any window was ever shown is ignored: the rule is measured from the baseline taken when the window first goes away
+    {
+        Sim s;
+        for (uint64_t t = T0; t < T0 + 30000; t += 1000) { s.cpu += 50000000; s.io += 9000000; s.step(t, false); }
+        CHECK(s.end_at == 0);                                    // starting up: never ends
+        s.step(T0 + 30000, true);                                // the window appears
+        for (uint64_t t = T0 + 31000; t < T0 + 90000; t += 1000) s.step(t, false);   // it goes away; the process is quiet from here
+        CHECK(s.end_at == T0 + 31000 + 15000);
+        CHECK(s.end_why == Why::Quiet);
+    }
     // window closes, process completely quiet: ends at 15 s (not before)
     {
         Sim s;
