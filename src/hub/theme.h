@@ -67,42 +67,42 @@ inline Palette preset(int p) {
     case P_MIDNIGHT:   // today's colours, exactly
         set(S_BG, rgba(16, 17, 22)); set(S_SIDEBAR, rgba(12, 13, 17)); set(S_PANEL, rgba(26, 28, 36)); set(S_PANEL2, rgba(37, 39, 51));
         set(S_PANEL3, rgba(50, 53, 69)); set(S_FRAME, rgba(30, 32, 42)); set(S_FRAME_HOV, rgba(40, 43, 56)); set(S_FRAME_ACT, rgba(46, 49, 64));
-        set(S_HAIRLINE, rgba(255, 255, 255, 20)); set(S_TEXT, rgba(238, 240, 246)); set(S_TEXT2, rgba(152, 157, 175)); set(S_TEXT3, rgba(104, 109, 127));
+        set(S_HAIRLINE, rgba(255, 255, 255, 20)); set(S_TEXT, rgba(238, 240, 246)); set(S_TEXT2, rgba(153, 158, 175)); set(S_TEXT3, rgba(130, 135, 152));
         set(S_ACCENT, rgba(108, 122, 255)); set(S_GOOD, rgba(56, 200, 120)); set(S_BAD, rgba(232, 95, 85)); set(S_WARN, rgba(240, 176, 64));
         set(S_HILITE, rgba(255, 255, 255)); set(S_GHOST, rgba(214, 217, 228)); set(S_HERO_BASE, rgba(16, 17, 22)); set(S_SCRIM, rgba(14, 15, 20)); dark_wash();
         break;
     case P_OLED:
         set(S_BG, rgba(0, 0, 0)); set(S_SIDEBAR, rgba(0, 0, 0)); set(S_PANEL, rgba(14, 14, 17)); set(S_PANEL2, rgba(26, 26, 31));
         set(S_PANEL3, rgba(40, 40, 48)); set(S_FRAME, rgba(18, 18, 22)); set(S_FRAME_HOV, rgba(27, 27, 33)); set(S_FRAME_ACT, rgba(34, 34, 42));
-        set(S_HAIRLINE, rgba(255, 255, 255, 22)); set(S_TEXT, rgba(240, 241, 246)); set(S_TEXT2, rgba(160, 163, 178)); set(S_TEXT3, rgba(112, 115, 130));
+        set(S_HAIRLINE, rgba(255, 255, 255, 22)); set(S_TEXT, rgba(240, 241, 246)); set(S_TEXT2, rgba(160, 163, 178)); set(S_TEXT3, rgba(121, 124, 139));
         set(S_ACCENT, rgba(108, 122, 255)); set(S_GOOD, rgba(56, 200, 120)); set(S_BAD, rgba(232, 95, 85)); set(S_WARN, rgba(240, 176, 64));
         set(S_HILITE, rgba(255, 255, 255)); set(S_GHOST, rgba(214, 217, 228)); set(S_HERO_BASE, rgba(0, 0, 0)); set(S_SCRIM, rgba(0, 0, 0)); dark_wash();
         break;
     case P_LIGHT:
         set(S_BG, rgba(238, 240, 246)); set(S_SIDEBAR, rgba(226, 229, 238)); set(S_PANEL, rgba(255, 255, 255)); set(S_PANEL2, rgba(232, 235, 244));
         set(S_PANEL3, rgba(214, 219, 233)); set(S_FRAME, rgba(247, 248, 252)); set(S_FRAME_HOV, rgba(238, 240, 248)); set(S_FRAME_ACT, rgba(228, 232, 244));
-        set(S_HAIRLINE, rgba(0, 0, 0, 28)); set(S_TEXT, rgba(20, 22, 32)); set(S_TEXT2, rgba(78, 84, 104)); set(S_TEXT3, rgba(108, 114, 134));
+        set(S_HAIRLINE, rgba(0, 0, 0, 28)); set(S_TEXT, rgba(20, 22, 32)); set(S_TEXT2, rgba(78, 84, 104)); set(S_TEXT3, rgba(97, 102, 120));
         set(S_ACCENT, rgba(62, 76, 214)); set(S_GOOD, rgba(20, 128, 72)); set(S_BAD, rgba(196, 52, 44)); set(S_WARN, rgba(164, 100, 0));
         set(S_HILITE, rgba(0, 0, 0)); set(S_GHOST, rgba(52, 57, 76)); set(S_HERO_BASE, rgba(16, 17, 22)); set(S_SCRIM, rgba(14, 15, 20)); light_wash();
         break;
     case P_ATOMIC:   // translucent N64 purple
         set(S_BG, rgba(22, 10, 38)); set(S_SIDEBAR, rgba(15, 6, 28)); set(S_PANEL, rgba(36, 19, 60)); set(S_PANEL2, rgba(52, 29, 84));
         set(S_PANEL3, rgba(70, 41, 110)); set(S_FRAME, rgba(42, 23, 70)); set(S_FRAME_HOV, rgba(54, 31, 88)); set(S_FRAME_ACT, rgba(64, 37, 104));
-        set(S_HAIRLINE, rgba(235, 215, 255, 26)); set(S_TEXT, rgba(246, 240, 255)); set(S_TEXT2, rgba(190, 172, 222)); set(S_TEXT3, rgba(144, 124, 178));
+        set(S_HAIRLINE, rgba(235, 215, 255, 26)); set(S_TEXT, rgba(246, 240, 255)); set(S_TEXT2, rgba(190, 172, 222)); set(S_TEXT3, rgba(146, 127, 180));
         set(S_ACCENT, rgba(168, 86, 238)); set(S_GOOD, rgba(70, 214, 140)); set(S_BAD, rgba(244, 100, 112)); set(S_WARN, rgba(244, 184, 70));
         set(S_HILITE, rgba(255, 255, 255)); set(S_GHOST, rgba(220, 206, 242)); set(S_HERO_BASE, rgba(22, 10, 38)); set(S_SCRIM, rgba(17, 8, 30)); dark_wash();
         break;
     case P_GAMECUBE:   // indigo cube
         set(S_BG, rgba(18, 16, 42)); set(S_SIDEBAR, rgba(12, 11, 32)); set(S_PANEL, rgba(29, 26, 64)); set(S_PANEL2, rgba(42, 38, 92));
         set(S_PANEL3, rgba(57, 52, 120)); set(S_FRAME, rgba(33, 30, 72)); set(S_FRAME_HOV, rgba(43, 39, 94)); set(S_FRAME_ACT, rgba(52, 47, 110));
-        set(S_HAIRLINE, rgba(225, 222, 255, 24)); set(S_TEXT, rgba(240, 239, 253)); set(S_TEXT2, rgba(170, 168, 214)); set(S_TEXT3, rgba(128, 126, 176));
+        set(S_HAIRLINE, rgba(225, 222, 255, 24)); set(S_TEXT, rgba(240, 239, 253)); set(S_TEXT2, rgba(170, 168, 214)); set(S_TEXT3, rgba(135, 134, 181));
         set(S_ACCENT, rgba(104, 90, 232)); set(S_GOOD, rgba(60, 206, 128)); set(S_BAD, rgba(238, 98, 94)); set(S_WARN, rgba(242, 180, 66));
         set(S_HILITE, rgba(255, 255, 255)); set(S_GHOST, rgba(216, 214, 240)); set(S_HERO_BASE, rgba(18, 16, 42)); set(S_SCRIM, rgba(14, 12, 34)); dark_wash();
         break;
     case P_FAMICOM:   // cream body, red accent
         set(S_BG, rgba(244, 235, 214)); set(S_SIDEBAR, rgba(232, 220, 194)); set(S_PANEL, rgba(253, 247, 232)); set(S_PANEL2, rgba(238, 226, 200));
         set(S_PANEL3, rgba(222, 207, 175)); set(S_FRAME, rgba(250, 243, 226)); set(S_FRAME_HOV, rgba(242, 232, 208)); set(S_FRAME_ACT, rgba(234, 222, 194));
-        set(S_HAIRLINE, rgba(60, 30, 20, 34)); set(S_TEXT, rgba(46, 26, 24)); set(S_TEXT2, rgba(108, 76, 68)); set(S_TEXT3, rgba(132, 100, 88));
+        set(S_HAIRLINE, rgba(60, 30, 20, 34)); set(S_TEXT, rgba(46, 26, 24)); set(S_TEXT2, rgba(108, 76, 68)); set(S_TEXT3, rgba(121, 91, 80));
         set(S_ACCENT, rgba(190, 30, 40)); set(S_GOOD, rgba(26, 128, 74)); set(S_BAD, rgba(176, 28, 38)); set(S_WARN, rgba(160, 98, 0));
         set(S_HILITE, rgba(0, 0, 0)); set(S_GHOST, rgba(86, 58, 54)); set(S_HERO_BASE, rgba(30, 14, 14)); set(S_SCRIM, rgba(24, 11, 11)); light_wash();
         break;
@@ -125,7 +125,8 @@ inline uint32_t mix_rgb(uint32_t a, uint32_t b, double t) {
 }
 
 /* Minimum text contrast every preset must reach (see test_theme.cpp). */
-constexpr double kMinText = 7.0, kMinText2 = 4.5, kMinText3 = 3.0, kMinAccent = 3.0;
+constexpr double kMinText = 7.0, kMinText2 = 4.5, kMinText3 = 4.5, kMinText3Raised = 3.0, kMinAccent = 3.0,
+                 kMinLarge = 3.0, kMinDisabled = 3.0;
 
 /* ---- "Accent from cover" ---- */
 
