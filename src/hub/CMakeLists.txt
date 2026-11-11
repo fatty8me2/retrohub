@@ -423,6 +423,11 @@ add_executable(hub_ext_pads_test test_ext_pads.cpp pcsx2.cpp ppsspp.cpp emulator
 target_include_directories(hub_ext_pads_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ext_pads_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
+# Emulator config writers: durable commit (bytes identical to the old helper), managed Cemu graphic-pack parking, analog clamp, PCSX2 deadzone, PPSSPP controls.ini merge (temp dirs only)
+add_executable(hub_emucfg_test test_emucfg.cpp pcsx2.cpp ppsspp.cpp emulators.cpp lichii.cpp)
+target_include_directories(hub_emucfg_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_emucfg_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+
 # PS2 online (docs/PS2_ONLINE.md): readiness reasons, retrorun arguments, exit-code texts, the pinned LRPS2 download
 add_executable(hub_ps2_online_test test_ps2_online.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_ps2_online_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)

@@ -219,6 +219,9 @@ std::string cemu_own_state_text(const CemuOwnState& st);
 bool cemu_own_state_parse(const std::string& text, CemuOwnState* st);
 bool prepare_cemu_own_settings(const std::string& user_data, const hub::gs::Values& v);   // revert leftovers, back up once, apply, record
 bool revert_cemu_own_settings(const std::string& user_data);                              // false when there was nothing to revert
+/* Managed Cemu graphic packs off/on without losing the selection (see emulators.cpp). `in` is the settings.xml text, `st` the parked block. */
+std::string cemu_managed_gp_apply(const std::string& settings_xml, bool packs_on, CemuOwnState* st);
+bool apply_cemu_managed_settings(const std::string& portable_dir, const hub::gs::Values& v);   // settings.xml + retrohub-cemu-gp-state.txt beside it
 /* Per-game Cemu profile (gameProfiles\<title id>.ini in the user data dir; Cemu layers it over its shipped gameProfiles\default\).
  * Only keys the game's RetroHub settings set are written (wiiu.cpu_mode); the previous file is kept as <file>.retrohub-orig
  * (or a ".retrohub-new" marker when there was none) and restored after the session. */
