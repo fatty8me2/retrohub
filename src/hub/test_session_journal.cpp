@@ -204,11 +204,12 @@ static void test_roundtrip_and_corrupt() {
     hubjournal::Entry j = r.entry(hubemu::begin_session(r.e, r.in, U8(r.battery), ""));
     j.id = "abc-1";
     j.title = "T\tab\nnew \\ line \xC3\xA9";
-    j.pid = 4242; j.created = 0x01dbaa11223344ull; j.attempts = 2;
+    j.pid = 4242; j.created = 0x01dbaa11223344ull; j.attempts = 2; j.game_path = "D:/roms/g/tab	game.wua";
     j.nx_install_dir = "C:\\x"; j.nx_title_id = 0x0100abcd12340000ull; j.cemu_user = "D:\\c"; j.cemu_tid = 5; j.revert_profile = true; j.revert_own_settings = true;
     hubjournal::Entry k;
     CHECK(hubjournal::parse(hubjournal::serialize(j), &k));
     CHECK(k.title == j.title && k.pid == 4242 && k.created == j.created && k.attempts == 2 && k.nx_title_id == j.nx_title_id && k.cemu_tid == 5);
+    CHECK(k.game_path == j.game_path);
     CHECK(k.sess.rels == j.sess.rels && k.sess.battery == j.sess.battery && k.sess.active && k.revert_profile && k.revert_own_settings && k.emu_kind == 7);
     const std::string good = hubjournal::serialize(j);
     hubjournal::Entry x;
@@ -264,6 +265,16 @@ static void test_recover_while_running() {
     j.pid = GetCurrentProcessId();   // a process that certainly runs
     hubproc::creation_time(GetCurrentProcess(), &j.created);
     CHECK(hubjournal::process_running(j.pid, j.created) && !hubjournal::process_running(0, 0));
+    {   // no creation time recorded: the image path decides; with nothing to compare only an old journal counts as a recycled pid
+        char me[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, me, MAX_PATH);
+        const long long now = (long long)time(nullptr);
+        CHECK(hubjournal::process_running(j.pid, 0, me, now));                          // same image: running
+        CHECK(!hubjournal::process_running(j.pid, 0, "C:\nowhere\other.exe", now));   // another image: recycled pid
+        CHECK(hubjournal::process_running(j.pid, 0, "", now));                          // nothing to compare, fresh journal: stay careful
+        CHECK(!hubjournal::process_running(j.pid, 0, "", now - 25 * 3600));             // nothing to compare, over a day old
+        CHECK(hubjournal::process_running(j.pid, 0, "", 0));                            // no start time either: running
+    }
     CHECK(hubjournal::begin(r.jdir_s(), j));
     hubjournal::forget_live();
     wr(r.save(), "WRITTEN-WHILE-RUNNING", 0);

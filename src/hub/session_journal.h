@@ -31,6 +31,7 @@ struct Entry {
     std::string emu_exe;             // the emulator's exe path (a process running from exactly this image defers the replay)
     std::string inst_dir;            // the install folder at launch (identity: the replay re-derives every path from the CURRENT install and refuses on a mismatch)
     bool inst_managed = false;       // RetroHub's own download: ANY process running from inst_dir counts as the emulator still running
+    std::string game_path;           // the game file the launch passed to hubemu::find (Cemu may be found next to it); "" in older journals
     std::string system_short, game_key, title;   // for the vault bookkeeping after a replay
     hubemu::SaveSession sess;        // as begin_session left it
     std::string nx_install_dir;      // Switch: install whose save mapping is re-evaluated at exit
@@ -73,7 +74,9 @@ void forget_live();
 
 /* True when that process (same id AND creation time) is still running. A pid that is not there, or now belongs to another process,
  * is not running. A process that cannot be inspected counts as running. */
-bool process_running(unsigned long pid, unsigned long long created);
+bool process_running(unsigned long pid, unsigned long long created, const std::string& exe = std::string(), long long started_unix = 0);
+/* With created == 0 (no creation time recorded): the process image is compared with `exe` when that is known and the pid counts as another
+ * program when it differs; with nothing to compare, the pid counts as recycled only once the journal (started_unix) is over 24 hours old. */
 /* True when any process runs from exactly the image `exe` (full path, case-insensitive), or from inside `managed_dir` when that is not empty.
  * An unrelated program with the same exe NAME elsewhere does not count. */
 bool image_running(const std::string& exe, const std::string& managed_dir);

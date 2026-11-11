@@ -441,12 +441,18 @@ void wiiu_pad_watch() {
     static ULONGLONG qa_until = 0;
     bool down = false;
     if (A.proc && !g_headless && A.run.system_short == "wiiu") {
+        static ULONGLONG next_probe[4] = {0, 0, 0, 0};   // an empty XInput slot is slow to ask: look again at most every 2 s
+        const ULONGLONG now_tick = GetTickCount64();
         for (DWORD i = 0; i < 4; ++i) {   // Xbox pads, read directly (works while the game window has the focus)
+            if (now_tick < next_probe[i]) continue;
             XINPUT_STATE xs{};
-            if (XInputGetState(i, &xs) == ERROR_SUCCESS &&
+            const DWORD r = XInputGetState(i, &xs);
+            if (r == ERROR_DEVICE_NOT_CONNECTED) { next_probe[i] = now_tick + 2000; continue; }
+            if (r == ERROR_SUCCESS &&
                 hubctl::pad_screen_combo_down(hubctl::pad_from_xinput(xs.Gamepad.wButtons, xs.Gamepad.bLeftTrigger, xs.Gamepad.bRightTrigger))) down = true;
         }
-        for (auto* c : A.pads) {   // SDL pads (state as the event loop last left it, as before)
+        SDL_GameControllerUpdate();   // SDL pad state must not depend on the main loop having pumped events
+        for (auto* c : A.pads) {   // SDL pads
             hubctl::PadState st;
             hubctl::read_state(c, &st);
             if (hubctl::pad_screen_combo_down(st)) down = true;
@@ -864,6 +870,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     jr->inst_managed = inst.managed;
     jr->system_short = hub::system_short(e.system);
     jr->game_key = e.key;
+    jr->game_path = e.path;
     jr->title = e.title;
     jr->sess = *sess;
     if (hubemu::is_nx(kind) && e.system == hub::System::Switch) { jr->nx_install_dir = inst.dir; jr->nx_title_id = hubemu::title_id_from_key(e.key); }
