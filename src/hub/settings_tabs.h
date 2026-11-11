@@ -42,7 +42,7 @@ inline const SettingsCtl* settings_controls(int* n) {
         {"smash_exe_default", ST_General}, {"sidebar_mode", ST_General}, {"theme_picker", ST_General}, {"show_friends", ST_General}, {"notify_in_game", ST_General}, {"game_chat", ST_General},
         {"tv_mode", ST_General}, {"tv_start", ST_General}, {"tv_cases", ST_General}, {"tv_windows", ST_General},
         {"notif_sound", ST_General}, {"menu_sounds", ST_General}, {"menu_volume", ST_General}, {"menu_music", ST_General}, {"attract_mode", ST_General}, {"rom_cache_clear", ST_General}, {"rom_cache_limit", ST_General}, {"skipped_archives", ST_General},
-        {"delay_auto", ST_Online}, {"input_delay", ST_Online}, {"auto_friend", ST_Online}, {"share_playtime", ST_Online}, {"share_games", ST_Online}, {"show_friend_games", ST_Online}, {"friend_code_copy", ST_Online}, {"server_url", ST_Online},
+        {"delay_auto", ST_Online}, {"input_delay", ST_Online}, {"auto_friend", ST_Online}, {"notify_online", ST_Online}, {"share_playtime", ST_Online}, {"share_games", ST_Online}, {"show_friend_games", ST_Online}, {"friend_code_copy", ST_Online}, {"server_url", ST_Online},
         {"cloud_summary", kPageSaves}, {"saves_page_link", kPageSaves}, {"pause_cloud", kPageSaves}, {"backup_shots", kPageSaves},
         {"cloud_states", kPageSaves}, {"sync_folder", kPageSaves}, {"sync_folder_stop", kPageSaves}, {"sync_auto", kPageSaves}, {"sync_copy_now", kPageSaves},
         {"controllers_page_link", kPageControllers}, {"cemu_manage_controls", kPageControllers}, {"cemu_restore_controls", kPageControllers},
