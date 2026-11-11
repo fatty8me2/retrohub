@@ -92,9 +92,12 @@ void result_line(const std::string& s, bool ok) {
 void page_saves() {
     {
         std::string hdr = A.st.username_claimed && !A.st.name.empty()
-            ? "Your saves follow you: cloud backup for " + A.st.name + ", automatic on every PC you sign in on. You can also keep a copy in a folder or a file."
-            : "Your saves follow you: cloud backup follows your RetroHub account on every PC you sign in on. You can also keep a copy in a folder or a file.";
-        page_header("Saves", hdr.c_str());
+            ? "Cloud backup for " + A.st.name + " follows you to every PC you sign in on. You can also keep a copy in a folder."
+            : "Cloud backup follows your RetroHub account to every PC you sign in on. You can also keep a copy in a folder.";
+        page_header("Saves", "");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", hdr.c_str());   // wraps instead of clipping in a narrow window
+        ImGui::PopStyleColor();
     }
     poll_vault();
     if (A.vault_dirty) refresh_vault();

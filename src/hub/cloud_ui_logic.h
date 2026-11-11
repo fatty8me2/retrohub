@@ -338,8 +338,8 @@ inline ConflictChoice conflict_default() { return ConflictChoice::UseNewer; }
 inline const char* conflict_button(ConflictChoice c) {
     switch (c) {
         case ConflictChoice::UseNewer: return "Use the newer one";
-        case ConflictChoice::UseLocal: return "Use this PC's";
-        case ConflictChoice::UseCloud: return "Use the cloud's";
+        case ConflictChoice::UseLocal: return "Use this PC's copy";
+        case ConflictChoice::UseCloud: return "Use the cloud copy";
         default: return "Decide later";
     }
 }
