@@ -1385,13 +1385,13 @@ static void test_fritchii_install(const fs::path& root) {
     CHECK(std::string(hubemu::name(K)) == "Fritchii" && hubemu::is_nx(K) && hubemu::is_nx(hubemu::Kind::Lichii) && !hubemu::is_nx(hubemu::Kind::Cemu));
     CHECK(hubemu::managed_dir(K, root.string()) != hubemu::managed_dir(hubemu::Kind::Lichii, root.string()));
     CHECK(fs::u8path(hubemu::managed_dir(K, root.string())).filename() == "fritchii");
-    CHECK(std::wstring(hubemu::release(K).exe) == L"lichii.exe" && std::string(hubemu::release(K).license) == "GPL-3.0" && std::string(hubemu::release(K).version) == "v5.7");
+    CHECK(std::wstring(hubemu::release(K).exe) == L"lichii.exe" && std::string(hubemu::release(K).license) == "GPL-3.0" && std::string(hubemu::release(K).version) == "v5.7 r2");
     // the v5.7 pin is real: RetroHub's own local build of Fritchii v5.7 (emulators.cpp, fritchii_pin)
     {
         const hubemu::Release& r = hubemu::release(K);
         CHECK(!hubemu::release_is_placeholder(K) && !hubemu::release_is_placeholder(hubemu::Kind::Lichii));
-        CHECK(std::wstring(r.host) == L"github.com" && std::wstring(r.path) == L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5.7/Fritchii-v5.7-RetroHub-windows-x64.zip");
-        CHECK(r.size == 66270008ull && std::string(r.sha256) == "43ad6f48d2a83f8a882ec5465daca4001dec9c6301e0fe4b90722dea62fa139a");
+        CHECK(std::wstring(r.host) == L"github.com" && std::wstring(r.path) == L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5.7-r2/Fritchii-v5.7-RetroHub-r2-windows-x64.zip");
+        CHECK(r.size == 66270333ull && std::string(r.sha256) == "1afa2247a5f4a5528db1ab97bc41b796a8773dfd9fc740ff59fc2296e7b61264");
     }
     // a placeholder pin (all-zero sha) still refuses with a plain message and creates nothing
     {
