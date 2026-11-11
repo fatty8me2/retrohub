@@ -1,4 +1,4 @@
-/* Settings > Help: Copy diagnostics. Zips userdata\logs (incl. hang reports), version info and the emulator list to the Desktop.
+/* Settings > Help: Copy diagnostics. Zips userdata\logs (hub.log, hang and crash reports), version info and the emulator list to the Desktop.
  * identity*.json and anything under _identity is never included (diag_logic.cpp). Opens the folder afterwards: the hub has focus then. */
 #include "convenience.h"
 #include "diag_logic.h"
@@ -19,7 +19,8 @@ std::string desktop_dir() {
 
 std::string build_and_save(std::string* where) {
     const std::string root = hub::data_dir();
-    std::vector<hubdiag::Entry> files = hubdiag::collect_dir(root + "logs", "logs/");
+    /* logs\ holds hub.log / hub.1.log / hub.2.log, hang reports and crash reports (newest 5 only) */
+    std::vector<hubdiag::Entry> files = hubdiag::limit_total_bytes(hubdiag::newest_crash_reports_only(hubdiag::collect_dir(root + "logs", "logs/")));
     std::string versions = std::string("RetroHub ") + HUB_VERSION_STR + "\n";
     {   // runner builds sit next to the hub; the VERSION file travels with them
         std::string v = read_text_file(hub::exe_dir() + "VERSION");
@@ -66,7 +67,7 @@ void diag_settings_ui() {
         g_ok = g_result.empty();
         if (g_ok) {
             g_result = "Saved " + file_name(where);
-            if (!g_headless) ShellExecuteW(nullptr, L"open", L"explorer.exe", (L"/select,\"" + std::wstring(where.begin(), where.end()) + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+            if (!g_headless) ShellExecuteW(nullptr, L"open", L"explorer.exe", (L"/select,\"" + W(where) + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
         }
     }
     if (!g_result.empty()) {
