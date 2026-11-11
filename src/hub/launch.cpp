@@ -435,21 +435,25 @@ void dolphin_send_speed_keys(const std::vector<int>& vks, std::function<void(int
     }).detach();
 }
 
-/* View (Back) + right bumper while a Wii U game runs. Edge-triggered: one toggle per press. */
+/* View (Back) + right bumper while a Wii U game runs, held 250 ms (hubctl::pad_screen_combo_down per pad; Start, Y, LT, RT must not be held). One toggle per hold. */
 void wiiu_pad_watch() {
-    static bool prev = false;
+    static hubctl::PadScreenCombo combo;
+    static ULONGLONG qa_until = 0;
     bool down = false;
     if (A.proc && !g_headless && A.run.system_short == "wiiu") {
-        for (DWORD i = 0; i < 4 && !down; ++i) {
-            XINPUT_STATE xs{};
-            if (XInputGetState(i, &xs) == ERROR_SUCCESS && hubemu::cemu_toggle_combo(xs.Gamepad.wButtons)) down = true;
+        SDL_GameControllerUpdate();
+        for (auto* c : A.pads) {
+            hubctl::PadState st;
+            hubctl::read_state(c, &st);
+            if (hubctl::pad_screen_combo_down(st)) down = true;
         }
-        for (auto* c : A.pads)
-            if (!down && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_BACK) && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) down = true;
-        if (autotest_active()) if (const char* after = std::getenv("RETROHUB_AUTOTEST_PADSWAP_AFTER"))   // QA only: press the combo once after N seconds
-            if (!prev && GetTickCount64() - A.run.start_tick >= (ULONGLONG)(std::atof(after) * 1000.0)) { static bool fired = false; if (!fired) { fired = true; down = true; } }
+        if (autotest_active()) if (const char* after = std::getenv("RETROHUB_AUTOTEST_PADSWAP_AFTER")) {   // QA only: hold the combo for 400 ms after N seconds
+            static bool fired = false;
+            if (!fired && GetTickCount64() - A.run.start_tick >= (ULONGLONG)(std::atof(after) * 1000.0)) { fired = true; qa_until = GetTickCount64() + 400; }
+            if (GetTickCount64() < qa_until) down = true;
+        }
     }
-    if (down && !prev) {
+    if (combo.update(down, (long long)GetTickCount64())) {
         /* The pad is read whichever window has focus: act only when RetroHub or this session's own game is in front, never pull Cemu
          * over another game the player switched to (QA's hidden desktop has no meaningful foreground window, so it is exempt). */
         DWORD fg = 0;
@@ -458,7 +462,6 @@ void wiiu_pad_watch() {
         for (DWORD p : game_pids()) gp.push_back(p);
         if (autotest_active() || hubui::pad_combo_may_act(fg, GetCurrentProcessId(), gp)) wiiu_toggle_gamepad_screen();
     }
-    prev = down;
 }
 
 void request_game_close() {

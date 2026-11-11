@@ -192,7 +192,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             const bool want = hubdisplay::initial_reduce_motion(key_saved, A.st.reduce_motion, hubdisplay::os_animations_on());
             if (want != A.st.reduce_motion || !key_saved) { A.st.reduce_motion = want; A.dirty = true; }
         }
-        if (std::getenv("HUB_REDUCE_MOTION")) A.st.reduce_motion = true;
+        if (g_headless && std::getenv("HUB_REDUCE_MOTION")) A.st.reduce_motion = true;   // screenshot mode only
         if (g_headless) if (const char* us = std::getenv("HUB_UI_SCALE")) A.st.ui_scale = hubdisplay::clamp_ui_scale(std::atoi(us));   // screenshots: UI size in percent
         ui::reduce_motion = A.st.reduce_motion;
     }

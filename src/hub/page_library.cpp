@@ -576,7 +576,7 @@ void library_top_bar() {
         dl->AddRectFilled(ImVec2(o.x, o.y + sp(0.5f)), ImVec2(o.x + w, o.y + sp(0.5f) + lh), ui::PANEL2, lh);
         if (t2 > 0) dl->AddRectFilled(ImVec2(o.x, o.y + sp(0.5f)), ImVec2(o.x + w * d / (float)t2, o.y + sp(0.5f) + lh), ui::ACCENT, lh);
         else {
-            float ph = std::fmod((float)ImGui::GetTime() * 0.8f, 1.f);
+            float ph = ui::reduce_motion ? 0.5f : std::fmod((float)ImGui::GetTime() * 0.8f, 1.f);
             dl->AddRectFilled(ImVec2(o.x + w * ph * 0.8f, o.y + sp(0.5f)), ImVec2(o.x + w * (ph * 0.8f + 0.2f), o.y + sp(0.5f) + lh), ui::ACCENT, lh);
         }
         /* "Scanning your games...  12 / 340. Looking in ~\Documents\Roms" (the folder is shortened in the middle to fit), and after 10 seconds a hint at the right */
