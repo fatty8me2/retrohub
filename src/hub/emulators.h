@@ -84,6 +84,13 @@ struct Installer {
 };
 /* Finish or roll back an upgrade that a crash cut short (see above). Cheap when there is nothing to do. Never call while an install job runs. */
 void recover_interrupted(Kind k, const std::string& root = managed_root());
+/* One conservative leftover pass over the managed root (call once at startup, off the UI thread: cleanup_leftovers_async). Removes `_downloads\*` files older than
+ * a day, and an `_old` / `_extract` folder of any install that has no upgrade journal beside it and is not fresh. Never follows a reparse point, never touches a
+ * `user` folder, and does nothing while an install job runs. Returns the number of items removed. */
+int cleanup_leftovers(const std::string& root = managed_root());   // refuses any root but <data dir>\emulators (or the test root below)
+void cleanup_leftovers_async(const std::string& root = managed_root());   // joinable background pass, one at a time
+void cleanup_leftovers_stop();                                              // cancel + join it (also done by ~Installer)
+void set_cleanup_test_root(const std::string& root);                        // console tests only: one extra root the pass accepts ("" = none)
 /* Test seam (console tests only; nullptr clears): replaces release(kind), the HTTPS download and the "is it running" check, so installs and upgrades run
  * from a local archive with no network and no process. */
 struct InstallTestHooks {
@@ -91,6 +98,18 @@ struct InstallTestHooks {
     const Release* release = nullptr;
     std::function<bool(const Release& rel, const std::string& out_file, std::string* err)> fetch;   // write the archive to out_file
     std::function<bool(const std::string& exe)> running;
+    /* The download transport (used only when `fetch` is empty): answers each GET (offset > 0 = the client sent `Range: bytes=<offset>-`) with a canned reply, so
+     * the real resume / retry / verify code runs with no network. Return false = the server could not be reached. */
+    struct HttpReply {
+        int status = 200;              // 200 (whole file), 206 (a range), 416, 404 ...
+        uint64_t range_start = 0;      // 206: the first byte of the body as the server states it (Content-Range)
+        uint64_t range_total = 0;      // 206: the whole file's size as the server states it
+        std::string body;
+        bool drop_after_body = false;  // the connection breaks once the body has been delivered
+    };
+    std::function<bool(const Release& rel, uint64_t offset, HttpReply* out)> serve;
+    std::function<unsigned long(uint64_t file_pos)> write_fault;           // a Windows error code (0 = fine) the write at that file position fails with
+    std::function<bool(const std::string& dir, uint64_t* free_bytes)> free_space;   // replaces the free-space query of the download folder
 };
 void set_install_test_hooks(const InstallTestHooks* h);
 /* Same job, synchronously (console test): returns false and fills err on failure. */

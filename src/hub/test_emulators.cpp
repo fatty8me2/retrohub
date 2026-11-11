@@ -21,6 +21,7 @@
 #include <process.h>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <map>
@@ -28,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 #include "dolphin_speed_logic.h"
 
@@ -1438,6 +1440,341 @@ static void test_fritchii_install(const fs::path& root) {
     fs::remove_all(root, ec);
 }
 
+/* ---- install robustness: resume, verification, plain disk messages, rename retry, tar stderr, leftover pass. Temp dirs and local hooks only. ---- */
+static std::string pseudo_random_bytes(size_t n) {
+    std::string s(n, 0);
+    uint32_t x = 12345;
+    for (char& c : s) { x = x * 1664525u + 1013904223u; c = (char)(x >> 24); }
+    return s;
+}
+
+static void test_install_robustness(const fs::path& root) {
+    using namespace upg;
+    using Reply = hubemu::InstallTestHooks::HttpReply;
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    const hubemu::Kind K = hubemu::Kind::Lichii;
+    const fs::path dir = fs::u8path(hubemu::managed_dir(K, root.string()));
+    const fs::path dls = root / "_downloads";
+    const fs::path part = dls / "lichii-windows-x86_64.zip.part";
+    auto v1 = make_rel(root / "zips" / "r1.zip", "build-r1", {{"lichii.exe", "EXE-R1"}, {"Qt6Core.dll", pseudo_random_bytes(300000)}, {"old_only.dll", "old"}});
+    auto v2 = make_rel(root / "zips" / "r2.zip", "build-r2", {{"lichii.exe", "EXE-R2"}, {"Qt6Core.dll", pseudo_random_bytes(200000)}});
+    std::map<std::string, std::string> blob = {{v1->sha, read_text(v1->zip)}, {v2->sha, read_text(v2->zip)}};
+    const std::string& z1 = blob[v1->sha];
+    const size_t half = z1.size() / 2;
+    CHECK(z1.size() > 64 * 1024 * 2);   // several reads per request
+
+    const hubemu::Release* cur = &v1->r;
+    std::vector<uint64_t> offsets;
+    std::function<bool(uint64_t, const std::string&, Reply*)> script;
+    auto whole = [](const std::string& z, Reply* o) { o->status = 200; o->body = z; };
+    auto range = [](const std::string& z, uint64_t off, Reply* o, size_t len = std::string::npos) { o->status = 206; o->range_start = off; o->range_total = z.size(); o->body = z.substr((size_t)off, len); };
+    auto drop_first_half = [&](const std::string& z, Reply* o) { o->status = 200; o->body = z.substr(0, z.size() / 2); o->drop_after_body = true; };
+    hubemu::InstallTestHooks hk;
+    hk.kind = K;
+    hk.release = cur;
+    hk.running = [](const std::string&) { return false; };
+    hk.serve = [&](const hubemu::Release& r, uint64_t off, Reply* o) { offsets.push_back(off); return script(off, blob[r.sha256], o); };
+    hubemu::set_install_test_hooks(&hk);
+    auto use = [&](const std::shared_ptr<Rel>& r) { cur = &r->r; hk.release = cur; };
+    auto run = [&](std::string* e) { e->clear(); return hubemu::install_blocking(K, root.string(), e, nullptr); };
+    auto reset = [&]() { std::error_code e2; fs::remove_all(dir, e2); fs::remove_all(dls, e2); offsets.clear(); hk.write_fault = nullptr; hk.free_space = nullptr; };
+    auto installed = [&](const char* exe) { return read_text(dir / "lichii.exe") == exe && fs::exists(dir / "retrohub-install.txt"); };
+    auto pin_of = [](const std::shared_ptr<Rel>& r) { return r->sha + " " + std::to_string((unsigned long long)r->size) + "\n"; };
+    auto put_part = [&](const std::string& bytes, const std::string& pin = std::string()) {   // a partial file plus its pin sidecar (default: v1's pin)
+        fs::create_directories(dls, ec);
+        write_file(part, Bytes(bytes.begin(), bytes.end()));
+        if (pin != "none") write_text(fs::path(part.string() + ".pin"), pin.empty() ? pin_of(v1) : pin);
+    };
+    const std::vector<uint64_t> zero = {0}, zero_half = {0, half}, half_zero = {half, 0}, only_half = {half};
+    std::string err;
+
+    // ---- a dropped connection mid-file resumes with a Range request and the download completes
+    use(v1);
+    reset();
+    script = [&](uint64_t off, const std::string& z, Reply* o) { if (off == 0 && offsets.size() == 1) drop_first_half(z, o); else range(z, off, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == zero_half && !fs::exists(part));
+
+    // ---- a server that ignores Range (answers 200 with the whole file): the file is rewritten cleanly
+    reset();
+    script = [&](uint64_t off, const std::string& z, Reply* o) { if (offsets.size() == 1) drop_first_half(z, o); else whole(z, o); (void)off; return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == zero_half && !fs::exists(part));
+
+    // ---- a corrupted resume: the checksum rejects it, the partial file is deleted, and the next try starts from zero (never resumed again)
+    reset();
+    script = [&](uint64_t off, const std::string& z, Reply* o) {
+        if (offsets.size() == 1) drop_first_half(z, o);
+        else { range(z, off, o); o->body[o->body.size() / 2] ^= 0x55; }
+        return true;
+    };
+    CHECK(!run(&err) && err.find("checksum mismatch") != std::string::npos && offsets == zero_half);
+    CHECK(!fs::exists(part) && !fs::exists(dir / "retrohub-install.txt") && !fs::exists(dir / "lichii.exe"));
+    offsets.clear();
+    script = [&](uint64_t, const std::string& z, Reply* o) { whole(z, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == zero);
+
+    // ---- a partial file left by an earlier run (crash, cancel) is resumed at its length
+    reset();
+    put_part(z1.substr(0, half));
+    script = [&](uint64_t off, const std::string& z, Reply* o) { range(z, off, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == only_half && !fs::exists(part));
+
+    // ---- a 200 reply to a Range request rewrites the file (no append): the install still verifies
+    reset();
+    put_part(z1.substr(0, half));
+    script = [&](uint64_t off, const std::string& z, Reply* o) { (void)off; whole(z, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == only_half && !fs::exists(part));
+
+    // ---- a 206 that states another total size is rejected: start over
+    reset();
+    put_part(z1.substr(0, half));
+    script = [&](uint64_t off, const std::string& z, Reply* o) { if (off > 0) { range(z, off, o); o->range_total = z.size() + 5; } else whole(z, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == half_zero);
+
+    // ---- a partial file of an OLDER pin with the same name (or with no pin sidecar) is wiped up front, not resumed
+    reset();
+    put_part(z1.substr(0, half), "0000 123\n");
+    script = [&](uint64_t off, const std::string& z, Reply* o) { if (off > 0) range(z, off, o); else whole(z, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == zero);
+    reset();
+    put_part(z1.substr(0, half), "none");
+    CHECK(run(&err) && installed("EXE-R1") && offsets == zero && !fs::exists(part.string() + ".pin"));
+
+    // ---- 416: the server refuses the range: start over
+    reset();
+    put_part(z1.substr(0, half));
+    script = [&](uint64_t off, const std::string& z, Reply* o) { if (off > 0) o->status = 416; else whole(z, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == half_zero);
+
+    // ---- a 206 whose Content-Range does not start where asked: start over
+    reset();
+    put_part(z1.substr(0, half));
+    script = [&](uint64_t off, const std::string& z, Reply* o) { if (off > 0) { range(z, off, o); o->range_start = off + 1; } else whole(z, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == half_zero);
+
+    // ---- a partial file longer than the pinned size is not a prefix of it: deleted, fresh download
+    reset();
+    put_part(z1 + "x");
+    script = [&](uint64_t, const std::string& z, Reply* o) { whole(z, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == zero);
+
+    // ---- the partial file of a failed verification is never reused: wrong bytes of the right length
+    reset();
+    {
+        std::string bad = z1.substr(0, half);
+        bad[10] ^= 0x7F;
+        put_part(bad);
+    }
+    script = [&](uint64_t off, const std::string& z, Reply* o) { range(z, off, o); return true; };
+    CHECK(!run(&err) && err.find("checksum mismatch") != std::string::npos && !fs::exists(part));
+    offsets.clear();
+    script = [&](uint64_t, const std::string& z, Reply* o) { whole(z, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == zero);
+
+    // ---- the connection keeps dropping: three resumes, then a plain message; the partial file stays so the next try continues
+    reset();
+    script = [&](uint64_t off, const std::string& z, Reply* o) { if (off == 0) { whole(z, o); o->body.resize(10); } else range(z, off, o, 10); o->drop_after_body = true; return true; };
+    CHECK(!run(&err) && err.find("download interrupted") != std::string::npos && err.find("continue where it stopped") != std::string::npos);
+    CHECK(offsets == std::vector<uint64_t>({0, 10, 20, 30}) && fs::exists(part) && fs::file_size(part) == 40);
+    CHECK(!fs::exists(dir / "retrohub-install.txt") && !fs::exists(dir / "lichii.exe"));
+    offsets.clear();
+    script = [&](uint64_t off, const std::string& z, Reply* o) { range(z, off, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1") && offsets == std::vector<uint64_t>({40}));
+
+    // ---- the server cannot be reached
+    reset();
+    script = [&](uint64_t, const std::string&, Reply*) { return false; };
+    CHECK(!run(&err) && err.find("could not reach") != std::string::npos && !fs::exists(dir / "lichii.exe"));
+
+    // ---- disk full / locked / denied while writing: plain English, no Windows code in the message, nothing half installed
+    struct Fault { unsigned long code; const char* words; };
+    for (const Fault& f : {Fault{ERROR_DISK_FULL, "disk is full"}, Fault{ERROR_HANDLE_DISK_FULL, "disk is full"}, Fault{ERROR_SHARING_VIOLATION, "antivirus"},
+                           Fault{ERROR_ACCESS_DENIED, "would not let RetroHub write"}}) {
+        reset();
+        script = [&](uint64_t off, const std::string& z, Reply* o) { if (off == 0) whole(z, o); else range(z, off, o); return true; };
+        const unsigned long code = f.code;
+        hk.write_fault = [&, code](uint64_t pos) -> unsigned long { return pos >= half ? code : 0; };
+        CHECK(!run(&err));
+        CHECK(err.find(f.words) != std::string::npos);
+        CHECK(err.find(std::to_string(f.code)) == std::string::npos && err.find("error") == std::string::npos && err.find("0x") == std::string::npos);
+        CHECK(!fs::exists(dir / "retrohub-install.txt") && !fs::exists(dir / "lichii.exe"));
+        hk.write_fault = nullptr;
+        offsets.clear();
+        CHECK(run(&err) && installed("EXE-R1"));   // space freed / lock gone: the next try completes (resuming the partial file)
+    }
+    {   // the log keeps the Windows code
+        const std::string lg = read_text(root / "install-log.txt");
+        CHECK(lg.find("Windows error 112") != std::string::npos && lg.find("Windows error 32") != std::string::npos && lg.find("Windows error 5") != std::string::npos);
+    }
+
+    // ---- free-space precheck: fails before downloading anything, names the space needed
+    reset();
+    hk.free_space = [](const std::string&, uint64_t* fr) { *fr = 1ull << 20; return true; };
+    script = [&](uint64_t, const std::string& z, Reply* o) { whole(z, o); return true; };
+    CHECK(!run(&err) && err.find("not enough free disk space") != std::string::npos && err.find("MB") != std::string::npos && err.find("only 1 MB is free") != std::string::npos);
+    CHECK(offsets.empty() && !fs::exists(part));
+    hk.free_space = [&](const std::string&, uint64_t* fr) { *fr = v1->size / 2 * 5 + (100ull << 20) + 1000; return true; };   // just enough
+    CHECK(run(&err) && installed("EXE-R1") && offsets == zero);
+    reset();
+
+    // ---- rename retry: a build file held by antivirus for a moment does not fail the upgrade; one held for good fails with the OS reason, and the old build stays
+    script = [&](uint64_t, const std::string& z, Reply* o) { whole(z, o); return true; };
+    CHECK(run(&err) && installed("EXE-R1"));
+    write_text(dir / "user" / "keys" / "prod.keys", "KEYS");
+    use(v2);
+    {
+        HANDLE h = CreateFileW((dir / "Qt6Core.dll").wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);   // no FILE_SHARE_DELETE
+        CHECK(h != INVALID_HANDLE_VALUE);
+        std::thread releaser([h] { Sleep(450); CloseHandle(h); });
+        const bool r = run(&err);
+        releaser.join();
+        CHECK(r && installed("EXE-R2") && read_text(dir / "user" / "keys" / "prod.keys") == "KEYS" && !fs::exists(dir / "old_only.dll") && !fs::exists(dir / "_old"));
+    }
+    use(v1);
+    {
+        HANDLE h = CreateFileW((dir / "Qt6Core.dll").wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(h != INVALID_HANDLE_VALUE);
+        offsets.clear();
+        // (v1 is "older" than the installed v2 but a different pin: the job installs it as an upgrade)
+        const bool r = run(&err);
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        const size_t at = err.find("(is something using it?): ");
+        CHECK(!r && err.find("could not move") != std::string::npos && at != std::string::npos && err.size() > at + 26);   // the OS reason follows
+        CHECK(installed("EXE-R2") && read_text(dir / "user" / "keys" / "prod.keys") == "KEYS" && !fs::exists(dir / "_old") && !fs::exists(dir / "retrohub-upgrade.txt"));   // rolled back as before
+    }
+
+    // ---- a failed 7z unpack says what tar said (Dolphin ships as .7z)
+    {
+        const std::string junk = pseudo_random_bytes(5000);
+        const std::string jpath = (root / "zips" / "junk.7z").string();
+        write_file(fs::u8path(jpath), Bytes(junk.begin(), junk.end()));
+        const std::string jsha = hubemu::sha256_file(jpath);
+        const hubemu::Release r7 = {"2509", L"example.invalid", L"/test/dolphin.7z", (uint64_t)junk.size(), jsha.c_str(), L"Dolphin.exe", "GPL-2.0+"};
+        hubemu::InstallTestHooks h7;
+        h7.kind = hubemu::Kind::Dolphin;
+        h7.release = &r7;
+        h7.serve = [&](const hubemu::Release&, uint64_t, Reply* o) { o->status = 200; o->body = junk; return true; };
+        hubemu::set_install_test_hooks(&h7);
+        std::string e7;
+        const bool r = hubemu::install_blocking(hubemu::Kind::Dolphin, root.string(), &e7, nullptr);
+        const size_t at = e7.find("tar exit");
+        if (r || at == std::string::npos || e7.find(": ", at) == std::string::npos) std::printf("tar error text was: %s\n", e7.c_str());
+        CHECK(!r && at != std::string::npos && e7.find(": ", at) != std::string::npos && e7.find("tar exit 1)") == std::string::npos);
+        CHECK(!fs::exists(fs::u8path(hubemu::managed_dir(hubemu::Kind::Dolphin, root.string())) / "Dolphin.exe") && !fs::exists(dls / "list.txt") && !fs::exists(dls / "list.txt.err"));
+        hubemu::set_install_test_hooks(&hk);
+    }
+    hubemu::set_install_test_hooks(nullptr);
+    fs::remove_all(root, ec);
+}
+
+static void test_cleanup_leftovers(const fs::path& root) {
+    using namespace upg;
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    hubemu::set_cleanup_test_root(root.string());
+    auto age = [](const fs::path& p, int hours) { std::error_code e; fs::last_write_time(p, fs::file_time_type::clock::now() - std::chrono::hours(hours), e); };
+    auto D = [&](hubemu::Kind k) { return fs::u8path(hubemu::managed_dir(k, root.string())); };
+    const fs::path dl = root / "_downloads";
+    write_text(dl / "a.zip.part", "x");
+    write_text(dl / "list.txt", "z");
+    write_text(dl / "fresh.zip", "y");
+    age(dl / "a.zip.part", 48);
+    age(dl / "list.txt", 30);
+    // Lichii: abandoned scratch (no journal) goes; the player's data stays
+    write_text(D(hubemu::Kind::Lichii) / "_old" / "x.dll", "x");
+    write_text(D(hubemu::Kind::Lichii) / "_extract" / "sub" / "y.dll", "y");
+    write_text(D(hubemu::Kind::Lichii) / "lichii.exe", "EXE");
+    write_text(D(hubemu::Kind::Lichii) / "retrohub-install.txt", "Lichii x\nsha256 0\n");
+    write_text(D(hubemu::Kind::Lichii) / "user" / "keys" / "prod.keys", "KEYS");
+    age(D(hubemu::Kind::Lichii) / "_old", 2);
+    age(D(hubemu::Kind::Lichii) / "_extract" / "sub", 2);
+    age(D(hubemu::Kind::Lichii) / "_extract", 2);
+    // Fritchii: a journal beside _old means recover_interrupted owns it
+    write_text(D(hubemu::Kind::Fritchii) / "_old" / "keep.dll", "k");
+    write_text(D(hubemu::Kind::Fritchii) / "retrohub-upgrade.txt", "to x\nsha256 0\nphase 2\n");
+    age(D(hubemu::Kind::Fritchii) / "_old", 5);
+    // Cemu: fresh scratch (maybe another RetroHub is working on it) stays
+    write_text(D(hubemu::Kind::Cemu) / "_extract" / "z.dll", "z");
+    // Azahar: a user folder inside the scratch: left alone
+    write_text(D(hubemu::Kind::Azahar) / "_extract" / "user" / "x.bin", "u");
+    age(D(hubemu::Kind::Azahar) / "_extract", 5);
+    // PCSX2: other names are never touched, whatever their age
+    write_text(D(hubemu::Kind::Pcsx2) / "other" / "keep.txt", "keep");
+    age(D(hubemu::Kind::Pcsx2) / "other", 50);
+    // Dolphin: a link inside the scratch: left alone, and what it points at is untouched
+    const fs::path outside = root / "outside";
+    write_text(outside / "precious.txt", "precious");
+    write_text(D(hubemu::Kind::Dolphin) / "_old" / "a.dll", "a");
+    write_text(D(hubemu::Kind::Dolphin) / "Dolphin.exe", "D");
+    write_text(D(hubemu::Kind::Dolphin) / "retrohub-install.txt", "Dolphin x\nsha256 0\n");
+    // PCSX2: an old _old but the live install has no exe / marker: it may be the only working copy, so it stays
+    write_text(D(hubemu::Kind::Pcsx2) / "_old" / "pcsx2-qt.exe", "P");
+    age(D(hubemu::Kind::Pcsx2) / "_old", 5);
+    const bool linked = [&] {
+        const fs::path lnk = D(hubemu::Kind::Dolphin) / "_old" / "lnk";
+        std::error_code e;
+        fs::create_directory_symlink(outside, lnk, e);
+        if (!e) return true;
+        const std::string cmd = "cmd /c mklink /J \"" + lnk.string() + "\" \"" + outside.string() + "\" >nul 2>&1";   // a junction needs no privilege
+        std::system(cmd.c_str());
+        return fs::exists(lnk / "precious.txt", e);
+    }();
+    age(D(hubemu::Kind::Dolphin) / "_old", 5);
+    // a folder that is not in the managed list is never looked at
+    write_text(root / "stranger" / "_old" / "mine.txt", "mine");
+    age(root / "stranger" / "_old", 99);
+
+    CHECK(hubemu::cleanup_leftovers((root / "no_such_root").string()) == 0);
+    {   // wrong roots are refused outright: nothing is deleted
+        write_text(root / "emulators" / "lichii" / "_old" / "q.dll", "q");
+        age(root / "emulators" / "lichii" / "_old", 5);
+        CHECK(hubemu::cleanup_leftovers("") == 0 && hubemu::cleanup_leftovers("emulators") == 0 && hubemu::cleanup_leftovers("C:\\") == 0 && hubemu::cleanup_leftovers("C:") == 0);
+        CHECK(hubemu::cleanup_leftovers((root / "emulators").string()) == 0);   // right leaf, wrong parent (not the hub data dir)
+        CHECK(hubemu::cleanup_leftovers((fs::path("relative") / "emulators").string()) == 0);
+        CHECK(fs::exists(root / "emulators" / "lichii" / "_old" / "q.dll") && fs::exists(dl / "a.zip.part"));
+        fs::remove_all(root / "emulators", ec);
+    }
+    const int n = hubemu::cleanup_leftovers(root.string());
+    CHECK(n == (linked ? 4 : 5));   // two old downloads + Lichii's _old and _extract (+ Dolphin's _old when no link could be made)
+    CHECK(!fs::exists(dl / "a.zip.part") && !fs::exists(dl / "list.txt") && fs::exists(dl / "fresh.zip"));
+    CHECK(!fs::exists(D(hubemu::Kind::Lichii) / "_old") && !fs::exists(D(hubemu::Kind::Lichii) / "_extract"));
+    CHECK(read_text(D(hubemu::Kind::Lichii) / "user" / "keys" / "prod.keys") == "KEYS" && read_text(D(hubemu::Kind::Lichii) / "lichii.exe") == "EXE");
+    CHECK(fs::exists(D(hubemu::Kind::Fritchii) / "_old" / "keep.dll") && fs::exists(D(hubemu::Kind::Fritchii) / "retrohub-upgrade.txt"));
+    CHECK(fs::exists(D(hubemu::Kind::Cemu) / "_extract" / "z.dll"));
+    CHECK(fs::exists(D(hubemu::Kind::Azahar) / "_extract" / "user" / "x.bin"));
+    CHECK(fs::exists(D(hubemu::Kind::Pcsx2) / "_old" / "pcsx2-qt.exe"));
+    CHECK(fs::exists(D(hubemu::Kind::Pcsx2) / "other" / "keep.txt") && fs::exists(root / "stranger" / "_old" / "mine.txt"));
+    if (linked) CHECK(fs::exists(D(hubemu::Kind::Dolphin) / "_old" / "a.dll") && fs::exists(outside / "precious.txt"));
+    else std::printf("(symlink check skipped: no privilege to create one)\n");
+    CHECK(hubemu::cleanup_leftovers(root.string()) == 0);   // nothing more to do
+
+    // while an install job runs the pass does nothing at all; afterwards it cleans up
+    write_text(dl / "old2.part", "x");
+    age(dl / "old2.part", 48);
+    auto v1 = make_rel(root / "zips" / "c1.zip", "build-c1", {{"lichii.exe", "EXE-C"}});
+    hubemu::InstallTestHooks hk;
+    hk.kind = hubemu::Kind::Lichii;
+    hk.release = &v1->r;
+    hk.running = [](const std::string&) { return false; };
+    hk.fetch = [&](const hubemu::Release&, const std::string& out, std::string*) { Sleep(900); std::error_code e; fs::copy_file(v1->zip, fs::u8path(out), fs::copy_options::overwrite_existing, e); return !e; };
+    hubemu::set_install_test_hooks(&hk);
+    int during = -1, calls = 0;
+    std::string err;
+    const bool ok = hubemu::install_blocking(hubemu::Kind::Lichii, root.string(), &err, [&](int, uint64_t, uint64_t) {
+        if (++calls == 3) during = hubemu::cleanup_leftovers(root.string());   // (this thread, about half a second in: the job thread holds the lock and sits in the slow fetch)
+    });
+    hubemu::set_install_test_hooks(nullptr);
+    CHECK(ok);
+    CHECK(during == 0);
+    CHECK(fs::exists(dl / "old2.part"));
+    CHECK(hubemu::cleanup_leftovers(root.string()) >= 1 && !fs::exists(dl / "old2.part"));
+    hubemu::cleanup_leftovers_async("relative");   // the background pass joins cleanly (here it refuses the root at once)
+    hubemu::cleanup_leftovers_stop();
+    hubemu::cleanup_leftovers_stop();
+    hubemu::set_cleanup_test_root("");
+    fs::remove_all(root, ec);
+}
+
 int main(int argc, char** argv) {
     test_3ds_header();
     test_wiiu_formats();
@@ -1459,6 +1796,8 @@ int main(int argc, char** argv) {
     test_nx_upgrade(hubemu::Kind::Lichii, dir / "upg");
     test_nx_upgrade(hubemu::Kind::Fritchii, dir / "upg_fritchii");   // the same install / upgrade / recovery scenarios on the Fritchii folder
     test_fritchii_install(dir / "fritchii");
+    test_install_robustness(dir / "robust");
+    test_cleanup_leftovers(dir / "cleanup");
     fs::remove_all(dir, ec);
 
     int dl_bad = 0;

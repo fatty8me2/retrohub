@@ -53,8 +53,19 @@ Twilight Princess HD is a `.wua` with the base game `000500001019e500_v81` and u
 
 Download: WinHTTP to `<data>\emulators\_downloads\`, size and SHA-256 checked before anything is unpacked, then RetroHub's own unzip (miniz;
 every entry name is checked for `..`, drive letters and absolute paths, and any entry that cannot be written fails the install). The folder holding
-the exe is moved into place and `retrohub-install.txt` is written last: only an install with that marker counts as installed, and any failure deletes
-the half-installed folder. A mismatch deletes the download and shows the error. Verified by `hub_emu_test --download` into a scratch dir: Azahar
+the exe is moved into place and `retrohub-install.txt` is written last: only an install with that marker counts as installed. Any failure of a first
+install deletes the half-installed folder; a failed in-place upgrade (Lichii / Fritchii) puts the old build back instead and leaves it working (its `user\` folder
+is never touched either way). A mismatch deletes the download and shows the error.
+
+Download robustness: WinHTTP timeouts (a stalled network ends with a message instead of a hang); a free-space check before the download (about 2.5 times the
+pinned size plus 100 MB); a partial `.part` file is resumed with an HTTP Range request when the server answers 206 with the matching Content-Range (a server that
+ignores Range, answers 416 or sends another range makes it restart from zero), and a dropped connection resumes up to three times. The size and SHA-256 check still
+decides: a file that fails it is deleted and never resumed. Disk-full, file-in-use and access-denied errors are shown in plain English; the Windows code goes to
+`<data>\emulators\install-log.txt`. A rename that antivirus holds up is retried (3 tries, 300 ms apart), a failed 7z unpack says what tar reported, and a startup pass
+(`cleanup_leftovers`) removes `_downloads\*` older than a day and abandoned `_old` / `_extract` folders that have no upgrade journal (never a `user` folder or a link,
+and never while an install job runs).
+
+Verified by `hub_emu_test --download` into a scratch dir: Azahar
 `azahar.exe` (35,499,008 bytes) and Cemu `Cemu.exe` (24,490,496 bytes) were found after extraction (including Cemu's RTL-mark file name), and
 neither was started.
 
