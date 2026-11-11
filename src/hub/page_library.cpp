@@ -141,6 +141,8 @@ void seed_nav_here() {
     set_nav_here();
 }
 
+static bool g_play_focused = false;   // the Play / Resume button of the last action_row has the visible nav focus (its game title tooltip follows)
+
 float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool compact, bool seed_nav) {
     bool idle = hubui::launch_allowed(A.proc != nullptr, session_active());   // shell-H2: any session, not just A.proc
     const hub::GameState& gs = gstate(e.key);
@@ -157,6 +159,7 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
     if (button(resume ? "Resume" : "Play", ImVec2(play_w, bh), true, idle, ui::Icon::Play)) { hub::GameEntry c = e; if (resume) play_entry_anim(c, true, [](const hub::GameEntry& g) { resume_entry(g, -1); }); else play_entry_anim(c, true); }
     if (!idle && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", hubui::launch_busy_reason(A.proc != nullptr));
     else if (resume && ImGui::IsItemHovered()) ImGui::SetTooltip("Continue from where you left off");
+    g_play_focused = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
     if (seed_nav) seed_nav_here();
     if (online) {
         ImGui::SameLine(0, gap);
@@ -279,6 +282,7 @@ void draw_hero(const hub::GameEntry& e, float h) {
 
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.3f + 0.7f * ha);
     action_row(e, bh, true, ImVec2(tx, by), compact || tw < sp(70.f), true);
+    if (g_play_focused && title_cut(lines, e.title)) ImGui::SetTooltip("%s", e.title.c_str());
     ImGui::PopStyleVar();
     ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
     ImGui::Dummy(ImVec2(w, sp(2.f)));
@@ -438,7 +442,7 @@ void library_top_bar() {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(sp(5.f), (bh - ImGui::GetFontSize()) * 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, bh * 0.5f);
     float search_w = sp(10.f);
-    const char* search_hint = "Search games";   // one hint at every width: Ctrl+F lives in the tooltip
+    const char* search_hint = "Search games";
     const bool compact = !g_lib_overlay && hubui::lc::compact_top(io.DisplaySize.y, bar_w, sp(1.f));   // short or narrow window: slimmer top area
     g_lib_compact = compact;
     hubui::lc::Plan plan;   // which controls are icon-only
@@ -472,9 +476,15 @@ void library_top_bar() {
         }
         ImGui::SetNextItemWidth(search_w);
     }
+    if (!compact) {   // regular sizes keep the placeholder with the shortcut; it gives way to a shorter one instead of being clipped (1280x800)
+        const float room_txt = search_w - sp(5.f) - sp(2.5f);
+        static const char* hints[] = {"Search games   (Ctrl+F)", "Search games (Ctrl+F)", "Search games", "Search"};
+        search_hint = hints[3];
+        for (const char* h : hints) if (ImGui::CalcTextSize(h).x <= room_txt) { search_hint = h; break; }
+    }
     osk::input("##search", search_hint, A.search_buf, sizeof A.search_buf);
     ImVec2 s0 = ImGui::GetItemRectMin(), s1 = ImGui::GetItemRectMax();
-    if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) ImGui::SetTooltip("Search your games  (Ctrl+F)");
+    if (compact && ImGui::IsItemHovered() && !ImGui::IsItemActive()) ImGui::SetTooltip("Search your games  (Ctrl+F)");
     ImGui::GetWindowDrawList()->AddRect(s0, s1, ImGui::IsItemActive() ? ui::ACCENT : ui::HAIRLINE, bh * 0.5f, 0, 1.f);
     ui::icon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(s0.x + sp(2.5f), (s0.y + s1.y) * 0.5f), sp(2.f), ui::TEXT2);
     ImGui::PopStyleVar(2);
@@ -519,7 +529,8 @@ void library_top_bar() {
     }
     if (!util_low) { draw_utility(); ImGui::SameLine(0, sp(1.f)); }
     if (plan.add_icon()) {
-        if (ui::icon_button("add_games_icon", ui::Icon::Plus, bh, true, "Add games")) add_games_open();
+        if (ui::icon_button("add_games_icon", ui::Icon::Plus, bh, true, nullptr)) add_games_open();
+        if (ImGui::IsItemHovered() || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible)) ImGui::SetTooltip("Add games");
     } else add_games_header_button(bh);
     if (wrap_chips) {   // second row, left-aligned under the search box
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -583,13 +594,14 @@ void selected_bar(const hub::GameEntry& e) {
     const hub::GameState& gs = gstate(e.key);
     const std::string bar_title = ui::ellipsize(ui::F.h2, ui::F.h2->FontSize, e.title, text_w);
     dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(tx, p0.y + sp(1.25f)), ui::TEXT, bar_title.c_str());
-    std::string sub = std::string(hub::console_name(e)) + "  -  " + hubui::format_play_time(gs.play_seconds);   // playtime: format_play_time (logic.h), to be pointed at the unified helper
+    std::string sub = std::string(hub::console_name(e)) + "  -  " + hubui::format_play_time(gs.play_seconds);
     const std::string bar_sub = ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, text_w);
     dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.25f) + ui::F.h2->FontSize + sp(0.5f)), ui::TEXT2, bar_sub.c_str());
     if ((bar_title != e.title || bar_sub != sub) && ImGui::IsWindowHovered() &&
         ImGui::IsMouseHoveringRect(ImVec2(tx, p0.y + sp(1.25f)), ImVec2(tx + text_w, p0.y + sp(1.25f) + ui::F.h2->FontSize + sp(0.5f) + ui::F.cap->FontSize)))
         ImGui::SetTooltip("%s", bar_title != e.title ? e.title.c_str() : sub.c_str());
     action_row(e, bh, true, ImVec2(p1.x - sp(2.f) - row_w, p0.y + (h - bh) * 0.5f), true);
+    if (g_play_focused && (bar_title != e.title || bar_sub != sub)) ImGui::SetTooltip("%s", bar_title != e.title ? e.title.c_str() : sub.c_str());
     ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
     ImGui::Dummy(ImVec2(w, 1));
 }
