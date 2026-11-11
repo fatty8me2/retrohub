@@ -15,7 +15,11 @@
  * The same rules apply to every system that resumes (N64, GB, GBC, GBA, NES, SNES): never online, never when a real console startup
  * replaces the resume, never when the save is newer. The player may then choose to continue from this PC's older resume point. */
 #include <cstdint>
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
+#include <filesystem>
+#include <map>
 #include <string>
 
 namespace hubui {
@@ -131,6 +135,63 @@ inline ResumeResult decide_resume(const ResumeInput& in, ResumeChoice choice) {
 /* Does the launch wait for the player's choice? Only a conflict that has not been answered. */
 inline bool resume_needs_choice(const ResumeInput& in, ResumeChoice choice) {
     return decide_resume(in, choice) == ResumeResult::NewerSave && choice == ResumeChoice::Ask;
+}
+
+/* ---- moved verbatim out of resume_more.cpp (pure parts, so they can be tested) ---- */
+
+/* Newest live battery file time in a folder; file_time(path) gives a file's unix time (0 = unreadable). .bak / .tmp are not live saves. */
+template <class FileTimeFn>
+inline long long newest_battery_in(const std::string& dir, FileTimeFn file_time) {
+    long long best = 0;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(std::filesystem::u8path(dir), ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        if (!it->is_regular_file(e2)) continue;
+        std::string ext = it->path().extension().u8string();
+        for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+        if (ext == ".bak" || ext == ".tmp") continue;   // kept copies, half writes: not the live save
+        best = std::max(best, file_time(it->path().u8string()));
+    }
+    return best;
+}
+
+/* Which systems auto-resume. */
+inline bool resumes(const std::string& sys) {
+    return sys == "n64" || sys == "gb" || sys == "gbc" || sys == "gba" || sys == "nes" || sys == "snes";
+}
+
+/* The player's answer, remembered for as long as the newest save stays the same. */
+struct Answer { ResumeChoice c = ResumeChoice::Ask; long long battery_time = 0; };
+
+/* resume_choice.txt: "<key>\t<this|newest>\t<battery time>\n" per game. */
+inline void parse_answers(const std::string& t, std::map<std::string, Answer>& answers) {
+    size_t p = 0;
+    while (p < t.size()) {
+        size_t e = t.find('\n', p);
+        if (e == std::string::npos) e = t.size();
+        std::string line = t.substr(p, e - p);
+        p = e + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t a = line.find('\t'), b = a == std::string::npos ? a : line.find('\t', a + 1);
+        if (b == std::string::npos) continue;
+        Answer an;
+        an.c = line.substr(a + 1, b - a - 1) == "this" ? ResumeChoice::ThisPc : ResumeChoice::Newest;
+        an.battery_time = std::atoll(line.c_str() + b + 1);
+        answers[line.substr(0, a)] = an;
+    }
+}
+
+inline std::string serialize_answers(const std::map<std::string, Answer>& answers) {
+    std::string t;
+    for (auto& kv : answers) t += kv.first + "\t" + (kv.second.c == ResumeChoice::ThisPc ? "this" : "newest") + "\t" + std::to_string(kv.second.battery_time) + "\n";
+    return t;
+}
+
+/* The stored answer if the newest save is still the one it was given for, else Ask. */
+inline ResumeChoice answer_lookup(const std::map<std::string, Answer>& answers, const std::string& key, long long battery_time) {
+    auto it = answers.find(key);
+    if (it == answers.end() || it->second.battery_time != battery_time) return ResumeChoice::Ask;   // a newer save since: ask again
+    return it->second.c;
 }
 
 }  // namespace hubui
