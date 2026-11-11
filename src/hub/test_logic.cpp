@@ -1023,7 +1023,7 @@ int main() {
         {   // item 1: a guest without the host's game is blocked with one clear reason (not "waiting for the host")
             std::vector<RoomMember> gm = {{"Host", true, true, false}, {"Me", false, false, true}};
             const std::string why = missing_game_block("Mario Party");
-            CHECK(why == "You don't have Mario Party. Add it in Library > Add games, then press Ready.");
+            CHECK(why == "You don't have Mario Party. Add it with the Add games button in your Library, then press Ready.");
             auto n = room_action_state(false, true, "", why, false, gm);
             CHECK(!n.button_enabled && n.headline == "You can't ready up yet" && n.detail == why && n.tone == RoomTone::Bad);
             n = room_action_state(false, false, "", "", false, gm);
@@ -1072,7 +1072,7 @@ int main() {
             struct Row { const char* in; const char* code; bool hint; };
             const Row rows[] = {
                 {"", "", false}, {"abc234", "ABC234", false}, {"ABC-234", "ABC234", false}, {"  abc 234 ", "ABC234", false}, {"abc_234", "ABC234", false},
-                {"ABC", "ABC", false}, {"ABC234XYZ", "ABC234", false},
+                {"ABC", "ABC", false}, {"ABC234XYZ", "ABC234", true}, {"ABC2345", "ABC234", true}, {"ABC!234", "ABC234", true},
                 {"retrohub://join/abcdef", "ABCDEF", false}, {"RETROHUB://JOIN/ABCDEF/", "ABCDEF", false}, {"retrohub://ABCDEF", "ABCDEF", false},
                 {"https://smash-netplay.jumpcircuit.workers.dev/j/ABCDEF", "ABCDEF", false},
                 {"https://smash-netplay.jumpcircuit.workers.dev/j/abcdef?h=Oli%20b", "ABCDEF", false},
@@ -1086,6 +1086,16 @@ int main() {
                 if (in.code != r.code || in.hint.empty() == r.hint) { std::printf("  room_code_from_text(\"%s\") -> \"%s\" hint=\"%s\"\n", r.in, in.code.c_str(), in.hint.c_str()); }
                 CHECK(in.code == r.code && in.hint.empty() != r.hint);
             }
+        }
+        {   // Esc / B leaving a room: only pre-join connecting or a terminal failure, never a reconnect or a running game
+            CHECK(room_back_may_leave(true, false, false, "connecting", false));
+            CHECK(room_back_may_leave(true, false, true, "The host left the room", false));
+            CHECK(!room_back_may_leave(true, false, false, "Connection lost - reconnecting (2/5)...", false));
+            CHECK(!room_back_may_leave(true, false, false, "Server busy, try again shortly", false));
+            CHECK(!room_back_may_leave(true, true, false, "connected", false));
+            CHECK(!room_back_may_leave(true, false, true, "Connection lost. Press Rejoin to try again.", true));
+            CHECK(!room_back_may_leave(true, false, false, "connecting", true));
+            CHECK(!room_back_may_leave(false, false, true, "No such room", false));
         }
         {   // item 6 / 7 wording
             CHECK(ready_block_reason("1.10.0", "", true) == "The host is on an older RetroHub than yours. Ask them to update RetroHub.");

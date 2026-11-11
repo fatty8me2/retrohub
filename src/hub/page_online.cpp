@@ -490,7 +490,7 @@ static unsigned s_connect_start = 0;
 /* Esc / pad B on a room that is still connecting or has failed leaves it (never in a connected room: B means "back" there). Called from global_input. */
 bool room_leave_on_back() {
     if (!A.in_room || g_fake_room) return false;
-    if (!(g_shot_rejoin || A.lobby.failed() || !room_connected())) return false;
+    if (!hubui::room_back_may_leave(A.in_room, room_connected(), g_shot_rejoin || A.lobby.failed(), A.lobby.status(), A.proc != nullptr || game_active())) return false;
     leave_room();
     return true;
 }

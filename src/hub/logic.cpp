@@ -548,7 +548,7 @@ std::string still_in_game_text(const std::vector<std::string>& names) {
 }
 
 std::string missing_game_block(const std::string& title) {
-    return "You don't have " + (title.empty() ? std::string("this game") : title) + ". Add it in Library > Add games, then press Ready.";
+    return "You don't have " + (title.empty() ? std::string("this game") : title) + ". Add it with the Add games button in your Library, then press Ready.";
 }
 
 std::string online_start_block(bool game_running, bool access_ok) {
@@ -559,6 +559,12 @@ std::string online_start_block(bool game_running, bool access_ok) {
 
 ConnectPhase connect_phase(unsigned started_ms, unsigned now_ms) {
     return (unsigned)(now_ms - started_ms) >= kConnectSlowMs ? ConnectPhase::StillTrying : ConnectPhase::Contacting;
+}
+
+bool room_back_may_leave(bool in_room, bool connected, bool failed, const std::string& status, bool game_running) {
+    if (!in_room || connected || game_running) return false;
+    if (failed) return true;
+    return status == "connecting";   // the lobby client's pre-join text; a reconnect after a lost link says "Connection lost - reconnecting ..."
 }
 
 std::string connect_phase_text(ConnectPhase p) {
@@ -597,13 +603,13 @@ RoomCodeInput room_code_from_text(const std::string& text_in) {
     std::string low = text;
     for (auto& c : low) c = (char)std::tolower((unsigned char)c);
     // upper-case, drop spaces and separators, keep room-code characters (up to 6); `bad` is set when something else was dropped
-    auto clean = [&](const std::string& in, bool* bad) {
+    auto clean = [&](const std::string& in, int* bad) {
         std::string out;
         for (unsigned char ch : in) {
             if (std::isspace(ch) || ch == '-' || ch == '_') continue;
             const char u = (char)std::toupper(ch);
-            if (ch < 128 && std::strchr("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", u)) { if (out.size() < 6) out.push_back(u); }
-            else if (out.size() < 6) *bad = true;
+            if (ch < 128 && std::strchr("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", u)) { if (out.size() < 6) out.push_back(u); else if (!*bad) *bad = 2; }
+            else *bad = 1;
         }
         return out;
     };
@@ -618,16 +624,17 @@ RoomCodeInput room_code_from_text(const std::string& text_in) {
             std::string rest = text.substr(j + 3);
             const size_t cut = rest.find_first_of("?#/ \t\"'<>");
             if (cut != std::string::npos) rest.erase(cut);
-            bool bad = false;
+            int bad = 0;
             const std::string code = clean(rest, &bad);
             if (code.size() == 6 && !bad) { r.code = code; return r; }
         }
         r.hint = "That link is not a RetroHub room invite.";
         return r;
     }
-    bool bad = false;
+    int bad = 0;
     r.code = clean(text, &bad);
-    if (bad) r.hint = "Room codes use letters and numbers, never I, O, 0 or 1.";
+    if (bad == 1) r.hint = "Room codes use letters and numbers, never I, O, 0 or 1.";
+    else if (bad == 2) r.hint = "Room codes have 6 characters.";
     return r;
 }
 
