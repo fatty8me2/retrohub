@@ -176,6 +176,15 @@ std::vector<Option> build() {
     // v1.37.0 stored "auto" (= Hookshot); it is no longer a choice, so loading / merging / resolving drops it and the default (Lichii) applies.
     v.push_back(mk("switch.runner", "Plays with", "Emulation", SWITCH, K::Choice, S::Visual, "lichii",
                    {{"lichii", "Lichii (emulator)"}, {"fritchii", "Fritchii (made for Ocarina of Time)"}, {"hookshot", "Hookshot (native)"}}));
+    // Fritchii v5.7 Ocarina of Time options (hubemu::fritchii_oot_keys, lichii.cpp): written to Fritchii's qt-config.ini [Renderer] before launch, only for a value the player chose.
+    // "default" writes nothing, so Fritchii keeps its own value. Shown only for Ocarina of Time played with Fritchii (settings_games_ui.cpp).
+    // Help text: "Above 60 fps at normal game speed. Experimental: some scenes may misbehave. The cap never goes above your screen's refresh rate." (Option has no help field; see docs/EMULATORS.md.)
+    v.push_back(mk("switch.oot_high_refresh", "High refresh rate (experimental)", "Video", SWITCH, K::Choice, S::Visual, "default",
+                   {{"default", "Fritchii's setting"}, {"on", "On"}, {"off", "Off"}}));
+    v.push_back(mk("switch.oot_refresh_cap", "High refresh rate limit", "Video", SWITCH, K::Choice, S::Visual, "default",
+                   {{"default", "Fritchii's setting"}, {"display", "Screen refresh rate"}, {"90", "90 fps"}, {"120", "120 fps"}, {"144", "144 fps"}, {"165", "165 fps"}}));
+    v.push_back(mk("switch.oot_aa", "Anti-aliasing", "Video", SWITCH, K::Choice, S::Visual, "default",
+                   {{"default", "Fritchii's setting"}, {"game", "Game's own"}, {"nosharp", "Game's own, no sharpening"}, {"fsr3", "AMD FSR 3.1"}, {"fsr4", "AMD FSR 4 (needs AMD's runtime)"}}));
     // Damaged-file repair (hub::nuprepair, nup_repair.h): before a .nup game starts in Lichii or Fritchii, RetroHub puts an intact sibling file of the same copy in
     // the emulator's LayeredFS mod folder for every game file whose first bytes are zeroed (the Water Temple walls of some Ocarina of Time copies). Anything but "off" is on.
     // Help text: "RetroHub fills in the files of a damaged copy with a matching intact file from the same copy, for example the Water Temple walls in some Ocarina of Time
