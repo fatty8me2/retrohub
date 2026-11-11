@@ -248,6 +248,7 @@ add_test(NAME hub_bootsound_test COMMAND hub_bootsound_test)       # procedural 
 add_test(NAME hub_gcnp_test COMMAND hub_gcnp_test)                     # GameCube netplay spec/config (no network)
 add_test(NAME dsu_test COMMAND dsu_test)   # DSU packets + loopback server round trip
 add_test(NAME hub_gbalink_test COMMAND hub_gbalink_test)                 # GameCube <-> GBA link (offline, temp dir)
+add_test(NAME hub_emuproc_test COMMAND hub_emuproc_test)           # emulator process lane: mlc_path entities, env restore, suspended spawn, session journal (temp dirs, no emulator)
 add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U parsers, save mapping, config (no network)
 add_test(NAME hub_wiiu_test COMMAND hub_wiiu_test)               # offline Wii U: meta.xml/.wua, own-Cemu settings backup+revert, profiles, saves, archives, art names
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
