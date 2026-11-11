@@ -278,7 +278,7 @@ void draw_missing_rom_dialog() {
         }
     }
     ImGui::SameLine();
-    if (button("Rescan", bs, false, !A.scanning, ui::Icon::Refresh)) { start_scan(); MA.open = false; set_notice("Scanning your games...", 4.0); }
+    if (button("Rescan", bs, false, !A.scanning, ui::Icon::Refresh)) { start_scan(true); MA.open = false; set_notice("Scanning your games...", 4.0); }
     if (button("Remove from this PC", bs, false, true)) {   // local only: your other PCs keep the game
         remove_here(MA.key, MA.title);
         MA.open = false;

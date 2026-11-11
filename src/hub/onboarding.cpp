@@ -324,8 +324,11 @@ void wizard_window() {
 
     const float pad = ui::sp(4.f);
     ImGui::SetCursorPos(c0 + ImVec2(pad, ui::sp(4.f)));
+    /* The body scrolls when a step is taller than the card (big UI size, short window); the footer buttons below stay put. */
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, ui::sp(1.25f));
     ImGui::BeginChild("##wiz_body", ImVec2(card_w - pad * 2, card_h - ui::sp(4.f) - ui::sp(10.f)), ImGuiChildFlags_NavFlattened,
-                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                      ImGuiWindowFlags_None);
+    ImGui::PopStyleVar();
     const float bw = card_w - pad * 2;
     bool primary_done = false;   // the footer primary is drawn after the body but must take initial focus first
     (void)primary_done;
@@ -404,7 +407,17 @@ void wizard_window() {
             ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));
             const int n = pad_count();
             ImGui::BulletText("Controller: %s", n > 0 ? (std::to_string(n) + (n == 1 ? " connected" : " connected")).c_str() : "none yet (plug one in any time)");
-            ImGui::BulletText("Games: %zu folder%s", A.st.rom_folders.size(), A.st.rom_folders.size() == 1 ? "" : "s");
+            if (A.st.rom_folders.empty()) {   // a calm heads-up in the wizard's warning colour, not a bare "0 folders"
+                ImDrawList* wdl = ImGui::GetWindowDrawList();
+                const ImVec2 ip = ImGui::GetCursorScreenPos();
+                const float slot = ImGui::GetTreeNodeToLabelSpacing();   // the same indent the bullet lines use
+                ui::icon(wdl, ui::Icon::Info, ImVec2(ip.x + slot * 0.5f, ip.y + ImGui::GetTextLineHeight() * 0.5f), ui::sp(1.75f), ui::WARN);
+                ImGui::Dummy(ImVec2(slot, ImGui::GetTextLineHeight()));
+                ImGui::SameLine(0, 0);
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bw - slot);
+                ImGui::TextColored(ImColor(ui::WARN), "No games yet. Add a folder from Home any time.");
+                ImGui::PopTextWrapPos();
+            } else ImGui::BulletText("Games: %zu folder%s", A.st.rom_folders.size(), A.st.rom_folders.size() == 1 ? "" : "s");
             ImGui::BulletText("Username: %s", A.st.username_claimed ? A.st.name.c_str() : "not claimed yet (we will remind you)");
             ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
             if (ImGui::Checkbox("Automatically add people I play with as friends", &A.st.auto_friend)) { mark_dirty(); fr_set_auto_friend(A.st.auto_friend); }
@@ -442,10 +455,15 @@ void wizard_window() {
         else go_next = true;
     }
     {   // hint strip
-        float hx = c0.x + card_w * 0.5f - ui::sp(11.f);
-        ImVec2 o = wp + ImVec2(hx, fy + bs.y * 0.5f - ImGui::GetTextLineHeight() * 0.5f);
-        hx = ui::key_hint(dl, o, A.pad_mode, "A", "Enter", "Select");
-        ui::key_hint(dl, o + ImVec2(hx + ui::sp(2.f), 0), A.pad_mode, "B", "Esc", "Back");
+        /* centred, but never on top of the Back / Skip buttons (big UI size) and never into the primary button: then it is left out */
+        const float left_end = c0.x + pad + (first ? 0.f : bs.x + ImGui::GetStyle().ItemSpacing.x) + (last ? 0.f : ui::sp(16.f));
+        const float right_start = c0.x + card_w - pad - ui::sp(on_name ? 28.f : 22.f);
+        float hx = std::max(c0.x + card_w * 0.5f - ui::sp(11.f), left_end + ui::sp(2.f));
+        if (hx + ui::sp(22.f) <= right_start) {
+            ImVec2 o = wp + ImVec2(hx, fy + bs.y * 0.5f - ImGui::GetTextLineHeight() * 0.5f);
+            hx = ui::key_hint(dl, o, A.pad_mode, "A", "Enter", "Select");
+            ui::key_hint(dl, o + ImVec2(hx + ui::sp(2.f), 0), A.pad_mode, "B", "Esc", "Back");
+        }
     }
     ImGui::SetCursorPos(ImVec2(0, 0));
 
