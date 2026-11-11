@@ -23,7 +23,10 @@ int main()
         {"WebSocket upgrade failed", WsErrorKind::Blocked, "The connection was blocked. A VPN or proxy may be interfering."},
         {"connection to the server was lost", WsErrorKind::Dropped, "The connection dropped."},
         {"server closed the connection", WsErrorKind::Dropped, "The connection dropped."},
-        {"server closed the connection: going away", WsErrorKind::Dropped, "The connection dropped."},
+        {"server closed the connection: room is full", WsErrorKind::Dropped, "room is full"},
+        {"server closed the connection:   padded reason \nsecond line", WsErrorKind::Dropped, "padded reason"},
+        {"server closed the connection: ", WsErrorKind::Dropped, "The connection dropped."},
+        {"server answered HTTP ", WsErrorKind::Unknown, unk},
         {"something else entirely", WsErrorKind::Unknown, unk},
         {"", WsErrorKind::None, unk},
     };
@@ -34,6 +37,7 @@ int main()
         std::string t = ws_error_player_text(std::string(r.raw));
         if (t.find("error 1") != std::string::npos || t.find("HTTP") != std::string::npos) { std::printf("FAIL jargon: '%s'\n", r.raw); ++fails; }
     }
+    if (ws_error_player_text(std::string("server closed the connection: ") + std::string(300, 'x')).size() != 120) { std::printf("FAIL cap\n"); ++fails; }
     if (!fails) std::printf("PASS\n");
     return fails;
 }
