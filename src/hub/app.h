@@ -783,6 +783,9 @@ void draw_cheats_modal();
 /* ---- quickmenu.cpp: in-game quick menu (View+Y), runner control channel, screenshots gallery ---- */
 struct SDL_Renderer;
 void qm_init(SDL_Renderer* ren);
+void qm_textures_begin_frame();          // once per loop iteration before any drawing: frees last frame's evicted thumbnails
+void state_textures_begin_frame();       // same, state-slot thumbnails (states_ui.cpp)
+void challenge_textures_begin_frame();   // same, challenge pictures (challenge_ui.cpp)
 void qm_prepare(RunInfo& ri, const hub::GameEntry& e);                                  // run_info_for(): run dir + control file for the built-in runners
 std::string qm_args(const RunInfo& ri, const hub::GameEntry& e, bool n64_state_dir);    // " --control ... --game-key ... --shot-dir ..." or ""
 bool qm_is_open();                                                                      // quick menu requested or showing (exempt from the pad focus gate)
