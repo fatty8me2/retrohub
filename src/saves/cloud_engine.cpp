@@ -2112,6 +2112,7 @@ void cloud_game_changed(const GameId& g) {   // F13: nothing else tells the engi
 namespace { struct ShotFake { bool on = false; CloudAccountInfo acct; std::vector<GameCloudInfo> games; } g_shot_fake; }
 
 bool cloud_shot_fake(const std::string& state) {
+    if (!std::getenv("HUB_SCREENSHOT")) return false;   // defence in depth: the hub's headless mode is exactly "HUB_SCREENSHOT is set"
     ShotFake f;
     const int64_t now = (int64_t)std::time(nullptr);
     f.acct.known = true;
