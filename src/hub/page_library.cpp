@@ -1365,8 +1365,8 @@ void draw_details_modal() {
         }
     } else {
         tr("savefolder", "hidden:native-keeps-own-saves");
-        place(label_w("Locate BattleShip.exe", false));
-        locate_smash(button("Locate BattleShip.exe", ImVec2(0, bh2)));
+        place(label_w("Find Smash 64 game", false));
+        locate_smash(button("Find Smash 64 game", ImVec2(0, bh2)));
     }
     const bool cheats_na = !cheats_supported(e) && !is_native(e) && !is_kanto(e);   // GC / 3DS / Wii U / PS2: shown disabled, with the reason
     tr("cheats", cheats_supported(e) ? "enabled" : cheats_na ? "explained:unavailable" : "hidden");

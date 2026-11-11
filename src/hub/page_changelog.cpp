@@ -46,7 +46,7 @@ void draw_changelog_list() {
     section_title("What's new");
     if (CL.entries.empty()) {
         begin_panel("cl_empty");
-        text_wrapped_disabled("The patch notes file (data\changelog.json) was not found next to RetroHub.");
+        text_wrapped_disabled("The patch notes are missing from this install. Reinstall RetroHub to restore them.");
         end_panel();
         return;
     }

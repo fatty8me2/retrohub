@@ -279,8 +279,8 @@ void tab_general() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     settings_label("Smash Classic location");
     std::string se = smash_exe_path();
-    text_wrapped_disabled(se.empty() ? "BattleShip.exe not found" : se);
-    locate_smash(button("Browse for BattleShip.exe...", ImVec2(0, 0), false, true, ui::Icon::Folder));
+    text_wrapped_disabled(se.empty() ? "The Smash 64 game files are missing. Reinstall RetroHub to restore them." : se);
+    locate_smash(button("Choose Smash 64 game file...", ImVec2(0, 0), false, true, ui::Icon::Folder));
     if (!A.st.smash_exe.empty()) {
         ImGui::SameLine();
         if (button("Use default", ImVec2(0, 0))) { A.st.smash_exe.clear(); mark_dirty(); A.hello_dirty = true; start_scan(); }
