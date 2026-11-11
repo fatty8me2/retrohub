@@ -237,6 +237,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::u8path(dir), ec);
         hub::saves::set_vault_dir(dir);
+        hub::library_set_data_dir(dir);   // library.json / library_cache.json (play history, fake or not) live in the scratch dir too: a headless run never writes <exe>\userdata\library.json
     }
     gs_load();
     if (!shot_path) {   // favorites follow the account: mirror them into <vault>/_account/prefs.json and tell the cloud engine on change

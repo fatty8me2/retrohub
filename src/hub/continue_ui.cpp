@@ -382,5 +382,5 @@ void continue_shot_seed() {
     struct H { const char* key; uint64_t ago, secs; };
     for (H hh : {H{"fake:2", 3 * 3600ull, 14 * 3600ull + 900}, H{"fake:0", 26 * 3600ull, 5400}, H{"fake:3", 3 * 86400ull, 2 * 3600ull},
                  H{"fake:5", 6 * 86400ull, 40 * 60ull}, H{"fake:6", 12 * 86400ull, 9 * 3600ull}, H{"fake:7", 20 * 86400ull, 7200}, H{"fake:8", 25 * 86400ull, 600}})
-        hub::record_play(hh.key, now - hh.ago, hh.secs);
+        hub::shot_set_play(hh.key, now - hh.ago, hh.secs);   // assigned, so the fake hours never climb between runs
 }
