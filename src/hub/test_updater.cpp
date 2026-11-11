@@ -132,6 +132,31 @@ int main(int argc, char** argv) {
     CHECK(compare_versions("v2.0.0", "dev") == 1);
     CHECK(compare_versions("dev", "dev") == 0);
 
+    // --- curl.exe / tar.exe are resolved to the Windows system folder, never searched for ---
+    {
+        std::string sd = system_dir();
+        wchar_t wbuf[MAX_PATH + 1]; UINT wn = GetSystemDirectoryW(wbuf, MAX_PATH);
+        CHECK(!sd.empty() && wn > 0 && sd.size() >= 4 && sd[1] == ':' && sd.back() != '\\');   // absolute, no trailing slash
+        std::string cp, tp, e;
+        CHECK(find_system_tool("curl.exe", &cp, &e) && cp == sd + "\\curl.exe");              // Windows 10 1803+ ships both
+        CHECK(find_system_tool("tar.exe", &tp, &e) && tp == sd + "\\tar.exe");
+        // the folder the exe runs from is never consulted: a curl.exe planted in a scratch "install folder" is not what resolves
+        std::filesystem::path pd = std::filesystem::temp_directory_path() / ("hub_updater_sys_test_" + std::to_string(_getpid()));
+        std::error_code pec; std::filesystem::remove_all(pd, pec); std::filesystem::create_directories(pd, pec);
+        std::string pds = pd.u8string();
+        std::string out = "untouched";
+        e.clear();
+        CHECK(!resolve_system_tool(pds, "curl.exe", &out, &e) && out == "untouched" && e.find("curl.exe") != std::string::npos);   // missing: a clear message
+        CHECK(e.find("not found") != std::string::npos && e.find(pds) != std::string::npos);
+        { std::ofstream o(pd / "curl.exe", std::ios::binary); o << "x"; }
+        CHECK(resolve_system_tool(pds, "curl.exe", &out, &e) && out == pds + "\\curl.exe");
+        CHECK(resolve_system_tool(pds + "\\", "curl.exe", &out, &e) && out == pds + "\\curl.exe");   // trailing slash tolerated
+        std::filesystem::create_directories(pd / "tar.exe", pec);
+        CHECK(!resolve_system_tool(pds, "tar.exe", &out, &e));                                       // a folder is not a tool
+        CHECK(!resolve_system_tool("", "curl.exe", &out, &e) && !resolve_system_tool(pds, "", &out, &e));
+        std::filesystem::remove_all(pd, pec);
+    }
+
     // --- release JSON ---
     Release r = parse_release(kSample);
     CHECK(r.ok && r.tag == "v1.8.0");

@@ -517,11 +517,44 @@ const char* verdict_message(Verdict v) {
 
 std::string sha256_file_hex(const std::string& path) { return sha256_file(path); }
 
+std::string system_dir() {
+    wchar_t buf[MAX_PATH + 1];
+    UINT n = GetSystemDirectoryW(buf, MAX_PATH);
+    if (n == 0 || n > MAX_PATH) return "";
+    return trim_slash(U8(std::wstring(buf, n)));
+}
+
+bool resolve_system_tool(const std::string& dir, const char* exe, std::string* path, std::string* err) {
+    if (dir.empty() || !exe || !*exe) {
+        if (err) *err = std::string("could not find Windows' ") + (exe ? exe : "tool") + ", which RetroHub needs to update itself.";
+        return false;
+    }
+    std::string p = trim_slash(dir) + "\\" + exe;
+    DWORD a = GetFileAttributesW(W(p).c_str());
+    if (a == INVALID_FILE_ATTRIBUTES || (a & FILE_ATTRIBUTE_DIRECTORY)) {
+        if (err) *err = std::string("Windows' ") + exe + " was not found at " + p + ", so RetroHub cannot update itself. Download manually: " + kManualUrl;
+        return false;
+    }
+    if (path) *path = p;
+    return true;
+}
+
+bool find_system_tool(const char* exe, std::string* path, std::string* err) { return resolve_system_tool(system_dir(), exe, path, err); }
+
+/* The quoted absolute path of curl.exe, or "" (+ *err). */
+static std::string curl_cmd(std::string* err) {
+    std::string p, e;
+    if (!find_system_tool("curl.exe", &p, &e)) { if (err) *err = e; return ""; }
+    return "\"" + p + "\"";
+}
+
 bool fetch_sums(const std::string& sumsUrl, const std::string& scratch, std::string* text, std::string* err) {
     std::string sp = scratch + ".sums";
     rm_file(sp);
     std::string sums;
-    int c = run_capture("curl -fLsS -m 30 --max-filesize 262144 -o \"" + sp + "\" \"" + sumsUrl + "\"", [](const std::string&) {});
+    std::string curl = curl_cmd(err);
+    if (curl.empty()) return false;
+    int c = run_capture(curl + " -fLsS -m 30 --max-filesize 262144 -o \"" + sp + "\" \"" + sumsUrl + "\"", [](const std::string&) {});
     if (c == 0) {
         std::ifstream in(P(sp), std::ios::binary);
         std::stringstream ss; ss << in.rdbuf();
@@ -537,7 +570,9 @@ bool fetch_sig(const std::string& sigUrl, const std::string& scratch, std::strin
     std::string sp = scratch + ".sig";
     rm_file(sp);
     std::string sig;
-    int c = run_capture("curl -fLsS -m 30 --max-filesize 1024 -o \"" + sp + "\" \"" + sigUrl + "\"", [](const std::string&) {});
+    std::string curl = curl_cmd(nullptr);
+    if (curl.empty()) { if (err) *err = "could not find Windows' curl.exe, which RetroHub needs to verify the update."; return false; }
+    int c = run_capture(curl + " -fLsS -m 30 --max-filesize 1024 -o \"" + sp + "\" \"" + sigUrl + "\"", [](const std::string&) {});
     if (c == 0) {
         std::ifstream in(P(sp), std::ios::binary);
         std::stringstream ss; ss << in.rdbuf();
@@ -569,7 +604,10 @@ bool download_verified(const FetchSpec& f, const std::string& zipPath, std::stri
     }
     const bool haveSums = true;
     rm_file(zipPath);
-    if (run_capture("curl -fL -# -m 600 -o \"" + zipPath + "\" \"" + f.zip_url + "\"", onLine) != 0) return bad("download failed.");
+    std::string curlErr;
+    std::string curl = curl_cmd(&curlErr);
+    if (curl.empty()) return bad(curlErr);
+    if (run_capture(curl + " -fL -# -m 600 -o \"" + zipPath + "\" \"" + f.zip_url + "\"", onLine) != 0) return bad("download failed.");
     std::ifstream in(P(zipPath), std::ios::binary | std::ios::ate);
     long long actual = in ? (long long)in.tellg() : -1;
     in.close();
@@ -690,9 +728,12 @@ void check_async(bool force) {
 
     std::thread([]() {
         std::string response;
-        std::string cmd = std::string("curl -fLsS -m 10 -H \"User-Agent: RetroHub-Updater\" "
-                                      "-H \"Accept: application/vnd.github+json\" \"") + kLatestReleaseApi + "\"";
-        int code = run_capture(cmd, [&](const std::string& l) { response += l; });
+        std::string cpath, curlErr;
+        const bool haveCurl = detail::find_system_tool("curl.exe", &cpath, &curlErr);
+        if (!haveCurl) ulog("check failed: %s", curlErr.c_str());
+        std::string cmd = "\"" + cpath + "\" -fLsS -m 10 -H \"User-Agent: RetroHub-Updater\" "
+                          "-H \"Accept: application/vnd.github+json\" \"" + kLatestReleaseApi + "\"";
+        int code = haveCurl ? run_capture(cmd, [&](const std::string& l) { response += l; }) : -1;
         if (code != 0 || response.empty()) {
             ulog("check failed (curl exit %d)", code);
             s_checked.store(false); s_last_fail_ms.store(GetTickCount64() | 1);   // a network failure is not an answer: the next automatic check may retry, spaced
@@ -847,16 +888,12 @@ void start_update() {
             /* Unpack the zip (Windows' own tar.exe, hidden), then hand over to a TEMP copy of
              * RetroHub.exe running `--apply-update` (see update_apply.h) once no game is running. */
             set_status("Preparing...");
-            std::wstring systemRoot = L"C:\\Windows";
-            if (DWORD need = GetEnvironmentVariableW(L"SystemRoot", nullptr, 0)) {
-                std::wstring b(need, L'\0');
-                DWORD got = GetEnvironmentVariableW(L"SystemRoot", &b[0], need);
-                if (got > 0 && got < need) { b.resize(got); systemRoot = b; }
-            }
+            std::string tarExe, tarErr;
+            if (!detail::find_system_tool("tar.exe", &tarExe, &tarErr)) { rm_file(zipPath); fail(tarErr); return; }
             rm_file(updatesDir + "\\staged.json");
             std::filesystem::remove_all(P(staged), fec);
             std::filesystem::create_directories(P(staged), fec);
-            std::string tarCmd = "\"" + U8(systemRoot) + "\\System32\\tar.exe\" -xf \"" + zipPath + "\" -C \"" + staged + "\"";
+            std::string tarCmd = "\"" + tarExe + "\" -xf \"" + zipPath + "\" -C \"" + staged + "\"";
             int tarCode = run_capture(tarCmd, [](const std::string&) {}, detail::kTarTimeoutMs);   // a stuck tar is ended by its handle; the install is untouched either way
             rm_file(zipPath);
             if (tarCode != 0) {

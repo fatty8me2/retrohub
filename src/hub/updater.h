@@ -138,6 +138,14 @@ bool fetch_sig(const std::string& sig_url, const std::string& scratch_path, std:
 bool download_verified(const FetchSpec& f, const std::string& zip_path, std::string* err,
                        const std::function<void(const std::string&)>& on_progress_line);
 
+/* ---- system tools (curl.exe, tar.exe) are always run by absolute path ----
+ * A bare "curl" makes Windows look in the application's own folder first, so a planted curl.exe beside RetroHub.exe would run.
+ * The updater only ever runs <Windows system folder>\curl.exe and tar.exe. */
+std::string system_dir();   // GetSystemDirectoryW as UTF-8, no trailing slash ("" when unknown)
+/* dir + "\\" + exe_name when that file exists; otherwise false and *err says (in plain words) which file is missing. */
+bool resolve_system_tool(const std::string& dir, const char* exe_name, std::string* path, std::string* err);
+bool find_system_tool(const char* exe_name, std::string* path, std::string* err);   // resolve_system_tool(system_dir(), ...)
+
 /* ---- the deferred hand-off (pure state machine; time is injected) ---- */
 constexpr unsigned long long kSettleMs = 2500;   // nothing running for this long before the installer starts (a game's exit is followed by save work)
 struct Gate {
