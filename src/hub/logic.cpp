@@ -1,6 +1,7 @@
 #include "logic.h"
 #include "durable_write.h"
 #include "settings_tabs.h"
+#include "playtime_logic.h"
 
 #include "remix_data.h"
 #include "ps2_online.h"
@@ -1296,19 +1297,12 @@ bool sidebar_collapsed(int mode, float window_w, float narrow_below) {
 }
 
 std::string format_play_time(unsigned long long s) {
-    if (s == 0) return "Never played";
-    if (s < 60) return "Under a minute";
-    if (s < 3600) return std::to_string(s / 60) + " min";
-    char b[32];
-    std::snprintf(b, sizeof b, "%lluh %02llum", s / 3600, (s % 3600) / 60);
-    return b;
+    return s == 0 ? std::string("Never played") : pt::hours_text(s);
 }
 
 std::string friend_hours_text(int m) {
     if (m < 1) return "";
-    if (m < 60) return std::to_string(m) + "m";
-    if (m % 60 == 0 || m >= 10 * 60) return std::to_string(m / 60) + "h";
-    return std::to_string(m / 60) + "h " + std::to_string(m % 60) + "m";
+    return pt::hours_compact((uint64_t)m * 60);
 }
 
 std::string friends_playtime_line(const std::map<std::string, std::vector<PlaytimeEntry>>& by_uid, const std::map<std::string, std::string>& names,
@@ -1565,8 +1559,7 @@ std::string friend_status_line(const FriendRow& r, long long now_ms) {
 std::string format_dur_short(long long ms) {
     long long m = ms / 60000;
     if (ms <= 0 || m < 1) return "";
-    if (m < 60) return std::to_string(m) + " min";
-    return std::to_string(m / 60) + "h" + (m % 60 ? " " + std::to_string(m % 60) + "m" : std::string());
+    return pt::hours_compact((uint64_t)m * 60);
 }
 
 std::string friend_presence_line(const FriendRow& r, long long now_ms) {

@@ -1,5 +1,6 @@
 #include "app.h"
 #include "homefun.h"
+#include "playtime_logic.h"
 
 /* ---------- Save history (Wave 2 G) and "Your stats" (Wave 2 H) ----------
  * History: one unified list per game on the Saves page (local snapshots + cloud versions), with Restore / Undo restore / Export.
@@ -205,13 +206,9 @@ struct StatsCache {
     bool any = false;
 } SC;
 
-std::string hours_text(int64_t s) {
-    char b[32];
-    if (s < 60) return s <= 0 ? "0 min" : "<1 min";
-    if (s < 3600) { std::snprintf(b, sizeof b, "%lld min", (long long)(s / 60)); return b; }
-    std::snprintf(b, sizeof b, "%.1f h", s / 3600.0);
-    return b;
-}
+/* Stat cells use the long form ("12.5 hours"), the per-game rows the compact one ("12.5 h"); both from playtime_logic.h. */
+std::string hours_text(int64_t s) { return s <= 0 ? std::string("0 minutes") : hubui::pt::hours_text((uint64_t)s); }
+std::string hours_short(int64_t s) { return s <= 0 ? std::string("0 min") : hubui::pt::hours_compact((uint64_t)s); }
 
 void stat_cell(const char* label, const std::string& value) {
     ImGui::BeginGroup();
@@ -262,9 +259,9 @@ void stats_ui_card() {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Your month or year in games");
     const float w = ImGui::GetContentRegionAvail().x;
     const bool wide = w > sp(70.f);
-    stat_cell("Total play time", hours_text(st.total_secs));
+    stat_cell("Total play time", st.total_secs > 0 ? hours_text(st.total_secs) : std::string("Not played yet"));
     ImGui::SameLine(0, sp(5.f));
-    stat_cell("This week", hours_text(st.week_secs));
+    stat_cell("This week", st.week_secs > 0 ? hours_text(st.week_secs) : std::string("None this week"));
     if (st.longest.secs > 0) {
         ImGui::SameLine(0, sp(5.f));
         stat_cell("Longest session", hours_text(st.longest.secs));
@@ -291,7 +288,7 @@ void stats_ui_card() {
         dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + std::max(h, bar_w * f), y + h), ui::ACCENT, h * 0.5f);
         ImGui::Dummy(ImVec2(bar_w, ImGui::GetTextLineHeight()));
         ImGui::SameLine(0, sp(1.f));
-        ImGui::TextDisabled("%s", hours_text(t.secs).c_str());
+        ImGui::TextDisabled("%s", hours_short(t.secs).c_str());
     }
     ImGui::EndGroup();
     if (!st.systems.empty()) {
@@ -305,7 +302,7 @@ void stats_ui_card() {
             int pct = st.total_secs ? (int)(s.second * 100 / st.total_secs) : 0;
             ImGui::Text("%s", hub::console_name(s.first));
             ImGui::SameLine(sp(14.f));
-            ImGui::TextDisabled("%s  (%d%%)", hours_text(s.second).c_str(), pct);
+            ImGui::TextDisabled("%s  (%d%%)", hours_short(s.second).c_str(), pct);
         }
         ImGui::EndGroup();
     }

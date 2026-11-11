@@ -228,7 +228,7 @@ static void test_wrapped() {
     CHECK(!aggregate(ss2, {}, Period::Month, mo, tz).has_friend);
 
     CHECK(hours_text(0) == "0 min" && hours_text(30) == "<1 min" && hours_text(5 * 60) == "5 min");
-    CHECK(hours_text(3600) == "1 h" && hours_text(3600 + 30 * 60) == "1 h 30 min");
+    CHECK(hours_text(3600) == "1 h" && hours_text(3600 + 30 * 60) == "1.5 h" && hours_text(27000) == "7.5 h" && hours_text(12345ull * 3600) == "12,345 h");
     CHECK(std::string(weekday_name(0)) == "Sunday" && std::string(weekday_name(9)).empty());
 
     // sharing: file naming and the attachment size guard

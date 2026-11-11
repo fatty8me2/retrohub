@@ -1,5 +1,5 @@
 /* Home "Continue" hero (Plan 5): the newest save-state thumbnail (else newest screenshot, else the cover) fills the hero with a soft scrim,
- * "Last played 2 hours ago . 14 h total", a big Continue / Play button, Start fresh, Play Online and the usual star / details. Crossfades
+ * "Last played 2 hours ago . 14 hours played", a big Continue / Play button, Start fresh, Play Online and the usual star / details. Crossfades
  * when the hero game changes and pans slowly (Ken Burns, attract_logic.h). Plus the "Recently played" row upgrade of the "recent" shelf.
  * Never launches by itself and never raises anything: it only draws and answers clicks inside the hub window.
  * Screenshot aid: HUB_SHOT_CONTINUE=1 seeds play history for the fake library, =playing also shows the hero as running. */

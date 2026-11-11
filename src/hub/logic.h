@@ -234,9 +234,9 @@ std::vector<int> filter_sort(const std::vector<ListItem>& items, const std::stri
                              const std::string& query, SortSpec mode = SortSpec());
 /* Indices of the `n` entries with the largest non-zero last_played, newest first. */
 std::vector<int> pick_recent(const std::vector<unsigned long long>& last_played, int n);
-/* "Never played" / "Under a minute" / "35 min" / "2h 05m". */
+/* "Never played" / "Under a minute" / "35 minutes" / "2.1 hours" (playtime_logic.h, long form). */
 std::string format_play_time(unsigned long long seconds);
-/* Friends' play time (coarse): "45m", "3h", "14h 30m" (minutes in, "" for < 1). */
+/* Friends' play time (coarse): "45 min", "3 h", "14.5 h" (compact form of playtime_logic.h; minutes in, "" for < 1). */
 std::string friend_hours_text(int minutes);
 /* Game details line: the top `max_n` friends who played `game_key`, "Mickey 14h · camer 3h" ("" if none). `names` maps uid -> display name;
  * friends missing from it, and uids in `hidden` (blocked), are skipped. Ties keep name order. */
@@ -503,7 +503,7 @@ std::string dropin_reason_text(const std::string& reason);
 /* Rich presence for rows and the Home shelf: "Smash Classic \xC2\xB7 2/4 \xC2\xB7 12 min" (game, players when known, time in this state from
  * the presence update). Online without a game = "Online"; offline = friend_status_line. */
 std::string friend_presence_line(const FriendRow& r, long long now_ms);
-/* "12 min" / "1h 5m" / "" (under a minute or unknown). */
+/* "12 min" / "1.1 h" (compact form) / "" (under a minute or unknown). */
 std::string format_dur_short(long long ms);
 /* "Ask to join": a friend is in a room/game we cannot just join (full, already launched, no known code). Not for people in our room. */
 inline bool friend_can_ask(const FriendRow& r) {

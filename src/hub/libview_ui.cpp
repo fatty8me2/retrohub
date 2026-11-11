@@ -385,7 +385,7 @@ void draw_list_row(int idx, float w, float h, const hubui::ListCols& C, bool odd
             dl->AddText(cf, cf->FontSize, ImVec2(p0.x + C.last_x, cy - cf->FontSize * 0.5f), gs.last_played ? scol : ui::TEXT3, s.c_str());
         }
         if (C.time) {
-            std::string s = gs.play_seconds ? hubui::pt::hours_text(gs.play_seconds) : std::string("-");
+            std::string s = gs.play_seconds ? hubui::pt::hours_compact(gs.play_seconds) : std::string("-");
             dl->AddText(cf, cf->FontSize, ImVec2(p0.x + C.time_x, cy - cf->FontSize * 0.5f), gs.play_seconds ? scol : ui::TEXT3, s.c_str());
         }
         bool on = entry_online(A.lib[idx]);
@@ -718,7 +718,7 @@ void draw_showcase(Disp& D) {
             const GameInfo* cat = catalog_for(e);
             if (cat && cat->year) pills.push_back({std::to_string(cat->year), IM_COL32(255, 255, 255, 34)});
             pills.push_back({gs.last_played ? "Played " + fmt_ago(gs.last_played) : std::string("Not played yet"), IM_COL32(255, 255, 255, 34)});
-            if (gs.play_seconds) pills.push_back({hubui::pt::hours_text(gs.play_seconds), IM_COL32(255, 255, 255, 34)});
+            if (gs.play_seconds) pills.push_back({hubui::pt::hours_compact(gs.play_seconds), IM_COL32(255, 255, 255, 34)});
             if (entry_online(e)) pills.push_back({"Online", ui::mix(ui::GOOD, IM_COL32_BLACK, 0.35f)});
         } else pills.push_back({"A friend's game", IM_COL32(255, 255, 255, 34)});
         ImFont* cf = ui::F.cap;

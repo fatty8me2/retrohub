@@ -31,16 +31,32 @@ inline std::string group_thousands(uint64_t n) {
     return o;
 }
 
-/* Steam's hours. "" for 0 seconds. Under 100 hours: one decimal, rounded to the nearest tenth (halves up) and never below "0.1 hours":
- * "0.1 hours", "0.4 hours", "12.5 hours", "99.9 hours". From 100 hours (after that rounding): whole hours, rounded, with thousands
- * separators: "100 hours", "1,234 hours". Always "hours" (Steam says "1.0 hours"). */
-inline std::string hours_text(uint64_t secs) {
+/* THE play-time formatter. Every duration of play shown anywhere in the hub goes through duration_text(): one rule set, two forms.
+ *   0 s            ""   (callers pick their own words: "Not played yet", "-", ...)
+ *   under a minute "<1 min" (compact) / "Under a minute" (long)
+ *   under an hour  whole minutes, rounded down: "45 min" / "45 minutes" ("1 min" / "1 minute")
+ *   1 h to 100 h   one decimal, truncated (never overstates), never ".0": "1 h" / "1 hour", "12.5 h" / "12.5 hours", "99.9 h"
+ *   100 h and up   whole hours, truncated, thousands separators: "100 h" / "100 hours", "1,204 h" / "1,204 hours"
+ * Compact is for tiles, list rows and chips; long is for sentences ("X played"). */
+inline std::string duration_text(uint64_t secs, bool compact) {
     if (secs == 0) return "";
-    uint64_t tenths = (secs + 180) / 360;
-    if (tenths < 1) tenths = 1;
-    if (tenths < 1000) return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + " hours";
-    return group_thousands((secs + 1800) / 3600) + " hours";
+    if (secs < 60) return compact ? "<1 min" : "Under a minute";
+    const char* hu = compact ? " h" : " hours";
+    if (secs < 3600) {
+        const uint64_t m = secs / 60;
+        return std::to_string(m) + (compact ? " min" : (m == 1 ? " minute" : " minutes"));
+    }
+    const uint64_t tenths = secs / 360;   // truncated: never overstates
+    if (tenths >= 1000) return group_thousands(secs / 3600) + hu;
+    if (tenths % 10 == 0) return std::to_string(tenths / 10) + (compact ? " h" : (tenths == 10 ? " hour" : " hours"));
+    return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + hu;
 }
+
+/* Long form: "45 minutes", "1 hour", "7.5 hours", "1,204 hours"; "" for 0 seconds. */
+inline std::string hours_text(uint64_t secs) { return duration_text(secs, false); }
+
+/* Compact form: "45 min", "1 h", "7.5 h", "1,204 h"; "" for 0 seconds. */
+inline std::string hours_compact(uint64_t secs) { return duration_text(secs, true); }
 
 /* "42.6 hours played"; "" when never played. */
 inline std::string hours_played(uint64_t secs) {
@@ -48,8 +64,8 @@ inline std::string hours_played(uint64_t secs) {
     return h.empty() ? h : h + " played";
 }
 
-/* Tile / list-row text while the "Most played" sort is on: "12.5 hours", or "Not played yet". */
-inline std::string sort_tile_text(uint64_t secs) { return secs ? hours_text(secs) : std::string("Not played yet"); }
+/* Tile / list-row text while the "Most played" sort is on: "12.5 h", or "Not played yet". */
+inline std::string sort_tile_text(uint64_t secs) { return secs ? hours_compact(secs) : std::string("Not played yet"); }
 
 /* ---- calendar (proleptic Gregorian, no locale / mktime; tz = local time minus UTC, seconds) ---- */
 inline int64_t local_day(int64_t t, int tz) {
