@@ -13,6 +13,7 @@ float init(SDL_Window* win, bool headless, float base_scale, bool cmd_flag, bool
 void toggle();
 /* UI size / monitor change: the new base scale (monitor DPI times the UI size). Applied between frames: fonts and theme are rebuilt live, TV mode keeps its larger scale. */
 void set_base_scale(float base);
+void request_font_rebuild();   // rebuild fonts at the current scale before the next frame (font option changed)
 float base_scale();
 /* Main loop hooks. */
 void handle_event(const SDL_Event& e, bool want_text);
