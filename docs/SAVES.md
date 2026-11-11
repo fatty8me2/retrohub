@@ -59,9 +59,15 @@ Other top-level entries: `.sync\` (manifests, never synced), `_conflicts\` (sync
   the file being overwritten is first copied to `_conflicts/` on both sides (same naming as a conflict; logged as `backup ...`
   and counted in `conflicts`). A normal newer incoming save gets no extra copy. `meta.json` is exempt. If the copy cannot be
   made, the file is left untouched.
-- **Incomplete scans refuse to sync.** Both trees are listed completely before anything is copied. Only "folder gone / empty"
-  (`ERROR_NO_MORE_FILES`, `ERROR_FILE_NOT_FOUND`, `ERROR_PATH_NOT_FOUND`) counts as normal; any other listing error (antivirus,
-  sync-client lock, access denied) fails the whole sync with `ok=false` and a clear error, and nothing is changed. In the "only one
+- **Incomplete scans refuse to sync, as narrowly as the layout allows.** Both trees are listed completely before anything is copied. Only
+  "folder gone / empty" (`ERROR_NO_MORE_FILES`, `ERROR_FILE_NOT_FOUND`, `ERROR_PATH_NOT_FOUND`) counts as normal. Any other listing
+  error (antivirus, sync-client lock, access denied) inside a game's tree (`<system>/<game>/...`, systems: n64 gba gb gbc gc wii 3ds
+  wiiu nds ps1 ps2 nes snes psp switch) leaves out just that game on both sides this run: it is logged (`skip game ...` with the Windows
+  error code), reported in `SyncReport::warning` in plain words, and the rest syncs (`ok` stays true). An unreadable top-level folder
+  that is not a system is left out with a `skip folder ...` log line. An error listing the root, a system folder itself, `_conflicts`
+  or `_account` fails the whole sync (`ok=false`, plain-words `error`) and changes nothing.
+  Also, if the `_conflicts` backup copy succeeds in the vault but fails in the sync folder, the vault-side copy this attempt just made
+  is removed again (nothing older is ever touched), so retries do not pile up copies. In the "only one
   side has it" branches the destination is probed first: if it exists after all, the pair is compared and handled as a normal
   two-sided file (conflict copy if needed), never overwritten blindly. A USB stick root's `System Volume Information` and
   `$RECYCLE.BIN` are skipped. (`export_zip` does not use this refusal.) Test seam: `set_enum_error_hook()` (inert unless set).
