@@ -3,6 +3,7 @@
 #include "party_ui.h"
 #include "profile.h"
 #include "online_caps.h"
+#include "launch_text.h"
 
 bool g_fake_room = false;
 bool g_shot_rejoin = false;
@@ -171,11 +172,13 @@ void rejoin_room() {
     enter_room(A.room_role_host, A.code);
 }
 
-void launch_fail(const std::string& why, double secs) {
-    set_notice(why, secs);
+void launch_fail_w(const std::string& shown, const std::string& wire, double secs) {
+    set_notice(shown, secs);
     if (room_connected() && !is_host())
-        A.lobby.send_msg("{\"kind\":\"np_fail\",\"reason\":\"" + json::escape(why) + "\"}");
+        A.lobby.send_msg("{\"kind\":\"np_fail\",\"reason\":\"" + json::escape(wire) + "\"}");   // the wire text is unchanged: older hosts read it as before
 }
+
+void launch_fail(const std::string& why, double secs) { launch_fail_w(why, why, secs); }
 
 std::string emulator_online_block() {
     if (A.selected_game.empty()) return "";
@@ -277,7 +280,7 @@ void lobby_tick() {
                 std::string c = A.prev_code, why = A.lobby.status();
                 bool h = A.prev_host;
                 A.prev_code.clear();
-                set_notice(why + " - going back to your previous room.");
+                set_notice(hublaunch::back_to_previous_room_text(why));
                 enter_room(h, c);
                 return;
             }
@@ -402,7 +405,11 @@ void lobby_tick() {
                 last_had_reason = !j.str("reason").empty();
             }
         } else if (kind == "np_fail") {
-            if (is_host()) { set_notice(member_name(from) + " can't start: " + j.str("reason"), 12.0); gc_host_guest_failed(member_name(from) + " can't start: " + j.str("reason")); }
+            if (is_host()) {   // the guest's text is written for the guest: show the host a third-person version
+                const std::string line = hublaunch::host_view_of_guest_fail(member_name(from), j.str("reason"));
+                set_notice(line, 12.0);   // the third-person line is for THIS player only
+                gc_host_guest_failed(member_name(from) + " can't start: " + j.str("reason"));   // goes to the guests as np_abort: byte-identical to v1.42.0
+            }
         } else if (kind == "np_gc_ready") {
             autotest_log("np_gc_ready from " + std::to_string(from) + " guest_wait=" + std::to_string((int)GCO.guest_wait));
             if (from == 0 && !is_host() && (GCO.guest_wait || GCO.active)) GCO.host_ready = true;

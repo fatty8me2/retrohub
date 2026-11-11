@@ -30,6 +30,8 @@ target_link_libraries(hub_console_names_test PRIVATE hublogic hubcommon)
 add_executable(hub_states_test test_state_slots.cpp)
 target_link_libraries(hub_states_test PRIVATE hublogic)
 
+add_executable(hub_launch_text_test test_launch_text.cpp)   # online launch guard, host view of guest failures, launch wording, UTF-8 file helpers
+target_include_directories(hub_launch_text_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(hub_online_caps_test test_online_caps.cpp)
 target_link_libraries(hub_online_caps_test PRIVATE hublogic hubcommon)
 add_executable(hub_picker_test test_picker.cpp)
