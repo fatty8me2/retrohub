@@ -186,6 +186,7 @@ add_test(NAME hub_convenience_test COMMAND hub_convenience_test)   # Discord fra
 add_test(NAME hub_session_test COMMAND hub_session_test)               # Smash save migrate, post-exit rules, queued join (scratch dirs only)
 add_test(NAME hub_qm_test COMMAND hub_qm_test)
 add_test(NAME hub_qm_nav_test COMMAND hub_qm_nav_test)                # quick menu controls: release gate, repeat, row nav (qm_nav.h)
+add_test(NAME hub_disc_id_test COMMAND hub_disc_id_test)              # PS1/PS2 serials: file-name serial, SYSTEM.CNF boot line, normalisation (pure strings)
 # Headless end-to-end quick menu run: RetroHub.exe on SDL's dummy video driver, input only from an SDL virtual game controller (real pads are
 # never opened), 13 scenarios incl. the phantom press from quickmenu.log (src/hub/qm_e2e.cpp). No window, no audio.
 add_test(NAME hub_qm_e2e COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/qm_e2e.ps1 -Exe $<TARGET_FILE:RetroHub>)
