@@ -1,6 +1,35 @@
 {
   "versions": [
     {
+      "version": "1.44.0",
+      "date": "2026-11-11",
+      "title": "Clearer online rooms, comfort options, safer saves after a hub close",
+      "new": [
+        "Comfort options: Larger small text, and Reduce motion now covers more animations. Status dots also differ by shape, not only by colour",
+        "If RetroHub is closed while a game is still running, the save copy that normally happens after the game is finished the next time RetroHub starts",
+        "Controllers page: Y undoes the last change, and B cancels Assign players",
+        "After a library scan you started, a short message says how many games were found"
+      ],
+      "improved": [
+        "Online rooms: launch problems are explained in plain words, the host can see why a guest could not start, and a second launch cannot start while the first is still going",
+        "Network problems on the Play Online page are shown in plain words instead of Windows error codes. If the server closes the connection, its reason is shown",
+        "Leaving a room asks first, so Esc or B cannot drop you out by accident",
+        "Friend invites stay in the bell and never appear over a running game",
+        "Small grey text is easier to read in every theme",
+        "The Wii U pad shortcut needs a short hold and ignores presses made together with Start, Y or the triggers, so it fires less often by accident",
+        "The first-run steps scroll on small windows, and the add-games prompt appears once",
+        "Plainer wording in several places: Host a room, the cloud save choice buttons, the Saves page intro and the missing Smash 64 files message"
+      ],
+      "fixed": [
+        "More files now work when RetroHub is in a folder with accented or non-English letters: the account code, history archives, 3DS settings and online launch files",
+        "Emulator settings written by RetroHub are saved safely, so a power cut cannot leave a half-written settings file",
+        "Cemu: a games folder path containing & or quotes was read wrongly",
+        "Game tiles without cover art showed a blank letter for names starting with an accented letter",
+        "Dark screenshots were sometimes discarded as empty",
+        "Emulators started by RetroHub always close with it, with no short gap at start"
+      ]
+    },
+    {
       "version": "1.43.0",
       "date": "2026-11-11",
       "title": "Safer updates, crash reports, a tidier library",
