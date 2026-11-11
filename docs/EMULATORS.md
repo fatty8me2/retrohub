@@ -409,3 +409,11 @@ Every external emulator RetroHub starts (Azahar, Cemu, Dolphin, PCSX2, PPSSPP, L
 - **What counts as a crash** (`src/hub/crash_note.cpp`, tested by `hub_crashnote_test`): any NTSTATUS error code `0xC0000000-0xCFFFFFFF` (access violation `0xC0000005`, fail-fast `0xC0000409`, stack overflow `0xC00000FD`, illegal instruction `0xC000001D`, heap corruption `0xC0000374` ...), plus `0x80000001-4` (breakpoint / abort), `0xE06D7363` and `0xE0434352`. Not a crash: exit code 0 and ordinary small codes, `0xC000013A` (Ctrl+C / console closed) and `0x40010004`. Exit code 0 is also what the Lichii exit-hang watch gives when RetroHub ends the emulator's job itself, so that case is never reported.
 - **Buttons:** "Open crash file folder" (only when Windows wrote `%LOCALAPPDATA%\CrashDumps\<exe>.<pid>.dmp`, which needs Windows' LocalDumps setting; RetroHub creates nothing), "Open emulator log" (Lichii / Fritchii only: `<emulator folder>\user\log`), "Copy details" (emulator and pinned version, exit code, time, dump path) and "Dismiss". Folders open only when the button is clicked.
 - **Limits:** the exit code is the one of the process RetroHub started (a crash in a child the emulator hands the game to is not seen). Hookshot, the built-in runners (retrorun / n64run) and the native Smash port are not covered. The note is kept in memory for the current RetroHub run only.
+
+## Checking the pins
+`qa\check_pins.ps1` is a read-only check that every emulator download pinned in `src\hub\emulators.cpp` still exists upstream with the pinned size. It parses
+every `static const Release` declaration (with `fritchii_pin` resolved), refuses to report if it finds fewer pins than are declared, and then makes metadata
+requests only: `gh api repos/<owner>/<repo>/releases/tags/<tag>` for GitHub hosts (asset size, and the digest when GitHub publishes one), and an HTTP HEAD
+with User-Agent `pin-check` for the other hosts (Content-Length). It prints one line per pin (OK, SIZE MISMATCH, SHA MISMATCH, MISSING or SKIPPED(reason))
+and exits 1 if any pin is not OK or SKIPPED. A HEAD cannot verify a SHA-256, so non-GitHub lines say the hash was not checked. Hookshot's toolchain
+downloads (`hookshot_build.cpp`) are not covered. Run it after changing a pin, or whenever upstream may have moved a file.
