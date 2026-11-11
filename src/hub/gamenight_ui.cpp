@@ -224,6 +224,9 @@ void gn_plan_button(const std::string& uid, ImVec2 pos, float h) {
 }
 
 void gn_plan_popup() {
+    // On short windows (1024x600) the spacer gaps go away first so the whole popup stays on screen.
+    const bool tight = ImGui::GetIO().DisplaySize.y < 700.f;
+    auto gap = [&](float v) { return tight ? 0.f : sp(v); };
     if (!GN.open) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(std::min(sp(52.f), ImGui::GetIO().DisplaySize.x - sp(4.f)), 0));
@@ -231,8 +234,8 @@ void gn_plan_popup() {
     ImGui::PushFont(ui::F.bold);
     ImGui::TextUnformatted("Plan a session");
     ImGui::PopFont();
-    ImGui::TextDisabled("Friends get an invite with the time. Reminder 10 minutes before, then one click to host or join.");
-    ImGui::Dummy(ImVec2(0, sp(0.75f)));
+    text_wrapped_disabled("Friends get an invite with the time. Reminder 10 minutes before, then one click to host or join.");
+    ImGui::Dummy(ImVec2(0, gap(0.75f)));
     auto gs = online_games();
     if (gs.empty()) ImGui::TextDisabled("No online games in your library yet.");
     else {
@@ -256,9 +259,18 @@ void gn_plan_popup() {
     tmv.tm_mday += GN.day; tmv.tm_hour = GN.hour; tmv.tm_min = GN.min5 * 5; tmv.tm_sec = 0; tmv.tm_isdst = -1;
     long long start = (long long)std::mktime(&tmv) * 1000;
     ImGui::TextDisabled("Starts %s", local_label(start).c_str());
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    ImGui::Dummy(ImVec2(0, gap(0.5f)));
     ImGui::TextUnformatted("Invite");
-    ImGui::BeginChild("##gn_friends", ImVec2(0, sp(20.f)), ImGuiChildFlags_Borders);
+    load_once();
+    auto act = GN.plans.active(wall_ms());
+    // Keep the whole popup on screen (1024x600): the friend list gives up height first and scrolls.
+    float lh = ImGui::GetTextLineHeightWithSpacing();
+    float foot = gap(0.75f) + sp(4.5f) + ImGui::GetStyle().WindowPadding.y * 2 + ImGui::GetStyle().ItemSpacing.y * 3;
+    if (!act.empty()) foot += gap(0.5f) + lh * (1.5f + 3.3f * (float)act.size() + (GN.ics_msg.empty() ? 0.f : 4.f));
+    if (!GN.err.empty()) foot += lh * 2.f;
+    float room = ImGui::GetIO().DisplaySize.y - sp(1.f) - ImGui::GetCursorPos().y - foot;
+    float fh = std::max(tight ? sp(3.2f) : sp(5.5f), std::min(sp(20.f), room));
+    ImGui::BeginChild("##gn_friends", ImVec2(0, fh), ImGuiChildFlags_Borders);
     for (auto& f : fr_friends()) {
         bool on = GN.pick.count(f.uid) > 0;
         if (ImGui::Checkbox((f.name + "##gn" + f.uid).c_str(), &on)) { if (on) GN.pick.insert(f.uid); else GN.pick.erase(f.uid); }
@@ -266,15 +278,16 @@ void gn_plan_popup() {
     ImGui::EndChild();
     if (!GN.err.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN); ImGui::TextWrapped("%s", GN.err.c_str()); ImGui::PopStyleColor(); }
     // upcoming
-    load_once();
-    auto act = GN.plans.active(wall_ms());
     if (!act.empty()) {
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        ImGui::Dummy(ImVec2(0, gap(0.5f)));
         ImGui::TextDisabled("Coming up");
         for (auto* n : act) {
-            ImGui::BulletText("%s - %s (%s)", n->game_title.c_str(), local_label(n->start_ms).c_str(), who(*n).c_str());
+            ImGui::Bullet();
             ImGui::SameLine();
+            ImGui::TextWrapped("%s - %s (%s)", n->game_title.c_str(), local_label(n->start_ms).c_str(), who(*n).c_str());
+            ImGui::Indent(sp(1.5f));   // buttons on their own line so nothing runs past the popup edge
             if (ImGui::SmallButton(("Add to calendar##ics" + n->id).c_str())) export_ics(*n);
+            ImGui::Unindent(sp(1.5f));
         }
         if (!GN.ics_msg.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Text, GN.ics_ok ? ui::TEXT2 : ui::WARN);
@@ -287,7 +300,7 @@ void gn_plan_popup() {
             }
         }
     }
-    ImGui::Dummy(ImVec2(0, sp(0.75f)));
+    ImGui::Dummy(ImVec2(0, gap(0.75f)));
     if (ui::button("Send invite", ImVec2(sp(14.f), sp(4.5f)), true, !gs.empty())) {
         Night n;
         n.mine = true; n.start_ms = start;
