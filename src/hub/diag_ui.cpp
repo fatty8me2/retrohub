@@ -20,7 +20,7 @@ std::string desktop_dir() {
 std::string build_and_save(std::string* where) {
     const std::string root = hub::data_dir();
     /* logs\ holds hub.log / hub.1.log / hub.2.log, hang reports and crash reports (newest 5 only) */
-    std::vector<hubdiag::Entry> files = hubdiag::newest_crash_reports_only(hubdiag::collect_dir(root + "logs", "logs/"));
+    std::vector<hubdiag::Entry> files = hubdiag::limit_total_bytes(hubdiag::newest_crash_reports_only(hubdiag::collect_dir(root + "logs", "logs/")));
     std::string versions = std::string("RetroHub ") + HUB_VERSION_STR + "\n";
     {   // runner builds sit next to the hub; the VERSION file travels with them
         std::string v = read_text_file(hub::exe_dir() + "VERSION");

@@ -4,8 +4,9 @@
  *   crash-<yyyymmdd-hhmmss>.txt in the logs folder, with the exception code and name, the faulting address as module+offset, the
  *   registers, return-address-looking values found on the faulting thread's stack (module+offset, symbolise offline with the PDB),
  *   the RetroHub version, the loaded modules, the UI breadcrumb (hang watchdog phase) and the last 50 hub log lines.
- * The handler never shows a dialog, allocates nothing it can avoid, and returns EXCEPTION_CONTINUE_SEARCH so Windows Error Reporting
- * still runs. On the next start the hub shows one note per new report (crash_report_ui.cpp). */
+ * The handler itself never shows a dialog (Windows Error Reporting may still show its own), allocates nothing it can avoid, chains to
+ * any filter that was installed before it, and returns EXCEPTION_CONTINUE_SEARCH so Windows Error Reporting still runs. Reports are
+ * never overwritten: a second report in the same second gets a -2 suffix. On the next start the hub shows one note per new report (crash_report_ui.cpp). */
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -41,6 +42,10 @@ size_t format_report(const Input& in, char* out, size_t cap);
 /* Installs the unhandled-exception filter, the CRT invalid-parameter and pure-call handlers and a std::terminate handler. Reports go to
  * logs_dir_utf8. phase_fn (optional) returns the UI breadcrumb; hublog::recent_lines supplies the log tail. Keeps the newest 10 reports. */
 void install(const std::string& logs_dir_utf8, const std::string& version, const char* (*phase_fn)() = nullptr);
+
+/* Re-installs our unhandled-exception filter if a vendor / overlay DLL replaced it (their filter is kept and chained to).
+ * Cheap; call once after the renderer and overlays are initialised. Returns true if it had been replaced. */
+bool reassert();
 
 /* ---- next start ---- */
 struct Found { std::string name; std::string path_utf8; std::string dir_utf8; };

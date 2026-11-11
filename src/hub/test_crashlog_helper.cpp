@@ -1,5 +1,5 @@
 /* Test helper for hub_crashlog_test: a tiny windowless program that installs the hub log and the crash handler and then dies on purpose.
- * Not part of RetroHub. Usage: hub_crash_helper.exe <logs dir> <av|terminate|terminate-call|overflow> . Never shows a dialog. */
+ * Not part of RetroHub. Usage: hub_crashlog_test_helper.exe <logs dir> <av|terminate|terminate-call|overflow> . Never shows a dialog. */
 #include "crash_report.h"
 #include "hub_log.h"
 

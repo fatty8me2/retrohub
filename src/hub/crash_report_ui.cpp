@@ -23,13 +23,21 @@ void draw_crash_report_note() {
     if (!g_pending) return;
     const char* id = "RetroHub closed";
     const bool is_open = ImGui::IsPopupOpen(id);
-    if (!g_headless && !prompt_allowed()) {
-        if (is_open) {   // a game started under it: hide it without ever submitting its window
-            ImGuiContext& g = *ImGui::GetCurrentContext();
-            const ImGuiID pid = ImGui::GetID(id);
-            for (int i = 0; i < g.OpenPopupStack.Size; ++i)
-                if (g.OpenPopupStack[i].PopupId == pid) { ImGui::ClosePopupToLevel(i, false); break; }
-        }
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    const ImGuiID pid = ImGui::GetID(id);
+    int my_level = -1;
+    for (int i = 0; i < g.OpenPopupStack.Size; ++i)
+        if (g.OpenPopupStack[i].PopupId == pid) { my_level = i; break; }
+    /* Yield: hide the card (it stays pending) when a game starts under it, or when the update popup or the emulator crash note opens
+     * above it. Those two reopen themselves while they are pending, so closing at our level only costs them a frame. */
+    bool yield = !g_headless && !prompt_allowed();
+    if (!yield && my_level >= 0) {
+        const ImGuiID upd = ImGui::GetID("Update available"), emu = ImGui::GetID("Emulator stopped");
+        for (int i = my_level + 1; i < g.OpenPopupStack.Size; ++i)
+            if (g.OpenPopupStack[i].PopupId == upd || g.OpenPopupStack[i].PopupId == emu) { yield = true; break; }
+    }
+    if (yield) {
+        if (my_level >= 0) ImGui::ClosePopupToLevel(my_level, false);   // never submit its window this frame
         return;
     }
     if (!is_open) {

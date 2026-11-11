@@ -168,6 +168,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {
         std::fprintf(stderr, "RetroHub: SDL_Init failed: %s\n", SDL_GetError());   // no MessageBox: it could land over a game
+        hublog::error("startup: SDL_Init failed: %s", SDL_GetError());
+        hublog::shutdown();
         return 1;
     }
 
@@ -325,6 +327,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     lib_fake_art_init(ren);
     qm_init(ren);
     hublog::info("startup: UI ready (+%llu ms)", hublog::since_start_ms());
+    if (log_on && crashrep::reassert()) hublog::warn("another module replaced the crash filter; ours is back in front");   // overlay / driver DLLs are loaded by now
     hubart::set_enabled(A.st.download_art);
     hub::rom_cache_set_limit((uint64_t)A.st.rom_cache_limit_gb << 30);
 

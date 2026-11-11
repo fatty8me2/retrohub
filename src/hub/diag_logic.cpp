@@ -83,6 +83,30 @@ bool write_zip(const std::string& out_zip, const std::vector<Entry>& files, cons
     return true;
 }
 
+std::vector<Entry> limit_total_bytes(std::vector<Entry> files, unsigned long long max_bytes) {
+    struct Item { Entry e; fs::file_time_type t; unsigned long long size; };
+    std::vector<Item> items;
+    std::error_code ec;
+    for (auto& e : files) {
+        fs::path p = fs::u8path(e.src);
+        Item it{e, fs::last_write_time(p, ec), 0};
+        if (ec) { ec.clear(); it.t = fs::file_time_type::min(); }
+        it.size = fs::file_size(p, ec);
+        if (ec) { ec.clear(); it.size = 0; }
+        items.push_back(it);
+    }
+    std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.t > b.t; });   // newest first
+    std::vector<Entry> out;
+    unsigned long long total = 0;
+    for (auto& it : items) {
+        if (total + it.size > max_bytes) continue;   // too big for what is left: a smaller older file may still fit
+        total += it.size;
+        out.push_back(it.e);
+    }
+    std::sort(out.begin(), out.end(), [](const Entry& a, const Entry& b) { return a.zip_name < b.zip_name; });
+    return out;
+}
+
 std::vector<Entry> newest_crash_reports_only(std::vector<Entry> files, size_t keep) {
     std::vector<Entry> reports, rest;
     for (auto& e : files) {
