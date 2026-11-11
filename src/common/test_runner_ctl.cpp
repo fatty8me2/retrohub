@@ -2,8 +2,12 @@
 #include <cstdio>
 #include <thread>
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 #include <filesystem>
@@ -119,49 +123,47 @@ int main() {
         fs::remove_all(d2);
     }
 #ifdef _WIN32
-    {   // a reader holding the ack file open (no delete sharing) blocks the rename once: the write must retry, not lose the ack
+    {   // a reader holding the ack file open (no delete sharing) blocks the rename: no sleeping, no lost ack
         fs::path d3 = fs::temp_directory_path() / "runctl_test_held";
         fs::remove_all(d3);
         fs::create_directories(d3);
-        std::string ap = (d3 / "control_ack.json").u8string();
+        std::string ctl3 = (d3 / "control.json").u8string();
+        std::string ap = ack_path_for(ctl3);
         CHECK(write_text_atomic(ap, make_ack({1, true, "old"})));
+        CHECK(send_command(ctl3, Cmd::Screenshot) == 1);
+        Poller pl(ctl3);   // seq 1 is already there: handled
+        CHECK(send_command(ctl3, Cmd::Pause, 0) == 2);
+        Command got;
+        CHECK(pl.poll(1000, &got) && got.seq == 2);
         HANDLE h = CreateFileW((d3 / "control_ack.json").c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         CHECK(h != INVALID_HANDLE_VALUE);
-        std::thread rel([h] { std::this_thread::sleep_for(std::chrono::milliseconds(80)); CloseHandle(h); });
-        CHECK(write_text_atomic(ap, make_ack({2, true, "new"})));   // released after 80 ms: the retry lands
-        rel.join();
-        std::string tt; Ack aa;
-        CHECK(read_text(ap, &tt) && parse_ack(tt, &aa) && aa.seq == 2 && aa.msg == "new");
-        CHECK(!fs::exists(d3 / "control_ack.json.tmp"));
-        // held for good: bounded failure, the old file stays intact and no temp file is left behind
-        h = CreateFileW((d3 / "control_ack.json").c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         auto t0 = std::chrono::steady_clock::now();
-        CHECK(!write_text_atomic(ap, make_ack({3, true, "never"})));
-        CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(3));
-        CloseHandle(h);
-        CHECK(read_text(ap, &tt) && parse_ack(tt, &aa) && aa.seq == 2);
+        CHECK(!write_text_atomic(ap, make_ack({9, true, "x"})));   // single attempt: fails fast while held
+        pl.ack(true, "paused");                                    // held: the ack is kept, not written
+        CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(200));   // nothing slept
+        std::string tt; Ack aa;
+        CHECK(read_text(ap, &tt) && parse_ack(tt, &aa) && aa.seq == 1 && aa.msg == "old");   // old file intact
         CHECK(!fs::exists(d3 / "control_ack.json.tmp"));
+        CHECK(!pl.poll(1300, &got));   // next tick, still held: still not written
+        CHECK(read_text(ap, &tt) && parse_ack(tt, &aa) && aa.seq == 1);
+        CloseHandle(h);
+        CHECK(!pl.poll(1600, &got));   // released: this tick writes the pending ack
+        CHECK(read_text(ap, &tt) && parse_ack(tt, &aa) && aa.seq == 2 && aa.ok && aa.msg == "paused");
+        CHECK(!fs::exists(d3 / "control_ack.json.tmp"));
+        // held for good: the retry gives up after kAckRetryTicks, the old ack stays, the poll never blocks
+        CHECK(send_command(ctl3, Cmd::Pause, 0) == 3);
+        CHECK(pl.poll(2000, &got) && got.seq == 3);
+        h = CreateFileW((d3 / "control_ack.json").c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        pl.ack(true, "never");
+        t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < kAckRetryTicks + 5; ++i) pl.poll(3000 + (uint64_t)i * 300, &got);
+        CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2));
+        CloseHandle(h);
+        pl.poll(20000, &got);   // gave up: the abandoned ack does not appear later
+        CHECK(read_text(ap, &tt) && parse_ack(tt, &aa) && aa.seq == 2);
         fs::remove_all(d3);
     }
 #endif
-    {   // screenshot delete: recycle seam + double-NUL buffer
-        std::wstring b = shfile_path_buffer(L"C:\\a\\b.png");
-        CHECK(b.size() == 10 + 2 && b[10] == L'\0' && b[11] == L'\0' && b.compare(0, 10, L"C:\\a\\b.png") == 0);
-        CHECK(shfile_path_buffer(L"").size() == 2);
-        fs::path d4 = fs::temp_directory_path() / "runctl_test_del";
-        fs::remove_all(d4);
-        fs::create_directories(d4);
-        std::string f1 = (d4 / "a.png").u8string(), f2 = (d4 / "b.png").u8string(), f3 = (d4 / "c.png").u8string();
-        for (auto& f : {f1, f2, f3}) { FILE* fp = std::fopen(f.c_str(), "wb"); if (fp) { std::fputs("x", fp); std::fclose(fp); } }
-        int calls = 0;
-        CHECK(delete_user_file(f1, [&](const std::string& p) { ++calls; std::error_code e; return fs::remove(fs::u8path(p), e); }));   // fake bin takes it
-        CHECK(calls == 1 && !fs::exists(d4 / "a.png"));
-        CHECK(delete_user_file(f2, [&](const std::string&) { ++calls; return false; }));   // bin refuses: permanent delete fallback
-        CHECK(calls == 2 && !fs::exists(d4 / "b.png"));
-        CHECK(delete_user_file(f2, [&](const std::string&) { ++calls; return false; }) && calls == 2);   // already gone: success, bin not asked
-        CHECK(fs::exists(d4 / "c.png"));   // untouched by the calls above
-        fs::remove_all(d4);
-    }
     if (!fails) std::printf("runner_ctl_test: all passed\n");
     return fails ? 1 : 0;
 }

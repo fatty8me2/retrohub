@@ -11,7 +11,6 @@
  * start-up counts as already handled), then writes the ack. Pure helpers; no SDL. */
 #include <cstdint>
 #include <ctime>
-#include <functional>
 #include <string>
 
 namespace runctl {
@@ -112,18 +111,11 @@ struct Sidecar {
 std::string make_sidecar(const Sidecar& s);
 bool parse_sidecar(const std::string& text, Sidecar* out);
 
-/* Atomic small-file write (tmp + rename). A rename blocked by a reader that holds the target open is retried for up to ~300 ms;
- * it never falls back to a non-atomic write (returns false instead, target untouched). */
+/* Atomic small-file write (tmp + rename). One attempt, never sleeps (safe on the emulation loop and the UI thread). If a
+ * reader holds the target open the rename fails: false, target untouched, temp file removed. It never falls back to a non-atomic write. */
 bool write_text_atomic(const std::string& path, const std::string& text);
 bool read_text(const std::string& path, std::string* out);
 
-/* Delete to the Windows Recycle Bin (no dialog, no confirmation). */
-std::wstring shfile_path_buffer(const std::wstring& path);   // SHFileOperation wants "path\0\0": path plus two NULs (size() == path.size() + 2)
-bool move_to_recycle_bin(const std::string& utf8_path);       // true when the file is gone into the bin
-using DeleteFn = std::function<bool(const std::string&)>;
-/* Delete a user file: Recycle Bin first (`recycle`, default move_to_recycle_bin; tests inject a fake), and only if that fails the plain
- * permanent delete. A file that is already gone counts as deleted. True when the file no longer exists. */
-bool delete_user_file(const std::string& utf8_path, const DeleteFn& recycle = nullptr);
 
 /* Hub side: write the next command for a run (seq = previous seq in the file + 1). Returns the seq, 0 on failure.
  * The file holds ONE command: a Quit the runner has not acked yet is never replaced by another command (0 is returned), so a
@@ -138,7 +130,8 @@ class Poller {
   public:
     explicit Poller(std::string ctl_path = std::string());
     bool poll(uint64_t now_ms, Command* out, uint64_t interval_ms = 250);
-    void ack(bool ok, const std::string& msg) const;   // for the command last returned by poll()
+    void ack(bool ok, const std::string& msg) const;   // for the command last returned by poll(); one attempt, never sleeps. If the ack file is
+                                                       // held open by a reader, the ack is kept and retried on the next poll() ticks (bounded)
     long long last_seq() const { return last_; }
     bool enabled() const { return !path_.empty(); }
   private:
@@ -146,6 +139,9 @@ class Poller {
     std::string path_, stamp_;
     long long last_ = 0, pending_ = 0;
     uint64_t next_ = 0;
+    mutable std::string retry_text_;   // an ack whose write failed; written again by poll() (kAckRetryTicks tries at most)
+    mutable int retry_left_ = 0;
 };
+constexpr int kAckRetryTicks = 20;   // poll ticks (250 ms each by default): about 5 s of patience for a held ack file
 
 }  // namespace runctl
