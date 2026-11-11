@@ -93,7 +93,7 @@ void display_settings_ui() {
     gap();
     if (ImGui::Checkbox("Larger small text", &A.st.large_text)) {
         mark_dirty();
-        tvmode::set_base_scale(hubdisplay::effective_scale(hubdisplay::dpi_scale(), A.st.ui_scale));   // same font rebuild as a UI size change
+        tvmode::request_font_rebuild();   // same scale, so set_base_scale would ignore it; fonts rebuild before the next frame
     }
     text_wrapped_disabled("Makes hints and captions bigger, so they are easier to read from the sofa. The rest of the layout stays the same size.");
 }
