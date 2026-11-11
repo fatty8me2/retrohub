@@ -2,6 +2,7 @@
  * Data: <exe dir>\data\changelog.json (parsed by changelog.cpp). Shot aid: HUB_START_PAGE=5 (Updates page). */
 #include "app.h"
 #include "changelog.h"
+#include "u8file.h"
 
 namespace cl = hubui::changelog;
 
@@ -15,13 +16,7 @@ void load() {
     if (CL.loaded) return;
     CL.loaded = true;
     std::string text;
-    FILE* f = std::fopen((hub::exe_dir() + "data/changelog.json").c_str(), "rb");
-    if (f) {
-        char buf[65536];
-        size_t n;
-        while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, n);
-        std::fclose(f);
-    }
+    u8file::slurp(hub::exe_dir() + "data/changelog.json", &text);
     cl::parse(text, &CL.entries);
 }
 

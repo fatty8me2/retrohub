@@ -8,6 +8,8 @@
 
 #include <fstream>
 #include <sstream>
+#include <filesystem>
+#include <windows.h>
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++g_fail; } } while (0)
@@ -152,6 +154,20 @@ int main() {
         CHECK(!set_console_username(&cfg, "ElevenChars"));
         std::vector<uint8_t> none(8, 0);
         CHECK(!set_console_username(&none, "Bob_2"));
+        /* the console config is edited by UTF-8 path: a non-ASCII install folder works, an ASCII one is unchanged */
+        for (const char* folder : {"rh_np3ds_ascii", "rh_np3ds_" "Zo\xC3\xAB_\xD0\x96_\xE6\x97\xA5\xE6\x9C\xAC"}) {
+            const std::string root = (std::filesystem::temp_directory_path() / std::filesystem::u8path(std::string(folder) + "_" + std::to_string(GetCurrentProcessId()))).u8string();
+            const std::string cp = console_config_path(root);
+            std::error_code ec;
+            std::filesystem::create_directories(std::filesystem::u8path(cp).parent_path(), ec);
+            { std::ofstream o(std::filesystem::u8path(cp), std::ios::binary); o.write((const char*)cfg.data(), (std::streamsize)cfg.size()); }
+            CHECK(set_console_username_file(root, "Kai_3"));
+            std::ifstream i(std::filesystem::u8path(cp), std::ios::binary);
+            std::string got((std::istreambuf_iterator<char>(i)), std::istreambuf_iterator<char>());
+            CHECK(got.size() == cfg.size() && got[32] == 'K' && got[34] == 'a' && got[40] == '3');
+            CHECK(!set_console_username_file(root + "_missing", "Kai_3"));
+            std::filesystem::remove_all(std::filesystem::u8path(root), ec);
+        }
         if (const char* real = std::getenv("N3DS_REAL_INSTALL")) CHECK(set_console_username_file(real, "TestNick_1"));
     }
 

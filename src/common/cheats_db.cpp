@@ -12,6 +12,7 @@
 #include "json.h"
 #include "miniz.h"
 #include "winutil.h"
+#include "u8file.h"
 
 namespace hub {
 namespace {
@@ -166,14 +167,7 @@ std::string dir() {
 }
 
 bool slurp(const std::string& p, std::string* out) {
-    FILE* f = std::fopen(p.c_str(), "rb");
-    if (!f) return false;
-    char buf[65536];
-    size_t n;
-    out->clear();
-    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) out->append(buf, n);
-    std::fclose(f);
-    return true;
+    return u8file::slurp(p, out);
 }
 
 /* GameCube sections are named by Dolphin's game ini ("GALE01r2", "GM4"): lower-case ID without the revision suffix. */
