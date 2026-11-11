@@ -27,6 +27,9 @@ std::string game_dir(const std::string& system_short, const std::string& game_ke
 std::string game_dir_path(const std::string& system_short, const std::string& game_key);
 std::string battery_dir(const std::string& system_short, const std::string& game_key);
 std::string states_dir(const std::string& system_short, const std::string& game_key);
+/* battery_dir() / states_dir() paths (trailing backslash) that are never created: for read-only UI (lists, counts, thumbnails, play-time, health). Writers and launchers keep the creating getters. */
+std::string battery_dir_path(const std::string& system_short, const std::string& game_key);
+std::string states_dir_path(const std::string& system_short, const std::string& game_key);
 /* Call after a play session: refreshes meta.json (title, updated, device). */
 void touch_game(const std::string& system_short, const std::string& game_key, const std::string& title);
 
