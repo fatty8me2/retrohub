@@ -1,5 +1,8 @@
 #include "app.h"
 #include "dolphin_speed.h"
+#include "hub_log.h"
+#include "synth_input_lock.h"
+#include "durable_write.h"
 #include "tex_cache_logic.h"
 
 #include <SDL.h>
@@ -203,6 +206,7 @@ void dolphin_send_acts(std::vector<hubqm::DolphinAct> acts) {
     if (g_headless || autotest_active()) { qm_log("dolphin: " + std::to_string(acts.size()) + " menu hotkey chord(s) not injected (headless / QA)"); return; }
     std::vector<unsigned long> pids = game_pid_list();
     std::thread([pids, acts]() {
+        std::lock_guard<std::mutex> synth_lock(hubinput::synth_input_mutex());   // one burst of synthetic keys at a time (synth_input_lock.h)
         auto game_fg = [&]() {
             DWORD pid = 0;
             GetWindowThreadProcessId(GetForegroundWindow(), &pid);
@@ -911,16 +915,19 @@ std::string qm_args(const RunInfo& ri, const hub::GameEntry& e, bool n64_state_d
 void qm_log(const std::string& line) {
     static std::mutex mu;
     std::lock_guard<std::mutex> lk(mu);
+    /* hub.log copy: skip the lines that name an arbitrary foreground window (its title could be anything) */
+    if (line.find("fg=") == std::string::npos && line.compare(0, 13, "foreground ->") != 0) hublog::info("quickmenu: %s", line.c_str());
     static std::string dir = hub::data_dir() + "logs\\";
     static std::string path = dir + "quickmenu.log";
-    CreateDirectoryA(dir.c_str(), nullptr);
+    const std::wstring wdir = durable::utf8_to_wide(dir), wpath = durable::utf8_to_wide(path);
+    CreateDirectoryW(wdir.c_str(), nullptr);
     WIN32_FILE_ATTRIBUTE_DATA fad{};
-    if (GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad) && fad.nFileSizeHigh == 0 && fad.nFileSizeLow > 500000)
-        MoveFileExA(path.c_str(), (path + ".1").c_str(), MOVEFILE_REPLACE_EXISTING);
+    if (GetFileAttributesExW(wpath.c_str(), GetFileExInfoStandard, &fad) && fad.nFileSizeHigh == 0 && fad.nFileSizeLow > 500000)
+        MoveFileExW(wpath.c_str(), (wpath + L".1").c_str(), MOVEFILE_REPLACE_EXISTING);
     SYSTEMTIME st; GetLocalTime(&st);
     char ts[48];
     std::snprintf(ts, sizeof ts, "%04d-%02d-%02d %02d:%02d:%02d.%03d ", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-    std::ofstream f(path, std::ios::app | std::ios::binary);
+    std::ofstream f(std::filesystem::u8path(path), std::ios::app | std::ios::binary);
     f << ts << line << "\n";
 }
 

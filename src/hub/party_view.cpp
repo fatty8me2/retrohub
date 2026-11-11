@@ -1,3 +1,4 @@
+#include "console_names.h"
 #include "app.h"
 #include "party_logic.h"
 #include "party_ui.h"
@@ -79,7 +80,7 @@ void cover(ImDrawList* dl, const std::string& id, ImVec2 p0, ImVec2 p1, float ra
 
 std::string console_of(const std::string& id) {
     if (const hub::GameEntry* e = partyui::entry_of(id)) return hub::console_name(*e);
-    if (const GameInfo* g = hub::find_game(id)) return hub::system_name(hub::system_from_short(g->system.c_str()));
+    if (const GameInfo* g = hub::find_game(id)) return hub::full_name(hub::system_from_short(g->system.c_str()));
     return std::string();
 }
 

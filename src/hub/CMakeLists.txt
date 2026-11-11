@@ -200,6 +200,7 @@ add_executable(hub_updater_test test_updater.cpp updater.cpp update_apply.cpp)
 target_include_directories(hub_updater_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_updater_test PRIVATE hubcommon bcrypt shell32 ws2_32)
 target_link_libraries(hub_updater_test PRIVATE hubversion)
+target_link_libraries(hub_updater_test PRIVATE hubcrashlog)   # updater.cpp forwards its log lines to hublog::info
 target_compile_definitions(hub_updater_test PRIVATE RETROHUB_UPDATER_TESTING)   # the test-only key override in updater.cpp; never defined for RetroHub.exe
 
 # ---- Branding: icon + version resources, Windows shell integration (assets/brand/retrohub.ico) ----

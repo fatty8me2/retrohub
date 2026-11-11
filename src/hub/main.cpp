@@ -770,6 +770,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     for (auto* p : A.pads) SDL_GameControllerClose(p);
     g_io_shutdown = true;
     hubart::shutdown();
+    hubtoast::shutdown();   // the toast worker finishes its queue and joins (no toast can follow), before the log closes
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

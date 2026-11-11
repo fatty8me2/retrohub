@@ -1,3 +1,4 @@
+#include "console_names.h"
 #include "app.h"
 #include "wave3_hooks.h"
 #include <cctype>
@@ -126,7 +127,7 @@ void apply_scan() {
                         g.catalog_id = ci->id;
                         g.title = ci->title;
                     } else {
-                        g.title = std::string("Plain ") + hub::system_name(s) + " game";
+                        g.title = std::string("Plain ") + hub::full_name(s) + " game";
                         if (s == hub::System::GC) g.serial = "GPLN01";   // a scanned disc always has its game ID
                     }
                     A.lib.push_back(g);

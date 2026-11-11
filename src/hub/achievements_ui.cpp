@@ -1,3 +1,4 @@
+#include "console_names.h"
 #include "app.h"
 #include "challenge_ui.h"
 #include "cheevos_data.h"
@@ -137,7 +138,7 @@ void achievements_ui_section(const hub::GameEntry& e) {
         ImGui::PushFont(ui::F.bold);
         ImGui::TextUnformatted("Achievements");
         ImGui::PopFont();
-        text_wrapped_disabled(std::string("Achievements are not available for ") + hub::system_name(e.system) + " yet.");
+        text_wrapped_disabled(std::string("Achievements are not available for ") + hub::full_name(e.system) + " yet.");
         return;
     }
     const cheevos::GameCache* g = cache_for(e.key);

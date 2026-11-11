@@ -373,7 +373,7 @@ void draw_frame() {
     ImU32 room_badge = A.in_room ? (A.lobby.connected() ? ui::GOOD : ui::WARN) : 0;
     if (nav_item(Page::Library, "Library", ui::Icon::Home, iw, expand, 0)) A.page = Page::Library;
     if (nav_item(Page::Discover, "Discover", ui::Icon::Star, iw, expand, 0)) A.page = Page::Discover;
-    if (nav_item(Page::Online, A.in_room ? "Play Online  (in room)" : "Play Online", ui::Icon::Globe, iw, expand, room_badge)) A.page = Page::Online;
+    if (nav_item(Page::Online, A.in_room ? "Play Online (in room)" : "Play Online", ui::Icon::Globe, iw, expand, room_badge)) A.page = Page::Online;
     const int cloud_conflicts = cloud_ui_conflict_count();
     {
         std::string saves_label = cloud_conflicts ? "Saves  (" + std::to_string(cloud_conflicts) + " to resolve)" : A.job.running ? "Saves  (syncing...)" : "Saves";
