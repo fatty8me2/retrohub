@@ -1,7 +1,7 @@
 add_library(hublogic STATIC changelog.cpp osk_logic.cpp logic.cpp toast.cpp netplay_3ds.cpp smash_save.cpp state_slots.cpp
     party_logic.cpp bracket_logic.cpp hack_logic.cpp libview_logic.cpp shelf_logic.cpp crash_note.cpp
     recycle_bin.cpp)   # recycle_bin.cpp: hub-only Recycle Bin delete (shell32); the runners do not link hublogic   # Plan 4: party mode, brackets/ladder, ROM hack identity (pure)
-target_link_libraries(hublogic PUBLIC hubbase)
+target_link_libraries(hublogic PUBLIC hubbase hubinvite)   # hubinvite: room_code_from_text() reuses invite_parse_url
 target_include_directories(hublogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
 target_compile_features(hublogic PUBLIC cxx_std_17)
 

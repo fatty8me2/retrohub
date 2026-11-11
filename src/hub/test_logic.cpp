@@ -186,10 +186,10 @@ int main() {
     PeerInfo b{1, "Bob", true, {{"mp1", "AAA"}}, {"n64:aaa", "gba:abcd-1234", "gb:tetris-1"}};
     PeerInfo c{2, "Cy", true, {{"mp1", "BBB"}}, {"gba:abcd-1234"}};
     CHECK(game_selectable("mp1", 4, {a, b}, 0).ok);
-    CHECK(game_selectable("smash64", 4, {a, b}, 0).reason == "Bob doesn't have this game");
+    CHECK(game_selectable("smash64", 4, {a, b}, 0).reason == "Bob doesn't have this game. Pick another game or ask Bob to add it.");
     CHECK(game_selectable("mp1", 4, {a, b, c}, 0).reason == "Cy has a different version of this game (region or revision)");
     CHECK(game_selectable("gba:abcd-1234", 4, {a, b, c}, 0).ok);
-    CHECK(game_selectable("gb:tetris-1", 4, {a, b}, 0).reason == "Ann doesn't have this game");
+    CHECK(game_selectable("gb:tetris-1", 4, {a, b}, 0).reason == "Ann doesn't have this game. Pick another game or ask Ann to add it.");
     CHECK(game_selectable("n64:aaa", 4, {a, b}, 0).ok);
     {   /* GB/GBA/NES/SNES version ids ("v:<id>"): same id matches, different id refused, a missing id (older RetroHub) never blocks */
         PeerInfo h{0, "Hal", true, {{"v:tetris", "gb:tetris-aaaa"}}, {"tetris"}};
@@ -216,7 +216,7 @@ int main() {
     }
     CHECK(game_selectable("gba:abcd-1234", 2, {a, b, c}, 0).reason.find("too many") == 0);
     PeerInfo d; d.slot = 3; d.name = "Di";
-    CHECK(game_selectable("mp1", 4, {a, d}, 0).reason == "waiting for Di");
+    CHECK(game_selectable("mp1", 4, {a, d}, 0).reason == "Still checking Di's games...");
     CHECK(!game_selectable("mp1", 1, {a, b}, 0).ok);
 
     /* Smash Classic online is up to 4 players (no online cap): 3- and 4-member rooms are allowed, no notice */
@@ -262,12 +262,12 @@ int main() {
             ok.slot = 0; ok.name = "Ok"; ok.hello = true; ok.games["mp1"] = "AAA";
             part.slot = 1; part.name = "Part";
             CHECK(json::parse(msgs[0], &j) && parse_hello(j, &part) && part.hello && !part.hello_complete());
-            CHECK(game_selectable("mp1", 4, {ok, part}, 0).reason == "waiting for Part");
+            CHECK(game_selectable("mp1", 4, {ok, part}, 0).reason == "Still checking Part's games...");
             for (size_t m = 1; m < msgs.size(); ++m) CHECK(json::parse(msgs[m], &j) && parse_hello(j, &part));
             CHECK(part.hello_complete());
         }
         CHECK(ready_block_reason("1.10.0", "1.10.0", true).empty() && ready_block_reason("1.9.0", "1.10.0", true).find("Update") == 0 &&
-              ready_block_reason("1.10.0", "1.9.0", true).find("host needs") != std::string::npos &&
+              ready_block_reason("1.10.0", "1.9.0", true) == "The host is on v1.9.0 and you are on v1.10.0. Ask them to update RetroHub." &&
               ready_block_reason("1.10.0", "", false) == "Checking versions..." && ready_block_reason("1.9.0", "1.10.0", true, true).empty());
     }
     {   /* app version gate */
@@ -600,7 +600,7 @@ int main() {
         set_net_reason_file("");
         std::filesystem::remove(f);
     }
-    CHECK(exit_code_text(2).find("couldn't start") != std::string::npos);
+    CHECK(exit_code_text(2).find("set up this game") != std::string::npos);
 
     /* drop-in */
     {
@@ -1020,6 +1020,90 @@ int main() {
         s = room_action_state(true, false, "", "", false, h);
         CHECK(!s.button_enabled && s.headline == "Pick a game to start");
         CHECK(join_names({}) == "" && join_names({"A"}) == "A" && join_names({"A", "B", "C"}) == "A, B and C");
+        {   // item 1: a guest without the host's game is blocked with one clear reason (not "waiting for the host")
+            std::vector<RoomMember> gm = {{"Host", true, true, false}, {"Me", false, false, true}};
+            const std::string why = missing_game_block("Mario Party");
+            CHECK(why == "You don't have Mario Party. Add it with the Add games button in your Library, then press Ready.");
+            auto n = room_action_state(false, true, "", why, false, gm);
+            CHECK(!n.button_enabled && n.headline == "You can't ready up yet" && n.detail == why && n.tone == RoomTone::Bad);
+            n = room_action_state(false, false, "", "", false, gm);
+            CHECK(n.headline == "Waiting for the host to pick a game");   // nothing selected yet: unchanged
+        }
+        {   // item 8: members who are in a game
+            std::vector<RoomMember> im = {{"Me", true, true, true}, {"Mia", false, false, false, true}, {"Zed", false, false, false}};
+            auto s2 = room_action_state(true, true, "Kart", "", false, im);
+            CHECK(s2.detail == "1 of 3 ready. Mia is still in a game.");
+            im[2].in_game = true;
+            CHECK(room_action_state(true, true, "Kart", "", false, im).detail == "1 of 3 ready. Mia and Zed are still in a game.");
+            CHECK(still_in_game_text({}) == "" && still_in_game_text({"Mia"}) == "Mia is still in a game.");
+            std::vector<RoomMember> gm = {{"Host", true, true, false}, {"Me", true, false, true}, {"Mia", false, false, false, true}};
+            CHECK(room_action_state(false, true, "Kart", "", true, gm).detail == "Waiting for Mia (2 of 3 ready). Mia is still in a game.");
+        }
+        {   // item 5: why Host / Join are greyed out
+            CHECK(online_start_block(true, true) == "Close your running game first.");
+            CHECK(online_start_block(false, false).find("isn't available") != std::string::npos && online_start_block(false, true).empty());
+        }
+        {   // item 4: connecting phases on a fake clock (wrap safe)
+            CHECK(connect_phase(1000, 1000) == ConnectPhase::Contacting && connect_phase(1000, 8999) == ConnectPhase::Contacting);
+            CHECK(connect_phase(1000, 9000) == ConnectPhase::StillTrying && connect_phase(1000, 60000) == ConnectPhase::StillTrying);
+            CHECK(connect_phase(0xFFFFFF00u, 100) == ConnectPhase::Contacting && connect_phase(0xFFFFFF00u, 9000) == ConnectPhase::StillTrying);
+            CHECK(connect_phase_text(ConnectPhase::Contacting) == "Contacting the server..." && connect_phase_text(ConnectPhase::StillTrying) == "Still trying...");
+        }
+        {   // item 2: which failure gets which message and buttons
+            struct Row { const char* status; RoomFailureKind kind; bool rejoin, host_new; const char* title; };
+            const Row rows[] = {
+                {"The host left the room", RoomFailureKind::Closed, false, true, "This room has closed"},
+                {"The host left - game over", RoomFailureKind::Closed, false, true, "This room has closed"},
+                {"No such room", RoomFailureKind::CouldntJoin, false, true, "Couldn't join room ABC234"},
+                {"The room is full", RoomFailureKind::CouldntJoin, false, true, "Couldn't join room ABC234"},
+                {"Waiting for the owner to approve this account. Online play switches on as soon as it is approved.", RoomFailureKind::Blocked, false, false, "Couldn't join room ABC234"},
+                {"This account can't use online rooms right now.", RoomFailureKind::Blocked, false, false, "Couldn't join room ABC234"},
+                {"Connection lost. Press Rejoin to try again.", RoomFailureKind::LostConnection, true, false, "Disconnected from the room"},
+                {"Server busy, try again shortly", RoomFailureKind::LostConnection, true, false, "Disconnected from the room"},
+                {"", RoomFailureKind::LostConnection, true, false, "Disconnected from the room"},
+            };
+            for (const Row& r : rows) {
+                RoomFailure f = room_failure_kind(r.status, "ABC234");
+                CHECK(f.kind == r.kind && f.can_rejoin == r.rejoin && f.can_host_new == r.host_new && f.title == r.title && !f.detail.empty());
+            }
+            CHECK(room_failure_kind("No such room", "").title == "Couldn't join the room");
+        }
+        {   // item 3: the Join box
+            struct Row { const char* in; const char* code; bool hint; };
+            const Row rows[] = {
+                {"", "", false}, {"abc234", "ABC234", false}, {"ABC-234", "ABC234", false}, {"  abc 234 ", "ABC234", false}, {"abc_234", "ABC234", false},
+                {"ABC", "ABC", false}, {"ABC234XYZ", "ABC234", true}, {"ABC2345", "ABC234", true}, {"ABC!234", "ABC234", true},
+                {"retrohub://join/abcdef", "ABCDEF", false}, {"RETROHUB://JOIN/ABCDEF/", "ABCDEF", false}, {"retrohub://ABCDEF", "ABCDEF", false},
+                {"https://smash-netplay.jumpcircuit.workers.dev/j/ABCDEF", "ABCDEF", false},
+                {"https://smash-netplay.jumpcircuit.workers.dev/j/abcdef?h=Oli%20b", "ABCDEF", false},
+                {"Join me: https://smash-netplay.jumpcircuit.workers.dev/j/K7M2QX", "K7M2QX", false},   // words around the link are fine
+                {"<https://smash-netplay.jumpcircuit.workers.dev/j/K7M2QX>", "K7M2QX", false},
+                {"https://example.com/other", "", true}, {"https://x.test/j/ABC", "", true}, {"https://x.test/j/ABCDE0", "", true},
+                {"ABC0", "ABC", true}, {"AB1CD", "ABCD", true}, {"IO", "", true}, {"abc!23", "ABC23", true},
+            };
+            for (const Row& r : rows) {
+                RoomCodeInput in = room_code_from_text(r.in);
+                if (in.code != r.code || in.hint.empty() == r.hint) { std::printf("  room_code_from_text(\"%s\") -> \"%s\" hint=\"%s\"\n", r.in, in.code.c_str(), in.hint.c_str()); }
+                CHECK(in.code == r.code && in.hint.empty() != r.hint);
+            }
+        }
+        {   // Esc / B leaving a room: only pre-join connecting or a terminal failure, never a reconnect or a running game
+            CHECK(room_back_may_leave(true, false, false, "connecting", false));
+            CHECK(room_back_may_leave(true, false, true, "The host left the room", false));
+            CHECK(!room_back_may_leave(true, false, false, "Connection lost - reconnecting (2/5)...", false));
+            CHECK(!room_back_may_leave(true, false, false, "Server busy, try again shortly", false));
+            CHECK(!room_back_may_leave(true, true, false, "connected", false));
+            CHECK(!room_back_may_leave(true, false, true, "Connection lost. Press Rejoin to try again.", true));
+            CHECK(!room_back_may_leave(true, false, false, "connecting", true));
+            CHECK(!room_back_may_leave(false, false, true, "No such room", false));
+        }
+        {   // item 6 / 7 wording
+            CHECK(ready_block_reason("1.10.0", "", true) == "The host is on an older RetroHub than yours. Ask them to update RetroHub.");
+            CHECK(exit_code_text(3) == "Emulator files are missing. Reinstall RetroHub.");
+            CHECK(exit_code_text(2) == "RetroHub couldn't set up this game for the room. Ask the host to launch again.");
+            CHECK(exit_code_text(77) == "The game closed unexpectedly (code 77).");
+            CHECK(exit_code_text(12).find("firewall or VPN") != std::string::npos);
+        }
     }
 
     {   // friends' games (ghosts): after owned games in their console, never in Recently played / Favorites / hero
