@@ -1,6 +1,33 @@
 {
   "versions": [
     {
+      "version": "1.43.0",
+      "date": "2026-11-11",
+      "title": "Safer updates, crash reports, a tidier library",
+      "new": [
+        "If a new version of RetroHub cannot start on your PC, RetroHub now goes back to the version that worked and tells you. It will not keep trying the same broken version; Updates has a Try again button",
+        "RetroHub keeps a log and, if it ever closes unexpectedly, a short crash report. Next start it tells you once, with buttons to open or copy the report. Copy diagnostics includes both",
+        "Small windows: the library's top area is compact below 1280x760, so more games fit. The game page scrolls and its buttons stay in view",
+        "Emulator install problems are explained in plain words, with a Try again button"
+      ],
+      "improved": [
+        "Updates and emulator downloads carry on from where they stopped after a dropped connection, check for free disk space first, and no longer give up on slow connections",
+        "Play time reads the same everywhere (for example 12.5 hours), and console names are consistent across the hub",
+        "The cloud save conflict window shows what the save is and when each copy was made, instead of a file path",
+        "Cheats list: duplicates are shown once and required codes are marked. The tournament page and the controller bindings grid are tidier",
+        "The Light theme: friends' game tiles and labels are readable",
+        "The Updates and Play Online pages describe every supported console in plain words",
+        "Closing RetroHub during a library scan is quick"
+      ],
+      "fixed": [
+        "A crash that could happen with many screenshots or save state pictures on screen",
+        "Settings did not load or save when RetroHub was installed in a folder with accented or non-English letters. Copy diagnostics failed for the same reason",
+        "Adding a desktop shortcut could freeze the window while cover art downloaded",
+        "The Wii U pad shortcut could bring Cemu in front of a different game you had switched to",
+        "A leftover part-downloaded emulator file is now cleaned up or resumed instead of staying forever"
+      ]
+    },
+    {
       "version": "1.42.1",
       "date": "2026-11-11",
       "title": "Fixes: minimised Switch games, emulator repair",
