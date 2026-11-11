@@ -1438,6 +1438,52 @@ static void test_fritchii_install(const fs::path& root) {
     fs::remove_all(root, ec);
 }
 
+/* A repair install (exe or marker missing: antivirus quarantine, deleted marker) into an existing managed folder must never delete the emulator's own user data. */
+static void test_repair_keeps_userdata(const fs::path& root) {
+    using namespace upg;
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    struct Case { hubemu::Kind k; std::vector<std::string> data; };
+    const std::vector<Case> cases = {
+        {hubemu::Kind::Dolphin, {"User/GC/USA/Card A/mc.raw", "User/Config/Dolphin.ini"}},
+        {hubemu::Kind::Cemu, {"portable/mlc01/usr/save/00050000/1019e500/user/80000001/save.dat", "portable/settings.xml"}},
+        {hubemu::Kind::Azahar, {"user/sdmc/Nintendo 3DS/a/b/title/00040000/00055d00/data/00000001.sav", "user/nand/data/x"}},
+        {hubemu::Kind::Pcsx2, {"inis/PCSX2.ini", "memcards/Mcd001.ps2", "sstates/slot1.p2s", "snaps/a.png"}},
+        {hubemu::Kind::Ppsspp, {"memstick/PSP/SAVEDATA/GAME/DATA.BIN", "memstick/PSP/SYSTEM/ppsspp.ini"}},
+        {hubemu::Kind::Lrps2, {"user/memcards/Mcd001.ps2"}},
+    };
+    for (const Case& c : cases) {
+        const hubemu::Kind K = c.k;
+        const std::wstring wexe = hubemu::release(K).exe;
+        const std::string exe_name(wexe.begin(), wexe.end());
+        for (int fail = 0; fail < 2; ++fail) {
+            const fs::path r = root / (std::string(hubemu::name(K)) + (fail ? "_fail" : "_ok"));
+            const fs::path dir = fs::u8path(hubemu::managed_dir(K, r.string()));
+            Files before;
+            for (const std::string& f : c.data) { before[f] = "DATA:" + f; write_text(dir / fs::u8path(f), before[f]); }
+            write_text(dir / "stale.dll", "old");   // program leftover (exe and marker are missing)
+            auto rel = make_rel(r / "zips" / "z.zip", "t1", {{exe_name, "EXE"}, {"lib.dll", "lib"}});
+            rel->r.exe = wexe.c_str();
+            hubemu::InstallTestHooks hk;
+            hk.kind = K;
+            hk.release = &rel->r;
+            hk.fetch = [&](const hubemu::Release&, const std::string& out, std::string* e) {
+                if (fail) { *e = "injected failure"; return false; }
+                std::error_code e2; fs::copy_file(rel->zip, fs::u8path(out), fs::copy_options::overwrite_existing, e2); return !e2;
+            };
+            hk.running = [](const std::string&) { return false; };
+            hubemu::set_install_test_hooks(&hk);
+            std::string err;
+            const bool ok = hubemu::install_blocking(K, r.string(), &err, nullptr);
+            CHECK(ok == !fail);
+            if (!fail) CHECK(fs::exists(dir / fs::u8path(exe_name)) && fs::exists(dir / "retrohub-install.txt"));
+            for (const std::string& f : c.data) CHECK(fs::exists(dir / fs::u8path(f)) && read_text(dir / fs::u8path(f)) == before[f]);
+            hubemu::set_install_test_hooks(nullptr);
+        }
+    }
+    fs::remove_all(root, ec);
+}
+
 int main(int argc, char** argv) {
     test_3ds_header();
     test_wiiu_formats();
@@ -1459,6 +1505,7 @@ int main(int argc, char** argv) {
     test_nx_upgrade(hubemu::Kind::Lichii, dir / "upg");
     test_nx_upgrade(hubemu::Kind::Fritchii, dir / "upg_fritchii");   // the same install / upgrade / recovery scenarios on the Fritchii folder
     test_fritchii_install(dir / "fritchii");
+    test_repair_keeps_userdata(dir / "repair");
     fs::remove_all(dir, ec);
 
     int dl_bad = 0;
