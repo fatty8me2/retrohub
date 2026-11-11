@@ -12,9 +12,17 @@ int main() {
     Palette mid = preset(P_MIDNIGHT);
     CHECK(mid.c[S_BG] == rgba(16, 17, 22) && mid.c[S_PANEL] == rgba(26, 28, 36) && mid.c[S_ACCENT] == rgba(108, 122, 255));
     CHECK(mid.c[S_TEXT] == rgba(238, 240, 246) && mid.c[S_HAIRLINE] == rgba(255, 255, 255, 20) && mid.c[S_WARN] == rgba(240, 176, 64));
+    CHECK(mid.c[S_WASH] == rgba(96, 99, 108) && mid.c[S_WASH2] == rgba(118, 122, 132) && mid.c[S_NOART0] == rgba(92, 95, 104));
+    CHECK(mid.c[S_NOART1] == rgba(70, 73, 82) && mid.c[S_RING] == rgba(6, 7, 12) && mid.c[S_ON_WASH] == rgba(255, 255, 255) && mid.c[S_PILL_FG] == rgba(255, 255, 255));
     for (int p = 0; p < P_COUNT; ++p) {
         Palette q = preset(p);
         for (int s = 0; s < S_COUNT; ++s) CHECK(q.c[s] != 0);                       // every slot defined
+        for (int s = 0; s < S_COUNT; ++s) CHECK(ca(q.c[s]) > 0);                    // ... and not fully transparent (a missed slot stays 0)
+        {   // friend-game cover tiles: labels stay readable on the surface they sit on
+            double w1 = contrast(q.c[S_ON_WASH], q.c[S_WASH]), w2 = contrast(q.c[S_PILL_FG], q.c[S_PANEL2]);
+            CHECKC(w1 >= kMinText3, "ON_WASH on WASH", p, w1);
+            CHECKC(w2 >= kMinText2, "PILL_FG on PANEL2", p, w2);
+        }
         for (int s = 0; s < S_COUNT; ++s) if (s != S_HAIRLINE) CHECK(ca(q.c[s]) == 255);
         CHECK(ca(q.c[S_HAIRLINE]) > 0 && ca(q.c[S_HAIRLINE]) < 100);
         const Slot surf[] = {S_BG, S_SIDEBAR, S_PANEL, S_PANEL2};
