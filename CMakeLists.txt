@@ -234,6 +234,7 @@ add_test(NAME hub_input_gate_test COMMAND hub_input_gate_test)   # a pad press p
 add_test(NAME hub_idle_test COMMAND hub_idle_test)                  # idle throttle: when the hub may skip drawing a frame (pumps keep their cadence)
 add_test(NAME hub_toast_test COMMAND hub_toast_test)                  # toast XML/activation/policy with a mock notifier (no real toasts)
 add_test(NAME hub_wizard_test COMMAND hub_wizard_test)
+add_test(NAME hub_emu_error_text_test COMMAND hub_emu_error_text_test)   # plain wording for emulator install failures
 add_test(NAME hub_cloud_ui_test COMMAND hub_cloud_ui_test)             # cloud saves v2 status/label/dialog logic
 add_test(NAME hub_tv_test COMMAND hub_tv_test)   # TV mode scale, hero, Run-key value, clock, avatar plan
 add_test(NAME hub_username_test COMMAND hub_username_test)        # username rules, suggestions, availability checker, wizard name step

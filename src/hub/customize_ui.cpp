@@ -581,6 +581,12 @@ void draw_customize() {
     auto cit = CU.P.covers.find(e.key);
     const bool has_cover = cit != CU.P.covers.end() && !cit->second.empty();
 
+    /* The body scrolls and the footer (Reset / Done) stays on screen, so Done is never cut off on a short window. */
+    const float footer_h = sp(1.5f) + sp(4.5f);
+    const float max_body = std::max(sp(20.f), ImGui::GetIO().DisplaySize.y * 0.92f - sp(6.f) - footer_h);
+    static float s_body_h = 1e6f;
+    ImGui::BeginChild("##cust_body", ImVec2(0, std::min(s_body_h, max_body)), ImGuiChildFlags_NavFlattened);
+    bool hide_now = false;
     heading("Customize");
     ImGui::TextDisabled("%s", orig.c_str());
 
@@ -623,8 +629,8 @@ void draw_customize() {
         if (CU.shots.want || s_k != e.key || now_s() - s_at > 2.0) { s_k = e.key; s_at = now_s(); refresh_shots(e); }
     }
     const bool have_shots = !CU.shot_files.empty();
-    if (ui::button("From a screenshot...", ImVec2(0, sp(4.f)), false, have_shots, ui::Icon::Play)) { CU.shots.want = true; CU.shots.parent = LocCustomize; }
-    if (!have_shots && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("No screenshots of this game yet");
+    if (ui::button("Pick a screenshot", ImVec2(0, sp(4.f)), false, have_shots, ui::Icon::Play)) { CU.shots.want = true; CU.shots.parent = LocCustomize; }
+    if (!have_shots && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("This game has no screenshots yet. Take one in game, then come back.");
     if (has_cover) {
         ImGui::SameLine(0, sp(1.f));
         if (ui::button("Back to box art", ImVec2(0, sp(4.f)))) {
@@ -646,13 +652,16 @@ void draw_customize() {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
         ImGui::TextWrapped("Takes it off your shelves and out of the library. Show hidden brings it back to look at.");   // wrapped: it ran off the card (1.40.0 UI QA)
         ImGui::PopStyleColor();
-        if (ui::button("Hide game", ImVec2(0, sp(4.f)), false, true, ui::Icon::Close)) {
-            const std::string hk = e.key;
-            hide_game_now(hk);   // e is gone from the library after this
-            ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-            return;
-        }
+        if (ui::button("Hide game", ImVec2(0, sp(4.f)), false, true, ui::Icon::Close)) hide_now = true;
+    }
+    s_body_h = ImGui::GetCursorPosY() + sp(0.5f);
+    ImGui::EndChild();
+    if (hide_now) {
+        const std::string hk = e.key;
+        hide_game_now(hk);   // e is gone from the library after this
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
     }
 
     ImGui::Dummy(ImVec2(0, sp(1.5f)));
