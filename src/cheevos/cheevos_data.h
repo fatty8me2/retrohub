@@ -63,6 +63,8 @@ std::string progress_text(const GameCache& g);
 enum class Feature { LoadState, Rewind, Cheats, FastForward, SlowMotion };
 bool hardcore_blocks(bool hardcore, Feature f);
 const char* block_message(Feature f);
+/* The automatic resume state (auto.state) is a save state: hardcore may neither write nor load it. */
+bool auto_state_allowed(bool hardcore);
 /* Speed multiplier allowed in hardcore (anything below 1x is not; fast-forward is its own Feature). */
 bool speed_allowed(bool hardcore, double speed);
 

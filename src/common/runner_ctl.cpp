@@ -8,6 +8,14 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <thread>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 #include "json.h"
 #include "winutil.h"
@@ -195,13 +203,18 @@ bool write_text_atomic(const std::string& path, const std::string& text) {
         f << text;
         if (!f) return false;
     }
-    fs::rename(tmp, p, ec);
-    if (ec) {   // Windows: rename over an open/existing file can fail; fall back to overwrite
-        fs::remove(p, ec);
+    /* Windows: renaming over a file another process has open (the hub reading control_ack.json) fails while it is held. The hold is
+     * short, so retry with a small backoff (10+20+40+80+160 ms, about 300 ms at most). Never fall back to remove + write: the target
+     * must always be either the old complete file or the new complete one. */
+    static const int kRenameDelaysMs[] = {0, 10, 20, 40, 80, 160};
+    for (int d : kRenameDelaysMs) {
+        if (d) std::this_thread::sleep_for(std::chrono::milliseconds(d));
+        ec.clear();
         fs::rename(tmp, p, ec);
-        if (ec) { fs::remove(tmp, ec); return false; }
+        if (!ec) return true;
     }
-    return true;
+    fs::remove(tmp, ec);
+    return false;
 }
 
 bool read_text(const std::string& path, std::string* out) {
@@ -211,6 +224,40 @@ bool read_text(const std::string& path, std::string* out) {
     ss << f.rdbuf();
     *out = ss.str();
     return true;
+}
+
+std::wstring shfile_path_buffer(const std::wstring& path) {
+    std::wstring w = path;
+    w.push_back(L'\0');
+    w.push_back(L'\0');
+    return w;
+}
+
+bool move_to_recycle_bin(const std::string& utf8_path) {
+#ifdef _WIN32
+    std::error_code ec;
+    fs::path abs = fs::absolute(fs::u8path(utf8_path), ec);   // undo (the bin) needs a full path
+    if (ec) return false;
+    std::wstring from = shfile_path_buffer(abs.make_preferred().wstring());
+    SHFILEOPSTRUCTW op{};
+    op.wFunc = FO_DELETE;
+    op.pFrom = from.c_str();
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
+    int rc = SHFileOperationW(&op);
+    return rc == 0 && !op.fAnyOperationsAborted && !fs::exists(abs, ec);
+#else
+    (void)utf8_path;
+    return false;
+#endif
+}
+
+bool delete_user_file(const std::string& utf8_path, const DeleteFn& recycle) {
+    fs::path p = fs::u8path(utf8_path);
+    std::error_code ec;
+    if (!fs::exists(p, ec)) return true;
+    if ((recycle ? recycle : DeleteFn(move_to_recycle_bin))(utf8_path)) return true;
+    fs::remove(p, ec);   // the bin refused (disabled, network drive, ...): the old permanent delete
+    return !ec && !fs::exists(p, ec);
 }
 
 long long send_command(const std::string& ctl, Cmd cmd, int slot) {

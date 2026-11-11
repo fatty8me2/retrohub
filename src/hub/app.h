@@ -807,7 +807,7 @@ void shot_viewer_open(const hub::GameEntry& e, const std::vector<std::string>& p
 bool shot_viewer_draw();                                  // call every frame where the strip is drawn; true = a picture was deleted
 bool shot_copy_to_clipboard(const std::string& path);     // CF_DIB
 bool shot_set_cover(const std::string& game_key, const std::string& path);   // prefs covers[key]
-bool shot_send_to_friend(const std::string& path);        // STUB (returns false): needs server/DM work
+bool shot_send_to_friend(const std::string& path);        // opens the friend picker, then uploads the picture and DMs it (false: the file cannot be sent at all)
 void qm_seed_gallery(const hub::GameEntry& e);                                          // HUB_SHOT_GALLERY aid
 
 /* ---- lobby.cpp ---- */
