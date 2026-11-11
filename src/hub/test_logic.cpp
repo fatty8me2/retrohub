@@ -402,7 +402,7 @@ int main() {
     }
 
     {   // friends' play time
-        CHECK(friend_hours_text(0) == "" && friend_hours_text(45) == "45 min" && friend_hours_text(180) == "3 h" && friend_hours_text(870) == "15 h" && friend_hours_text(570) == "9.5 h");
+        CHECK(friend_hours_text(0) == "" && friend_hours_text(45) == "45 min" && friend_hours_text(180) == "3 h" && friend_hours_text(870) == "14.5 h" && friend_hours_text(570) == "9.5 h");
         std::map<std::string, std::vector<PlaytimeEntry>> by;
         by["u1"] = {{"k1", "Smash", 840}, {"k2", "Metroid", 10}};
         by["u2"] = {{"k1", "Smash", 180}};
@@ -446,7 +446,7 @@ int main() {
     CHECK(format_play_time(0) == "Never played");
     CHECK(format_play_time(30) == "Under a minute");
     CHECK(format_play_time(35 * 60) == "35 minutes");
-    CHECK(format_play_time(2 * 3600 + 5 * 60) == "2.1 hours");
+    CHECK(format_play_time(2 * 3600 + 5 * 60) == "2 hours");
     CHECK(sanitize_player_name("") == "Player");
     CHECK(sanitize_player_name("  Bob \"x\" ") == "Bob x");
     CHECK(sanitize_player_name("ABCDEFGHIJKLMNOPQRSTUVWXYZ").size() == 16);
@@ -666,7 +666,7 @@ int main() {
             a.updated_ms = NOW - 30000;
             CHECK(friend_presence_line(a, NOW) == "Smash Classic \xC2\xB7 2/4");
             a.updated_ms = NOW - 65 * 60000;
-            CHECK(friend_presence_line(a, NOW) == "Smash Classic \xC2\xB7 2/4 \xC2\xB7 1.1 h");
+            CHECK(friend_presence_line(a, NOW) == "Smash Classic \xC2\xB7 2/4 \xC2\xB7 1 h");
             FriendRow g = row("g", "Gus", FS_InGame, false, 0, "Mario Kart 64");
             CHECK(friend_presence_line(g, NOW) == "Mario Kart 64");
             CHECK(friend_presence_line(row("o", "Oz", FS_Online, false, 5), NOW) == "Online");

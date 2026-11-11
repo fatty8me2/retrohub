@@ -35,8 +35,8 @@ inline std::string group_thousands(uint64_t n) {
  *   0 s            ""   (callers pick their own words: "Not played yet", "-", ...)
  *   under a minute "<1 min" (compact) / "Under a minute" (long)
  *   under an hour  whole minutes, rounded down: "45 min" / "45 minutes" ("1 min" / "1 minute")
- *   1 h to 10 h    one decimal, rounded to the nearest tenth (halves up), never ".0": "1 h" / "1 hour", "1.5 h" / "1.5 hours", "9.9 h"
- *   10 h and up    whole hours, rounded, thousands separators: "10 h" / "10 hours", "100 h", "1,204 h" / "1,204 hours"
+ *   1 h to 100 h   one decimal, truncated (never overstates), never ".0": "1 h" / "1 hour", "12.5 h" / "12.5 hours", "99.9 h"
+ *   100 h and up   whole hours, truncated, thousands separators: "100 h" / "100 hours", "1,204 h" / "1,204 hours"
  * Compact is for tiles, list rows and chips; long is for sentences ("X played"). */
 inline std::string duration_text(uint64_t secs, bool compact) {
     if (secs == 0) return "";
@@ -46,8 +46,8 @@ inline std::string duration_text(uint64_t secs, bool compact) {
         const uint64_t m = secs / 60;
         return std::to_string(m) + (compact ? " min" : (m == 1 ? " minute" : " minutes"));
     }
-    const uint64_t tenths = (secs + 180) / 360;
-    if (tenths >= 100) return group_thousands((secs + 1800) / 3600) + hu;
+    const uint64_t tenths = secs / 360;   // truncated: never overstates
+    if (tenths >= 1000) return group_thousands(secs / 3600) + hu;
     if (tenths % 10 == 0) return std::to_string(tenths / 10) + (compact ? " h" : (tenths == 10 ? " hour" : " hours"));
     return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + hu;
 }

@@ -261,7 +261,7 @@ void stats_ui_card() {
     const bool wide = w > sp(70.f);
     stat_cell("Total play time", st.total_secs > 0 ? hours_text(st.total_secs) : std::string("Not played yet"));
     ImGui::SameLine(0, sp(5.f));
-    stat_cell("This week", hours_text(st.week_secs));
+    stat_cell("This week", st.week_secs > 0 ? hours_text(st.week_secs) : std::string("None this week"));
     if (st.longest.secs > 0) {
         ImGui::SameLine(0, sp(5.f));
         stat_cell("Longest session", hours_text(st.longest.secs));

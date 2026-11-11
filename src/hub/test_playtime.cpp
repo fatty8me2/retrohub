@@ -42,23 +42,22 @@ int main() {
         {59 * 60, "59 min", "59 minutes"},
         {3599, "59 min", "59 minutes"},
         {3600, "1 h", "1 hour"},                     // never "1.0"
-        {3779, "1 h", "1 hour"},                     // 3959 / 360 = 10 tenths
-        {3780, "1.1 h", "1.1 hours"},
+        {3779, "1 h", "1 hour"},                     // 10 tenths
+        {3960, "1.1 h", "1.1 hours"},
         {5400, "1.5 h", "1.5 hours"},
         {7200, "2 h", "2 hours"},
         {27000, "7.5 h", "7.5 hours"},
-        {35640, "9.9 h", "9.9 hours"},               // 9.9 h
-        {35819, "9.9 h", "9.9 hours"},               // 35999 / 360 = 99 tenths
-        {35820, "10 h", "10 hours"},                 // 36000 / 360 = 100 tenths: whole hours from here
+        {35999, "9.9 h", "9.9 hours"},               // truncated, not rounded up to 10
         {36000, "10 h", "10 hours"},
-        {99 * 3600 + 1800, "100 h", "100 hours"},    // 99.5 h rounds up
-        {100 * 3600, "100 h", "100 hours"},
-        {45000, "13 h", "13 hours"},                 // 12.5 h: halves up
+        {45000, "12.5 h", "12.5 hours"},
+        {45359, "12.5 h", "12.5 hours"},             // 12.59 h
+        {358200, "99.5 h", "99.5 hours"},
+        {359999, "99.9 h", "99.9 hours"},
+        {360000, "100 h", "100 hours"},              // whole hours from here
         {1000ull * 3600, "1,000 h", "1,000 hours"},
         {1204ull * 3600, "1,204 h", "1,204 hours"},
         {12345ull * 3600, "12,345 h", "12,345 hours"},
-        {12345ull * 3600 + 1799, "12,345 h", "12,345 hours"},
-        {12345ull * 3600 + 1800, "12,346 h", "12,346 hours"},
+        {12345ull * 3600 + 3599, "12,345 h", "12,345 hours"},
     };
     for (const Row& r : table) {
         CHECK(duration_text(r.secs, true) == r.compact);
@@ -69,7 +68,7 @@ int main() {
 
     /* ---- hours_played / sort_tile_text ---- */
     CHECK(hours_played(0) == "");
-    CHECK(hours_played(45000) == "13 hours played");
+    CHECK(hours_played(45000) == "12.5 hours played");
     CHECK(hours_played(27000) == "7.5 hours played");
     CHECK(hours_played(3600) == "1 hour played");
     CHECK(hours_played(1234ull * 3600) == "1,234 hours played");
@@ -160,8 +159,8 @@ int main() {
     {
         const int64_t now = ts(2026, 11, 9, 12);
         const std::string sep = " | ";
-        CHECK(header_line(153360, (uint64_t)(now - 100), now, 0, sep) == "43 hours played | Last played: Today");
-        CHECK(header_line(153360, 0, now, 0, sep) == "43 hours played");
+        CHECK(header_line(153360, (uint64_t)(now - 100), now, 0, sep) == "42.6 hours played | Last played: Today");
+        CHECK(header_line(153360, 0, now, 0, sep) == "42.6 hours played");
         CHECK(header_line(0, (uint64_t)ts(2026, 11, 3, 8), now, 0, sep) == "Last played: Nov 3");
         CHECK(header_line(0, 0, now, 0, sep) == "Not played yet");
         CHECK(header_line(5, (uint64_t)ts(2025, 12, 31, 8), now, 0, sep) == "Under a minute played | Last played: Dec 31, 2025");
@@ -248,15 +247,15 @@ int main() {
         std::vector<Session> v = {S(now - 100000, 3600, "PC-A"), S(now - 50000, 7200, "PC-A"), S(now - 10, 100, "PC-A"), S(now - 5000, 500, "PC-B"),
                                   S(now - 4000, 700, "pc-b"), S(now - 3000, 60, "PC-C")};
         GameStats g = game_stats(20000, (uint64_t)(now - 5), v, "PC-A", now);
-        // total = 20000 + 1260 = 21260 s -> "5.9 hours"; recent = 3600 + 7200 + 10 + 1260 = 12070 s -> "3.4 hours";
-        // this PC 20000 s -> "5.6 hours"; other 1260 s -> "21 minutes"
+        // total = 20000 + 1260 = 21260 s -> "5.9 hours"; recent = 3600 + 7200 + 10 + 1260 = 12070 s -> "3.3 hours";
+        // this PC 20000 s -> "5.5 hours"; other 1260 s -> "21 minutes"
         std::vector<Cell> c = strip_cells(g, now, 0);
         CHECK(c.size() == 6);
         CHECK(c.size() == 6 && c[0].label == "Play time" && c[0].value == "5.9 hours");
         CHECK(c.size() == 6 && c[1].label == "Last played" && c[1].value == "Today");
         CHECK(c.size() == 6 && c[2].label == "Sessions" && c[2].value == "6");
-        CHECK(c.size() == 6 && c[3].label == "Last 2 weeks" && c[3].value == "3.4 hours");
-        CHECK(c.size() == 6 && c[4].label == "This PC" && c[4].value == "5.6 hours");
+        CHECK(c.size() == 6 && c[3].label == "Last 2 weeks" && c[3].value == "3.3 hours");
+        CHECK(c.size() == 6 && c[4].label == "This PC" && c[4].value == "5.5 hours");
         CHECK(c.size() == 6 && c[5].label == "Other PCs" && c[5].value == "21 minutes");
 
         std::vector<Session> one = {S(now - 100, 3600, "PC-B")};
