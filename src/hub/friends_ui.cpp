@@ -455,45 +455,47 @@ void fr_invite_uids(const std::vector<std::string>& uids) {
     }
     if (FR.fake) set_toast("Invited " + names + " to room " + A.code + ".");   // live: the server's invite_result reports who was reached
 }
-static void fr_join_now(const std::string& code, const std::string& game_id, const std::string& title) {
-    if (launch_blocked("fr_join_lobby")) return;
-    if (session_active()) return;   // a game started while the question was open: the invite stays in the bell
-    if (A.in_room && A.code == code) { A.page = Page::Online; return; }
+/* Notices on the join paths: never a sound or a toast while a game runs (the hard rule); the invite waits in the bell instead. */
+static void fr_join_notice(const std::string& text, double secs = 8.0) { if (!game_active()) set_notice(text, secs); }
+static bool fr_join_now(const std::string& code, const std::string& game_id, const std::string& title, long long expires_at) {
+    if (launch_blocked("fr_join_lobby")) return false;
+    if (game_active() || session_active()) return false;   // a game started while the question was open: the invite stays in the bell
+    if (hubui::invite_expired(expires_at, wall_ms())) { fr_join_notice("That invite has expired."); return false; }
+    if (A.in_room && A.code == code) { A.page = Page::Online; return true; }
     bool owned = game_id.empty() || find_entry(game_id) || find_room_entry(game_id);
     enter_room(false, code);   // leaves any current room, switches to Play Online
-    if (A.in_room && A.code == code && !owned)
-        set_notice(hubui::group::missing_game_notice(title), 12.0);
+    if (A.in_room && A.code == code && !owned) fr_join_notice(hubui::group::missing_game_notice(title), 12.0);
+    return true;
 }
 /* Returns true only when the join went ahead. False: a game runs (invite kept in the bell), we are asking the player to confirm leaving
- * their room, or the code was bad. Callers that resolve a bell entry must do so only on true. */
-bool fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who) {
+ * their room, or the code was bad. Callers that resolve a bell entry must do so only on true. `expires_at` = the invite's expiry (0 = none). */
+bool fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who, long long expires_at) {
     if (launch_blocked("fr_join_lobby")) return false;
     fr_trace("join", code);
-    if (!hubnet::valid_room_code(code)) { set_notice("That room code is not valid any more."); return false; }
-    const bool busy = session_active();   // any session (A.proc, GC NetPlay, remote play, Kanto, 3DS room) or a full-screen app
-    switch (hubui::group::join_route(busy, hub_has_focus())) {
-    case hubui::group::JoinRoute::JoinNow: break;
-    default:   // NEVER auto-join or launch after it closes; keep the invite in the bell, joinable by hand
+    if (!hubnet::valid_room_code(code)) { fr_join_notice("That room code is not valid any more."); return false; }
+    const bool game = game_active();       // ANY game, session or full-screen app owns the screen
+    const bool session = session_active(); // sessions the hub knows about
+    const hubui::group::JoinRoute route = hubui::group::join_route(game, session, hub_has_focus());
+    hubnet::Invite inv;
+    inv.lobby_code = code; inv.game_id = game_id; inv.game_title = title; inv.expires_at = expires_at;
+    const std::string bell_name = who.empty() ? std::string("A friend") : who;
+    if (route != hubui::group::JoinRoute::JoinNow) {   // NEVER auto-join or launch after it closes; keep the invite in the bell, joinable by hand
         if (hubui::join_while_running(A.in_room && A.code == code) == hubui::JoinWhileRunning::AlreadyInRoom) {
-            set_notice("You are already in that room."); return false;
+            fr_join_notice("You are already in that room."); return false;
         }
-        {
-            hubnet::Invite inv;
-            inv.lobby_code = code; inv.game_id = game_id; inv.game_title = title;
-            group_note_invite("link:" + code, who.empty() ? std::string("A friend") : who, inv);
-        }
+        group_note_invite("link:" + code, bell_name, inv);
         // a game in front: silent, the bell badge shows it when the hub is next opened. The hub in front: one quiet line, no sound
-        if (hubui::group::join_route(busy, hub_has_focus()) == hubui::group::JoinRoute::QuietToast)
+        if (route == hubui::group::JoinRoute::QuietToast)
             push_toast("Saved in the bell. Join when your game ends.", ui::ACCENT, 5.0);
         return false;
     }
     if (!(A.in_room && A.code == code) && hubui::group::join_needs_confirm(A.in_room, (int)room_members().size(), ::is_host())) {
+        if (who.empty()) group_note_invite("link:" + code, bell_name, inv);   // a link has no card: keep a bell entry in case the question expires
         push_toast_action(hubui::group::join_confirm_text(who, ::is_host()), ui::WARN, "Leave and join",
-                          [code, game_id, title]() { fr_join_now(code, game_id, title); }, 12.0);   // letting the toast expire is "Stay"
+                          [code, game_id, title, who, expires_at]() { if (fr_join_now(code, game_id, title, expires_at) && who.empty()) group_resolve(hubui::group::Kind::Invite, "link:" + code, code); }, 12.0);   // letting the toast expire is "Stay"
         return false;
     }
-    fr_join_now(code, game_id, title);
-    return true;
+    return fr_join_now(code, game_id, title, expires_at);
 }
 void fr_open_chat(const std::string& uid) {
     fr_trace("chat", uid);
@@ -1073,7 +1075,7 @@ void fr_accept(const std::string& uid, const std::string& name) {
     if (FR_FRIEND_TOAST.allow(uid, wall_ms())) set_toast("You and " + name + " are now friends.");   // the later friend_added event for this person is deduped
 }
 void fr_join_notif(Notif& n) {
-    if (fr_join_lobby(n.inv.lobby_code, n.inv.game_id, n.inv.game_title, n.name))
+    if (fr_join_lobby(n.inv.lobby_code, n.inv.game_id, n.inv.game_title, n.name, n.inv.expires_at))
         group_resolve(hubui::group::Kind::Invite, n.uid, n.inv.lobby_code);   // otherwise the invite stays in the bell
     n.done = true;
 }
@@ -1233,7 +1235,7 @@ bool fr_join_invite_toast() {
         if (n.done || !n.toast || !n.invite || ImGui::GetTime() - n.t0 > 30.0) continue;
         if (hubui::invite_expired(n.inv.expires_at, wall_ms())) {
             n.done = true;
-            set_notice("That invite has expired.");
+            fr_join_notice("That invite has expired.");
             return true;
         }
         shot_trace("join-toast", n.inv.lobby_code);
@@ -2079,7 +2081,7 @@ void fr_chat_view(float cw) {
                 ImGui::PushID((int)i);
                 ImGui::SetCursorScreenPos(ImVec2(q0.x + pad, q1.y - pad - sp(3.f)));
                 if (ui::button("Join", ImVec2(cwid - pad * 2, sp(3.f)), true, !expired))
-                    fr_join_lobby(m.inv.lobby_code, m.inv.game_id, m.inv.game_title, (fr_find(m.from) ? fr_find(m.from)->name : std::string()));
+                    fr_join_lobby(m.inv.lobby_code, m.inv.game_id, m.inv.game_title, (fr_find(m.from) ? fr_find(m.from)->name : std::string()), m.inv.expires_at);
                 ImGui::PopID();
             }
             ImGui::SetCursorScreenPos(c);
