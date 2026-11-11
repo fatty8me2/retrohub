@@ -69,7 +69,7 @@ void page_online_home() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, same_h), ImVec2(FLT_MAX, FLT_MAX));
     begin_panel("host", ImVec2(w, 0));
     ImGui::PushFont(ui::F.h2);
-    ImGui::TextUnformatted("Start a room");
+    ImGui::TextUnformatted("Host a room");
     ImGui::PopFont();
     text_wrapped_disabled("Create a room, pick a game, and share its 6-character code with your friends.");
     ImGui::Dummy(ImVec2(0, 8 * S));

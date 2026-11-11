@@ -582,7 +582,7 @@ void page_discover()
     page_header("Discover", "Highly rated games for each console. Add your own copy, or install from your shared packs.");
     ensure_browser();
     if (g_br.size() == 0) {
-        text_wrapped_disabled("The recommendations list (data\\recommended.json) is missing from this install.");
+        text_wrapped_disabled("The recommendations list is missing from this install. Reinstall RetroHub to restore it.");
         return;
     }
     if (!g_inited) {   // first visit: the console you own the most games for
