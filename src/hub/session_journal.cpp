@@ -347,7 +347,9 @@ bool process_running(unsigned long pid, unsigned long long created, const std::s
 namespace {
 
 std::wstring norm_path(const std::string& p) {
-    std::wstring w = u8(p).wstring();
+    std::wstring w;
+    try { w = u8(p).wstring(); }
+    catch (...) { w.assign(p.begin(), p.end()); }   /* not valid UTF-8 (a damaged journal): compare the raw bytes, never throw */
     for (auto& c : w) { if (c == L'/') c = L'\\'; c = (wchar_t)towlower(c); }
     while (w.size() > 3 && w.back() == L'\\') w.pop_back();
     return w;

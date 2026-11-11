@@ -266,9 +266,11 @@ static void test_recover_while_running() {
     hubproc::creation_time(GetCurrentProcess(), &j.created);
     CHECK(hubjournal::process_running(j.pid, j.created) && !hubjournal::process_running(0, 0));
     {   // no creation time recorded: the image path decides; with nothing to compare only an old journal counts as a recycled pid
-        char me[MAX_PATH] = {};
-        GetModuleFileNameA(nullptr, me, MAX_PATH);
+        wchar_t mew[2048] = {};
+        GetModuleFileNameW(nullptr, mew, 2048);
+        const std::string me = U8(fs::path(mew));   // UTF-8, also from a folder with non-ANSI letters
         const long long now = (long long)time(nullptr);
+        CHECK(!hubjournal::process_running(j.pid, 0, "C:\\bad\xEB\xFF" ".exe", now));   // invalid UTF-8 never throws
         CHECK(hubjournal::process_running(j.pid, 0, me, now));                          // same image: running
         CHECK(!hubjournal::process_running(j.pid, 0, "C:\nowhere\other.exe", now));   // another image: recycled pid
         CHECK(hubjournal::process_running(j.pid, 0, "", now));                          // nothing to compare, fresh journal: stay careful
