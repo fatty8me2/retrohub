@@ -44,6 +44,7 @@ struct UI {
     std::string req_for;
     double kit_asked_at = -100.0;
     Fake fake;
+    int scroll_frames = 0;   // screenshots: frames spent scrolling to the card (a few, for layout)
     bool fake_on_hookshot = false;   // the fake done state's runner
     std::string fake_runner = "lichii";   // ...as a name (the switch buttons set it)
     bool fake_read = false;
@@ -56,7 +57,7 @@ void read_fake() {
     if (HU.fake_read) return;
     HU.fake_read = true;
     const char* m = g_headless ? std::getenv("HUB_SHOT_HOOKSHOT") : nullptr;
-    if (m && *m) { HU.fake.on = true; HU.fake.mode = m; HU.fake_on_hookshot = HU.fake.mode == "done_on"; HU.fake_runner = HU.fake_on_hookshot ? "hookshot" : HU.fake.mode == "done_fritchii" ? "fritchii" : "lichii"; }
+    if (m && *m && !(m[0] == '0' && !m[1])) { HU.fake.on = true; HU.fake.mode = m; HU.fake_on_hookshot = HU.fake.mode == "done_on"; HU.fake_runner = HU.fake_on_hookshot ? "hookshot" : HU.fake.mode == "done_fritchii" ? "fritchii" : "lichii"; }
 }
 
 std::string date_text(int64_t unix_t) {
@@ -416,7 +417,7 @@ void hookshot_details_section(const hub::GameEntry& e) {
     const View v = make_view(e);
 
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    if (HU.fake.on && ImGui::GetFrameCount() > 8) ImGui::SetScrollHereY(0.f);   // screenshots: the card sits at the end of the page, bring it to the top
+    if (HU.fake.on && HU.scroll_frames < 8 && ImGui::GetFrameCount() > 8) { ImGui::SetScrollHereY(0.f); ++HU.scroll_frames; }   // screenshots: the card sits at the end of the page, bring it to the top
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::PANEL);
     ImGui::PushStyleColor(ImGuiCol_Border, ui::HAIRLINE);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, sp(1.f));
