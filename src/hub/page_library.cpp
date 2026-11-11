@@ -910,8 +910,12 @@ static void draw_playtime_strip(const std::vector<hubui::pt::Cell>& cells, float
 
 /* ---------- details modal (Y / right-click / "...") ---------- */
 
+std::string g_details_shown;
+
 void draw_details_modal() {
     draw_ghost_modal();   // a friend's game you do not own (friend_games_ui.cpp)
+    g_details_shown.clear();
+    if (g_headless && A.show_details && !A.lib.empty() && !A.env_select.empty() && find_entry(A.env_select)) { A.sel_game = A.env_select; A.env_select.clear(); }   // HUB_SHOT_DETAILS: select the named game before opening
     if (A.show_details && !(g_headless && A.lib.empty())) {   // headless aids (HUB_SHOT_DETAILS) set this before the library exists: keep it pending until then
         A.show_details = false;
         if (find_entry(A.sel_game)) ImGui::OpenPopup("##details");
@@ -928,6 +932,7 @@ void draw_details_modal() {
     if (!open) return;
     if (!ep || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     const hub::GameEntry& e = *ep;
+    g_details_shown = e.key;
     const hub::GameState& gs = gstate(e.key);
     const GameInfo* cat = catalog_for(e);
     poll_save_info();
