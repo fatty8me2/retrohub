@@ -128,8 +128,22 @@ int main(int argc, char** argv) {
         CHECK(!g.a_press("p2", true, false));                  // a pad never primed: primed, not claimed
         CHECK(!g.a_press("p2", true, false) && !g.a_press("p2", false, false) && g.a_press("p2", true, false));
         g.forget("p2"); CHECK(!g.known("p2")); g.clear(); CHECK(!g.known("p1"));
-        CHECK(hubui::assign_end_requested(true, false) && hubui::assign_end_requested(false, true));
-        CHECK(!hubui::assign_end_requested(false, false));
+    }
+    {   // Assign players state machine: every way out ends the mode AND releases A; running keeps A locked; Y starts over in pad mode only
+        using hubui::AssignFrameIn; using hubui::assign_frame;
+        AssignFrameIn r; r.active = true;
+        CHECK(!assign_frame(r).end && assign_frame(r).lock_a && !assign_frame(r).release_a);
+        AssignFrameIn x;
+        x = r; x.b_pressed = true;      CHECK(assign_frame(x).end && assign_frame(x).release_a && !assign_frame(x).lock_a && assign_frame(x).swallow_b);
+        x = r; x.esc_pressed = true;    CHECK(assign_frame(x).end && assign_frame(x).release_a && assign_frame(x).swallow_b);
+        x = r; x.done_clicked = true;   CHECK(assign_frame(x).end && assign_frame(x).release_a && !assign_frame(x).swallow_b);
+        x = r; x.all_ports_set = true;  CHECK(assign_frame(x).end && assign_frame(x).release_a);
+        x = r; x.timed_out = true;      CHECK(assign_frame(x).end && assign_frame(x).release_a);
+        x = r; x.input_blocked = true;  CHECK(assign_frame(x).end && assign_frame(x).release_a && !assign_frame(x).swallow_b);   // unfocused: B belongs to the game
+        x = r; x.page_visible = false;  CHECK(assign_frame(x).end && assign_frame(x).release_a && !assign_frame(x).lock_a);
+        AssignFrameIn off; CHECK(!assign_frame(off).end && assign_frame(off).release_a && !assign_frame(off).lock_a);   // inactive: always released
+        x = r; x.y_pressed = true;      CHECK(!assign_frame(x).start_over);                      // mouse / keyboard: no Y route
+        x.pad_mode = true;              CHECK(assign_frame(x).start_over && assign_frame(x).lock_a && !assign_frame(x).end);
     }
     std::printf(g_fail ? "FAILED\n" : "launch settings OK\n");
     return g_fail != 0;
