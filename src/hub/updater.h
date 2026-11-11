@@ -31,6 +31,12 @@ void check_async(bool force);      // force=false honours launch_check_disabled(
 bool checking();
 bool update_available();
 bool check_failed();
+/* A release whose new RetroHub could not start on this PC is rolled back by the installer (updates\\bad_version.json). The updater then
+ * does not download, stage or install that same tag again by itself: the check says so calmly (status()) and update_available() stays
+ * false. update_blocked_bad_version() is true meanwhile; the "Try again" button calls retry_bad_version(), which clears the record and
+ * checks once more. A different, newer release is handled normally. */
+bool update_blocked_bad_version();
+void retry_bad_version();
 std::string latest_version();      // release tag, e.g. "v1.8.0"
 std::string release_notes();       // plain text, markdown stripped
 std::string current_version();     // HUB_VERSION_STR
@@ -234,6 +240,15 @@ inline bool check_retry_due(bool checked, unsigned long long last_fail_ms, unsig
     if (checked) return false;
     return last_fail_ms == 0 || now_ms < last_fail_ms || now_ms - last_fail_ms >= kCheckRetryMs;
 }
+
+/* ---- do not offer again a version that could not start here (the applier's updates\\bad_version.json) ---- */
+enum class BadVerdict { Proceed, Skip, ForcedRetry };
+/* Same tag (a leading "v" ignored) => Skip, or ForcedRetry when the user asked to try again; anything else (no record, another tag) => Proceed. */
+BadVerdict bad_version_verdict(const std::string& candidate_tag, const std::string& bad_tag, bool retry_requested);
+std::string bad_version_message(const std::string& candidate_tag, const std::string& current_version);   // "Version X could not start on this PC, so RetroHub stayed on version Y."
+/* Reads the record under <install>\\updates (a missing or malformed one is ignored). true => this candidate must NOT be downloaded or installed
+ * (*why = the calm message). A forced retry, or a different tag, clears the record and returns false. */
+bool bad_version_gate(const std::wstring& install, const std::string& candidate_tag, bool retry_requested, std::string* why);
 
 /* ---- a staged folder that keeps failing its check is not retried forever ----
  * Each time an unpacked folder of the SAME tag is found untrusted and discarded, note_discard counts it; after kMaxStagedDiscards the tag is
