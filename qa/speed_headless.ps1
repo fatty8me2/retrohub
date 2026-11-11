@@ -4,7 +4,7 @@
 # Checks, per system: every step 0.25x..8x lands within +-TOL of the 1x measured right before/after it (steady machine only; busy PC -> exit 77, skipped); 1x restores after EVERY step and after Max;
 # Max is far above 8x; 10 speed changes inside ~200 ms -> the last one wins; speed changes still apply while "input off".
 # n64run has no test ROM under deps (see docs); it is not covered here.
-param([string]$Root = (Split-Path -Parent $PSScriptRoot), [double]$Tol = 0.08, [string[]]$Only = @(), [double]$Settle = 0.7, [double]$Window = 1.6, [double]$Unstable = 0.10)
+param([string]$Root = (Split-Path -Parent $PSScriptRoot), [double]$Tol = 0.08, [string[]]$Only = @(), [double]$Settle = 0.7, [double]$Window = 1.6, [double]$Unstable = 0.04)
 $ErrorActionPreference = 'Stop'
 $env:RETRORUN_MUTE = '1'; $env:N64RUN_MUTE = '1'; $env:SSB64_MUTE = '1'
 $exe = Join-Path $Root 'build\bin\Release\retrorun.exe'
@@ -64,13 +64,15 @@ function MeasureFps($log) {   # settle, then average frames/s over the window us
 
 # A busy PC (builds, other tests) changes the wall-clock fps of the 1x runner itself, so each speed step is measured against 1x windows taken
 # immediately before and after it (consecutive windows) and checked with the same +-TOL as always. If those two 1x windows disagree by more than
-# $Unstable the machine was not steady during the trial: the trial is repeated (up to 3 times); if it never gets steady the test exits 77 (CTest
-# SKIP_RETURN_CODE: "skipped: machine too busy") instead of reporting a false failure. A step that is measured on a steady machine is judged exactly as strictly as before.
-$script:unstable = $false
+# $Unstable (4%, half of TOL) the machine was not steady during the trial: the trial is repeated (up to 3 times); ONLY if it still drifts after 3 tries
+# does the test exit 77 (CTest SKIP_RETURN_CODE: "skipped: machine too busy"). Everything else still FAILS: no frames logged, a steady-but-too-slow 1x (<40 fps),
+# runner not starting, wrong reported speed. A step must be within TOL of BOTH neighbouring 1x windows, so a steady machine is judged at least as strictly as before.
+$script:tooBusy = $false
 $script:carry = $null     # the last 1x measurement (a trial's closing window is the next trial's opening window)
 
 function Trial($n, $label, $ctl, $run, $log, [scriptblock]$act) {
     # returns @{ ok=$true; ref; m } on a steady trial, $null when the machine never settled
+    $why = ''
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         $pre = $script:carry
         if (-not $pre) { SetSpeed $ctl $run 1; $pre = MeasureFps $log }
@@ -80,22 +82,25 @@ function Trial($n, $label, $ctl, $run, $log, [scriptblock]$act) {
         SetSpeed $ctl $run 1
         $post = MeasureFps $log
         $script:carry = $post
-        if (-not $pre -or -not $post -or -not $m) { Write-Host "  [$n] $label attempt ${attempt}: no frames logged, machine busy?"; continue }
-        if ($pre.fps -gt 75) { Fail "$n $label 1x baseline $($pre.fps) fps is not ~60 (realtime pacing broken)"; return @{ ok = $true; ref = $pre.fps; m = $m; post = $post; pre = $pre; broken = $true } }
+        if (-not $pre -or -not $post -or -not $m) { $why = 'noframes'; Write-Host "  [$n] $label attempt ${attempt}: no frames logged"; continue }
         $drift = [math]::Abs($post.fps - $pre.fps) / [math]::Max($pre.fps, $post.fps)
-        if ($pre.fps -lt 40 -or $post.fps -lt 40 -or $drift -gt $Unstable) {
+        if ($drift -gt $Unstable) {
+            $why = 'drift'
             Write-Host ("  [{0}] {1} attempt {2}: unsteady machine (1x before {3:N1} fps, after {4:N1} fps), repeating" -f $n, $label, $attempt, $pre.fps, $post.fps)
             continue
         }
-        return @{ ok = $true; ref = ($pre.fps + $post.fps) / 2; pre = $pre; post = $post; m = $m }
+        if ($pre.fps -gt 75 -or $pre.fps -lt 40 -or $post.fps -lt 40) { $why = "baseline $([math]::Round($pre.fps,1))/$([math]::Round($post.fps,1)) fps is not ~60 (realtime pacing broken)"; continue }
+        return @{ pre = $pre; post = $post; m = $m }
     }
-    $script:unstable = $true
+    if ($why -eq 'drift') { $script:tooBusy = $true }
+    elseif ($why -eq 'noframes') { Fail "$n $label no frames logged" }
+    else { Fail "$n $label 1x $why" }
     return $null
 }
 
 foreach ($s in $systems) {
     if ($Only.Count -and $Only -notcontains $s.n) { continue }
-    if ($script:unstable) { break }
+    if ($script:tooBusy) { break }
     $core = Join-Path $cores $s.core; $rom = Join-Path $roms $s.rom
     if (-not (Test-Path $core) -or -not (Test-Path $rom)) { Write-Host "SKIP $($s.n): core or rom missing"; continue }
     $work = Join-Path $env:TEMP ('spd_' + $s.n + '_' + [guid]::NewGuid().ToString('N'))
@@ -110,10 +115,9 @@ foreach ($s in $systems) {
         $t0 = Get-Date
         while (-not (Test-Path $log) -or (Fstats $log).Count -lt 2) {
             if ($p.HasExited) { throw "runner did not start ($($s.n))" }
-            if (((Get-Date) - $t0).TotalSeconds -gt 90) { Write-Host "[$($s.n)] runner too slow to start (machine busy)"; $script:unstable = $true; break }
+            if (((Get-Date) - $t0).TotalSeconds -gt 90) { Fail "$($s.n): runner did not log frames within 90 s"; throw 'hard' }
             Start-Sleep -Milliseconds 200
         }
-        if ($script:unstable) { throw 'unstable' }
         $n = $s.n
         $row = [ordered]@{ system = $n }
         $steps = @(0.25, 0.5, 1.5, 2, 3, 5, 8, 0)
@@ -123,14 +127,16 @@ foreach ($s in $systems) {
             $label = if ($sp -eq 0) { 'max' } else { "$($sp)x" }
             $spv = $sp
             $t = Trial $n $label $ctl $run $log { SetSpeed $ctl $run $spv }.GetNewClosure()
-            if (-not $t) { throw 'unstable' }
-            $m = $t.m; $base = $t.ref
+            if (-not $t) { throw $(if ($script:tooBusy) { 'unstable' } else { 'hard' }) }
+            $m = $t.m; $hi = [math]::Max($t.pre.fps, $t.post.fps)
             if ($sp -eq 0) {
                 if (-not $m.last.max) { Fail "$n max: runner did not report max mode" }
-                if ($m.fps -lt $base * 8 * 0.92) { Fail ("{0} max only {1:N0} fps (< 8x of {2:N1})" -f $n, $m.fps, $base) }
+                if ($m.fps -lt $hi * 8 * 0.92) { Fail ("{0} max only {1:N0} fps (< 8x of {2:N1})" -f $n, $m.fps, $hi) }
             } else {
-                $ratio = $m.fps / $base
-                if ([math]::Abs($ratio - $sp) -gt $Tol * $sp) { Fail ("{0} {1}: {2:N1} fps = {3:N3}x (want {4}x +-{5:P0}; 1x before {6:N1}, after {7:N1})" -f $n, $label, $m.fps, $ratio, $sp, $Tol, $t.pre.fps, $t.post.fps) }
+                foreach ($b1 in @($t.pre.fps, $t.post.fps)) {   # within TOL of BOTH neighbouring 1x windows
+                    $ratio = $m.fps / $b1
+                    if ([math]::Abs($ratio - $sp) -gt $Tol * $sp) { Fail ("{0} {1}: {2:N1} fps = {3:N3}x of a 1x window (want {4}x +-{5:P0}; 1x before {6:N1}, after {7:N1})" -f $n, $label, $m.fps, $ratio, $sp, $Tol, $t.pre.fps, $t.post.fps); break }
+                }
                 if ([double]$m.last.sp -ne $sp) { Fail "$n $label runner reports speed $($m.last.sp)" }
             }
             # 1x restore after EVERY step, and after Max: the closing 1x window of the trial
@@ -140,7 +146,7 @@ foreach ($s in $systems) {
             if (-not $row.Contains('1x')) { $row['1x'] = [math]::Round($t.pre.fps, 1) }
             $row[$label] = [math]::Round($m.fps, 1)
             $row["1x<-$label"] = [math]::Round($r.fps, 1)
-            Write-Host ("[{0}] {1}: {2:N1} fps (1x ref {3:N1})" -f $n, $label, $m.fps, $base)
+            Write-Host ("[{0}] {1}: {2:N1} fps (1x before {3:N1}, after {4:N1})" -f $n, $label, $m.fps, $t.pre.fps, $t.post.fps)
             if ($inputOff -and $sp -eq 0) { Send $ctl @{ cmd = 'input'; value = 1 } | Out-Null; $inputOff = $false }
         }
         # rapid changes: 10 commands, ~20 ms apart; the last one must win, then rapid ending on 1x after Max
@@ -152,10 +158,10 @@ foreach ($s in $systems) {
                 $a = WaitAck $run $seq 10
                 if (-not $a) { Fail "$n rapid: last seq $seq never acked" }
             }.GetNewClosure()
-            if (-not $t) { throw 'unstable' }
+            if (-not $t) { throw $(if ($script:tooBusy) { 'unstable' } else { 'hard' }) }
             $m = $t.m
-            $ok = [math]::Abs($m.fps / $t.ref - $want) -le $Tol * $want
-            if (-not $ok) { Fail ("{0} rapid x10 ending {1}x: {2:N1} fps ({3}; 1x ref {4:N1})" -f $n, $want, $m.fps, $m.last.sp, $t.ref) }
+            $ok = ([math]::Abs($m.fps / $t.pre.fps - $want) -le $Tol * $want) -and ([math]::Abs($m.fps / $t.post.fps - $want) -le $Tol * $want)
+            if (-not $ok) { Fail ("{0} rapid x10 ending {1}x: {2:N1} fps ({3}; 1x before {4:N1}, after {5:N1})" -f $n, $want, $m.fps, $m.last.sp, $t.pre.fps, $t.post.fps) }
             $row["rapid->$want"] = [math]::Round($m.fps, 1)
         }
         SetSpeed $ctl $run 1
@@ -163,7 +169,7 @@ foreach ($s in $systems) {
         $table += [pscustomobject]$row
         if (-not $p.WaitForExit(15000)) { Fail "$n runner did not quit"; Stop-Process -Id $p.Id -Force }
     } catch {
-        if (-not $script:unstable) { Fail "$($s.n): $_" }
+        if ($_.Exception.Message -ne 'unstable' -and $_.Exception.Message -ne 'hard') { Fail "$($s.n): $_" }
         if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
     }
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
@@ -171,5 +177,5 @@ foreach ($s in $systems) {
 Write-Host ''
 $table | ForEach-Object { ($_.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '  ' }
 if ($script:fail) { Write-Host "speed_headless: $script:fail FAILED"; exit 1 }
-if ($script:unstable) { Write-Host 'speed_headless: SKIPPED: machine too busy for a wall-clock speed measurement (1x windows disagree by more than 10% after 3 tries)'; exit 77 }
+if ($script:tooBusy) { Write-Host 'speed_headless: SKIPPED: machine too busy for a wall-clock speed measurement (1x windows disagree by more than 4% after 3 tries)'; exit 77 }
 Write-Host 'speed_headless: all passed'
