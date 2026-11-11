@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -229,6 +230,144 @@ inline bool save(const std::string& path, const Plans& p) {
     std::filesystem::rename(tmp, path, ec);
     if (ec) { std::filesystem::remove(path, ec); std::filesystem::rename(tmp, path, ec); }
     return !ec;
+}
+
+/* ---- "Add to calendar": a standard iCalendar (RFC 5545) file for one game night ----
+ * Plans are single events (no recurrence in the model), so there is no RRULE. UTC times, CRLF line ends, lines folded at 75 octets
+ * (never inside a UTF-8 character), TEXT values escaped. */
+constexpr int64_t kIcsDurationMs = 90LL * 60 * 1000;   // same window the Host / Join card stays offered
+constexpr int kIcsAlarmMinutes = 15;
+
+/* RFC 5545 TEXT escaping: backslash, semicolon, comma, newline. Other control characters become spaces. */
+inline std::string ics_escape(const std::string& s) {
+    std::string o;
+    for (size_t i = 0; i < s.size(); ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '\\') o += "\\\\";
+        else if (c == ';') o += "\\;";
+        else if (c == ',') o += "\\,";
+        else if (c == '\r') { if (i + 1 < s.size() && s[i + 1] == '\n') ++i; o += "\\n"; }
+        else if (c == '\n') o += "\\n";
+        else if (c < 0x20 || c == 0x7f) o += ' ';
+        else o += (char)c;
+    }
+    return o;
+}
+
+/* Folds a content line (no line end) at 75 octets: each continuation starts with one space. Returns CRLF-terminated text. */
+inline std::string ics_fold(const std::string& line) {
+    std::string o;
+    size_t pos = 0, limit = 75;   // octets allowed on this physical line, including the leading space of continuations
+    bool first = true;
+    while (pos < line.size()) {
+        size_t room = first ? limit : limit - 1;
+        size_t take = std::min(room, line.size() - pos);
+        if (pos + take < line.size())   // do not cut a multi-byte character: back up to a character start
+            while (take > 0 && ((unsigned char)line[pos + take] & 0xC0) == 0x80) --take;
+        if (take == 0) take = std::min(room, line.size() - pos);   // malformed input: still make progress
+        if (!first) o += ' ';
+        o.append(line, pos, take);
+        o += "\r\n";
+        pos += take;
+        first = false;
+    }
+    if (line.empty()) o = "\r\n";
+    return o;
+}
+
+/* "YYYYMMDDTHHMMSSZ" for unix seconds (proleptic Gregorian, no locale / timezone). */
+inline std::string ics_utc(int64_t secs) {
+    int64_t days = secs / 86400, rem = secs % 86400;
+    if (rem < 0) { rem += 86400; --days; }
+    int64_t z = days + 719468;
+    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    int64_t doe = z - era * 146097;
+    int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int64_t y = yoe + era * 400;
+    int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    int64_t mp = (5 * doy + 2) / 153;
+    int d = (int)(doy - (153 * mp + 2) / 5 + 1);
+    int m = (int)(mp < 10 ? mp + 3 : mp - 9);
+    if (m <= 2) ++y;
+    char b[32];
+    std::snprintf(b, sizeof b, "%04d%02d%02dT%02d%02d%02dZ", (int)y, m, d, (int)(rem / 3600), (int)(rem % 3600 / 60), (int)(rem % 60));
+    return b;
+}
+
+/* SHA-256 (lower-case hex). Used so the calendar file carries no account id: the UID and file name only hold a hash. */
+inline std::string sha256_hex(const std::string& msg) {
+    static const uint32_t K[64] = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
+    uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    std::string m = msg;
+    const uint64_t bits = (uint64_t)msg.size() * 8;
+    m += (char)0x80;
+    while (m.size() % 64 != 56) m += (char)0;
+    for (int i = 7; i >= 0; --i) m += (char)((bits >> (i * 8)) & 0xff);
+    auto rr = [](uint32_t x, int n) { return (x >> n) | (x << (32 - n)); };
+    for (size_t off = 0; off < m.size(); off += 64) {
+        uint32_t w[64];
+        for (int i = 0; i < 16; ++i) w[i] = ((uint32_t)(unsigned char)m[off + i * 4] << 24) | ((uint32_t)(unsigned char)m[off + i * 4 + 1] << 16) | ((uint32_t)(unsigned char)m[off + i * 4 + 2] << 8) | (uint32_t)(unsigned char)m[off + i * 4 + 3];
+        for (int i = 16; i < 64; ++i) {
+            uint32_t s0 = rr(w[i - 15], 7) ^ rr(w[i - 15], 18) ^ (w[i - 15] >> 3), s1 = rr(w[i - 2], 17) ^ rr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+        for (int i = 0; i < 64; ++i) {
+            uint32_t t1 = hh + (rr(e, 6) ^ rr(e, 11) ^ rr(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i];
+            uint32_t t2 = (rr(a, 2) ^ rr(a, 13) ^ rr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+            hh = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+    }
+    char buf[65];
+    for (int i = 0; i < 8; ++i) std::snprintf(buf + i * 8, 9, "%08x", (unsigned)h[i]);
+    return buf;
+}
+
+/* A stable id with no personal data: a hash of the night's id (which holds the host's account id), so importing the same night twice
+ * updates the calendar entry instead of duplicating it, and the file never shows the account id. */
+inline std::string night_hash(const Night& n) {
+    return sha256_hex("retrohub-gamenight:" + (n.id.empty() ? std::to_string(n.start_ms / 1000) : n.id));
+}
+inline std::string ics_uid(const Night& n) { return "gamenight-" + night_hash(n).substr(0, 32) + "@retrohub"; }
+
+/* now_ms only feeds DTSTAMP. */
+inline std::string make_ics(const Night& n, int64_t now_ms) {
+    const std::string title = n.game_title.empty() ? std::string("a session") : n.game_title;
+    std::string desc = "Game night in RetroHub: " + title + ".";
+    if (!n.mine && !n.host_name.empty()) desc += "\nPlanned by " + n.host_name + ".";
+    desc += "\nOpen RetroHub a few minutes before the start to host or join.";
+    std::string o;
+    auto L = [&](const std::string& l) { o += ics_fold(l); };
+    L("BEGIN:VCALENDAR");
+    L("VERSION:2.0");
+    L("PRODID:-//RetroHub//Game night//EN");
+    L("CALSCALE:GREGORIAN");
+    L("BEGIN:VEVENT");
+    L("UID:" + ics_uid(n));
+    L("DTSTAMP:" + ics_utc(now_ms / 1000));
+    L("DTSTART:" + ics_utc(n.start_ms / 1000));
+    L("DTEND:" + ics_utc((n.start_ms + kIcsDurationMs) / 1000));
+    L("SUMMARY:" + ics_escape("Game night: " + title));
+    L("DESCRIPTION:" + ics_escape(desc));
+    L("BEGIN:VALARM");
+    L("ACTION:DISPLAY");
+    L("TRIGGER:-PT" + std::to_string(kIcsAlarmMinutes) + "M");
+    L("DESCRIPTION:" + ics_escape("Game night starts in " + std::to_string(kIcsAlarmMinutes) + " minutes: " + title));
+    L("END:VALARM");
+    L("END:VEVENT");
+    L("END:VCALENDAR");
+    return o;
+}
+
+/* "game-night-20261112-2000-1a2b3c4d.ics": UTC start plus a short hash, so two nights (even at the same minute) never share a name. */
+inline std::string ics_file_name(const Night& n) {
+    const std::string t = ics_utc(n.start_ms / 1000);   // YYYYMMDDTHHMMSSZ
+    return "game-night-" + t.substr(0, 8) + "-" + t.substr(9, 4) + "-" + night_hash(n).substr(0, 8) + ".ics";
 }
 
 }  // namespace night

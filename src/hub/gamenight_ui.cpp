@@ -3,8 +3,10 @@
  * clock once per frame. While a game runs nothing pops up: the reminder and the start notice go to the bell only. */
 #include <cstdlib>
 #include <ctime>
+#include <filesystem>
 
 #include "app.h"
+#include <shellapi.h>
 #include "friends_ui.h"
 #include "gamenight_logic.h"
 #include "gamenight_sched.h"
@@ -27,6 +29,9 @@ struct GnState {
     // host flow: after the room opens, invite these friends once
     std::vector<std::string> pending_invite;
     double pending_at = 0;
+    // "Add to calendar": the last .ics written (path empty = the last try failed; msg says why)
+    std::string ics_path, ics_msg;
+    bool ics_ok = true;
 };
 GnState GN;
 
@@ -81,6 +86,34 @@ void toast_sync(bool force, bool for_exit = false) {
     }
 }
 
+/* Writes the .ics to <user data>\calendar (not into a game's save-vault folder). Nothing is opened here: Open / Show in folder act on
+ * click only. Headless runs use the same folder, which then sits next to the (sandbox) exe. */
+void export_ics(const Night& n) {
+    const std::string dir = no_slash(hub::data_dir()) + "\calendar";
+    make_dirs(dir);
+    const std::string file = dir + "\\" + ics_file_name(n);
+    const std::string body = make_ics(n, wall_ms());
+    FILE* f = _wfopen(std::filesystem::u8path(file).c_str(), L"wb");
+    const bool ok = f && std::fwrite(body.data(), 1, body.size(), f) == body.size();
+    if (f) std::fclose(f);
+    if (!ok) { GN.ics_path.clear(); GN.ics_ok = false; GN.ics_msg = "Could not write the calendar file to " + dir + "."; return; }
+    GN.ics_path = file;
+    GN.ics_ok = true;
+    GN.ics_msg = "Calendar file saved to " + file;
+}
+
+void shell_ics(bool show) {
+    if (GN.ics_path.empty()) return;
+    if (g_headless) { GN.ics_ok = true; GN.ics_msg = "Not opened: headless run. File: " + GN.ics_path; return; }
+    const std::wstring w = std::filesystem::u8path(GN.ics_path).wstring();
+    HINSTANCE r = show ? ShellExecuteW(nullptr, L"open", L"explorer.exe", (L"/select,\"" + w + L"\"").c_str(), nullptr, SW_SHOWNORMAL)
+                       : ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if ((INT_PTR)r <= 32) {
+        GN.ics_ok = false;
+        GN.ics_msg = show ? "Windows could not open the folder. The file is at " + GN.ics_path
+                          : "Windows could not open the file (no calendar app is set up for .ics files?). It is saved at " + GN.ics_path;
+    }
+}
 std::string who(const Night& n) { return n.mine ? std::string("You") : (n.host_name.empty() ? std::string("A friend") : n.host_name); }
 
 }  // namespace
@@ -238,7 +271,21 @@ void gn_plan_popup() {
     if (!act.empty()) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         ImGui::TextDisabled("Coming up");
-        for (auto* n : act) ImGui::BulletText("%s - %s (%s)", n->game_title.c_str(), local_label(n->start_ms).c_str(), who(*n).c_str());
+        for (auto* n : act) {
+            ImGui::BulletText("%s - %s (%s)", n->game_title.c_str(), local_label(n->start_ms).c_str(), who(*n).c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton(("Add to calendar##ics" + n->id).c_str())) export_ics(*n);
+        }
+        if (!GN.ics_msg.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, GN.ics_ok ? ui::TEXT2 : ui::WARN);
+            ImGui::TextWrapped("%s", GN.ics_msg.c_str());
+            ImGui::PopStyleColor();
+            if (!GN.ics_path.empty()) {
+                if (ImGui::SmallButton("Open##icsopen")) shell_ics(false);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Show in folder##icsshow")) shell_ics(true);
+            }
+        }
     }
     ImGui::Dummy(ImVec2(0, sp(0.75f)));
     if (ui::button("Send invite", ImVec2(sp(14.f), sp(4.5f)), true, !gs.empty())) {
