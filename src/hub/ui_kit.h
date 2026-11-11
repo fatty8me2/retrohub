@@ -47,6 +47,7 @@ extern ImU32 HILITE;
 extern ImU32 GHOST;
 extern ImU32 HERO_BASE;
 extern ImU32 SCRIM;
+extern ImU32 WASH, WASH2, NOART0, NOART1, RING, ON_WASH, PILL_FG;   // friend-game cover tiles (see theme.h)
 
 /* Runtime palette (theme.h presets): these globals are rewritten by apply_palette(), so colours are looked up at draw time. */
 void apply_palette(const hubtheme::Palette& p);
