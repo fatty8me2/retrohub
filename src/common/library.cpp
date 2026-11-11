@@ -3346,6 +3346,28 @@ void record_play(const std::string& key, uint64_t started_unix, uint64_t seconds
     state_flush_locked();
 }
 
+/* Screenshot aids only (hub headless mode, src/hub/shot.cpp): ASSIGN instead of add, so a fake history is the same on every run. */
+void shot_set_play(const std::string& key, uint64_t last_played, uint64_t seconds) {
+    std::lock_guard<std::mutex> lk(g_state_mu);
+    state_load_locked();
+    GameState& g = g_state[key];
+    g.last_played = last_played;
+    g.play_seconds = seconds;
+    g_state_dirty = true;
+    state_flush_locked();
+}
+
+void shot_clear_play(bool all) {
+    std::lock_guard<std::mutex> lk(g_state_mu);
+    state_load_locked();
+    for (auto it = g_state.begin(); it != g_state.end();) {
+        if (all || it->first.compare(0, 5, "fake:") == 0) { it->second.last_played = 0; it->second.play_seconds = 0; if (!it->second.favorite) { it = g_state.erase(it); continue; } }
+        ++it;
+    }
+    g_state_dirty = true;
+    state_flush_locked();
+}
+
 void flush_library_state() {
     std::lock_guard<std::mutex> lk(g_state_mu);
     state_flush_locked();
