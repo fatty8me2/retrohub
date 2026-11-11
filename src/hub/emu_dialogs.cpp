@@ -8,6 +8,7 @@ void poll_emulators() {
         recovered = true;
         hubemu::recover_interrupted(hubemu::Kind::Lichii);
         hubemu::recover_interrupted(hubemu::Kind::Fritchii);
+        hubemu::cleanup_leftovers_async();   // stale downloads and abandoned _old / _extract folders (background thread; skips while an install job runs)
     }
     poll_nxprep();
     bool success = false;
