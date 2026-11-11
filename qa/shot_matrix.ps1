@@ -88,7 +88,6 @@ $userdata = Join-Path $sand "userdata"
 $vault = Join-Path $sand "vault"
 $rows = New-Object System.Collections.ArrayList
 $fails = New-Object System.Collections.ArrayList
-$aborted = $false
 
 function Test-Blank([string]$png) {   # all-black / single-colour image: a grid of samples with (almost) no distinct colours
     $b = New-Object System.Drawing.Bitmap $png
@@ -122,8 +121,9 @@ function Run-Shot($m, [string]$size) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo $exe
     $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.WorkingDirectory = $sand
     $psi.RedirectStandardError = $true; $psi.RedirectStandardOutput = $true
+    foreach ($k in @($psi.EnvironmentVariables.Keys)) { if ($k -match '^(HUB_SHOT_|HUB_START_|HUB_SELECT_|HUB_SCREENSHOT|HUB_SCALE|HUB_UI_SCALE|HUB_TV|RETROHUB_)') { $psi.EnvironmentVariables.Remove($k) } }   # ambient shot variables must not leak into the child
     foreach ($k in $env2.Keys) { $psi.EnvironmentVariables[$k] = [string]$env2[$k] }
-    $p = [System.Diagnostics.Process]::Start($psi)
+    $p =[System.Diagnostics.Process]::Start($psi)
     $errTask = $p.StandardError.ReadToEndAsync(); $outTask = $p.StandardOutput.ReadToEndAsync()
     $timedOut = $false
     if (-not $p.WaitForExit($TimeoutSec * 1000)) { $timedOut = $true; try { Stop-Process -Id $p.Id -Force } catch {} }   # our own PID only
@@ -153,9 +153,8 @@ foreach ($m in $M) {
     $sz = @($Sizes)
     if ($m.k -and -not $NoKey -and ($sz -notcontains "1024x600")) { $sz += "1024x600" }
     foreach ($s in $sz) {
-        if ((Run-Shot $m $s) -eq "ABORT") { $aborted = $true; break }
+        [void](Run-Shot $m $s)
     }
-    if ($aborted) { break }
 }
 
 # ---- index, contact sheets, summary ----
@@ -172,11 +171,10 @@ foreach ($s in $Sizes) {
     }
 }
 $sum = New-Object System.Collections.ArrayList
-[void]$sum.Add("shots: $($rows.Count)   failures: $($fails.Count)   elapsed: $([int]((Get-Date) - $t0).TotalSeconds) s" + $(if ($aborted) { "   ABORTED: the owner started a game" } else { "" }))
+[void]$sum.Add("shots: $($rows.Count)   failures: $($fails.Count)   elapsed: $([int]((Get-Date) - $t0).TotalSeconds) s")
 foreach ($f in $fails) { [void]$sum.Add("FAIL  $f") }
 [IO.File]::WriteAllLines((Join-Path $Out "summary.txt"), $sum)
 $sum | ForEach-Object { Write-Host $_ }
 Write-Host "output: $Out"
-if ($aborted) { exit 3 }
 if ($fails.Count -gt 0) { exit 1 }
 exit 0

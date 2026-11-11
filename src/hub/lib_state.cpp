@@ -104,7 +104,7 @@ void apply_scan() {
         /* HUB_SHOT_FAKE_LIB values: 0 or "empty" = a truly EMPTY library (first-run state, not even the bundled game); "native" = only the bundled Smash 64 entry;
          * n >= 1 = n made-up games (+ Crash Bash, Super Mario 3D World); "all" / "tpak" = the fixed sets below. */
         int n = std::max(1, std::atoi(fl));
-        const bool only_empty = std::string(fl) == "empty" || (std::isdigit((unsigned char)fl[0]) && std::atoi(fl) == 0);   // QA: a truly empty own library (no bundled game either)
+        const bool only_empty = std::string(fl) == "empty" || !fl[0] || (std::isdigit((unsigned char)fl[0]) && std::atoi(fl) == 0);   // "" is empty too   // QA: a truly empty own library (no bundled game either)
         const bool only_native = std::string(fl) == "native" || only_empty;   // QA: just the bundled Smash 64 entry (a fresh install with no ROM folders)
         if (only_empty) n = 0;
         else if (only_native) { hub::GameEntry g; g.system = hub::System::N64; g.key = kNativeKey; g.title = "Super Smash Bros. 64"; g.catalog_id = "smash64"; g.path = "C:/fake/BattleShip.exe"; A.lib.push_back(g); n = 0; }

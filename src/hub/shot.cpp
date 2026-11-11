@@ -55,7 +55,7 @@ void shot_init_ui() {
      * shot_init_ui runs for HUB_SCREENSHOT alone. */
     if (g_headless) {
         const char* fr = std::getenv("HUB_SHOT_FRESH");
-        if ((fr && *fr && std::string(fr) != "0") || std::getenv("HUB_SHOT_FAKE_LIB") || std::getenv("HUB_SHOT_HOOKSHOT")) hub::shot_clear_play(false);
+        if ((fr && *fr && std::string(fr) != "0") || std::getenv("HUB_SHOT_FAKE_LIB") || std::getenv("HUB_SHOT_HOOKSHOT")) hub::shot_clear_play();
     }
     lib_shot_seed();   // HUB_SHOT_LIBVIEW=grid|list|compact|showcase (+ HUB_SHOT_LIBCOL=last:desc)
     if (const char* sq = std::getenv("HUB_SHOT_SEARCH")) { std::snprintf(A.search_buf, sizeof A.search_buf, "%s", sq); A.vis_dirty = true; }   // screenshot aid: preset the library search text
