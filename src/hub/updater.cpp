@@ -67,7 +67,6 @@ std::atomic<bool> s_handing{false};
 std::atomic<bool> s_deferred{false};
 std::atomic<bool> s_quit{false};
 std::atomic<bool> s_blocked_bad{false};   // the latest release is the one that could not start here: not offered
-std::atomic<bool> s_retry_bad{false};     // the user pressed "Try again": the next check may clear the record
 
 struct Pending {
     std::wstring apply_exe, apply_dir, staged, exe_dir, marker;
@@ -864,6 +863,37 @@ bool bad_version_gate(const std::wstring& install, const std::string& cand, bool
     return false;
 }
 
+void discard_blocked_artifacts(const std::string& updatesDir, const std::string& tag) {
+    if (strip_v(tag).empty()) return;
+    const std::string staged = updatesDir + "\\staged", manifest = updatesDir + "\\staged.json", zip = updatesDir + "\\update.zip";
+    {   // the unpacked folder, only when its manifest names this tag
+        std::string text;
+        { std::ifstream in(P(manifest), std::ios::binary); if (in) { std::stringstream ss; ss << in.rdbuf(); text = ss.str(); } }   // closed before anything is deleted
+        if (!text.empty()) {
+            StagedInfo m;
+            if (parse_staged_manifest(text, &m) && strip_v(m.version) == strip_v(tag)) {
+                rm_file(manifest);
+                remove_tree(P(staged), &s_quit);
+                ulog("deleted the unpacked files of %s: that version is blocked", tag.c_str());
+            }
+        }
+    }
+    {   // a (partial) download, only when its record names this tag
+        std::string text;
+        { std::ifstream in(P(zip + ".resume"), std::ios::binary); if (in) { std::stringstream ss; ss << in.rdbuf(); text = ss.str(); } }
+        if (!text.empty()) {
+            JV v;
+            if (json_parse(text, &v) && strip_v(v.str("tag")) == strip_v(tag)) {
+                rm_file(zip); rm_file(zip + ".resume");
+                ulog("deleted the download of %s: that version is blocked", tag.c_str());
+            }
+        }
+    }
+}
+#ifdef RETROHUB_UPDATER_TESTING
+void set_busy_for_test(bool checking, bool downloading) { s_checking.store(checking); s_downloading.store(downloading); }
+#endif
+
 bool discard_allowed(const DiscardGuard& g, const std::string& tag) { return !(g.tag == tag && g.count >= kMaxStagedDiscards); }
 void note_discard(DiscardGuard& g, const std::string& tag) { if (g.tag != tag) { g.tag = tag; g.count = 0; } g.count++; }
 void note_staged_ok(DiscardGuard& g) { g = DiscardGuard(); }
@@ -1040,13 +1070,15 @@ bool launch_check_disabled() {
     return found;
 }
 
-void check_async(bool force) {
-    if (s_checking.load() || s_downloading.load()) return;
-    if (!force && !detail::check_retry_due(s_checked.load(), s_last_fail_ms.load(), GetTickCount64())) return;
+/* retryBad is passed to the check THIS call starts (never kept in a flag): "Try again" can clear the bad-version record only through the check
+ * it actually started, so an automatic check can never clear it. Returns false when no check was started. */
+static bool start_check(bool force, bool retryBad) {
+    if (s_checking.load() || s_downloading.load()) return false;
+    if (!force && !detail::check_retry_due(s_checked.load(), s_last_fail_ms.load(), GetTickCount64())) return false;
     if (!force && launch_check_disabled()) {
         s_checked.store(true);
         set_status("Update check disabled.");
-        return;
+        return false;
     }
     s_checked.store(true);
     s_checking.store(true);
@@ -1055,8 +1087,8 @@ void check_async(bool force) {
     s_available.store(false);
     set_status("");
 
-    if (s_quit.load()) { s_checking.store(false); return; }   // the app is leaving
-    if (!s_check_th.start([]() {
+    if (s_quit.load()) { s_checking.store(false); return false; }   // the app is leaving
+    if (!s_check_th.start([retryBad]() {
         std::string response;
         std::string cpath, curlErr;
         const bool haveCurl = detail::find_system_tool("curl.exe", &cpath, &curlErr);
@@ -1072,7 +1104,6 @@ void check_async(bool force) {
             s_checking.store(false);
             return;
         }
-        const bool retryBad = s_retry_bad.exchange(false);   // consumed by exactly one check
         detail::Release rel = detail::parse_release(response);
         if (!rel.ok) {
             ulog("check failed: unreadable release JSON");
@@ -1098,6 +1129,7 @@ void check_async(bool force) {
             s_blocked_bad.store(true);
             set_status(badWhy);
             ulog("latest %s is the version that could not start here; not offered (%s)", rel.tag.c_str(), badWhy.c_str());
+            detail::discard_blocked_artifacts(trim_slash(hub::exe_dir()) + "\\updates", rel.tag);   // it will never be used: do not keep its files
         } else if ((rel.has_asset || rel.has_hub_asset) && (rel.sums_url.empty() || rel.sig_url.empty())) {
             /* Unsigned (or no checksums): refused up front, nothing is offered or downloaded. */
             s_failed.store(true);
@@ -1118,8 +1150,11 @@ void check_async(bool force) {
             ulog("latest %s has no usable %s asset", rel.tag.c_str(), kPlatformAssetName);
         }
         s_checking.store(false);
-    })) s_checking.store(false);   // the previous check thread would not end (cannot happen in practice): try again later
+    })) { s_checking.store(false); return false; }   // the previous check thread would not end (cannot happen in practice): try again later
+    return true;
 }
+
+void check_async(bool force) { start_check(force, false); }
 
 static bool (*s_game_probe)() = nullptr;
 void set_game_probe(bool (*fn)()) { s_game_probe = fn; }
@@ -1152,7 +1187,9 @@ void start_update() {
         if (detail::bad_version_gate(W(trim_slash(hub::exe_dir())), version, false, &why)) {
             s_blocked_bad.store(true);
             set_status(why);
-            s_downloading.store(false);
+            const std::string upd = trim_slash(hub::exe_dir()) + "\\updates";
+            /* The (possibly large) leftovers are removed on the worker, not on the UI thread; downloading() stays true until that is done. */
+            if (!s_download_th.start([upd, version]() { detail::discard_blocked_artifacts(upd, version); s_downloading.store(false); })) s_downloading.store(false);
             return;
         }
     }
@@ -1470,6 +1507,7 @@ void shutdown() {
 
 void startup_pass_async() {
     if (s_startup_started.exchange(true)) return;
+    apply::set_own_version(current_version());   // note_boot_ok() (main.cpp) records this version as started, with or without --boot-ok
     const std::string install = trim_slash(hub::exe_dir());
     s_startup_th = std::thread([install]() {
         std::vector<std::string> notes;
@@ -1515,7 +1553,7 @@ bool checking() { return s_checking.load(); }
 bool update_available() { return s_available.load(); }
 bool check_failed() { return s_failed.load(); }
 bool update_blocked_bad_version() { return s_blocked_bad.load(); }
-void retry_bad_version() { s_retry_bad.store(true); check_async(true); }
+bool retry_bad_version() { return start_check(true, true); }
 bool downloading() { return s_downloading.load(); }
 float download_progress() { return s_progress.load(); }
 bool installer_started() { return s_started.load(); }
