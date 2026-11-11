@@ -284,7 +284,7 @@ void draw_page() {
             ImGui::PopFont();
             if (nx >= 0) ImGui::TextDisabled("Next: %s vs %s", b.seat_name(b.state(nx).a.seat).c_str(), b.seat_name(b.state(nx).b.seat).c_str());
             if (in_room()) ImGui::TextDisabled(edit ? "Start the match as usual. Others in the room can Watch it." : "The host starts the match. You can Watch it from the room.");
-            else ImGui::TextDisabled("Couch: player 1 = %s, player 2 = %s. Smash Classic results fill this in.", b.seat_name(m.a.seat).c_str(), b.seat_name(m.b.seat).c_str());
+            else ImGui::TextDisabled("Same PC: player 1 = %s, player 2 = %s. Smash Classic results fill this in.", b.seat_name(m.a.seat).c_str(), b.seat_name(m.b.seat).c_str());
             if (edit) {
                 ImGui::Dummy(ImVec2(0, sp(0.5f)));
                 std::string la = b.seat_name(m.a.seat) + " won", lb = b.seat_name(m.b.seat) + " won";
@@ -302,12 +302,12 @@ void draw_page() {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
     }
     if (BK.have) {
-        ImGui::BeginChild("bk_tree", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::BeginChild("bk_tree", ImVec2(0, 0), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_HorizontalScrollbar);
         ImGui::Dummy(ImVec2(0, sp(1.5f)));
         draw_tree();
         ImGui::EndChild();
     } else if (edit) {
-        ImGui::BeginChild("bk_setup", ImVec2(0, 0), ImGuiChildFlags_None);
+        ImGui::BeginChild("bk_setup", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
         draw_setup();
         ImGui::EndChild();
     } else {
