@@ -1481,7 +1481,7 @@ int shots_count(const hub::GameEntry& e) {
 
 void shots_gallery(const hub::GameEntry& e) {
     if (is_native(e)) return;
-    std::string dir = trim_sep(hub::saves::game_dir(sys_short(e), e.key)) + "\\shots";
+    std::string dir = trim_sep(hub::saves::game_dir_path(sys_short(e), e.key)) + "\\shots";
     static std::string s_key; static double s_at = -10; static std::vector<std::string> s_files;
     static std::string s_confirm;
     if (s_key != e.key || ImGui::GetTime() - s_at > 2.0) {

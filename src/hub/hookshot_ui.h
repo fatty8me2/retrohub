@@ -1,6 +1,6 @@
 #pragma once
 /* The Hookshot card on Ocarina of Time (Switch 2)'s game page: "Build the native version" and its progress (hookshot_build.h).
- * Only drawn when hookshot::supports(e). Screenshot aid: HUB_SHOT_HOOKSHOT=idle|problems|building|paused|done (Play uses Lichii)|done_on (Play uses Hookshot)|failed fakes the state
+ * Only drawn when hookshot::supports(e). Screenshot aid: HUB_SHOT_HOOKSHOT=idle|problems|building|paused|done (Play uses Lichii)|done_on (Play uses Hookshot)|failed fakes the state (unset, empty or 0 = off)
  * (with HUB_SHOT_FAKE_LIB=3 HUB_SHOT_DETAILS=switch:0400486024dec000). */
 #include <string>
 

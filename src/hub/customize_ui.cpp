@@ -556,7 +556,7 @@ void draw_manager() {
 /* ---------- Customize (rename / cover / reset) ---------- */
 
 void refresh_shots(const hub::GameEntry& e) {
-    CU.shot_dir = hub::saves::game_dir(sys_short(e), e.key);
+    CU.shot_dir = hub::saves::game_dir_path(sys_short(e), e.key);
     while (!CU.shot_dir.empty() && (CU.shot_dir.back() == '\\' || CU.shot_dir.back() == '/')) CU.shot_dir.pop_back();
     CU.shot_dir += "\\shots";
     CU.shot_files.clear();
