@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include "hookshot.h"
+#include "nx_runner.h"
 
 /* ---------- per-game settings UI (details modal section + "Game defaults" area in Settings) ---------- */
 
@@ -86,6 +87,11 @@ void options_grouped(const std::string& console, const std::string& game_key, in
             if (o->key == hookshot::kRunnerSetting) {   // only for the one game Hookshot runs, never in the per-system defaults
                 const hub::GameEntry* ge = level == 2 ? find_entry(game_key) : nullptr;
                 if (!ge || !hookshot::supports(*ge)) continue;
+            }
+            if (o->key == "switch.oot_high_refresh" || o->key == "switch.oot_refresh_cap" || o->key == "switch.oot_aa") {   // Fritchii's Ocarina of Time options: that game, played with Fritchii, never in the per-system defaults
+                const hub::GameEntry* ge = level == 2 ? find_entry(game_key) : nullptr;
+                if (!ge || !hookshot::supports(*ge) ||
+                    hubemu::nx_emulator_for(*ge, gs_values_for(*ge), false, GSTORE.source_console(console, game_key, hubemu::kRunnerKey), true) != hubemu::Kind::Fritchii) continue;
             }
             if (!any) { ImGui::Dummy(ImVec2(0, sp(0.4f))); ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted(grp); ImGui::PopFont(); any = true; }
             hub::gs::Values v = level == 2 ? hubui::effective_values(GSTORE, console, game_key, A.st.fullscreen, A.st.volume)
