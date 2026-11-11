@@ -288,40 +288,25 @@ bool hookshot_running() { return g_hookshot_run && A.proc; }
 static bool g_fritchii_run = false;   // the running Switch game is Fritchii (set at spawn)
 bool fritchii_running() { return g_fritchii_run && A.proc; }
 
+#include "hang_watch_logic.h"
 void lichii_hang_watch() {
-    static bool had_window = false;
-    static ULONGLONG gone_since = 0;
-    static ULONGLONG cpu_at_gone = 0, io_at_gone = 0, idle_since = 0;
+    static hubhang::HangWatch watch;   // the decision lives in hang_watch_logic.h (unit-tested by hub_hangwatch_test)
     if (!A.proc) { g_hookshot_run = false; g_fritchii_run = false; }
-    if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { had_window = false; gone_since = 0; return; }   // Hookshot has its own exit; the hang is a Lichii issue (builds 88-95; builds 125 and 130 unknown)
+    if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { watch.reset(); return; }   // Hookshot has its own exit; the hang is a Lichii issue (builds 88-95; builds 125 and 130 unknown)
     const ULONGLONG now = GetTickCount64();
-    if (game_main_window()) { had_window = true; gone_since = 0; return; }
-    if (!had_window) return;
-    auto cpu = []() -> ULONGLONG {   // total CPU time (100 ns units) of the game process
-        FILETIME c, x, k, u;
-        if (!GetProcessTimes(A.proc, &c, &x, &k, &u)) return 0;
-        return (((ULONGLONG)k.dwHighDateTime << 32) | k.dwLowDateTime) + (((ULONGLONG)u.dwHighDateTime << 32) | u.dwLowDateTime);
-    };
-    auto io = []() -> ULONGLONG {   // bytes read + written by the game process so far (disk-bound work, e.g. Lichii build 130's shader-cache writer / log compaction, uses little CPU)
-        IO_COUNTERS c;
-        if (!GetProcessIoCounters(A.proc, &c)) return 0;
-        return c.ReadTransferCount + c.WriteTransferCount;
-    };
-    if (!gone_since) { gone_since = now; cpu_at_gone = cpu(); io_at_gone = io(); idle_since = now; return; }
-    {   /* still busy (saving, draining the shader cache, shutting threads down): wait; only a process that stopped using both the CPU and the disk counts as hung */
-        const ULONGLONG c = cpu(), b = io();
-        if (c > cpu_at_gone + 2000000) { cpu_at_gone = c; idle_since = now; }   // more than 0.2 s of CPU since the last time it counted as busy
-        if (b > io_at_gone + 65536) { io_at_gone = b; idle_since = now; }       // more than 64 KiB of I/O since the last time it counted as busy
+    const bool window = game_main_window() != nullptr;
+    ULONGLONG cpu = 0, io = 0;
+    if (!window) {
+        FILETIME c, x, k, u;   // total CPU time (100 ns units) of the game process; a failed read counts as 0
+        if (GetProcessTimes(A.proc, &c, &x, &k, &u))
+            cpu = (((ULONGLONG)k.dwHighDateTime << 32) | k.dwLowDateTime) + (((ULONGLONG)u.dwHighDateTime << 32) | u.dwLowDateTime);
+        IO_COUNTERS ic;   // bytes read + written so far (disk-bound work, e.g. Lichii build 130's shader-cache writer / log compaction, uses little CPU)
+        if (GetProcessIoCounters(A.proc, &ic)) io = ic.ReadTransferCount + ic.WriteTransferCount;
     }
-    /* Quiet for 10 s = hung. A process that never goes quiet (a hang that keeps logging or spinning) is still ended 3 minutes after its window closed, so the
-     * session (save copy-back, vault sync) can never wait forever; Lichii replaces its cache files atomically, so a cut-off write loses only that session's additions. */
-    const bool quiet = now - idle_since >= 10000, too_long = now - gone_since >= 180000;
-    if (now - gone_since < 15000 || (!quiet && !too_long)) return;
+    if (watch.tick(now, window, cpu, io) != hubhang::Verdict::End) return;
     autotest_log("lichii: window closed 15 s ago but the process is still running (Lichii exit hang): ending its job");
     if (A.job_h) TerminateJobObject(A.job_h, 0);
     else TerminateProcess(A.proc, 0);
-    had_window = false;
-    gone_since = 0;
 }
 
 void* running_game_hwnd() { return g_headless ? nullptr : (void*)game_main_window(); }

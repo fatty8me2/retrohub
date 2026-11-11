@@ -34,6 +34,9 @@ target_include_directories(hub_picker_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(hub_lockout_test test_lockout.cpp)   # whole-app lock verdict state machine (pure)
 target_include_directories(hub_lockout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 
+add_executable(hub_hangwatch_test test_hangwatch.cpp)   # Lichii exit-hang watchdog decision (pure)
+target_include_directories(hub_hangwatch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(hub_iconrefresh_test test_icon_refresh.cpp)   # once-per-version shortcut icon refresh policy (pure)
 target_include_directories(hub_iconrefresh_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
