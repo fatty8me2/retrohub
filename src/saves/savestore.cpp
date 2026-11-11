@@ -299,10 +299,41 @@ bool is_junk_name(const ws& name0) {
 
 /* Lists root/rel into `out`. Returns false (with *err set) when the listing is incomplete for any reason other than the folder being
  * gone or empty: an incomplete scan would make files that exist look absent, so callers must not act on it. */
-bool walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str>& log, str* err = nullptr, bool junk = false) {
+bool known_system_dir(const ws& lower_name) {
+    static const wchar_t* k[] = {L"n64", L"gba", L"gb", L"gbc", L"gc", L"wii", L"3ds", L"wiiu", L"nds", L"ps1", L"ps2", L"nes", L"snes", L"psp", L"switch"};
+    for (const wchar_t* s : k) if (lower_name == s) return true;
+    return false;
+}
+
+/* Parts of a tree that could not be listed and are left out of this sync on BOTH sides (lowercase "<system>/<game>" or lowercase
+ * top-level folder name -> text for the player). Only used by sync_folder. */
+struct Excluded { std::map<ws, str> games, folders; };
+
+/* With `ex` set, a listing error is only fatal where a wrong "absent" verdict could lead to an overwrite and the damage cannot be
+ * confined: the root, `_conflicts`, `_account` and a system folder itself. Inside <system>/<game>/ the game is excluded; in any other
+ * (foreign) top-level folder that folder is excluded with a log line. */
+bool walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str>& log, str* err = nullptr, bool junk = false, Excluded* ex = nullptr, const char* side = "") {
     ws dir = rel.empty() ? root : root + L"/" + rel;
     auto bad = [&](DWORD code) {
-        if (err) *err = "could not list the folder " + U(dir) + " (Windows error " + std::to_string((unsigned long)code) + ")";
+        str code_s = std::to_string((unsigned long)code);
+        if (ex && !rel.empty()) {
+            ws top = lower(comp_at(rel, 0));
+            if (top != L"_conflicts" && top != L"_account") {
+                if (!known_system_dir(top)) {
+                    ex->folders[top] = U(comp_at(rel, 0));
+                    log.push_back("skip folder " + U(comp_at(rel, 0)) + ": could not be read in the " + side + " (Windows error " + code_s + "); left out of this sync");
+                    return true;
+                }
+                if (comp_count(rel) >= 2) {
+                    ws prefix = top + L"/" + lower(comp_at(rel, 1));
+                    str name = U(comp_at(rel, 0) + L"/" + comp_at(rel, 1));
+                    ex->games[prefix] = name;
+                    log.push_back("skip game " + name + ": its folder could not be read in the " + side + " (Windows error " + code_s + "); not synced this time");
+                    return true;
+                }
+            }
+        }
+        if (err) *err = "Windows could not read the folder " + U(dir) + " (error " + code_s + ")";
         return false;
     };
     WIN32_FIND_DATAW fd;
@@ -332,7 +363,7 @@ bool walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str
             if (rel.empty() && (lower(name) == L"system volume information" || lower(name) == L"$recycle.bin")) continue;   // a USB stick's root: Windows keeps these closed, they never hold saves
             if ((rel.empty() && lower(name) == L"_identity") || (lower(rel) == L"_conflicts" && lower(name) == L"_identity")) continue;   // the account secret never travels (F6)
             if (!states && is_states_path(crel)) continue;
-            if (!walk(root, crel, states, out, log, err, junk)) { FindClose(h); return false; }
+            if (!walk(root, crel, states, out, log, err, junk, ex, side)) { FindClose(h); return false; }
         } else {
             if (name.size() > 7 && name.compare(name.size() - 7, 7, L".hubtmp") == 0) continue;
             if (junk && is_junk_name(name)) continue;
@@ -513,8 +544,16 @@ SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
      * and the "only one side has it" branches would then replace them. On any listing error nothing is changed. */
     {
         str werr;
-        if (!walk(vault, L"", include_states, L, rep.log, &werr, true)) return fail("sync stopped, nothing was changed: " + werr + " (vault)");
-        if (!walk(root, L"", include_states, R, rep.log, &werr, true)) return fail("sync stopped, nothing was changed: " + werr + " (sync folder)");
+        Excluded ex;
+        if (!walk(vault, L"", include_states, L, rep.log, &werr, true, &ex, "vault")) return fail("Sync stopped and nothing was changed. " + werr + " in the save vault.");
+        if (!walk(root, L"", include_states, R, rep.log, &werr, true, &ex, "sync folder")) return fail("Sync stopped and nothing was changed. " + werr + " in the sync folder.");
+        auto drop = [&](FMap& m, const ws& prefix) {
+            for (auto it = m.begin(); it != m.end();) it = it->first.rfind(prefix + L"/", 0) == 0 ? m.erase(it) : std::next(it);
+        };
+        for (auto& g : ex.games) { drop(L, g.first); drop(R, g.first); }
+        for (auto& f : ex.folders) { drop(L, f.first); drop(R, f.first); }
+        for (auto& g : ex.games) rep.warning += (rep.warning.empty() ? "" : " ") + str("Could not read the save folder of ") + g.second + ", so that game was not synced this time.";
+        for (auto& f : ex.folders) rep.warning += (rep.warning.empty() ? "" : " ") + str("Could not read the folder ") + f.second + " in your sync folder or vault, so it was left out.";
     }
 
     ws mpath = manifest_path(vault, root);
@@ -619,8 +658,11 @@ SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
         if ((conflict || suspicious) && !is_meta(el.rel)) {
             ws cr = conflict_rel(el.rel, {vault, root});
             uint64_t lm = lose.mtime;
-            if (!copy_atomic(lbase + L"/" + lose.rel, vault + L"/" + cr, lm) ||
-                !copy_atomic(lbase + L"/" + lose.rel, root + L"/" + cr, lm)) {
+            bool vcopy = copy_atomic(lbase + L"/" + lose.rel, vault + L"/" + cr, lm);
+            if (!vcopy || !copy_atomic(lbase + L"/" + lose.rel, root + L"/" + cr, lm)) {
+                /* conflict_rel() picked a name free on both sides, so a vault copy that exists now is exactly the one THIS attempt made:
+                 * remove it, or every retry would pile up another timestamped copy. Nothing older is ever touched. */
+                if (vcopy) DeleteFileW(lp(vault + L"/" + cr).c_str());
                 skip(el, "could not preserve the overwritten copy; left untouched");
                 continue;
             }
