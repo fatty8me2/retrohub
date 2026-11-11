@@ -91,6 +91,20 @@ int main(int argc, char** argv) {
         CHECK(hubui::capture_hold_step(k, "", true, 2.9) == hubui::CaptureStep::Wait);
         CHECK(hubui::capture_hold_step(k, "", true, 3.0) == hubui::CaptureStep::Cancel && !k.pending);   // hold: cancel
     }
+    {   // play.rewind reaches the retrorun command line only when it is off
+        Store rw;
+        rw.set_game("r", System::SNES, "play.rewind", "off");
+        CHECK(hubui::retro_extra_args(System::SNES, hubui::effective_values(rw, System::SNES, "r", false)).find("--rewind off") != std::string::npos);
+        CHECK(hubui::retro_extra_args(System::SNES, hubui::effective_values(rw, System::SNES, "other", false)).find("--rewind") == std::string::npos);
+    }
+    {   // a missing game file is asked about before the cloud-save gate; a stale gate pass is dropped
+        using hubui::PlayFirst;
+        CHECK(hubui::play_first_step(false, true, false).step == PlayFirst::AskMissing && !hubui::play_first_step(false, true, false).clear_pass);
+        CHECK(hubui::play_first_step(false, true, true).step == PlayFirst::AskMissing && hubui::play_first_step(false, true, true).clear_pass);   // the file vanished while the gate ran
+        CHECK(hubui::play_first_step(false, false, true).step == PlayFirst::Continue && !hubui::play_first_step(false, false, true).clear_pass);   // cloud_gate_begin consumes the pass itself
+        CHECK(hubui::play_first_step(false, false, false).step == PlayFirst::Continue);
+        CHECK(hubui::play_first_step(true, true, false).step == PlayFirst::GateBusy && hubui::play_first_step(true, false, true).step == PlayFirst::GateBusy);
+    }
     std::printf(g_fail ? "FAILED\n" : "launch settings OK\n");
     return g_fail != 0;
 }

@@ -19,4 +19,16 @@ inline const char* launch_busy_reason(bool a_proc) { return a_proc ? "A game is 
  * game menu: focus_game()). One opened from the library never does. */
 inline bool cheats_return_focus(bool opened_from_game, bool game_running) { return opened_from_game && game_running; }
 
+/* First step of play_entry once the file to run is known: a cloud gate still working (notice), a game file that is gone (ask at once,
+ * before any cloud wait), or carry on. `pass_pending` = the cloud gate already passed this game (A.cloud_gate.pass_key == its key) and
+ * cloud_gate_begin has not consumed that pass yet; asking about a missing file first must drop it, so the next Play (after Locate)
+ * runs the gate again instead of skipping the cloud pull. */
+enum class PlayFirst { GateBusy, AskMissing, Continue };
+struct PlayFirstDecision { PlayFirst step; bool clear_pass; };
+inline PlayFirstDecision play_first_step(bool gate_busy, bool missing, bool pass_pending) {
+    if (gate_busy) return {PlayFirst::GateBusy, false};
+    if (missing) return {PlayFirst::AskMissing, pass_pending};
+    return {PlayFirst::Continue, false};
+}
+
 }  // namespace hubui
