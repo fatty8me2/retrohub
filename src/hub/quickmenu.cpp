@@ -1473,7 +1473,7 @@ int shots_count(const hub::GameEntry& e) {
     if (k != e.key || ImGui::GetTime() - at > 2.0) {
         k = e.key; at = ImGui::GetTime(); n = 0;
         std::error_code ec;
-        for (auto& it : std::filesystem::directory_iterator(std::filesystem::u8path(trim_sep(hub::saves::game_dir(sys_short(e), e.key)) + "\\shots"), ec))
+        for (auto& it : std::filesystem::directory_iterator(std::filesystem::u8path(trim_sep(hub::saves::game_dir_path(sys_short(e), e.key)) + "\\shots"), ec))
             if (it.is_regular_file(ec) && is_image(it.path().filename().u8string())) ++n;
     }
     return n;

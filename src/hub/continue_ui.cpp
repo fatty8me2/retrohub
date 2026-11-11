@@ -110,8 +110,8 @@ Source find_source(const hub::GameEntry& e) {
     if (now - c.at > 4.0 || now < c.at) {   // directory scans at most every few seconds per game
         c.at = now;
         ct::Pic st, sh;
-        const bool has_st = !is_native(e) && newest_png(hub::saves::states_dir(sys_short(e), e.key), &st);
-        const bool has_sh = newest_png(no_slash(hub::saves::game_dir(sys_short(e), e.key)) + "\\shots", &sh);
+        const bool has_st = !is_native(e) && newest_png(hub::saves::states_dir_path(sys_short(e), e.key), &st);
+        const bool has_sh = newest_png(no_slash(hub::saves::game_dir_path(sys_short(e), e.key)) + "\\shots", &sh);
         Source s;
         s.kind = ct::pick_backdrop(has_st, has_sh, true);   // the cover is the last resort and is looked up when drawn
         if (s.kind == ct::Backdrop::StateThumb) { s.path = st.path; s.ckey = st.path + "|" + std::to_string(st.time); }

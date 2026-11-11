@@ -141,7 +141,7 @@ bool decode_rgba(const std::string& path, std::vector<unsigned char>* px, int* w
 
 /* Where a game's own cover lives in the vault: <vault>/<system>/<key>/cover.png (the cloud engine syncs it with the game's other files). */
 std::string vault_cover_path(const hub::GameEntry& e) {
-    std::string d = hub::saves::game_dir(sys_short(e), e.key);
+    std::string d = hub::saves::game_dir_path(sys_short(e), e.key);
     while (!d.empty() && (d.back() == '\\' || d.back() == '/')) d.pop_back();
     return d + "\\cover.png";
 }
