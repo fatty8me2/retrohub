@@ -3,8 +3,6 @@
 #include "launch_guard_logic.h"
 #include "capture_hold_logic.h"
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 using namespace hub; using namespace hub::gs;
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
@@ -99,16 +97,13 @@ int main(int argc, char** argv) {
         CHECK(hubui::retro_extra_args(System::SNES, hubui::effective_values(rw, System::SNES, "r", false)).find("--rewind off") != std::string::npos);
         CHECK(hubui::retro_extra_args(System::SNES, hubui::effective_values(rw, System::SNES, "other", false)).find("--rewind") == std::string::npos);
     }
-    {   // a missing game file is asked about before the cloud-save gate (source order in play_entry)
-        std::ifstream in(std::string(HUB_SRC_DIR) + "/launch.cpp", std::ios::binary);
-        std::stringstream ss; ss << in.rdbuf();
-        const std::string src = ss.str();
-        const std::string ask = "if (rom_missing(e)) { missing_rom_ask(e.key); return; }";
-        const size_t fn = src.find("void play_entry(");
-        const size_t miss = src.find(ask, fn);
-        const size_t gate = src.find("cloud_gate_begin(e,", fn);
-        CHECK(fn != std::string::npos && miss != std::string::npos && gate != std::string::npos && miss < gate);
-        CHECK(src.find(ask, miss + 1) == std::string::npos);   // and it is not asked a second time after the gate
+    {   // a missing game file is asked about before the cloud-save gate; a stale gate pass is dropped
+        using hubui::PlayFirst;
+        CHECK(hubui::play_first_step(false, true, false).step == PlayFirst::AskMissing && !hubui::play_first_step(false, true, false).clear_pass);
+        CHECK(hubui::play_first_step(false, true, true).step == PlayFirst::AskMissing && hubui::play_first_step(false, true, true).clear_pass);   // the file vanished while the gate ran
+        CHECK(hubui::play_first_step(false, false, true).step == PlayFirst::Continue && !hubui::play_first_step(false, false, true).clear_pass);   // cloud_gate_begin consumes the pass itself
+        CHECK(hubui::play_first_step(false, false, false).step == PlayFirst::Continue);
+        CHECK(hubui::play_first_step(true, true, false).step == PlayFirst::GateBusy && hubui::play_first_step(true, false, true).step == PlayFirst::GateBusy);
     }
     std::printf(g_fail ? "FAILED\n" : "launch settings OK\n");
     return g_fail != 0;

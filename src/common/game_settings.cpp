@@ -82,7 +82,7 @@ std::vector<Option> build() {
     // Offline only (retrorun refuses both online). Auto run-ahead = 1 frame on NES/SNES/GB/GBC/GBA; rewind is automatic per system.
     v.push_back(mk("play.runahead", "Run-ahead (less input lag)", "Video", GB | GBA | NES | SNES | NDS | PS1, K::Choice, S::Visual, "off",
                    {{"off", "Off"}, {"1", "1 frame"}, {"2", "2 frames"}, {"auto", "Auto"}}));
-    v.push_back(mk("play.rewind", "Rewind", "Video", GB | GBA | NES | SNES | NDS | PS1, K::Choice, S::Visual, "auto",
+    v.push_back(mk("play.rewind", "Rewind (offline only)", "Video", GB | GBA | NES | SNES | NDS | PS1, K::Choice, S::Visual, "auto",
                    {{"auto", "Automatic"}, {"off", "Off"}}));
     v.push_back(mk("gb.color", "Color correction", "Color", GB | GBA, K::Choice, S::Visual, "auto",
                    {{"auto", "Core default"}, {"off", "Off"}, {"on", "On"}}));

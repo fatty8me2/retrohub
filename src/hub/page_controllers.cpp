@@ -384,7 +384,7 @@ void draw_empty_pads() {
     end_panel();
 }
 
-/* Names the emulator behind a Controllers tab ("Dolphin", "Cemu", ...); the built-in players for the rest. */
+/* Names the emulator behind a Controllers tab ("Dolphin", "Cemu", ...); "the emulator" for the rest. */
 static std::string emu_phrase(const std::string& tab) {
     if (tab == "gc") return "Dolphin";
     if (tab == "wiiu") return "Cemu";
@@ -392,7 +392,7 @@ static std::string emu_phrase(const std::string& tab) {
     if (tab == "ps2") return "PCSX2";
     if (tab == "psp") return "PPSSPP";
     if (tab == "switch" || tab == "switch2") return "Lichii";
-    return "the built-in player";
+    return "the emulator";
 }
 
 void draw_mapping_panel() {
@@ -505,7 +505,7 @@ void draw_mapping_panel() {
     }
     if (!keys && turbo_ui) text_wrapped_disabled("Turbo buttons auto-fire while held. They are off in online games unless the room host allows them for everyone.");
     else if (!keys && !hubctl::turbo_supported(sys)) text_wrapped_disabled("Turbo buttons: not supported for this system (" + emu_phrase(sys) + " reads the controller itself).");
-    if (!keys && sys != "n64" && !analogs.empty()) text_wrapped_disabled("Sensitivity is only available for N64: " + emu_phrase(sys) + " only takes a deadzone.");
+    if (!keys && sys != "n64" && !analogs.empty()) text_wrapped_disabled("Sensitivity can only be adjusted for N64. Here you can set the deadzone.");
     if (!keys && sys == "n64") {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         bool rm = cur.rumble;

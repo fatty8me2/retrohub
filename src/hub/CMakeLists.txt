@@ -327,7 +327,6 @@ target_include_directories(hub_dolphin_speed_live PRIVATE ${CMAKE_CURRENT_SOURCE
 target_link_libraries(hub_dolphin_speed_live PRIVATE dsuserver hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi user32 ws2_32)
 
 add_executable(hub_launchset_test test_launch_settings.cpp)
-target_compile_definitions(hub_launchset_test PRIVATE HUB_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}")   # the launch-order check reads launch.cpp
 target_link_libraries(hub_launchset_test PRIVATE hublogic hubcommon)
 # fw2-ci: launch decisions (which runner / core, title + save-stem quoting, resume rules, launch guard), pure
 add_executable(hub_launch_logic_test test_launch_logic.cpp)
