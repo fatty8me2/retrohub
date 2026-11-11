@@ -208,6 +208,16 @@ static void test_scan_summary() {
     // a folder name that only starts the same is not a parent
     r = scan_summary({"D:\\Roms2\\a.z64"}, {"D:\\Roms"}, home);
     CHECK(r.text == "Found 1 game.");   // games found, but none under a listed folder (e.g. a pack): no folder count
+    // who gets a toast: only a scan the player started, never while a game runs
+    {
+        const ScanSummary some = scan_summary({"D:\\Roms\\a.z64"}, {"D:\\Roms"}), none = scan_summary({}, {"D:\\Roms"}), nofolders = scan_summary({}, {});
+        CHECK(scan_toast_wanted(true, false, some));      // user scan with games
+        CHECK(scan_toast_wanted(true, false, none));      // user scan that found nothing
+        CHECK(!scan_toast_wanted(false, false, some));    // automatic scan: silent
+        CHECK(!scan_toast_wanted(false, false, none));
+        CHECK(!scan_toast_wanted(true, true, some));      // a game is running
+        CHECK(!scan_toast_wanted(true, false, nofolders));  // nothing to report
+    }
     // paths
     CHECK(short_path("C:\\Users\\me\\Documents", home) == "~\\Documents" && short_path("c:/users/ME/Games", home) == "~/Games");
     CHECK(short_path("C:\\Users\\meow\\Documents", home) == "C:\\Users\\meow\\Documents" && short_path("D:\\Roms", home) == "D:\\Roms" && short_path("C:\\Users\\me", home) == "~");

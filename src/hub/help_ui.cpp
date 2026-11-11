@@ -69,24 +69,14 @@ double g_scan_started = 0.0;
 std::string home_dir() { const char* h = std::getenv("USERPROFILE"); return h ? h : ""; }
 }  // namespace
 
-/* Called every frame from the library top bar (the only place a scan is shown). */
-void scan_result_tick() {
-    static bool inited = false, prev = false;
-    static int completed = 0;
-    if (!inited) { inited = true; prev = A.scanning; if (prev) g_scan_started = ImGui::GetTime(); }
-    const bool now_scanning = A.scanning;
-    if (now_scanning && !prev) g_scan_started = ImGui::GetTime();
-    if (!now_scanning && prev) {
-        ++completed;
-        std::vector<std::string> paths;
-        for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey && !e.path.empty()) paths.push_back(e.path);
-        const hubhelp::ScanSummary s = hubhelp::scan_summary(paths, A.st.rom_folders, home_dir());
-        g_scan_last_line = s.text;
-        /* the start-up scan of a library that has games stays quiet; every later scan, and an empty one, says what it found. Never while a game runs. */
-        const bool quiet = completed == 1 && !s.none;
-        if (!s.text.empty() && !quiet && !game_active()) push_toast(s.text, s.none ? ui::ACCENT : ui::GOOD, 6.0);
-    }
-    prev = now_scanning;
+/* lib_state.cpp: a scan starts / its result has been applied (once per finished scan, from apply_scan, whatever page is open). */
+void scan_note_started() { g_scan_started = ImGui::GetTime(); }
+void scan_finished(bool user_requested) {
+    std::vector<std::string> paths;
+    for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey && !e.path.empty()) paths.push_back(e.path);
+    const hubhelp::ScanSummary s = hubhelp::scan_summary(paths, A.st.rom_folders, home_dir());
+    g_scan_last_line = s.text;   // the empty Home card keeps the last result, however the scan began
+    if (hubhelp::scan_toast_wanted(user_requested, game_active(), s)) push_toast(s.text, s.none ? ui::ACCENT : ui::GOOD, 6.0);   // automatic scans stay silent
 }
 const std::string& scan_last_line() { return g_scan_last_line; }
 double scan_elapsed_s() { return A.scanning ? std::max(0.0, ImGui::GetTime() - g_scan_started) : 0.0; }

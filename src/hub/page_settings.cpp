@@ -219,7 +219,7 @@ void tab_general() {
     if (remove_at >= 0) {
         A.st.rom_folders.erase(A.st.rom_folders.begin() + remove_at);
         mark_dirty();
-        start_scan();
+        start_scan(true);   // the player removed a folder
     }
     add_rom_folder(button("Add folder...", ImVec2(0, 0), false, true, ui::Icon::Plus));
     ImGui::SameLine();
@@ -227,7 +227,7 @@ void tab_general() {
     ImGui::SameLine();
     if (button("Run setup again", ImVec2(0, 0), false, true, ui::Icon::Gamepad)) wizard_open();
     ImGui::SameLine();
-    if (button("Rescan", ImVec2(0, 0), false, !A.scanning, ui::Icon::Refresh)) start_scan();
+    if (button("Rescan", ImVec2(0, 0), false, !A.scanning, ui::Icon::Refresh)) start_scan(true);
     { ImGui::SameLine(); hidden_games_row(); }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     settings_label("Shared game packs");

@@ -35,7 +35,7 @@ void text_wrapped_disabled(const std::string& s) {
 void add_rom_folder_path(const std::string& p) {
     if (std::find(A.st.rom_folders.begin(), A.st.rom_folders.end(), p) == A.st.rom_folders.end()) A.st.rom_folders.push_back(p);
     mark_dirty();
-    start_scan();
+    start_scan(true);   // the player added a folder
 }
 void add_rom_folder(bool clicked) {
     std::string p = osk::folder("rom", clicked);

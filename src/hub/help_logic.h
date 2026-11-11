@@ -103,6 +103,9 @@ inline ScanSummary scan_summary(const std::vector<std::string>& game_paths, cons
     return r;
 }
 
+/* A toast only for a scan the player started (Rescan, a folder added or removed, "Find my games"); never while a game runs; never an empty text. */
+inline bool scan_toast_wanted(bool user_requested, bool game_running, const ScanSummary& s) { return user_requested && !game_running && !s.text.empty(); }
+
 /* The empty Home card's line about the last scan, plus the file types a scan reads (`exts` come from the code: addgames::supported_exts()). */
 inline std::string file_types_line(const std::vector<std::string>& exts) {
     std::string s;
