@@ -153,6 +153,8 @@ struct RunInfo {
     int dsu_players = 0;                // Wii U remote play HOST: guests' pads (Cemu players 2..1+n) are DSU slots 0..n-1 in the Cemu profiles; 0 = every normal launch
     std::string result_file;            // native Smash online: SSB64_RESULT_FILE the game writes the finished match to (rivalries)
     std::string controls_path, controls_sys;   // built-in runner started with --controls <file>: the file the hub rewrites + the profile system ("n64","retro","ps1","nes","snes"); empty = nothing to reload
+    int emu_kind = -1;                  // external emulator session: hubemu::Kind (crash note); -1 = not an external emulator
+    std::string emu_exe, emu_dir;       // its exe path and folder (crash note)
     bool cloud_started = false;         // cloud_game_started() was called for this session (set by spawn); exit pushes the game
 };
 
@@ -1133,6 +1135,8 @@ void draw_welcome();    // welcome_ui.cpp, every frame: the one-time "Welcome ba
 
 /* ---- frame.cpp ---- */
 void draw_update_popup();
+void draw_crash_note();   // crash_note_ui.cpp: the "<Emulator> stopped unexpectedly" card (opens only when prompt_allowed())
+void crash_note_session_ended(int emu_kind, const std::string& exe_path, const std::string& emu_dir, const std::string& game, unsigned long pid, unsigned long exit_code);
 float draw_toasts(float bottom, float right, float top);   // returns the height the bottom stack used
 bool nav_item(Page pg, const char* label, ui::Icon ic, float w, float expand, ImU32 badge);
 void draw_footer(float h);
