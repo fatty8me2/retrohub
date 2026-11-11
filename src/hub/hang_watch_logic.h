@@ -15,6 +15,15 @@ constexpr uint64_t kCapMs = 180000;            // hard cap after the window went
 constexpr uint64_t kCpuStep = 2000000;         // CPU counter units (100 ns) that count as "busy" (0.2 s)
 constexpr uint64_t kIoStep = 65536;            // I/O bytes that count as "busy"
 
+/* Does one top-level window of the game process count as "the game still has a window" for the watchdog? A MINIMISED window has a 0x0
+ * client rect but is very much alive (the player pressed Win+D / Alt-Tabbed out): it counts as present. Only a visible, non-tool window
+ * with a non-empty client area, or a minimised one, counts; zero-size helper windows are ignored. */
+inline bool window_counts_as_present(bool visible, bool iconic, long client_w, long client_h, bool tool_window) {
+    if (!visible || tool_window) return false;
+    if (iconic) return true;
+    return client_w > 0 && client_h > 0;
+}
+
 enum class Verdict { Wait, End };
 enum class Why { None, Quiet, Cap };
 
