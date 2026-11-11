@@ -171,20 +171,36 @@ int main() {
         CHECK(hl.sound && hl.toast && !hl.hold);
         CHECK(online_alert_wanted(true) && !online_alert_wanted(false));
 
+        /* windowed game with the hub in front: the ask card may show, but never a sound; without focus it is held */
+        InHubRoute af = in_hub_route(true, false, false, true, true), an = in_hub_route(true, false, false, false, true), ad = in_hub_route(true, false, false, true, false);
+        CHECK(!af.sound && af.toast && !af.hold);
+        CHECK(!an.sound && !an.toast && an.hold);
+        CHECK(!ad.sound && !ad.toast && ad.hold);   // other kinds ignore focus
+
         HeldNotices h;
         CHECK(h.tick(false).empty());
-        h.note();                                   // while idle nothing is held (callers only note while busy)
+        h.note(true);                               // while idle nothing is held (callers only note while busy)
         CHECK(h.tick(false).empty() && h.count == 0);
         CHECK(h.tick(true).empty());
-        h.note(); h.note(); h.note();
+        h.note(true); h.note(true); h.note(true);
         CHECK(h.tick(true).empty());                // still playing: nothing yet
-        std::string sum = h.tick(false);            // play ends: exactly one summary
+        CHECK(h.tick(false, false).empty());        // play over but the hub is not in front: stays pending
+        CHECK(h.tick(false, false).empty());
+        std::string sum = h.tick(false, true);      // in front: exactly one summary
         CHECK(sum == "3 new notifications while you played. Open the bell to see them.");
         CHECK(h.tick(false).empty() && h.tick(false).empty());   // never again
-        h.tick(true); h.note();
+        h.tick(true); h.note(true);
         CHECK(h.tick(false) == "1 new notification while you played. Open the bell to see it.");
+        h.tick(true); h.note(true); h.note(false);  // a DM among them: no pointer to the bell
+        CHECK(h.tick(false) == "2 new notifications while you played.");
         h.tick(true);
         CHECK(h.tick(false).empty());               // played with nothing arriving: silent
+
+        FriendToastDedup d;                         // one friend toast per person per few seconds
+        CHECK(d.allow("u1", 1000));
+        CHECK(!d.allow("u1", 3000));                // second source for the same friend
+        CHECK(d.allow("u2", 3000));
+        CHECK(d.allow("u1", 7000));                 // later: a new event is fine
     }
 
     fs::remove_all(base);
