@@ -490,6 +490,30 @@ std::vector<std::wstring> restore_backup(const std::wstring& install, const fs::
 std::wstring boot_ok_path(const std::wstring& install) { return norm(install) + L"\\updates\\boot_ok"; }
 std::wstring bad_version_path(const std::wstring& install) { return norm(install) + L"\\updates\\bad_version.json"; }
 
+void bad_version_clear(const std::wstring& install) { DeleteFileW(bad_version_path(install).c_str()); }
+
+bool version_lower(const std::string& a, const std::string& b) {
+    auto parse = [](const std::string& s, std::vector<long>* out) {
+        const std::string v = strip_v(s);
+        out->clear();
+        if (v.empty()) return false;
+        size_t i = 0;
+        while (i < v.size()) {
+            if (v[i] < '0' || v[i] > '9') return false;
+            long n = 0;
+            while (i < v.size() && v[i] >= '0' && v[i] <= '9') n = n * 10 + (v[i++] - '0');
+            out->push_back(n);
+            if (i < v.size()) { if (v[i] != '.') return false; ++i; }
+        }
+        return true;
+    };
+    std::vector<long> x, y;
+    if (!parse(a, &x) || !parse(b, &y)) return false;
+    const size_t n = std::max(x.size(), y.size());
+    x.resize(n, 0); y.resize(n, 0);
+    return x < y;
+}
+
 bool boot_marker_matches(const std::wstring& marker, const std::string& expect) {
     std::string text;
     if (strip_v(expect).empty() || !winutil::read_file_w(marker, &text)) return false;
@@ -655,13 +679,25 @@ RecoverReport recover_interrupted(const std::wstring& installIn, const std::stri
         const fs::path backup = dir / L"backup";
         if (!fs::exists(backup, ec)) { fs::remove_all(dir, ec); ++rep.cleaned; continue; }
         const std::string cur = strip_v(current_version), from = strip_v(m.from), to = strip_v(m.to);
-        if (m.booting && !to.empty() && (cur == to || boot_marker_matches(boot_ok_path(install), to))) {
-            /* The applier that was watching the new RetroHub start is gone, and the new version is the one running (or it wrote its boot
-             * marker): it is healthy. The backup is only clutter now. NEVER restore it: that would put an old version over a newer one. */
-            ++rep.healthy;
-            alog(L"recovery: leftover " + dir.wstring() + L" belongs to a started " + w16(m.to) + L"; backup dropped, nothing restored");
-            fs::remove_all(dir, ec);
-            continue;
+        if (m.booting && !to.empty()) {
+            BadVersion bv;
+            const bool named_bad = bad_version_read(install, &bv) && strip_v(bv.version) == to;
+            const bool marker_ok = boot_marker_matches(boot_ok_path(install), to);
+            if (cur == to && (named_bad || !marker_ok)) {
+                /* The new version is running (or was recorded as bad) but has not proven that it started: it is not trusted, so the backup
+                 * stays and nothing is restored over it. A later start that finds the marker (the hub writes it itself after its first
+                 * frame) cleans the backup up. */
+                ++rep.pending;
+                continue;
+            }
+            if (marker_ok && !named_bad) {
+                /* The applier that was watching the new RetroHub start is gone and the new version wrote its boot marker: it is healthy.
+                 * The backup is only clutter now. NEVER restore it: that would put an old version over a newer one. */
+                ++rep.healthy;
+                alog(L"recovery: leftover " + dir.wstring() + L" belongs to a started " + w16(m.to) + L"; backup dropped, nothing restored");
+                fs::remove_all(dir, ec);
+                continue;
+            }
         }
         if (from.empty() || cur.empty() || from != cur) {
             /* The install is no longer on the version this backup came from (an update or reinstall landed since, or the new RetroHub.exe
@@ -774,7 +810,10 @@ BootOutcome watch_boot(const Options& o, HANDLE proc, const std::wstring& marker
         if (w == WAIT_OBJECT_0) {
             GetExitCodeProcess(proc, exit_code);
             if (boot_marker_matches(marker, version)) return BootOutcome::Started;   // it wrote the marker and then ended
-            return *exit_code == 0 ? BootOutcome::ExitedClean : BootOutcome::Crashed;
+            /* Only a real crash (NTSTATUS-like code) or RetroHub's own "could not start" code is a failed start. A Task Manager kill (1),
+             * logoff (0xC000013A), exit 0 and the like are not: they keep the update. */
+            const bool real_crash = (*exit_code >= 0xC0000000u && *exit_code != 0xC000013Au) || *exit_code == (DWORD)kStartFailExit;
+            return real_crash ? BootOutcome::Crashed : BootOutcome::ExitedClean;
         }
         const ULONGLONG el = GetTickCount64() - t0;
         if (!slow_logged && el >= (ULONGLONG)o.boot_wait_secs * 1000ull) {
@@ -814,7 +853,8 @@ int run(const Options& o) {
     const bool gen_backup = opt.backup.empty();
     /* Watch the new RetroHub start (and roll back if it cannot) only when there is a new RetroHub to watch: it is relaunched, the release is
      * named (the marker carries the version), and the backup is ours (gen_backup). Anything else keeps the old behaviour. */
-    const bool watch = gen_backup && o.relaunch && !strip_v(u8(o.version)).empty() && o.boot_cap_secs > 0;
+    const bool watch = gen_backup && o.relaunch && !strip_v(u8(o.version)).empty() && o.boot_cap_secs > 0 &&
+                       !version_lower(u8(o.version), u8(o.from_version));   // a deliberate downgrade is never rolled back (an older hub may not write the marker)
     opt.keep_backup = watch;
     fs::path bk_parent;
     Manifest man;
@@ -878,9 +918,8 @@ int run(const Options& o) {
         return 0;
     }
     if (bo == BootOutcome::ExitedClean) {
-        alog(L"the new RetroHub exited normally before confirming (a second instance handing over, or it was closed); the update is kept");
-        fs::remove_all(bk_parent, ec);
-        return 0;
+        alog(L"the new RetroHub ended (exit code " + std::to_wstring(code) + L") without confirming, but not like a failed start (a second instance, or the player closed or ended it); the update is kept, and so is the backup until a start that confirms cleans it up");
+        return 4;
     }
     if (bo == BootOutcome::Unconfirmed) {
         alog(L"the new RetroHub is still running without a boot marker after " + std::to_wstring(o.boot_cap_secs) + L" s; not watching any longer, nothing is changed (backup kept; the next start cleans it up)");
