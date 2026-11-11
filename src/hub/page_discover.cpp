@@ -1,5 +1,6 @@
 #include "app.h"
 #include "art.h"
+#include "console_names.h"
 #include "discover_logic.h"
 #include "gameinfo.h"
 #include "gamepack.h"
@@ -33,22 +34,8 @@ std::string g_cat_sig;
 
 const char* short_label(const std::string& s)
 {
-    if (s == "nes") return "NES";
-    if (s == "snes") return "SNES";
-    if (s == "n64") return "N64";
-    if (s == "gb") return "Game Boy";
-    if (s == "gbc") return "GB Color";
-    if (s == "gba") return "GBA";
-    if (s == "nds") return "DS";
-    if (s == "3ds") return "3DS";
-    if (s == "gc") return "GameCube";
-    if (s == "wiiu") return "Wii U";
-    if (s == "ps1") return "PS1";
-    if (s == "ps2") return "PS2";
-    if (s == "psp") return "PSP";
-    if (s == "switch") return "Switch";
-    if (s == "switch2") return "Switch 2";
-    return s.c_str();
+    const char* n = hub::short_name_id(s);   // one name table for every console (console_names.h)
+    return *n ? n : s.c_str();
 }
 
 /* Word-wrap `text` into at most `max_lines` lines of width `w`; the last line is ellipsized when text is left over. */
@@ -250,10 +237,13 @@ void card(int id, ImVec2 size)
         if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, sp(1.25f), own ? 1.f : 0.82f);
         else {
             TileSpec ts;
-            ts.title = r.title;
+            // no cover yet: the console's colour with the console name in the middle (no clipped title initials)
             ts.c0 = own ? c0 : mix(c0, IM_COL32(92, 95, 104, 255), 0.6f);
             ts.c1 = own ? c1 : mix(c1, IM_COL32(70, 73, 82, 255), 0.6f);
             draw_no_art(dl, ts, a0, a1, sp(1.25f), 0.85f);
+            const std::string cname = ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, short_label(r.sys), aw - sp(1.f));
+            const ImVec2 cs = ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, cname.c_str());
+            dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2((a0.x + a1.x - cs.x) * 0.5f, (a0.y + a1.y - cs.y) * 0.5f), IM_COL32(255, 255, 255, 190), cname.c_str());
             if (art.loading) ui::shimmer(dl, a0, a1, sp(1.25f), IM_COL32(0, 0, 0, 0));
         }
         dl->AddRect(a0, a1, ui::HAIRLINE, sp(1.25f), 0, 1.f);
@@ -266,7 +256,7 @@ void card(int id, ImVec2 size)
     y += hf->FontSize + sp(0.5f);
     {
         std::string meta;
-        auto add = [&](const std::string& s) { if (!s.empty()) { if (!meta.empty()) meta += "  -  "; meta += s; } };
+        auto add = [&](const std::string& s) { if (!s.empty()) { if (!meta.empty()) meta += "  \xC2\xB7  "; meta += s; } };
         if (g_f.sys.empty()) add(short_label(r.sys));   // all-consoles view: say which console
         if (r.year > 0) add(std::to_string(r.year));
         if (r.genre != "Other") add(r.genre);
@@ -293,7 +283,7 @@ void card(int id, ImVec2 size)
             body = r.dev;
             if (!r.pub.empty() && r.pub != r.dev) body += body.empty() ? r.pub : "  /  " + r.pub;
             if (body.empty()) body = "No more details on file.";
-            if (r.score > 0) body += "  -  Rated " + std::to_string(r.score) + "/100";
+            if (r.score > 0) body += "  \xC2\xB7  Rated " + std::to_string(r.score) + "/100";
             col = ui::TEXT3;
         }
         for (const std::string& ln : wrap_lines(bf, bf->FontSize, body, tw, lines)) {
