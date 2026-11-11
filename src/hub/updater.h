@@ -193,6 +193,22 @@ int live_child_count();   // children currently registered (tests)
 void reset_quit_for_test();   // tests only: undo shutdown()'s "leaving" state
 #endif
 
+/* ---- free disk space: checked before the download and before the unpack, with a plain message ---- */
+constexpr unsigned long long kSpaceMargin = 256ull << 20;   // headroom on top of the files themselves (logs, the installer's backup, other programs)
+constexpr unsigned long long kDiskFullBytes = 64ull << 20;  // after a failed unpack, less than this free means the disk filled up
+/* Before the download: the zip (minus what a resumed partial file already holds) + the unpacked files (estimated as the zip's size: the
+ * exact figure is checked again before the unpack) + the margin. */
+unsigned long long space_needed_for_download(unsigned long long zip_bytes, unsigned long long already_have_bytes);
+/* Before the unpack: the zip is on disk already, so the unpacked files + the margin. */
+unsigned long long space_needed_for_unpack(unsigned long long unpacked_bytes);
+/* free < 0 means "could not be read": never blocks an update. */
+inline bool enough_space(unsigned long long needed, long long free_bytes) { return free_bytes < 0 || (unsigned long long)free_bytes >= needed; }
+std::string format_bytes(unsigned long long bytes, bool round_up);   // "1.4 GB", "300 MB", "under 1 MB"
+/* "There is not enough free space ... It needs about X free on drive C: but only Y is free. Free up some space and try again." */
+std::string low_space_message(unsigned long long needed, unsigned long long free_bytes, const std::string& path);
+long long free_bytes_on(const std::string& path);              // GetDiskFreeSpaceExW for the volume of path (available to this user); -1 when unknown
+long long zip_unpacked_size(const std::string& zip_path);      // sum of the uncompressed sizes in the zip's central directory; -1 when unreadable (or zip64)
+
 /* ---- the deferred hand-off (pure state machine; time is injected) ---- */
 constexpr unsigned long long kSettleMs = 2500;   // nothing running for this long before the installer starts (a game's exit is followed by save work)
 struct Gate {

@@ -633,6 +633,75 @@ bool resume_eligible(const std::string& text, const ResumeKey& want, long long p
            lower(v.str("sha256")) == lower(want.sha256);
 }
 
+unsigned long long space_needed_for_download(unsigned long long zip, unsigned long long have) {
+    const unsigned long long still = have >= zip ? 0 : zip - have;
+    return still + zip + kSpaceMargin;
+}
+unsigned long long space_needed_for_unpack(unsigned long long unpacked) { return unpacked + kSpaceMargin; }
+
+std::string format_bytes(unsigned long long b, bool up) {
+    const unsigned long long MB = 1ull << 20, GB = 1ull << 30;
+    char t[48];
+    if (b >= GB) {
+        unsigned long long tenths = (b * 10) / GB;
+        if (up && (b * 10) % GB) tenths++;
+        std::snprintf(t, sizeof(t), "%llu.%llu GB", tenths / 10, tenths % 10);
+    } else if (b >= MB) {
+        unsigned long long mb = b / MB;
+        if (up && b % MB) mb++;
+        std::snprintf(t, sizeof(t), "%llu MB", mb);
+    } else {
+        return up && b > 0 ? "1 MB" : "under 1 MB";
+    }
+    return t;
+}
+
+std::string low_space_message(unsigned long long needed, unsigned long long have, const std::string& path) {
+    std::string where = "the install drive";
+    if (path.size() >= 2 && path[1] == ':') where = std::string("drive ") + path.substr(0, 2);
+    return "There is not enough free space to install this update. It needs about " + format_bytes(needed, true) + " free on " + where +
+           " but only " + format_bytes(have, false) + " is free. Free up some space and try again.";
+}
+
+long long free_bytes_on(const std::string& path) {
+    ULARGE_INTEGER avail{}, total{}, freeAll{};
+    if (!GetDiskFreeSpaceExW(W(path).c_str(), &avail, &total, &freeAll)) return -1;
+    return (long long)avail.QuadPart;
+}
+
+long long zip_unpacked_size(const std::string& zipPath) {
+    std::ifstream in(P(zipPath), std::ios::binary | std::ios::ate);
+    if (!in) return -1;
+    const long long fsize = (long long)in.tellg();
+    if (fsize < 22) return -1;
+    auto u16 = [](const unsigned char* p) { return (unsigned)p[0] | ((unsigned)p[1] << 8); };
+    auto u32 = [](const unsigned char* p) { return (unsigned long long)p[0] | ((unsigned long long)p[1] << 8) | ((unsigned long long)p[2] << 16) | ((unsigned long long)p[3] << 24); };
+    const long long tailLen = fsize < 65557 ? fsize : 65557;   // the end-of-central-directory record is in the last 22 + 65535 bytes
+    std::vector<unsigned char> tail((size_t)tailLen);
+    in.seekg(fsize - tailLen);
+    if (!in.read(reinterpret_cast<char*>(tail.data()), tailLen)) return -1;
+    long long e = -1;
+    for (long long i = tailLen - 22; i >= 0; i--)
+        if (tail[(size_t)i] == 0x50 && tail[(size_t)i + 1] == 0x4b && tail[(size_t)i + 2] == 5 && tail[(size_t)i + 3] == 6) { e = i; break; }
+    if (e < 0) return -1;
+    const unsigned count = u16(&tail[(size_t)e + 10]);
+    const unsigned long long cdSize = u32(&tail[(size_t)e + 12]), cdOff = u32(&tail[(size_t)e + 16]);
+    if (count == 0xFFFF || cdSize == 0xFFFFFFFFull || cdOff == 0xFFFFFFFFull) return -1;   // zip64: the caller falls back to an estimate
+    if (cdSize > (64ull << 20) || cdOff + cdSize > (unsigned long long)fsize) return -1;
+    std::vector<unsigned char> cd((size_t)cdSize);
+    in.clear(); in.seekg((std::streamoff)cdOff);
+    if (cdSize && !in.read(reinterpret_cast<char*>(cd.data()), (std::streamsize)cdSize)) return -1;
+    unsigned long long total = 0, at = 0;
+    for (unsigned i = 0; i < count; i++) {
+        if (at + 46 > cdSize || u32(&cd[(size_t)at]) != 0x02014b50ull) return -1;
+        const unsigned long long usz = u32(&cd[(size_t)at + 24]);
+        if (usz == 0xFFFFFFFFull) return -1;
+        total += usz;
+        at += 46 + u16(&cd[(size_t)at + 28]) + u16(&cd[(size_t)at + 30]) + u16(&cd[(size_t)at + 32]);
+    }
+    return (long long)total;
+}
+
 bool fetch_sums(const std::string& sumsUrl, const std::string& scratch, std::string* text, std::string* err) {
     std::string sp = scratch + ".sums";
     rm_file(sp);
@@ -1080,6 +1149,17 @@ void start_update() {
             detail::FetchSpec spec; spec.tag = version; spec.sums_url = sumsUrl; spec.sums_text = sumsText; spec.sig_url = sigUrl; spec.sig_bytes = sigBytes;
             if (hubOnly) { spec.zip_url = hubUrl; spec.digest = hubDigest; spec.size = hubSize; spec.asset_name = detail::kHubAssetName; }
             else { spec.zip_url = url; spec.digest = digest; spec.size = size; }
+            {   // enough room for the zip and what it unpacks to? (a partial file from an earlier try already holds part of it)
+                std::error_code se;
+                const unsigned long long have = std::filesystem::exists(P(zipPath), se) ? (unsigned long long)std::filesystem::file_size(P(zipPath), se) : 0ull;
+                const unsigned long long need = detail::space_needed_for_download((unsigned long long)spec.size, se ? 0ull : have);
+                const long long freeNow = detail::free_bytes_on(updatesDir);
+                if (!detail::enough_space(need, freeNow)) {
+                    ulog("not enough disk space for the download: need %llu, free %lld", need, freeNow);
+                    fail(detail::low_space_message(need, (unsigned long long)freeNow, updatesDir));
+                    return;
+                }
+            }
             std::string verr;
             if (!detail::download_verified(spec, zipPath, &verr, onLine)) {
                 fail(verr + " Download manually: " + kManualUrl);
@@ -1092,14 +1172,31 @@ void start_update() {
             std::string tarExe, tarErr;
             if (!detail::find_system_tool("tar.exe", &tarExe, &tarErr)) { rm_file(zipPath); fail(tarErr); return; }
             if (s_quit.load()) { rm_file(zipPath); fail("RetroHub is closing, so the update was stopped."); return; }
+            long long unpackedBytes = detail::zip_unpacked_size(zipPath);   // exact, from the zip's own index (-1: unreadable, then the zip's size is the estimate)
+            if (unpackedBytes < 0) unpackedBytes = spec.size;
+            {
+                const unsigned long long need = detail::space_needed_for_unpack((unsigned long long)unpackedBytes);
+                const long long freeNow = detail::free_bytes_on(updatesDir);
+                if (!detail::enough_space(need, freeNow)) {
+                    ulog("not enough disk space to unpack: need %llu, free %lld", need, freeNow);
+                    rm_file(zipPath); rm_file(zipPath + ".resume");   // a verified zip that cannot be unpacked is only taking room
+                    fail(detail::low_space_message(need, (unsigned long long)freeNow, updatesDir));
+                    return;
+                }
+            }
             rm_file(updatesDir + "\\staged.json");
             std::filesystem::remove_all(P(staged), fec);
             std::filesystem::create_directories(P(staged), fec);
             std::string tarCmd = "\"" + tarExe + "\" -xf \"" + zipPath + "\" -C \"" + staged + "\"";
             int tarCode = run_capture(tarCmd, [](const std::string&) {}, detail::kTarTimeoutMs);   // a stuck tar is ended by its handle; the install is untouched either way
+            const long long freeAfter = tarCode != 0 ? detail::free_bytes_on(updatesDir) : -1;   // read before the half-unpacked files are removed
             rm_file(zipPath); rm_file(zipPath + ".resume");
             if (tarCode != 0) {
                 std::filesystem::remove_all(P(staged), fec);
+                if (tarCode != kRunTimedOut && !s_quit.load() && freeAfter >= 0 && (unsigned long long)freeAfter < detail::kDiskFullBytes) {   // the disk filled up while unpacking
+                    fail(detail::low_space_message(detail::space_needed_for_unpack((unsigned long long)unpackedBytes), (unsigned long long)freeAfter, updatesDir));
+                    return;
+                }
                 if (tarCode == kRunTimedOut) ulog("unpacking the update timed out after %lu s", detail::kTarTimeoutMs / 1000);
                 fail(tarCode == kRunTimedOut ? "unpacking the update took too long." : "could not unpack the update.");
                 return;
