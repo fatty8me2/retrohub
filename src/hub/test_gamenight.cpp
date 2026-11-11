@@ -110,6 +110,70 @@ int main() {
         std::string pj = to_json(q); Plans q2; CHECK(from_json(pj, &q2) && q2.v[0].toast_sched);
         CHECK(hubtoast::build_gamenight_xml("A&B", "", "x@1").find("A&amp;B") != std::string::npos);
     }
+    {   // ---- iCalendar export ----
+        CHECK(ics_utc(1794513600) == "20261112T200000Z" && ics_utc(0) == "19700101T000000Z" && ics_utc(951868799) == "20000229T235959Z");
+        CHECK(ics_escape("a,b;c\\d\ne") == "a\\,b\\;c\\\\d\\ne" && ics_escape("x\r\ny") == "x\\ny");
+        Night g; g.id = "hostuid42@1794513600"; g.host_uid = "hostuid42"; g.host_name = "Mia"; g.game_id = "mk64"; g.game_title = "Mario Kart 64"; g.start_ms = 1794513600000LL;
+        const int64_t stamp = 1794312000000LL;
+        const std::string want =
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//RetroHub//Game night//EN\r\nCALSCALE:GREGORIAN\r\nBEGIN:VEVENT\r\n"
+            "UID:" + ics_uid(g) + "\r\nDTSTAMP:20261110T120000Z\r\nDTSTART:20261112T200000Z\r\nDTEND:20261112T213000Z\r\n"
+            "SUMMARY:Game night: Mario Kart 64\r\n"
+            "DESCRIPTION:Game night in RetroHub: Mario Kart 64.\\nPlanned by Mia.\\nOpen R\r\n"
+            " etroHub a few minutes before the start to host or join.\r\n"
+            "BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Game night starts in 15 minutes: Mario Kart 64\r\nEND:VALARM\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR\r\n";
+        CHECK(make_ics(g, stamp) == want);
+        // UID / file name: stable, hashed, and free of account ids
+        CHECK(sha256_hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" && sha256_hex("").size() == 64);
+        {
+            Night g2 = g; g2.invitees = {"frienduid77"}; g2.mine = true;
+            const std::string u = ics_uid(g), f = ics_file_name(g);
+            CHECK(u == ics_uid(g2) && f == ics_file_name(g2));                        // same night, same UID and name, whatever else changes
+            CHECK(u.size() == 10 + 32 + 9 && u.compare(0, 10, "gamenight-") == 0 && u.find("@retrohub") == 42);
+            CHECK(f.find("game-night-20261112-2000-") == 0 && f.size() == 25 + 8 + 4 && f.substr(f.size() - 4) == ".ics");
+            Night g3 = g; g3.id = "other@1794513600";                                  // same second, different night: different UID and name
+            CHECK(ics_uid(g3) != u && ics_file_name(g3) != f);
+            const std::string all = make_ics(g2, stamp) + f;
+            CHECK(all.find("hostuid42") == std::string::npos && all.find("frienduid77") == std::string::npos && all.find("1794513600") == std::string::npos);
+            g2.mine = false; CHECK(make_ics(g2, stamp).find("frienduid77") == std::string::npos);
+        }
+        g.mine = true; CHECK(make_ics(g, stamp).find("Planned by") == std::string::npos);
+
+        // commas, semicolons, non-ASCII and a very long title: every physical line <= 75 octets, CRLF only, unfolds back to the escaped text
+        auto check_lines = [&](const std::string& ics) {
+            bool ok = ics.size() > 2 && ics.substr(ics.size() - 2) == "\r\n";
+            size_t pos = 0;
+            while (pos < ics.size()) {
+                size_t e = ics.find("\r\n", pos);
+                if (e == std::string::npos) { ok = false; break; }
+                if (e - pos > 75) ok = false;
+                if (ics.substr(pos, e - pos).find('\n') != std::string::npos) ok = false;
+                pos = e + 2;
+            }
+            return ok;
+        };
+        auto unfold = [](const std::string& ics) {
+            std::string o;
+            for (size_t i = 0; i < ics.size(); ++i) { if (ics.compare(i, 3, "\r\n ") == 0) i += 2; else o += ics[i]; }
+            return o;
+        };
+        g.game_title = "Super Smash Bros., Melee; Ultimate \xC3\xA9\xE3\x83\x9E\xE3\x83\xAA\xE3\x82\xAA";   // e-acute + katakana
+        std::string ics = make_ics(g, stamp);
+        CHECK(check_lines(ics));
+        CHECK(unfold(ics).find("SUMMARY:Game night: Super Smash Bros.\\, Melee\\; Ultimate \xC3\xA9\xE3\x83\x9E\xE3\x83\xAA\xE3\x82\xAA\r\n") != std::string::npos);
+        std::string longt(300, 'x'); for (size_t i = 5; i < longt.size(); i += 7) longt[i] = ',';
+        for (int lead = 0; lead < 4; ++lead) {   // shift the multi-byte characters across every fold position
+            g.game_title = std::string(lead, 'a') + longt + "\xE3\x83\x9E\xE3\x83\xAA\xE3\x82\xAA\xE3\x83\x9E\xE3\x83\xAA\xE3\x82\xAA\xE3\x83\x9E\xE3\x83\xAA\xE3\x82\xAA";
+            std::string li = make_ics(g, stamp);
+            CHECK(check_lines(li));
+            CHECK(unfold(li).find("SUMMARY:" + ics_escape("Game night: " + g.game_title) + "\r\n") != std::string::npos);
+            // no fold lands inside a UTF-8 character: every physical line is valid on its own (continuation bytes never start a line body)
+            for (size_t p = li.find("\r\n "); p != std::string::npos; p = li.find("\r\n ", p + 3)) CHECK(((unsigned char)li[p + 3] & 0xC0) != 0x80);
+        }
+        CHECK(ics_fold("").size() == 2 && ics_fold(std::string(75, 'a')) == std::string(75, 'a') + "\r\n");
+        CHECK(ics_fold(std::string(76, 'a')) == std::string(75, 'a') + "\r\n a\r\n");
+    }
     std::printf(fails ? "FAILED (%d)\n" : "gamenight tests passed\n", fails);
     return fails ? 1 : 0;
 }
