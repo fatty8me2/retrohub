@@ -586,8 +586,8 @@ TileSpec spec_for_ghost(const hubui::fg::Ghost& g, const char* shelf, bool show_
     t.title = g.title;
     if (show_sys) t.badge = console_badge(g.sys);   // packs from other PCs say "switch" (no Switch 2 info in them); a "switch2" id would work too
     console_colors(g.sys, &t.c0, &t.c1);
-    t.c0 = mix(t.c0, IM_COL32(92, 95, 104, 255), 0.72f);   // no-cover tiles are grey too
-    t.c1 = mix(t.c1, IM_COL32(70, 73, 82, 255), 0.72f);
+    t.c0 = mix(t.c0, ui::NOART0, 0.72f);   // no-cover tiles are grey too
+    t.c1 = mix(t.c1, ui::NOART1, 0.72f);
     t.owned = false;       // greyed, no star
     t.show_star = false;
     t.selected = A.sel_ghost == g.id;
@@ -612,14 +612,14 @@ void ghost_tile_progress(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, I
     if (!st) return;
     float bh = sp(0.9f);
     ImVec2 b0(p0.x + sp(1.5f), p1.y - sp(0.75f) - bh), b1(p1.x - sp(1.5f), p1.y - sp(0.75f));
-    dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 70), bh * 0.5f);
+    dl->AddRectFilled(b0, b1, (ui::ON_WASH & 0x00FFFFFFu) | (70u << 24), bh * 0.5f);
     if (frac >= 0) { if (frac > 0) dl->AddRectFilled(b0, ImVec2(b0.x + (b1.x - b0.x) * std::min(1.f, frac), b1.y), ui::ACCENT, bh * 0.5f); }
     else if (st == 2) { float t = (float)std::fmod(ImGui::GetTime() * 0.8, 1.0); float x0 = b0.x + (b1.x - b0.x) * t * 0.8f; dl->AddRectFilled(ImVec2(x0, b0.y), ImVec2(x0 + (b1.x - b0.x) * 0.2f, b1.y), ui::ACCENT, bh * 0.5f); }
 }
 
 void ghost_tile_decor(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, ImVec2 p1, float e, std::string* subtitle) {
     /* desaturate: a neutral grey wash over the cover (lighter on hover so it is clear it can be opened) */
-    dl->AddRectFilled(p0, p1, IM_COL32(96, 99, 108, (int)(150.f - 70.f * e)), sp(1.75f));
+    dl->AddRectFilled(p0, p1, (ui::WASH & 0x00FFFFFFu) | ((ImU32)(int)(150.f - 70.f * e) << 24), sp(1.75f));
     std::vector<std::string> names = ghost_names(g);
     *subtitle = hubui::fg::badge_text(names);
     {   // installing / queued: the state as the subtitle (the bar itself is drawn on top of the title scrim: ghost_tile_progress)
@@ -633,14 +633,14 @@ void ghost_tile_decor(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, ImVe
         const hubnet::Friend* f = fr_find(g.uids[i]);
         if (!f) continue;
         ImVec2 c(p1.x - sp(2.25f) - (float)i * r * 1.35f, p0.y + sp(2.25f));
-        fr_avatar(dl, c, r, f->name, fr_row(*f).state, IM_COL32(6, 7, 12, 255));
+        fr_avatar(dl, c, r, f->name, fr_row(*f).state, ui::RING);
     }
     if (g.uids.size() > shown) {
         char more[16];
         std::snprintf(more, sizeof more, "+%d", (int)(g.uids.size() - shown));
         ImVec2 ts = ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, more);
         dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p1.x - sp(2.25f) - (float)shown * r * 1.35f - ts.x - sp(0.25f), p0.y + sp(2.25f) - ts.y * 0.5f),
-                    IM_COL32(255, 255, 255, 230), more);
+                    (ui::ON_WASH & 0x00FFFFFFu) | (230u << 24), more);
     }
 }
 
@@ -658,7 +658,7 @@ void selected_bar_ghost(const hubui::fg::Ghost& g) {
     ArtRef art = art_for_ghost(g);
     if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, sp(1.25f), 0.8f);
     else draw_no_art(dl, ts, a0, a1, sp(1.25f), 0.8f);
-    dl->AddRectFilled(a0, a1, IM_COL32(118, 122, 132, 120), sp(1.25f));
+    dl->AddRectFilled(a0, a1, (ui::WASH2 & 0x00FFFFFFu) | (120u << 24), sp(1.25f));
     float bh = sp(5.f), bw = sp(16.f);
     float tx = a1.x + sp(2.f);
     float text_w = std::max(sp(8.f), p1.x - sp(2.f) - bw - tx - sp(2.f));
@@ -727,7 +727,7 @@ void draw_ghost_modal() {
         ui::shadow(dl, a0, a1, sp(1.75f), 1.2f);
         if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, sp(1.75f), 0.85f);
         else draw_no_art(dl, ts, a0, a1, sp(1.75f), 0.85f);
-        dl->AddRectFilled(a0, a1, IM_COL32(118, 122, 132, 110), sp(1.75f));
+        dl->AddRectFilled(a0, a1, (ui::WASH2 & 0x00FFFFFFu) | (110u << 24), sp(1.75f));
         dl->AddRect(a0, a1, ui::HAIRLINE, sp(1.75f), 0, 1.f);
     }
     float tx = with_art ? aw + sp(3.f) : 0;
@@ -741,13 +741,13 @@ void draw_ghost_modal() {
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     pill(hub::console_name(g.sys), mix(c0, IM_COL32_BLACK, 0.2f));
-    if (cat && cat->year) { ImGui::SameLine(0, sp(0.75f)); pill(std::to_string(cat->year).c_str(), ui::PANEL2); }
+    if (cat && cat->year) { ImGui::SameLine(0, sp(0.75f)); pill(std::to_string(cat->year).c_str(), ui::PANEL2, ui::PILL_FG); }
     int players = cat ? cat->max_players : 0;
     if (players > 0) {
         char pl[32];
         std::snprintf(pl, sizeof pl, "1-%d players", players);
         ImGui::SameLine(0, sp(0.75f));
-        pill(pl, ui::PANEL2);
+        pill(pl, ui::PANEL2, ui::PILL_FG);
     }
     if (cat && !cat->blurb.empty()) {
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
