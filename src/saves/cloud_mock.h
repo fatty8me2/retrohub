@@ -35,7 +35,9 @@ public:
     std::atomic<int64_t> prot_cap{20ll << 20};
     std::atomic<int> lease_secs{720};
     std::atomic<int> sig_checks_failed{0};
-    std::function<void()> before_plan;     // test hook: called (outside the server lock) before every plan request is handled
+    /* test hook: called (outside the server lock) before every plan request is handled; set / clear it only through this (thread-safe) */
+    void set_before_plan(std::function<void()> f) { std::lock_guard<std::mutex> lk(hook_mu_); before_plan_ = std::move(f); }
+    std::function<void()> get_before_plan() { std::lock_guard<std::mutex> lk(hook_mu_); return before_plan_; }
 
     /* counters / inspection */
     std::atomic<int> n_manifest{0}, n_plan{0}, n_put{0}, n_get{0}, n_commit{0}, n_lease{0}, n_revoke{0}, n_devices{0};
@@ -59,6 +61,8 @@ public:
     void refuse_in_commit(const std::string& path_part, const std::string& cloud = "skipped", const std::string& reason = "over-cap");
 
 private:
+    std::mutex hook_mu_;
+    std::function<void()> before_plan_;
     struct Impl;
     std::unique_ptr<Impl> p_;
     int port_ = 0;
