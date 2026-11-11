@@ -153,6 +153,7 @@ std::string serialize(const Entry& e) {
     kv("system", e.system_short);
     kv("game", e.game_key);
     kv("title", e.title);
+    if (!e.game_path.empty()) kv("gamepath", e.game_path);
     kv("pid", std::to_string(e.pid));
     kv("created", hexs(e.created));
     kv("attempts", std::to_string(e.attempts));
@@ -212,6 +213,7 @@ bool parse(const std::string& text, Entry* out) {
         else if (k == "system") e.system_short = v;
         else if (k == "game") e.game_key = v;
         else if (k == "title") e.title = v;
+        else if (k == "gamepath") e.game_path = v;
         else if (k == "pid") { if (!parse_int(v, &n) || n < 0) return false; e.pid = (unsigned long)n; }
         else if (k == "created") { if (!parse_hex(v, &h)) return false; e.created = h; }
         else if (k == "attempts") { if (!parse_int(v, &n) || n < 0) return false; e.attempts = (int)n; }
@@ -293,8 +295,9 @@ void run_exit(hubemu::SaveSession& s, const Entry& meta) {
 
 void finish(hubemu::SaveSession& s, const Entry& meta, const std::string& dir) {
     run_exit(s, meta);
-    live_drop(meta.id);
+    /* file first, then the live entry: the other way round leaves a window where a replay could see the journal with no live entry */
     if (s.error.empty() && !meta.id.empty()) remove_entry(dir, meta.id);   // an error keeps it: the next start retries (the copy is idempotent)
+    live_drop(meta.id);
 }
 
 void abort_unspawned(const Entry& meta, const std::string& dir, bool revert) {
@@ -302,8 +305,8 @@ void abort_unspawned(const Entry& meta, const std::string& dir, bool revert) {
         if (meta.revert_profile) hubemu::revert_cemu_game_profile(meta.cemu_user, meta.cemu_tid);
         if (meta.revert_own_settings) hubemu::revert_cemu_own_settings(meta.cemu_user);
     }
-    live_drop(meta.id);
     if (!meta.id.empty()) remove_entry(dir, meta.id);
+    live_drop(meta.id);
 }
 
 void forget_live() {
@@ -311,14 +314,28 @@ void forget_live() {
     g_live.clear();
 }
 
-bool process_running(unsigned long pid, unsigned long long created) {
+namespace { bool same_path(const std::string& a, const std::string& b); }
+
+bool process_running(unsigned long pid, unsigned long long created, const std::string& exe, long long started_unix) {
     if (!pid) return false;
     HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, (DWORD)pid);
     if (!h) return GetLastError() == ERROR_ACCESS_DENIED;   // there but cannot be inspected: assume it is the emulator
     FILETIME c, x, k, u;
     bool running;
     if (!GetProcessTimes(h, &c, &x, &k, &u)) running = true;
-    else {
+    else if (!created) {
+        /* no creation time recorded: compare what can be compared, and never call it "not running" while it might be the emulator */
+        bool decided = false;
+        running = true;
+        if (!exe.empty()) {
+            wchar_t buf[2048];
+            DWORD n = (DWORD)(sizeof buf / sizeof buf[0]);
+            if (QueryFullProcessImageNameW(h, 0, buf, &n)) { running = same_path(to_u8(fs::path(std::wstring(buf, n))), exe); decided = true; }
+        }
+        if (decided) { if (running) running = WaitForSingleObject(h, 0) == WAIT_TIMEOUT; }
+        else if (started_unix > 0 && (long long)time(nullptr) - started_unix > 24 * 3600) running = false;   // nothing to compare and the journal is old: a recycled pid
+        else running = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+    } else {
         const unsigned long long now_created = ((unsigned long long)c.dwHighDateTime << 32) | c.dwLowDateTime;
         if (created && now_created != created) running = false;   // the pid was recycled by another program
         else running = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
@@ -441,6 +458,7 @@ RecoverReport recover(const std::string& dir, const Config& cfg, const std::func
         if (stopped()) break;
         std::unique_lock<std::mutex> lk(session_lock(), std::defer_lock);   // a launch in progress owns the emulator's files: wait for it
         while (!lk.try_lock()) { if (stopped()) return rep; std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+        try {
         std::string text;
         bool read_ok = false;
         {
@@ -456,7 +474,7 @@ RecoverReport recover(const std::string& dir, const Config& cfg, const std::func
             continue;
         }
         /* everything below is checked INSIDE the lock, after any launch finished: the emulator may have started since the last look */
-        if (process_running(e.pid, e.created)) { ++rep.still_running; rep.notes.push_back("pending session " + e.id + ": emulator still running"); continue; }
+        if (process_running(e.pid, e.created, e.emu_exe, (long long)e.sess.started_unix)) { ++rep.still_running; rep.notes.push_back("pending session " + e.id + ": emulator still running"); continue; }
         if (live_kind(e.emu_kind) || image_running(e.emu_exe, e.inst_managed ? e.inst_dir : std::string())) {
             ++rep.deferred;
             rep.notes.push_back("pending session " + e.id + ": the emulator is running again, waiting");
@@ -488,6 +506,11 @@ RecoverReport recover(const std::string& dir, const Config& cfg, const std::func
             if (e.attempts >= 3) set_aside(p, L".stale");   // gives up; the emulator's own files and the vault are untouched
             else write_entry(dir, e);
         }
+        } catch (...) {   // an odd journal (filesystem error, bad_alloc, invalid UTF-8) must never take the hub down: set it aside, never delete
+            try { set_aside(p, L".corrupt"); } catch (...) {}
+            ++rep.corrupt;
+            try { rep.warnings.push_back("a pending session file raised an error and was set aside"); } catch (...) {}
+        }
     }
     return rep;
 }
@@ -510,6 +533,7 @@ void start_recovery(const std::string& dir, Config cfg, std::function<void(const
     r.stop = false;
     set_log(log);
     r.th = std::thread([dir, cfg, after, log]() {
+        try {
         Recovery& r = rec();
         for (;;) {
             RecoverReport rep = recover(dir, cfg, after, &r.stop);
@@ -517,6 +541,9 @@ void start_recovery(const std::string& dir, Config cfg, std::function<void(const
             if (r.stop || rep.still_running + rep.deferred == 0) return;   // nothing waits for an emulator any more
             std::unique_lock<std::mutex> lk(r.mu);
             if (r.cv.wait_for(lk, std::chrono::seconds(15), [&] { return r.stop.load(); })) return;
+        }
+        } catch (...) {
+            try { if (log) log(true, "pending session recovery stopped after an unexpected error"); } catch (...) {}
         }
     });
 }

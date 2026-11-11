@@ -367,7 +367,7 @@ static int hub_main() {
         jc.battery_dir = [](const std::string& sys, const std::string& key) { return hub::saves::battery_dir_path(sys, key); };
         jc.install = [cemu = A.st.cemu_exe](const hubjournal::Entry& e, std::string* dir, bool* managed) {
             if (e.emu_kind == 100) { *dir = hookshot::user_dir(); *managed = false; return true; }   // Hookshot
-            const hubemu::Install i = hubemu::find((hubemu::Kind)e.emu_kind, cemu, "");
+            const hubemu::Install i = hubemu::find((hubemu::Kind)e.emu_kind, cemu, e.game_path);
             if (i.exe.empty()) return false;
             *dir = i.dir;
             *managed = i.managed;
