@@ -1,4 +1,5 @@
 #include "logic.h"
+#include "durable_write.h"
 #include "settings_tabs.h"
 
 #include "remix_data.h"
@@ -276,8 +277,8 @@ bool save_settings(const std::string& path, const Settings& s) {
         f << settings_to_json(s);
         if (!f.good()) return false;
     }
-    std::remove(path.c_str());
-    return std::rename(tmp.c_str(), path.c_str()) == 0;
+    if (!durable::commit_replace_ansi(tmp, path)) { std::remove(tmp.c_str()); return false; }   // flushed, then one atomic replace: the old file is never removed first
+    return true;
 }
 
 /* ---------------- lobby rules ---------------- */

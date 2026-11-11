@@ -5,6 +5,7 @@
 #include "palpark_logic.h"
 #include "savestore.h"
 #include "cloud_engine.h"
+#include "durable_write.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -36,8 +37,7 @@ void save_choices() {
         if (!f.flush()) return;
     }
     std::error_code ec;
-    fs::rename(fs::u8path(tmp), fs::u8path(path), ec);
-    if (ec) { fs::remove(fs::u8path(path), ec); fs::rename(fs::u8path(tmp), fs::u8path(path), ec); }
+    if (!durable::commit_replace(fs::u8path(tmp).wstring(), fs::u8path(path).wstring())) fs::remove(fs::u8path(tmp), ec);
 }
 
 /* The player's own GBA games (ROM hacks excluded: their saves are separate and their path is the unpatched base game). */
