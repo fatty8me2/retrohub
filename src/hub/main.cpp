@@ -157,7 +157,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");   // smooth downscaling of cover art
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {
         std::fprintf(stderr, "RetroHub: SDL_Init failed: %s\n", SDL_GetError());   // no MessageBox: it could land over a game
-        return 1;
+        return hubupdate::apply::kStartFailExit;
     }
 
     float ddpi = 96.f;
@@ -277,7 +277,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_Renderer* ren = A.win ? SDL_CreateRenderer(A.win, -1, shot_path ? SDL_RENDERER_SOFTWARE : (SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC)) : nullptr;
     if (!A.win || !ren) {
         std::fprintf(stderr, "RetroHub: window/renderer failed: %s\n", SDL_GetError());   // no MessageBox: it could land over a game
-        return 1;
+        return hubupdate::apply::kStartFailExit;   // the update applier treats this code (and real crashes) as "did not start"
     }
     if (!shot_path) { hubdisplay::seed_monitor(A.win); hubdisplay::apply_min_size(A.win, S); }   // clamped to the work area (L3); headless shots keep the size they ask for
     S = tvmode::init(A.win, g_headless, S, hubtv::has_tv_flag(GetCommandLineW()) || std::getenv("HUB_TV") != nullptr, A.st.tv_start, win_h);   // TV mode scale (fonts are built next)

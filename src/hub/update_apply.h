@@ -19,7 +19,7 @@
  *        --started-marker <file>  --backup-dir <dir>  --wait-secs <n>  --hub-wait-secs <n>  --hub-only --smash-sha256 <hex>
  *        --boot-wait-secs <n>  --boot-cap-secs <n>  --relaunch-no-window
  * Exit code: 0 applied (and the new RetroHub started), 1 failed (rolled back), 2 usage, 3 postponed (a game was still running; nothing
- * changed), 4 applied but the new RetroHub never confirmed (still running at the cap), 5 applied, new RetroHub did not start, rolled back,
+ * changed), 4 applied but the new RetroHub never confirmed (still running at the cap, or it ended without the marker but not like a failed start: kept, backup kept), 5 applied, new RetroHub did not start, rolled back,
  * 6 the boot rollback could not restore everything (backup kept for startup recovery). See "boot check" below. */
 
 #include <string>
@@ -115,7 +115,8 @@ struct RecoverReport {
     int repaired = 0;     // files put back from the backup, dir removed
     int partial = 0;      // some files could not be put back: backup kept
     int stale = 0;        // the install is no longer on the version the backup came from: removed, never restored (would downgrade)
-    int healthy = 0;      // an applier that was watching the new version's start died, and the new version is the one running: backup dropped, no note
+    int pending = 0;      // new version running (or recorded bad) but its boot marker is missing: backup kept, nothing restored (see "boot check")
+    int healthy = 0;     // an applier that was watching the new version's start died, and the new version is the one running: backup dropped, no note
     int restored_files = 0;
     std::vector<std::string> notes;   // one-line bell texts for the next start
 };
@@ -126,10 +127,10 @@ RecoverReport recover_interrupted(const std::wstring& install, const std::string
  * presented its first frame (or is up minimised behind a game) it calls note_boot_ok(), which writes <version> to the marker (temp +
  * rename, never fails the app). The applier, still alive and window-less, waits for the marker:
  *   marker with the expected version -> the update is good: the backup is deleted.
- *   the new process exited with a non-zero code (or could not start) without writing it -> ROLLBACK: the replaced files are restored
+ *   the new process crashed (exit code >= 0xC0000000 except 0xC000013A) or exited with kStartFailExit (70), or could not start, without writing it -> ROLLBACK: the replaced files are restored
  *     from the backup, the files the update added are removed, the OLD RetroHub is relaunched quietly, a status note ("rolled_back",
  *     shown once in the bell) and updates\bad_version.json are written. Exit code 5.
- *   the new process exited with code 0 -> a clean exit (a second instance handing over, or the player closed it): kept, backup deleted.
+ *   any other exit without the marker (0, a Task Manager kill = 1, logoff ...): kept, and so is the backup (exit 4). A downgrade (version < from) is never watched.
  *   the new process is still running after boot_wait_secs -> keep waiting (slow PC), never kill it; after boot_cap_secs stop watching and
  *     change nothing (backup kept for the next start to clean up). Exit code 4.
  * The applier never terminates any process and shows no UI. A rollback only starts when the new RetroHub is gone and nothing else runs
@@ -144,6 +145,14 @@ std::wstring bad_version_path(const std::wstring& install);  // <install>\update
 struct BadVersion { std::string version, from, reason; long long at = 0; long exit_code = 0; };
 bool bad_version_read(const std::wstring& install, BadVersion* out);   // false: none or unreadable
 bool bad_version_write(const std::wstring& install, const BadVersion& b);
+/* Removes updates\bad_version.json (the updater calls this once it installs a DIFFERENT, newer release). Safe when there is none. */
+void bad_version_clear(const std::wstring& install);
+/* RetroHub's exit code for "could not start" (SDL init / window / renderer failed). The applier rolls back ONLY on this code or a real
+ * crash (exit code >= 0xC0000000, except 0xC000013A Ctrl-C/logoff). Any other exit without the marker (a Task Manager kill = 1, exit 0, ...)
+ * keeps the update and the backup; the next start that wrote its marker cleans the backup up. */
+constexpr int kStartFailExit = 70;
+/* True when `v` is a lower dotted version than `than` (leading v ignored). False when either is unparsable. A downgrade is never watched. */
+bool version_lower(const std::string& v, const std::string& than);
 /* Called by the running RetroHub (main.cpp) once it is up. Cheap, idempotent, thread-safe, never throws, does nothing without --boot-ok. */
 void note_boot_ok();
 /* Pure helper (tested): reads the marker and compares its version with `expect` (leading v and spaces ignored). */
