@@ -224,21 +224,23 @@ bool export_game_zip(const std::string& game_dir, const std::string& zip_path, b
     fs::path dst = P(zip_path);
     std::error_code ec;
     fs::create_directories(dst.parent_path(), ec);
-    fs::path tmp = dst;
-    tmp += ".hubtmp";
+    /* Built in memory and written with the atomic UTF-8 writer: miniz's own file entry points take narrow ANSI paths. */
     mz_zip_archive z;
     memset(&z, 0, sizeof z);
-    std::string tmp8 = S(tmp);
-    if (!mz_zip_writer_init_file(&z, tmp8.c_str(), 0)) return fail("Could not create the zip.");
+    if (!mz_zip_writer_init_heap(&z, 0, 64 * 1024)) return fail("Could not create the zip.");
     bool ok = true;
     for (auto& f : fl) {
-        std::string src = S(g / P(f.rel));
-        if (!mz_zip_writer_add_file(&z, f.rel.c_str(), src.c_str(), nullptr, 0, MZ_DEFAULT_LEVEL)) { ok = false; break; }
+        std::ifstream in(g / P(f.rel), std::ios::binary);
+        std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (!in && !in.eof()) { ok = false; break; }
+        if (!mz_zip_writer_add_mem(&z, f.rel.c_str(), data.data(), data.size(), MZ_DEFAULT_LEVEL)) { ok = false; break; }
     }
-    if (ok) ok = mz_zip_writer_finalize_archive(&z) != 0;
-    mz_zip_writer_end(&z);
-    if (ok) ok = durable::commit_replace(tmp.wstring(), dst.wstring(), durable::kRetryLongMs);
-    if (!ok) { fs::remove(tmp, ec); return fail("Writing the zip failed."); }
+    void* buf = nullptr;
+    size_t len = 0;
+    if (ok) ok = mz_zip_writer_finalize_heap_archive(&z, &buf, &len) != 0;
+    if (ok) ok = durable::write_file_durable(dst.wstring(), buf, len, durable::kRetryLongMs);
+    mz_zip_writer_end(&z);   // frees the heap archive
+    if (!ok) return fail("Writing the zip failed.");
     return true;
 }
 

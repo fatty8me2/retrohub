@@ -2711,6 +2711,8 @@ std::mutex g_skip_mu;
 std::vector<SkippedArchive> g_skipped;
 std::vector<GameEntry> g_extra_copies;     // library-1: every copy of a game the last scan found besides the one it lists
 std::vector<FolderScanStatus> g_folder_status;   // library-3: per scanned folder, reachable / complete
+std::string g_scan_current;   // the folder the running scan is looking at (guarded by g_skip_mu); "" when no scan runs
+void set_scan_current(const std::string& s) { std::lock_guard<std::mutex> lk(g_skip_mu); g_scan_current = s; }
 std::mutex g_state_mu;
 bool g_state_loaded = false;
 bool g_state_dirty = false;
@@ -2980,6 +2982,7 @@ void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::strin
 std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
                                     const std::function<void(int, int)>& progress) {
     if (g_cancel.load()) return {};   // cancelled scans return nothing and write nothing
+    struct CurrentGuard { ~CurrentGuard() { set_scan_current(""); } } current_guard;   // the hub's progress line shows the folder being read
     {   /* once per process: stale "*.part" files from an interrupted unzip / extraction in the rom cache */
         static std::once_flag cleaned;
         std::call_once(cleaned, [] {
@@ -3009,6 +3012,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
         st.folder = f;
         if (ec || !fs::is_directory(root, ec)) { st.reachable = false; st.complete = false; unknown_prefixes.push_back(pre); fstat.push_back(st); continue; }
         bool incomplete = false;
+        set_scan_current(f);
         walk(root, cands, seen, &incomplete);
         if (g_cancel.load()) return {};
         if (incomplete) { st.complete = false; unknown_prefixes.push_back(pre); }
@@ -3070,6 +3074,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
             size_t k = next.fetch_add(1);
             if (k >= work.size()) return;
             Candidate& c = cands[work[k]];
+            { const size_t cut = c.path_utf8.find_last_of("\\/"); set_scan_current(cut == std::string::npos ? c.path_utf8 : c.path_utf8.substr(0, cut)); }
             GameEntry e;
             bool ok = false;
             try { ok = identify_game(c.path_utf8, &e); } catch (...) { ok = false; }
@@ -3186,6 +3191,10 @@ std::vector<GameEntry> scan_extra_copies() {
 std::vector<FolderScanStatus> scan_folder_status() {
     std::lock_guard<std::mutex> lk(g_skip_mu);
     return g_folder_status;
+}
+std::string scan_current_folder() {
+    std::lock_guard<std::mutex> lk(g_skip_mu);
+    return g_scan_current;
 }
 
 /* library-13: keys of files the scan cache already identified (same path, size and mtime), without reading them. */

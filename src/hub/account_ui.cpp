@@ -1,5 +1,6 @@
 #include "app.h"
 #include "identity_link.h"
+#include "u8file.h"
 #include "cloud_ui_logic.h"
 
 #include <cstdio>
@@ -131,13 +132,11 @@ std::string code_path() { return hub::data_dir() + "account_code.txt"; }
 void load_saved_code() {
     if (AC.code_loaded || (g_headless && !shot_net())) return;
     AC.code_loaded = true;
-    std::ifstream f(code_path());
-    std::string c;
-    if (f && std::getline(f, c) && hubnet::link_normalize_code(c).size() == 12) { AC.code = c; AC.show_code = true; AC.permanent = true; }
+    std::string c;   // UTF-8 path, legacy-location migration; an unreadable file is simply not shown (never overwritten)
+    if (u8file::read_account_code(code_path(), &c) && hubnet::link_normalize_code(c).size() == 12) { AC.code = c; AC.show_code = true; AC.permanent = true; }
 }
 void save_code(const std::string& c) {
-    std::ofstream f(code_path(), std::ios::trunc);
-    if (f) f << c << "\n";
+    u8file::write_account_code(code_path(), c);
 }
 
 /* "9:05" for 545 seconds; never negative. */
@@ -202,7 +201,7 @@ void adopt_pending() {
     }
     AC.redeem_buf[0] = 0;
     AC.show_code = false;
-    if (!same_account) { std::remove(code_path().c_str()); AC.code_loaded = false; }   // the saved account code belonged to the previous account
+    if (!same_account) { u8file::clear_account_code(code_path()); AC.code_loaded = false; }   // the saved account code belonged to the previous account
     AC.io_msg.clear();
     cloud_account_changed();   // cloud saves follow the account: this PC pulls it (cloud wins where there is no local save)
     if (!FR.started)   // when the friends client runs, its IdentityAdopted event shows the same toast

@@ -68,6 +68,7 @@ void draw_update_popup() {
 float draw_toasts(float bottom, float right, float top) {
     double now = ImGui::GetTime();
     A.toasts.erase(std::remove_if(A.toasts.begin(), A.toasts.end(), [&](const Toast& t) { return t.until < now; }), A.toasts.end());
+    { void scan_toast_prune(); scan_toast_prune(); }   // help_ui.cpp: a scan-result toast never survives into a running game
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImFont* f = ui::F.body;
@@ -220,8 +221,11 @@ void global_input() {
         if (ImGui::IsKeyDown(ImGuiKey_GamepadBack) && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false))) view_combo = true;
         if (ImGui::IsKeyReleased(ImGuiKey_GamepadBack) && !view_combo && !A.proc) fr_toggle_panel();
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
         if (fr_handle_back()) return;
+        extern bool room_leave_on_back();   // page_online.cpp: Esc / B leaves a room that is connecting or failed
+        if (A.page == Page::Online && room_leave_on_back()) return;
+    }
     int dir = 0;
     if (FR.panel_focused) {}
     else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) dir = 1;
@@ -450,7 +454,7 @@ void draw_frame() {
         float w = ImGui::GetContentRegionAvail().x, h = sp(5.f);
         dl->AddRectFilled(p, p + ImVec2(w, h), mix(ui::PANEL, ui::ACCENT, 0.22f), sp(1.5f));
         dl->AddRect(p, p + ImVec2(w, h), with_alpha(ui::ACCENT, 0.5f), sp(1.5f), 0, 1.f);
-        float pulse = 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 4.f);
+        float pulse = ui::reduce_motion ? 1.f : 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 4.f);
         dl->AddCircleFilled(p + ImVec2(sp(2.f), h * 0.5f), sp(0.6f) + pulse * sp(0.25f), ui::ACCENT, 16);
         std::string m = A.proc_title + " is running. You can keep using RetroHub; " +
                         (A.run.controls_path.empty() ? "control changes apply the next time you start it." : "changes to controls apply right away.");

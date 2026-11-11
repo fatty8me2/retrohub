@@ -172,10 +172,78 @@ static void test_help() {
     CHECK(open_steps(s).size() == 2);
     s = SetupInputs(); CHECK(open_steps(s).size() == 3);
     s.have_games = s.username_claimed = s.net_probe_done = true; CHECK(open_steps(s).size() == 1);   // only the tour is left
+    // the empty Home card already asks for game folders: the Finish card drops "Add your games"
+    s = SetupInputs();
+    CHECK(open_steps(s).size() == 3 && open_steps(s)[0] == "Add your games");
+    s.empty_card_showing = true;
+    CHECK(open_steps(s).size() == 2 && open_steps(s)[0] == "Pick a username" && open_steps(s)[1] == "Allow online play");
+    s.username_claimed = s.net_probe_done = true; s.setup_done = true;
+    CHECK(open_steps(s).empty());                       // nothing else open: the card hides, the games card carries on alone
+    s.setup_done = false; CHECK(open_steps(s).size() == 1 && open_steps(s)[0] == "Finish the setup tour");
+    // compact one-line card below about 700 px (at 100% UI size)
+    CHECK(finish_card_compact(600.f, 1.f) && finish_card_compact(699.f, 1.f) && !finish_card_compact(700.f, 1.f) && !finish_card_compact(720.f, 1.f));
+    CHECK(!finish_card_compact(1050.f, 1.5f) && finish_card_compact(1049.f, 1.5f));
+    CHECK(join_steps({"Pick a username", "Allow online play"}) == "Pick a username, Allow online play" && join_steps({}).empty());
+}
+
+static void test_scan_summary() {
+    using namespace hubhelp;
+    const std::string home = "C:\\Users\\me";
+    // no folders: nothing to report
+    CHECK(scan_summary({}, {}).text.empty());
+    // nothing found
+    ScanSummary r = scan_summary({}, {"C:\\Users\\me\\Documents\\Games"}, home);
+    CHECK(r.none && r.games == 0 && r.text == "Looked in ~\\Documents\\Games: no game files found.");
+    r = scan_summary({}, {"D:\\Roms", "E:\\More"}, home);
+    CHECK(r.none && r.text == "Looked in 2 folders: no game files found.");
+    // one game, one folder: singular
+    r = scan_summary({"D:\\Roms\\a.z64"}, {"D:\\Roms"}, home);
+    CHECK(!r.none && r.text == "Found 1 game in 1 folder.");
+    // many games, one folder (slash style and case do not matter, nested folders count)
+    r = scan_summary({"d:/roms/a.z64", "D:\\ROMS\\sub\\b.gba", "D:\\Roms\\c.nds"}, {"D:\\Roms\\"}, home);
+    CHECK(r.text == "Found 3 games in 1 folder." && r.folders_with_games == 1);
+    // several folders, only some hold games
+    r = scan_summary({"D:\\Roms\\a.z64", "E:\\More\\b.gba"}, {"D:\\Roms", "E:\\More", "F:\\Empty"}, home);
+    CHECK(r.text == "Found 2 games in 2 folders.");
+    // a folder name that only starts the same is not a parent
+    r = scan_summary({"D:\\Roms2\\a.z64"}, {"D:\\Roms"}, home);
+    CHECK(r.text == "Found 1 game.");   // games found, but none under a listed folder (e.g. a pack): no folder count
+    // the sentence the Home cards keep
+    CHECK(scan_summary({}, {"D:\\Roms"}, home).last == "Your last scan looked in D:\\Roms and found no game files.");
+    CHECK(scan_summary({}, {"D:\\Roms", "E:\\X"}, home).last == "Your last scan looked in 2 folders and found no game files.");
+    CHECK(scan_summary({"D:\\Roms\\a.z64"}, {"D:\\Roms"}, home).last == "Your last scan found 1 game in 1 folder.");
+    CHECK(scan_summary({"D:\\Roms2\\a.z64"}, {"D:\\Roms"}, home).last == "Your last scan found 1 game.");
+    // who gets a toast: only a scan the player started, never while a game runs
+    {
+        const ScanSummary some = scan_summary({"D:\\Roms\\a.z64"}, {"D:\\Roms"}), none = scan_summary({}, {"D:\\Roms"}), nofolders = scan_summary({}, {});
+        CHECK(scan_toast_wanted(true, false, some));      // user scan with games
+        CHECK(scan_toast_wanted(true, false, none));      // user scan that found nothing
+        CHECK(!scan_toast_wanted(false, false, some));    // automatic scan: silent
+        CHECK(!scan_toast_wanted(false, false, none));
+        CHECK(!scan_toast_wanted(true, true, some));      // a game is running
+        CHECK(!scan_toast_wanted(true, false, nofolders));  // nothing to report
+    }
+    // paths
+    CHECK(short_path("C:\\Users\\me\\Documents", home) == "~\\Documents" && short_path("c:/users/ME/Games", home) == "~/Games");
+    CHECK(short_path("C:\\Users\\meow\\Documents", home) == "C:\\Users\\meow\\Documents" && short_path("D:\\Roms", home) == "D:\\Roms" && short_path("C:\\Users\\me", home) == "~");
+    CHECK(short_path("D:\\Roms", "") == "D:\\Roms");
+    CHECK(middle_trunc("short", 10) == "short");
+    {
+        const std::string t = middle_trunc("D:\\Very\\Long\\Folder\\Name\\Here", 15);
+        CHECK(utf8_len(t) == 15 && t.find("...") != std::string::npos && t.substr(0, 3) == "D:\\" && t.substr(t.size() - 4) == "Here");
+        const std::string u = middle_trunc("C:\\Spiele\\\xC3\xA4\xC3\xB6\xC3\xBC\xC3\xA4\xC3\xB6\xC3\xBC\xC3\xA4\xC3\xB6\xC3\xBC\\ende", 12);   // umlauts: never cut inside a character
+        CHECK(utf8_len(u) == 12);
+        for (size_t i = 0; i < u.size(); ++i) if (((unsigned char)u[i] & 0xC0) == 0x80) CHECK(i > 0 && ((unsigned char)u[i - 1] & 0x80));
+    }
+    CHECK(middle_trunc("abcdefghij", 3) == "..." && middle_trunc("abcdefghij", 0).empty());
+    // caption
+    CHECK(scan_caption_base(12, 340) == "Scanning your games...  12 / 340" && scan_caption_base(0, 0) == "Scanning your games...");
+    CHECK(scan_browse_hint(9.9).empty() && scan_browse_hint(10.0) == "You can keep browsing while this finishes.");
+    CHECK(file_types_line({".z64", ".gba"}) == "RetroHub reads these file types: .z64, .gba." && file_types_line({}).empty());
 }
 
 int main() {
-    test_discord(); test_diag(); test_nettest(); test_glyph(); test_palette(); test_help();
+    test_discord(); test_diag(); test_nettest(); test_glyph(); test_palette(); test_help(); test_scan_summary();
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("convenience tests passed\n");
     return 0;

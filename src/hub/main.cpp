@@ -10,6 +10,8 @@
 #include "hang_watchdog.h"
 #include "hub_log.h"
 #include "winutil.h"
+#include "session_journal.h"
+#include "hookshot.h"
 #include "hub_version.h"
 #include "crash_report.h"
 #include "crash_report_ui.h"
@@ -209,7 +211,7 @@ static int hub_main() {
             const bool want = hubdisplay::initial_reduce_motion(key_saved, A.st.reduce_motion, hubdisplay::os_animations_on());
             if (want != A.st.reduce_motion || !key_saved) { A.st.reduce_motion = want; A.dirty = true; }
         }
-        if (std::getenv("HUB_REDUCE_MOTION")) A.st.reduce_motion = true;
+        if (g_headless && std::getenv("HUB_REDUCE_MOTION")) A.st.reduce_motion = true;   // screenshot mode only
         if (g_headless) if (const char* us = std::getenv("HUB_UI_SCALE")) A.st.ui_scale = hubdisplay::clamp_ui_scale(std::atoi(us));   // screenshots: UI size in percent
         ui::reduce_motion = A.st.reduce_motion;
     }
@@ -360,6 +362,25 @@ static int hub_main() {
     if (qm_e2e_active()) qm_e2e_start();
     start_scan();
     cloud_boot();  // cloud saves v2: automatic for every account (startup delta + retry queue run in the background)
+    if (!g_headless && !autotest_active()) {   // a game that was still running when the hub was closed: its saves reach the vault now (session_journal.h). Never in QA runs.
+        hubjournal::Config jc;
+        jc.battery_dir = [](const std::string& sys, const std::string& key) { return hub::saves::battery_dir_path(sys, key); };
+        jc.install = [cemu = A.st.cemu_exe](const hubjournal::Entry& e, std::string* dir, bool* managed) {
+            if (e.emu_kind == 100) { *dir = hookshot::user_dir(); *managed = false; return true; }   // Hookshot
+            const hubemu::Install i = hubemu::find((hubemu::Kind)e.emu_kind, cemu, "");
+            if (i.exe.empty()) return false;
+            *dir = i.dir;
+            *managed = i.managed;
+            return true;
+        };
+        const char* ad = std::getenv("APPDATA");
+        jc.appdata = ad ? ad : "";
+        hubjournal::start_recovery(hubjournal::pending_dir(hub::data_dir()), jc, [](const hubjournal::Entry& e) {
+            if (e.system_short.empty() || e.game_key.empty()) return;
+            hub::saves::touch_game(e.system_short, e.game_key, e.title);
+            hub::saves::cloud_game_changed({e.system_short, e.game_key});
+        }, [](bool warning, const std::string& m) { if (warning) hublog::warn("%s", m.c_str()); else hublog::info("%s", m.c_str()); });
+    }
     auto_sync();
     SH.init(shot_path);
     hubupdate::set_game_probe(&game_active);
@@ -522,7 +543,7 @@ static int hub_main() {
             std::string jc;
             if (link_join.take(name_set, &jc)) {
                 fr_join_lobby(jc, "", "", "");
-                hub_surface();   // no-op while a game runs: the join is queued and starts after the game; nothing is shown or flashed
+                hub_surface();   // no-op while a game runs: the invite waits in the bell; nothing is shown or flashed
             }
             while (invite_srv.take_night(&w)) { if (!launch_blocked("game night link")) pending_night = U(w); }
             if (app_locked()) pending_night.clear();
@@ -775,6 +796,7 @@ static int hub_main() {
     gamepack_shutdown();
     if (A.dirty) hubui::save_settings(A.settings_path, A.st);
     invite_srv.stop();
+    hubjournal::stop_recovery();   // before the cloud engine and the log go away: the thread may be about to touch both
     gn_shutdown();   // hand the game night reminders back to Windows (scheduled toasts) now that RetroHub is closing
     A.lobby.stop();
     FR.cli.stop();

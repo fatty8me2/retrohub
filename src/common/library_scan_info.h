@@ -25,6 +25,9 @@ struct FolderScanStatus {
 };
 std::vector<FolderScanStatus> scan_folder_status();
 
+/* The folder the RUNNING scan is reading right now (read-only progress for the hub's caption); "" when no scan runs. Thread-safe. */
+std::string scan_current_folder();
+
 /* library-2: games removed from THIS PC's library only (never synced; "Remove from this PC" on the missing-file popup).
  * Stored in <library dir>/removed_here.txt, one game key per line. Hiding a game on every PC stays a separate choice (prefs `hidden`). */
 std::set<std::string> local_removed();

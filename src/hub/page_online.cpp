@@ -78,6 +78,11 @@ void page_online_home() {
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         if (button(group_last_label().c_str(), ImVec2(-1, sp(5.f)), false, A.proc == nullptr, ui::Icon::Globe)) group_invite_last();
     }
+    const std::string start_block = hubui::online_start_block(A.proc != nullptr, access_ok);
+    if (!start_block.empty()) {   // say why Host / Join are greyed out
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        text_wrapped_disabled(start_block);
+    }
     host_nat = natural_h();
     end_panel();
 
@@ -90,17 +95,28 @@ void page_online_home() {
     ImGui::PopFont();
     text_wrapped_disabled("Type the 6-character code your friend gave you, or paste it here from a message or an invite link.");
     ImGui::Dummy(ImVec2(0, 8 * S));
-    char buf[16];
+    /* A roomy buffer so a pasted invite link or "ABC-234" arrives whole; room_code_from_text() reduces it to the code. The on-screen keyboard
+     * (pad mode) edits the buffer itself and stops after 6 characters, so it keeps the small one. */
+    char buf[256];
     std::snprintf(buf, sizeof buf, "%s", A.join_buf.c_str());
+    const size_t buf_size = A.pad_mode ? 7 : sizeof buf;
     ImGui::PushFont(ui::F.h2);
     ImGui::SetNextItemWidth(w * 0.5f);
-    bool enter = osk::input("##code", "ABC234", buf, 7, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Room);
+    bool enter = osk::input("##code", "ABC234", buf, buf_size, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_EnterReturnsTrue, osk::Kind::Room);
     ImGui::PopFont();
-    A.join_buf = hubui::normalize_code(buf);
+    static double bad_until = 0.0;
+    static std::string bad_hint;
+    {
+        const hubui::RoomCodeInput in = hubui::room_code_from_text(buf);
+        A.join_buf = in.code;
+        if (!in.hint.empty()) { bad_hint = in.hint; bad_until = ImGui::GetTime() + 4.0; }
+    }
     bool valid = hubnet::valid_room_code(A.join_buf);
     ImGui::SameLine();
     bool go = button("Join", ImVec2(120 * S, 0), true, valid && A.proc == nullptr && access_ok);
-    if (!A.join_buf.empty() && !valid) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_WARN), "Room codes have 6 characters: letters and numbers, never I, O, 0 or 1.");
+    if (ImGui::GetTime() < bad_until) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_WARN), "%s", bad_hint.c_str());
+    else if (!A.join_buf.empty() && !valid) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_WARN), "Room codes have 6 characters: letters and numbers, never I, O, 0 or 1.");
+    if (!start_block.empty()) text_wrapped_disabled(start_block);
     if ((go || (enter && valid)) && access_ok) enter_room(false, A.join_buf);
     join_nat = natural_h();
     end_panel();
@@ -223,7 +239,10 @@ static std::string room_block_reason(bool host, const hub::GameEntry* rg, const 
             }
         }
     }
-    if (!rg) return "";
+    if (!rg) {   // the host picked a game this PC does not have: say so (the hero card says the same)
+        if (!host && !A.selected_game.empty()) { const GameInfo* g = hub::find_game(A.selected_game); return hubui::missing_game_block(g ? g->title : std::string()); }
+        return "";
+    }
     if (A.proc) return "You're in a game right now.";
     auto sel = hubui::game_selectable(A.selected_game, max_players_for(*rg), peers, 0, remote_play_entry(*rg));   // remote play: guests need no copy
     if (!sel.ok) {
@@ -269,7 +288,8 @@ std::string room_host_launch_block(bool* can_launch) {
     for (auto& p : peers) {
         auto it = A.ready.find(p.slot);
         const bool rd = p.slot == 0 || (p.slot == me ? A.my_ready : (it != A.ready.end() && it->second));
-        mem.push_back({p.name, rd, p.slot == 0, p.slot == me});
+        auto ig = A.ingame.find(p.slot);
+        mem.push_back({p.name, rd, p.slot == 0, p.slot == me, ig != A.ingame.end() && ig->second});
     }
     const hubui::RoomActionState st = hubui::room_action_state(true, rg != nullptr, rg ? rg->title : "", block, A.my_ready, mem);
     const bool ok = st.button_enabled && st.is_launch;
@@ -291,15 +311,14 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     hubui::GuestVersionAction gact;
     std::string block = room_block_reason(host, rg, peers, &gact);
     std::vector<hubui::RoomMember> mem;
-    std::vector<bool> in_game;
     int me = room_my_slot();
     for (auto& p : peers) {
         auto ig = A.ingame.find(p.slot);
-        in_game.push_back(ig != A.ingame.end() && ig->second);
         bool rd = p.slot == 0 || (p.slot == me ? A.my_ready : A.ready[p.slot]);
-        mem.push_back({p.name, rd, p.slot == 0, p.slot == me});
+        mem.push_back({p.name, rd, p.slot == 0, p.slot == me, ig != A.ingame.end() && ig->second});
     }
-    hubui::RoomActionState st = hubui::room_action_state(host, rg != nullptr, rg ? rg->title : "", block, A.my_ready, mem);
+    const bool have_game = rg != nullptr || (!host && !A.selected_game.empty());   // a guest without the host's game still has a game to be blocked on
+    hubui::RoomActionState st = hubui::room_action_state(host, have_game, rg ? rg->title : "", block, A.my_ready, mem);
     bool update_mode = !host && gact == hubui::GuestVersionAction::UpdateNow;
     bool dl_busy = update_mode && hubupdate::downloading();
     if (update_mode) {
@@ -314,6 +333,11 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
         else if (!hubupdate::check_failed() && !hubupdate::update_blocked_bad_version()) A.room_update_none = true;
     }
     group_decorate_room_action(update_mode, st.is_launch, st.ready_on, st.button_enabled, st.button_label, st.headline);
+    if (host && !update_mode && block.empty() && st.is_launch && room_launch_busy()) {   // a launch is already starting: no second press
+        st.button_enabled = false;
+        const std::string starting = room_launch_busy_text();
+        if (!starting.empty()) st.headline = starting;
+    }
     std::string extra;
     if (update_mode && !dl_busy) {
         if ((hubupdate::check_failed() || hubupdate::update_blocked_bad_version()) && !hubupdate::status().empty()) extra = hubupdate::status();
@@ -465,6 +489,17 @@ static bool room_footer(float fw) {
     return left;
 }
 
+static std::string s_connect_code;      // the room whose "connecting" screen is showing, and when that began
+static unsigned s_connect_start = 0;
+
+/* Esc / pad B on a room that is still connecting or has failed leaves it (never in a connected room: B means "back" there). Called from global_input. */
+bool room_leave_on_back() {
+    if (!A.in_room || g_fake_room) return false;
+    if (!hubui::room_back_may_leave(A.in_room, room_connected(), g_shot_rejoin || A.lobby.failed(), A.lobby.status(), A.proc != nullptr || game_active())) return false;
+    leave_room();
+    return true;
+}
+
 void page_online_room() {
     if (g_fake_room && !std::getenv("HUB_SHOT_NOGAME")) {   // screenshot aid: a scratch library has no games; fake a native one
         bool any = false;
@@ -475,6 +510,7 @@ void page_online_room() {
         for (auto& e : A.lib)
             if (supports_online(e)) { A.selected_game = room_id(e); if (e.title.find("Kart") != std::string::npos) break; }
     }
+    if (g_fake_room && g_headless && std::getenv("HUB_SHOT_INGAME")) A.ingame[1] = true;   // screenshot aid: the second member is in a game
     if (g_shot_rejoin || (!g_fake_room && A.lobby.failed())) {
         // banner-styled failure strip: reason on the left, Rejoin where the action button normally sits
         float W = ImGui::GetContentRegionAvail().x, H = 108 * S;
@@ -483,27 +519,48 @@ void page_online_room() {
         dl->AddRectFilled(p0, p1, mix(COL_PANEL, ui::BAD, 0.16f), 16 * S);
         dl->AddRect(p0, p1, with_alpha(ui::BAD, 0.75f), 16 * S, 0, 2 * S);
         dl->AddRectFilled(p0 + ImVec2(0, 14 * S), p0 + ImVec2(6 * S, H - 14 * S), ui::BAD, 3 * S);
-        float bw = std::min(340 * S, W * 0.34f), bh = 80 * S;
+        s_connect_code.clear();
+        const hubui::RoomFailure fail = hubui::room_failure_kind(g_shot_rejoin ? g_shot_rejoin_why : A.lobby.status(), A.code);
+        const bool two_btn = !fail.can_rejoin && fail.can_host_new;
+        float bw = std::min(two_btn ? 420 * S : 340 * S, W * (two_btn ? 0.44f : 0.34f)), bh = 80 * S;
         ImVec2 bp(p1.x - bw - 14 * S, p0.y + (H - bh) * 0.5f);
         float tx = p0.x + 24 * S, tw = bp.x - tx - 16 * S;
         ImFont* hf = ui::F.title ? ui::F.title : ui::F.h2;
-        dl->AddText(hf, hf->FontSize, ImVec2(tx, p0.y + 10 * S), ui::TEXT, "Disconnected from the room");
-        auto lines = ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), g_shot_rejoin ? g_shot_rejoin_why : A.lobby.status(), tw, 2);
+        dl->AddText(hf, hf->FontSize, ImVec2(tx, p0.y + 10 * S), ui::TEXT, ui::ellipsize(hf, hf->FontSize, fail.title, tw).c_str());
+        auto lines = ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), fail.detail, tw, 2);
         float ly = p0.y + 10 * S + hf->FontSize + 6 * S;
         for (auto& l : lines) { dl->AddText(ImVec2(tx, ly), ui::TEXT2, l.c_str()); ly += ImGui::GetFontSize() + 2 * S; }
         ImGui::SetCursorScreenPos(bp);
-        if (button("Rejoin room", ImVec2(bw, bh), true)) rejoin_room();   // same code and role
+        if (fail.can_rejoin) {
+            if (button("Rejoin room", ImVec2(bw, bh), true)) rejoin_room();   // same code and role
+        } else {
+            const float gap = 8 * S, hw = fail.can_host_new ? (bw - gap) * 0.5f : bw;
+            if (fail.can_host_new) {
+                if (button("Host a new room", ImVec2(hw, bh), true, A.proc == nullptr && fr_access() == hubnet::Access::Ok)) enter_room(true, hubnet::new_room_code());
+                ImGui::SetCursorScreenPos(ImVec2(bp.x + hw + gap, bp.y));
+            }
+            if (button("Back", ImVec2(hw, bh), !fail.can_host_new)) leave_room();
+        }
         ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y + 12 * S));
         ImGui::Dummy(ImVec2(0, 0));
         room_footer(ImGui::GetContentRegionAvail().x);
         return;
     }
     if (!room_connected()) {
-        ImGui::TextDisabled("Connecting...  %s", A.lobby.status().c_str());
+        if (s_connect_code != A.code) { s_connect_code = A.code; s_connect_start = SDL_GetTicks(); }
+        hubui::ConnectPhase ph = hubui::connect_phase(s_connect_start, SDL_GetTicks());
+        if (g_headless && std::getenv("HUB_SHOT_CONNECT_SLOW")) ph = hubui::ConnectPhase::StillTrying;   // screenshot aid: the slow wording
+        ImGui::PushFont(ui::F.h2);
+        ImGui::TextUnformatted(hubui::connect_phase_text(ph).c_str());
+        ImGui::PopFont();
+        if (ph == hubui::ConnectPhase::StillTrying) text_wrapped_disabled("This is taking longer than usual. You can keep waiting or cancel.");
+        ImGui::Dummy(ImVec2(0, 8 * S));
+        if (button("Cancel", ImVec2(sp(12.f), sp(4.5f)), false)) { leave_room(); return; }
         ImGui::Dummy(ImVec2(0, 8 * S));
         room_footer(ImGui::GetContentRegionAvail().x);
         return;
     }
+    s_connect_code.clear();
 
     auto peers = peer_list();
     bool host = is_host();

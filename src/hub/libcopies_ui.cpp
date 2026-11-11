@@ -4,6 +4,9 @@
 #include "prefs.h"
 #include "hidden_games.h"
 #include "hidden_ui.h"
+#include "ctl_pad_logic.h"
+#include "glyph_logic.h"
+#include "osk.h"
 #include "library_scan_info.h"
 
 
@@ -219,12 +222,22 @@ static void draw_hidden_list() {
 /* Undo after "Remove from library": a small clickable card above the toasts (the toast list itself is draw-only). */
 static void draw_undo_card() {
     double now = ImGui::GetTime();
+    if (g_headless && std::getenv("HUB_SHOT_UNDO") && UNDO.key.empty()) { UNDO.key = "fake:0"; UNDO.title = "Sample Game"; UNDO.until = now + 600.0; }   // screenshot aid: show the Undo card
     if (UNDO.key.empty() || now > UNDO.until) { UNDO.key.clear(); return; }
     ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowPos(ImVec2(ds.x - ui::sp(3.f), ds.y - ui::sp(12.f)), ImGuiCond_Always, ImVec2(1.f, 1.f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ui::sp(1.f), ui::sp(1.f)));
     ImGui::Begin("##undoremove", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
-    if (button("Undo", ImVec2(ui::sp(10.f), ui::sp(4.f)), true)) {
+    hubui::UndoPadIn pin;   // a pad player undoes with Y while the card shows; with no card the press belongs to the screen underneath
+    pin.card_visible = true;
+    pin.pad_mode = A.pad_mode;
+    pin.input_blocked = osk::hub_input_blocked();
+    pin.text_input = ImGui::GetIO().WantTextInput;
+    pin.y_pressed = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
+    const std::string undo_label = A.pad_mode ? std::string(hubglyph::label(ui::pad_kind, "Y")) + "  Undo" : std::string("Undo");
+    const bool pad_undo = hubui::undo_card_pad_press(pin);
+    if (pad_undo) ImGui::SetKeyOwner(ImGuiKey_GamepadFaceUp, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);   // this Y is spent: the library's own Y (Details) must not also fire (global_input runs after the overlays)
+    if (button(undo_label.c_str(), ImVec2(ui::sp(A.pad_mode ? 14.f : 10.f), ui::sp(4.f)), true) || pad_undo) {
         std::string k = UNDO.key;
         UNDO.key.clear();
         unhide_game(k);
@@ -265,7 +278,7 @@ void draw_missing_rom_dialog() {
         }
     }
     ImGui::SameLine();
-    if (button("Rescan", bs, false, !A.scanning, ui::Icon::Refresh)) { start_scan(); MA.open = false; set_notice("Scanning your games...", 4.0); }
+    if (button("Rescan", bs, false, !A.scanning, ui::Icon::Refresh)) { start_scan(true); MA.open = false; set_notice("Scanning your games...", 4.0); }
     if (button("Remove from this PC", bs, false, true)) {   // local only: your other PCs keep the game
         remove_here(MA.key, MA.title);
         MA.open = false;

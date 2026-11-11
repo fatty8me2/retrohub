@@ -13,6 +13,7 @@
 #include "friends.h"
 #include "identity_link.h"
 #include "json.h"
+#include "u8file.h"
 #include "winutil.h"
 #include "prefs.h"
 #include "game_settings.h"
@@ -263,7 +264,7 @@ void push_event(CloudEvent::Kind k, const GameId& g, const str& text, bool good 
 }
 
 void log_line(const str& s) {   // cloud_saves.log in the data dir; never contains secrets
-    std::ofstream f(data_dir_s() + "cloud_saves.log", std::ios::app);
+    std::ofstream f = u8file::open_out(data_dir_s() + "cloud_saves.log", std::ios::app);
     if (!f) return;
     std::time_t t = std::time(nullptr);
     char ts[32] = {};
@@ -2318,9 +2319,8 @@ bool cloud_restore_version(const GameId& g, const std::string& path, int ver, st
 /* The account code (XXXX-XXXX-XXXX) is the ONE add / recover mechanism: the Settings > Account screen and this engine share
  * identity_link (server: /link/keep + /link/redeem). The text is kept in account_code.txt next to identity.json. */
 std::string cloud_recovery_code() {
-    std::ifstream f(data_dir_s() + "account_code.txt");
     str c;
-    if (f && std::getline(f, c)) { while (!c.empty() && (c.back() == '\r' || c.back() == ' ')) c.pop_back(); }
+    u8file::read_account_code(data_dir_s() + "account_code.txt", &c);   // UTF-8 path + legacy migration; unreadable: no code shown, file untouched
     return hubnet::link_normalize_code(c).size() == 12 ? c : str();
 }
 bool cloud_create_account_code(std::string* code, std::string* err) {
@@ -2329,8 +2329,7 @@ bool cloud_create_account_code(std::string* code, std::string* err) {
     str base, e2, c;
     { std::lock_guard<std::mutex> lk(E.mu); base = E.base_url; }
     if (!hubnet::link_keep_code(base, id, &c, &e2)) { if (err) *err = e2; return false; }
-    std::ofstream f(data_dir_s() + "account_code.txt", std::ios::trunc);
-    if (f) f << c << "\n";
+    u8file::write_account_code(data_dir_s() + "account_code.txt", c);
     if (code) *code = c;
     return true;
 }
@@ -2358,7 +2357,7 @@ bool cloud_adopt_recovery_code(const std::string& code, std::string* err) {
     hubnet::Identity id;
     str e2;
     if (!hubnet::link_redeem_code(base, code, &id, &e2)) { if (err) *err = e2; return false; }
-    std::remove((data_dir_s() + "account_code.txt").c_str());   // the saved code belonged to the previous account
+    u8file::clear_account_code(data_dir_s() + "account_code.txt");   // the saved code belonged to the previous account
     return cloud_adopt_account(id.user_id, id.secret, err);
 }
 

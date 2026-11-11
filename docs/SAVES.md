@@ -141,3 +141,7 @@ progress made online is discarded (the host's vault stays exactly as it was). Wi
 
 Guests therefore never touch their vault in shared-save modes; vault sync (Sync button) is unaffected.
 Test: `qa\retrorun_hostsave.ps1 -Share` (guest save differs from host's; final state hashes must match).
+
+## Pending-session journal (external emulators)
+
+`src/hub/session_journal.*`. When RetroHub starts an external emulator it writes `<data dir>\pending_sessions\<id>.session` (atomic, text, first line `RHJ1`, last line `end`; format in the header). It holds what the after-exit work needs: the save mapping (emulator folder, vault folder, relative folders), the temporary Cemu settings to give back, the emulator's process id and creation time. The normal after-exit path (`finish`) copies the saves with `end_session` and deletes it. If RetroHub is closed during play, the next start (and every ~15 s while one still waits) replays it, but only when that process id with that creation time is gone and no emulator of the same kind runs; the replay uses the same newest-wins copy with backups, so doing it twice changes nothing. An unreadable journal is renamed `*.corrupt`. A failed copy keeps the journal (3 tries). For Switch the save folders are looked up again at exit, so a folder the emulator created during the session (`nand\user\save\account\...`) is copied too. Test: `hub_emuproc_test`.

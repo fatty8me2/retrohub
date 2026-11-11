@@ -18,24 +18,8 @@ int main() {
         Palette q = preset(p);
         for (int s = 0; s < S_COUNT; ++s) CHECK(q.c[s] != 0);                       // every slot defined
         for (int s = 0; s < S_COUNT; ++s) CHECK(ca(q.c[s]) > 0);                    // ... and not fully transparent (a missed slot stays 0)
-        {   // friend-game cover tiles: labels stay readable on the surface they sit on
-            double w1 = contrast(q.c[S_ON_WASH], q.c[S_WASH]), w2 = contrast(q.c[S_PILL_FG], q.c[S_PANEL2]);
-            CHECKC(w1 >= kMinText3, "ON_WASH on WASH", p, w1);
-            CHECKC(w2 >= kMinText2, "PILL_FG on PANEL2", p, w2);
-        }
         for (int s = 0; s < S_COUNT; ++s) if (s != S_HAIRLINE) CHECK(ca(q.c[s]) == 255);
         CHECK(ca(q.c[S_HAIRLINE]) > 0 && ca(q.c[S_HAIRLINE]) < 100);
-        const Slot surf[] = {S_BG, S_SIDEBAR, S_PANEL, S_PANEL2};
-        for (Slot b : surf) {
-            double c1 = contrast(q.c[S_TEXT], q.c[b]), c2 = contrast(q.c[S_TEXT2], q.c[b]);
-            CHECKC(c1 >= kMinText, "TEXT contrast", p, c1);
-            CHECKC(c2 >= kMinText2, "TEXT2 contrast", p, c2);
-        }
-        const Slot base[] = {S_BG, S_PANEL};
-        for (Slot b : base) {
-            double c3 = contrast(q.c[S_TEXT3], q.c[b]);
-            CHECKC(c3 >= kMinText3, "TEXT3 contrast", p, c3);
-        }
         double ca1 = contrast(q.c[S_ACCENT], rgba(255, 255, 255)), ca2 = contrast(q.c[S_ACCENT], q.c[S_BG]);
         CHECKC(ca1 >= kMinAccent, "white on ACCENT", p, ca1);
         CHECKC(ca2 >= kMinAccent, "ACCENT on BG", p, ca2);
@@ -44,6 +28,41 @@ int main() {
         Choice cc; cc.preset = p; cc.cover = true;
         CHECK(parse_choice(preset_id(p)).preset == p);
         CHECK(parse_choice(format_choice(cc)).cover && parse_choice(format_choice(cc)).preset == p);
+    }
+
+    // Contrast table: every text token against every surface it is drawn on, every preset. Printed always, enforced per row.
+    const uint32_t WHITE = rgba(255, 255, 255);
+    const Slot surf[] = {S_BG, S_SIDEBAR, S_PANEL, S_PANEL2, S_PANEL3, S_FRAME};
+    const char* surfN[] = {"BG", "SIDEBAR", "PANEL", "PANEL2", "PANEL3", "FRAME"};
+    std::printf("contrast table (WCAG ratio; min in brackets)\n");
+    for (int p = 0; p < P_COUNT; ++p) {
+        Palette q = preset(p);
+        std::printf("[%s]\n", preset_id(p));
+        auto row = [&](const char* fgN, uint32_t fg, const char* bgN, uint32_t bg, double mn) {
+            double r = contrast(fg, bg);
+            std::printf("  %-10s on %-8s %5.2f (>=%.1f)%s\n", fgN, bgN, r, mn, r >= mn ? "" : "  <-- FAIL");
+            if (r < mn) { std::printf("FAIL preset %s: %s on %s = %.2f, needs %.1f\n", preset_id(p), fgN, bgN, r, mn); ++fails; }
+        };
+        for (int i = 0; i < 6; ++i) {
+            row("TEXT", q.c[S_TEXT], surfN[i], q.c[surf[i]], kMinText);
+            row("TEXT2", q.c[S_TEXT2], surfN[i], q.c[surf[i]], kMinText2);
+            row("TEXT3", q.c[S_TEXT3], surfN[i], q.c[surf[i]], (surf[i] == S_PANEL2 || surf[i] == S_PANEL3) ? kMinText3Raised : kMinText3);
+        }
+        row("GHOST", q.c[S_GHOST], "PANEL2", q.c[S_PANEL2], kMinText2);
+        row("GHOST", q.c[S_GHOST], "PANEL3", q.c[S_PANEL3], kMinText2);
+        row("white", WHITE, "ACCENT", q.c[S_ACCENT], kMinLarge);          // bold button labels
+        row("ACCENT", q.c[S_ACCENT], "BG", q.c[S_BG], kMinLarge);
+        for (Slot sm : {S_GOOD, S_BAD, S_WARN}) {
+            const char* n = sm == S_GOOD ? "GOOD" : sm == S_BAD ? "BAD" : "WARN";
+            row(n, q.c[sm], "PANEL", q.c[S_PANEL], kMinLarge);
+            row(n, q.c[sm], "PANEL2", q.c[S_PANEL2], kMinLarge);
+        }
+        row("ON_WASH", q.c[S_ON_WASH], "WASH", q.c[S_WASH], kMinLarge);
+        row("PILL_FG", q.c[S_PILL_FG], "PANEL2", q.c[S_PANEL2], kMinText2);
+        // disabled controls (BeginDisabled) fade everything to 60% (ImGui DisabledAlpha); 3:1 by design, not 4.5
+        for (int i : {0, 2, 3}) row("TEXT@60%", mix_rgb(q.c[surf[i]], q.c[S_TEXT], 0.6), surfN[i], q.c[surf[i]], kMinDisabled);
+        row("GHOST@60%", mix_rgb(q.c[S_PANEL2], q.c[S_GHOST], 0.6), "PANEL2", q.c[S_PANEL2], kMinDisabled);
+        row("TEXTDIS", q.c[S_TEXT2], "PANEL", q.c[S_PANEL], kMinText2);   // ImGuiCol_TextDisabled is TEXT2 at full alpha
     }
     CHECK(parse_choice("").preset == P_MIDNIGHT && !parse_choice("junk").cover);
 

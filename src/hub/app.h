@@ -536,7 +536,7 @@ std::string n64run_path();
 bool is_native(const hub::GameEntry& e);
 std::string sys_short(const hub::GameEntry& e);
 std::string no_slash(std::string p);
-void start_scan();
+void start_scan(bool user_requested = false);   // user_requested: the player asked for it (Rescan, folder added / removed): its result is announced; automatic scans stay silent
 const hub::GameState& gstate(const std::string& key);
 void refresh_state(const std::string& key);
 const hub::GameEntry* find_entry(const std::string& key);
@@ -803,6 +803,8 @@ void qm_e2e_start();                                                            
 bool qm_e2e_frame();                                                                    // every frame; false = finished (exit code set)
 int qm_e2e_exit_code();
 void qm_e2e_enable();
+unsigned long long qm_now_ms();                      // quickmenu.cpp: wall clock, or the e2e virtual clock
+void qm_e2e_advance_clock(unsigned ms);                // e2e only: switches to the virtual clock and advances it
 struct QmE2EState { bool open = false; int page = 0; std::string sel; int speed_idx = 0, vol = 0; bool mute = false; std::string close_why; std::vector<std::string> cmds; bool imgui_nav = false; };
 QmE2EState qm_e2e_state();                                                                   // View+Y while a game runs
 void draw_quick_menu();
@@ -854,6 +856,9 @@ void spectate_start(const std::string& code, const std::string& game_id, const s
 void spectate_tick();
 bool spectate_pending();
 void launch_fail(const std::string& why, double secs = 8.0);   // guest couldn't start the host's launch: notice + np_fail to the host
+void launch_fail_w(const std::string& shown, const std::string& wire, double secs = 8.0);   // launch_fail with different wire text (older RetroHubs keep reading the old wording)
+bool room_launch_busy();                // launch_online.cpp: a room launch is already starting on this PC (async launch states + 5 s after the host's press): disable Launch
+std::string room_launch_busy_text();    // launch_online.cpp: "Starting <game>..." while room_launch_busy(), else ""
 std::string emulator_online_block();   // "" or why this PC cannot take part in the room game yet (Dolphin / Azahar not installed); lobby_tick un-readies on it
 std::string ready_block_reason_now();   // "" or why the guest's "I'm ready" must stay disabled (version mismatch)
 bool is_host();

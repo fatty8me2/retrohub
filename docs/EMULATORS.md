@@ -165,7 +165,7 @@ Stored in the vault at `<vault>\_settings\game_settings.json`. Layers: option de
   32-digit key lines; they never print key material.
 - **Saves.** Synced folders per game: `usr/save/00050000/<id low>` and `usr/save/0005000e/<id low>`; every account (`user/<persistentId>`, `user/common`) is inside them. Vault
   layout: `<vault>\wiiu\<game key>\battery\usr\save\...`. Unknown-title discs pick up changed folders under both ids. The shader cache is not vaulted.
-- **GamePad screen.** Cemu 2.6's default hotkey "toggle pad screen" is Ctrl+Tab (its first-run assistant lists it). RetroHub sends it when View (Back) + right bumper are held,
+- **GamePad screen.** Cemu 2.6's default hotkey "toggle pad screen" is Ctrl+Tab (its first-run assistant lists it). RetroHub sends it when View (Back) + right bumper are held alone (not with Start, Y or a trigger) for a quarter of a second,
   and from Game menu > "Swap GamePad / TV screen". The keys are injected into the focused Cemu window, so the hidden-desktop QA only logs it.
 - **Cover art.** libretro-thumbnails "Nintendo - Wii U": the repository's file list (one GitHub API request, cached) is matched by title with the article moved
   ("Legend of Zelda, The - ..."), USA release first. Fallback: GameTDB front cover by the product code (`art.gametdb.com/wiiu/cover/<US|EN|JA>/<id>01.jpg`), one image per game, fetched on demand and cached.
