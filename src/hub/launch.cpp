@@ -37,6 +37,7 @@
 #include "third_party/stb_image.h"
 #include "app.h"
 #include "launch_guard_logic.h"
+#include "synth_input_lock.h"
 #include "launch_logic.h"
 #include "hang_watch_logic.h"
 #include "exit_combo.h"
@@ -337,6 +338,9 @@ void focus_game() {
 /* Raises the running game and presses one key chord, but only while a game window is the foreground window (re-checked before every key-down;
  * releases always go out). Returns how many keys were pressed. Shared by the Wii U pad-screen toggle and the PSP state keys. */
 static int send_game_chord(const std::vector<int>& keys) {
+    /* UI frame thread: never wait for another key burst (a Dolphin speed burst can run for seconds), skip this press instead. */
+    std::unique_lock<std::mutex> burst(hubinput::synth_input_mutex(), std::try_to_lock);
+    if (!burst.owns_lock()) { autotest_log("chord skipped: another key burst is running"); return 0; }
     focus_game();
     std::vector<DWORD> pids = game_pids();
     auto game_fg = [&]() {   // re-checked before every key-down; releases always go out
@@ -386,6 +390,7 @@ void dolphin_send_speed_keys(const std::vector<int>& vks, std::function<void(int
         };
         for (int i = 0; i < 60 && !game_fg(); ++i) Sleep(50);
         if (!game_fg()) { qm_log("speed burst: game never became foreground, not sent"); if (done_cb) done_cb(-1); return; }
+        std::lock_guard<std::mutex> burst(hubinput::synth_input_mutex());   // one key burst at a time (a chord or quickmenu.cpp's state keys must not interleave)
         Sleep(150);
         auto key = [](int vk, bool up) {
             INPUT i{};
@@ -416,7 +421,15 @@ void wiiu_pad_watch() {
         if (autotest_active()) if (const char* after = std::getenv("RETROHUB_AUTOTEST_PADSWAP_AFTER"))   // QA only: press the combo once after N seconds
             if (!prev && GetTickCount64() - A.run.start_tick >= (ULONGLONG)(std::atof(after) * 1000.0)) { static bool fired = false; if (!fired) { fired = true; down = true; } }
     }
-    if (down && !prev) wiiu_toggle_gamepad_screen();
+    if (down && !prev) {
+        /* The pad is read whichever window has focus: act only when RetroHub or this session's own game is in front, never pull Cemu
+         * over another game the player switched to (QA's hidden desktop has no meaningful foreground window, so it is exempt). */
+        DWORD fg = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), &fg);
+        std::vector<unsigned long> gp;
+        for (DWORD p : game_pids()) gp.push_back(p);
+        if (autotest_active() || hubui::pad_combo_may_act(fg, GetCurrentProcessId(), gp)) wiiu_toggle_gamepad_screen();
+    }
     prev = down;
 }
 
@@ -820,7 +833,11 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
 }
 
 void start_unzip(const hub::GameEntry& e) {
-    if (UNZ.th.joinable()) UNZ.th.join();
+    if (UNZ.state == UnzipJob::Working && !UNZ.done) {   // one still unpacking: joining it here would freeze the frame thread for minutes
+        set_notice("Another game is still being unpacked. Try again when it has finished.");
+        return;
+    }
+    if (UNZ.th.joinable()) UNZ.th.join();   // finished (done is set as its last step): returns at once
     UNZ.done = false;
     UNZ.ok = false;
     UNZ.cancel = false;
@@ -853,12 +870,12 @@ void add_game_shortcut(const hub::GameEntry& e) {
     std::wstring key = W(e.key);
     if (!invite_is_valid_game_key(key)) { set_notice("This game cannot be added to the desktop."); return; }
     std::wstring icon;
-    if (hubart::enabled()) {   // cover art as the icon when it is already cached
+    if (hubart::enabled()) {   // cover art as the icon when it is already cached (button click on the frame thread: the *_cached calls never touch the network)
         std::string name, png;
         int w = 0, h = 0;
         std::string err;
-        if (hubart::detail::resolve_name(e, &name, nullptr) &&
-            hubart::detail::fetch_decode(sys_short(e), name, hubart::Kind::Boxart, &w, &h, &err, &png)) {
+        if (hubart::detail::resolve_name_cached(e, &name, nullptr) &&
+            hubart::detail::fetch_decode_cached(sys_short(e), name, hubart::Kind::Boxart, &w, &h, &err, &png)) {
             int iw = 0, ih = 0, comp = 0;
             std::ifstream pf(std::filesystem::path(W(png)), std::ios::binary);
             std::string bytes((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());

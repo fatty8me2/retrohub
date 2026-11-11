@@ -110,6 +110,7 @@ void worker_main() {
     Worker* w = W();
     for (;;) {
         JobQueue::Entry j;
+        std::string cdir;   // w->cache_dir, copied under the lock (the UI thread assigns it)
         {
             std::unique_lock<std::mutex> l(w->mu);
             for (;;) {   // urgent jobs sit in front; a background job only runs while bg_allowed()
@@ -117,11 +118,12 @@ void worker_main() {
                 w->cv.wait_for(l, std::chrono::seconds(1));
             }
             j = w->jobs.pop();
+            cdir = w->cache_dir;
         }
         Online on;
         std::string txt;
         Online cached;
-        bool fresh = winutil::read_file(w->cache_dir + j.name, &txt) && gameinfo::cache_from_json(txt, &cached) && !gameinfo::cache_stale(cached, now_s());
+        bool fresh = winutil::read_file(cdir + j.name, &txt) && gameinfo::cache_from_json(txt, &cached) && !gameinfo::cache_stale(cached, now_s());
         if (fresh) continue;   // already on disk and recent: nothing to do
         gameinfo::Fetcher f = [](const std::string& u, std::string* b, int* s) { return gameinfo_net::fetch(u, b, s); };
         t_tdb_pending = false;
@@ -132,8 +134,8 @@ void worker_main() {
             on.fetched = now_s();
             on.rev = waiting_db ? 0 : gameinfo::kCacheRev;   // rev 0 = looked up again once the database is there (cache_stale)
             std::error_code ec;
-            std::filesystem::create_directories(std::filesystem::u8path(w->cache_dir), ec);
-            winutil::write_file_atomic(w->cache_dir + j.name, gameinfo::cache_to_json(on));
+            std::filesystem::create_directories(std::filesystem::u8path(cdir), ec);
+            winutil::write_file_atomic(cdir + j.name, gameinfo::cache_to_json(on));
             g_generation.fetch_add(1);
         } else if (!j.urgent) {   // offline: leave the trickle alone for 5 minutes and keep the job
             std::lock_guard<std::mutex> l(w->mu);
@@ -208,10 +210,11 @@ Slot& slot_for(const Query& q, const std::string& name) {
     Slot& s = g_slots[name];
     s.q = q;
     s.meta = gameinfo::shared_db(hub::exe_dir() + "data/").lookup(q);
-    W()->cache_dir = cache_dir();
+    const std::string cdir = cache_dir();
+    { std::lock_guard<std::mutex> l(W()->mu); W()->cache_dir = cdir; }   // the worker reads it under the same lock
     std::string txt;
     Online cached;
-    bool have = winutil::read_file(W()->cache_dir + name, &txt) && gameinfo::cache_from_json(txt, &cached);
+    bool have = winutil::read_file(cdir + name, &txt) && gameinfo::cache_from_json(txt, &cached);
     if (have) { s.on = cached; s.st = Slot::Done; }
     if (!have || gameinfo::cache_stale(cached, now_s())) {
         if (network_allowed()) enqueue(name, s);
