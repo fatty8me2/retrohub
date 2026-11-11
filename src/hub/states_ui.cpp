@@ -50,7 +50,7 @@ SDL_Texture* thumb_tex(const hubui::StateSlot& s, int* w, int* h) {
 }
 
 std::string slot_path(const hub::GameEntry& e, int slot) {
-    std::string d = with_slash(hub::saves::states_dir(sys_short(e), e.key));
+    std::string d = with_slash(hub::saves::states_dir_path(sys_short(e), e.key));
     return slot < 0 ? d + "auto.state" : d + "slot" + std::to_string(slot) + ".state";
 }
 
@@ -109,7 +109,7 @@ void draw_state_strip(const hub::GameEntry& e) {
         return;
     }
     shot_trace_once("act", e.key + " states enabled count=" + std::to_string(hubui::count_states(A.info_states, true)));
-    const std::string dir = hub::saves::states_dir(sys, e.key);
+    const std::string dir = hub::saves::states_dir_path(sys, e.key);
     const bool idle = A.proc == nullptr;
     ImDrawList* dl = ImGui::GetWindowDrawList();
 

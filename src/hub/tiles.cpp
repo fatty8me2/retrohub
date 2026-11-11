@@ -44,8 +44,8 @@ void refresh_save_info(const hub::GameEntry& e) {
     if (is_native(e)) return;
     std::string sys = sys_short(e);
     uint64_t sb = 0;
-    count_files(hub::saves::battery_dir(sys, e.key), &A.info_battery_files, &A.info_battery_bytes);
-    std::string sd = hub::saves::states_dir(sys, e.key);
+    count_files(hub::saves::battery_dir_path(sys, e.key), &A.info_battery_files, &A.info_battery_bytes);
+    std::string sd = hub::saves::states_dir_path(sys, e.key);
     count_files(sd, &A.info_state_files, &sb);
     A.info_auto_state = file_exists(with_slash(sd) + "auto.state");
     if (A.info_auto_state && A.info_state_files > 0) --A.info_state_files;
@@ -75,8 +75,8 @@ void save_info_scan(std::string key, std::string sys, bool native, unsigned gen)
     SaveInfoBg r;
     if (!g_io_shutdown && !native) {
         uint64_t sb = 0;
-        count_files(hub::saves::battery_dir(sys, key), &r.battery_files, &r.battery_bytes);
-        std::string sd = hub::saves::states_dir(sys, key);
+        count_files(hub::saves::battery_dir_path(sys, key), &r.battery_files, &r.battery_bytes);
+        std::string sd = hub::saves::states_dir_path(sys, key);
         count_files(sd, &r.state_files, &sb);
         r.auto_state = file_exists(with_slash(sd) + "auto.state");
         if (r.auto_state && r.state_files > 0) --r.state_files;

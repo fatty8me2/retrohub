@@ -96,8 +96,8 @@ std::vector<at::Slide> build_slides() {
     std::vector<std::vector<at::Slide>> per;
     for (auto* e : games) {
         std::vector<at::Slide> pics;
-        collect(hub::saves::states_dir(sys_short(*e), e->key), true, *e, &pics);
-        collect(no_slash(hub::saves::game_dir(sys_short(*e), e->key)) + "\\shots", false, *e, &pics);
+        collect(hub::saves::states_dir_path(sys_short(*e), e->key), true, *e, &pics);
+        collect(no_slash(hub::saves::game_dir_path(sys_short(*e), e->key)) + "\\shots", false, *e, &pics);
         std::stable_sort(pics.begin(), pics.end(), [](const at::Slide& a, const at::Slide& b) { return a.when > b.when; });
         if (pics.size() > at::kPerGame) pics.resize(at::kPerGame);
         if (!pics.empty()) per.push_back(std::move(pics));
