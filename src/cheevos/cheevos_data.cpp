@@ -195,6 +195,7 @@ bool hardcore_blocks(bool hc, Feature f) {
     (void)f;
     return hc;   // every listed feature is blocked in hardcore
 }
+bool auto_state_allowed(bool hc) { return !hardcore_blocks(hc, Feature::LoadState); }
 const char* block_message(Feature f) {
     switch (f) {
         case Feature::LoadState: return "Hardcore: save states are off";

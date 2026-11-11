@@ -111,9 +111,11 @@ struct Sidecar {
 std::string make_sidecar(const Sidecar& s);
 bool parse_sidecar(const std::string& text, Sidecar* out);
 
-/* Atomic small-file write (tmp + rename). */
+/* Atomic small-file write (tmp + rename). One attempt, never sleeps (safe on the emulation loop and the UI thread). If a
+ * reader holds the target open the rename fails: false, target untouched, temp file removed. It never falls back to a non-atomic write. */
 bool write_text_atomic(const std::string& path, const std::string& text);
 bool read_text(const std::string& path, std::string* out);
+
 
 /* Hub side: write the next command for a run (seq = previous seq in the file + 1). Returns the seq, 0 on failure.
  * The file holds ONE command: a Quit the runner has not acked yet is never replaced by another command (0 is returned), so a
@@ -128,7 +130,8 @@ class Poller {
   public:
     explicit Poller(std::string ctl_path = std::string());
     bool poll(uint64_t now_ms, Command* out, uint64_t interval_ms = 250);
-    void ack(bool ok, const std::string& msg) const;   // for the command last returned by poll()
+    void ack(bool ok, const std::string& msg) const;   // for the command last returned by poll(); one attempt, never sleeps. If the ack file is
+                                                       // held open by a reader, the ack is kept and retried on the next poll() ticks (bounded)
     long long last_seq() const { return last_; }
     bool enabled() const { return !path_.empty(); }
   private:
@@ -136,6 +139,9 @@ class Poller {
     std::string path_, stamp_;
     long long last_ = 0, pending_ = 0;
     uint64_t next_ = 0;
+    mutable std::string retry_text_;   // an ack whose write failed; written again by poll() (kAckRetryTicks tries at most)
+    mutable int retry_left_ = 0;
 };
+constexpr int kAckRetryTicks = 20;   // poll ticks (250 ms each by default): about 5 s of patience for a held ack file
 
 }  // namespace runctl

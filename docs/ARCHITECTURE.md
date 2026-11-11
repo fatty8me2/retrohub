@@ -479,7 +479,7 @@ Entries per system, with engine: n64 29 (Mupen64Plus 28, Native 1); gba 27 (Libr
 They run as external emulators started by `launch_external` in `src/hub/launch.cpp`; everything else is in `src/hub/emulators.cpp`, with the header
 parsers in `src/common/emu_formats.cpp` and the save mapping in `src/common/emu_saves.cpp`. See `docs/EMULATORS.md`.
 
-ROM files can be `.z64` (big-endian), `.v64` (byteswapped) or `.n64` (little-endian). Normalize to `.z64` byte order before hashing. Identification uses the MD5 of the normalized image, with a fallback to the header CRC1/CRC2 at offsets 0x10/0x14.
+ROM files can be `.z64` (big-endian), `.v64` (byteswapped) or `.n64` (little-endian). Normalize to `.z64` byte order before hashing. Identification uses the MD5 of the normalized image (the library key is `n64:<md5>`). If no catalog entry has that MD5, the lookup falls back to the 4-character game code at header offset 0x3B (`find_game_for` in `src/common/games.cpp`). There is no CRC1/CRC2 check.
 
 
 **Socket blips (Plan 4 W2-D):** a game-room WebSocket loss after `ready` does not end the match. `Session` reconnects (`net/reconnect.h`, 25

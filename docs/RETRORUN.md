@@ -1,7 +1,7 @@
 # retrorun: libretro frontend for GBA / GB / GBC / Nintendo DS
 
 `retrorun.exe` is a small, dependency-light libretro frontend (SDL2 only) that the hub launches for Game Boy
-family games. It loads any software-rendered `*_libretro.dll` core; tested with **mGBA** (GBA) and **Gambatte** (GB/GBC).
+family games. It loads any software-rendered `*_libretro.dll` core (frames are drawn through SDL, with optional built-in screen filters); tested with **mGBA** (GBA) and **Gambatte** (GB/GBC).
 Source: `src/retrorun/` (`core.cpp` = libretro host, `main.cpp` = frontend, `image.cpp` = PNG/BMP writer,
 `third_party/` = vendored `libretro.h` (MIT) and `stb_image_write.h` (public domain)).
 
@@ -98,7 +98,7 @@ Fast forward (Tab, offline) discards audio, skips pacing and presents every 8th 
 - Battery: `<save-dir>\<rom basename>.srm` via `retro_get_memory_data(SAVE_RAM)`. Loaded at start (copied up to the smaller of file and core sizes),
   written on exit and every 30 s **only if changed**, always temp-file + rename (`MoveFileEx` replace + write-through) so a crash never tears the file.
   Cores that write their own saves (via the save dir) also land in `--save-dir`.
-- States: `<state-dir>\slotN.state` (F5/F7), plus `auto.state` written on exit and loaded at start only with `--resume` (ignored online).
+- States: `<state-dir>\slotN.state` (F5/F7), plus `auto.state` written on exit and loaded at start only with `--resume` (ignored online). In RetroAchievements hardcore the resume state is not written (hardcore forbids save states), so a later non-hardcore session resumes from the older point.
   Loading states is disabled in netplay.
 
 ## Netplay (lockstep)
@@ -146,7 +146,7 @@ Windowed code paths can be smoke-tested with `SDL_VIDEODRIVER=dummy SDL_AUDIODRI
 
 ## Limitations
 
-- No hardware rendering, no sensors/camera, no core-options UI (use `--opt` / ini), no shaders.
+- No hardware rendering, no sensors/camera, no core-options UI (use `--opt` / ini), no GPU shaders (cores cannot supply their own). The frontend does have built-in software screen filters (`--fx off|crt|lcd|dmg|sharp`, runner_ctl `shader`) and an optional bezel (`--bezel`), see `present_fx.cpp`.
 - **Rewind and run-ahead (offline only; refused online, in `--link` and on PS2):** `--rewind auto|on|off` keeps a ring of XOR-delta compressed states (`rewind.h`): about 20 s for NES/SNES/GB/GBC/GBA, off by default for PS1/DS (`on` gives 5 s). Hold LT + View (not with Start or Y) or send runner_ctl `rewind`; the OSD corner shows `REWIND n.ns`. `--runahead off|1|2|auto` runs 1-2 speculative frames after the real one with audio muted and restores the state (`runahead.h`); Auto = 1 on NES/SNES/GB/GBC/GBA. Settings: per-game "Run-ahead" (play.runahead). Both measure their cost over the first 120 frames and turn themselves off with an OSD message if too slow (not in headless). QA: `--headless --rewind-selftest N,K` / `--runahead N --runahead-selftest N` (frame hashes after rewind-replay, and run-ahead output == normal shifted by N); `retrorun_rewind_test` covers the ring limits and the same checks on a fake core.
 - Supported: cheats (`--cheats FILE`, live toggles offline), multi-disc swap (`--disc-ctl FILE`, libretro disk-control interface), rumble (libretro rumble -> `SDL_GameControllerRumble` on the pad of that local port).
 - Zipped ROMs are not unpacked by retrorun itself (the hub library extracts them first) (cores that handle zip themselves via `need_fullpath` work).
