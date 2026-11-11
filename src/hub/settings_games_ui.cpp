@@ -126,7 +126,7 @@ void options_grouped(const std::string& console, const std::string& game_key, in
     if (!opts.empty()) {   // say what is missing instead of silently leaving it out
         bool has_fx = false;
         for (auto* o : opts) if (o->key == "fx.filter") has_fx = true;
-        if (!has_fx) { ImGui::Dummy(ImVec2(0, sp(0.4f))); text_wrapped_disabled(std::string("Screen filters and console frames are not available for ") + hub::system_name(sys) + "."); }
+        if (!has_fx) { ImGui::Dummy(ImVec2(0, sp(0.4f))); text_wrapped_disabled(std::string("Screen filters and console frames are not available for ") + hub::system_name(sys) + "."); ImGui::Dummy(ImVec2(0, sp(1.5f))); }
     }
 }
 
