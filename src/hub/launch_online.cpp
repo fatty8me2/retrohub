@@ -54,7 +54,18 @@ bool room_launch_busy() {
     rplay_busy_states(&st.rp_pending, &st.rp_stream, &st.rp_probe);
     return hublaunch::launch_busy(st, GetTickCount64(), g_launch_pressed_at);
 }
-std::string room_launch_busy_text() { return room_launch_busy() ? hublaunch::starting_text(g_launch_title) : std::string(); }
+/* Text for the STARTING phase only: not while a GameCube / remote play session is simply running (those flags stay true for the whole game). */
+std::string room_launch_busy_text() {
+    hublaunch::LaunchStates st;
+    st.np3_pending = NP3_pending;
+    st.np3_active = NP3.active();
+    st.gc_active = GCO.active;
+    st.gc_guest_wait = GCO.guest_wait;
+    st.gc_process_alive = gc_process_alive();
+    st.game_running = A.proc != nullptr;
+    rplay_busy_states(&st.rp_pending, &st.rp_stream, &st.rp_probe);
+    return hublaunch::starting_text_active(st, GetTickCount64(), g_launch_pressed_at) ? hublaunch::starting_text(g_launch_title) : std::string();
+}
 
 bool gc_fingerprint_ready(const std::string& path) {
     if (GCO.fp_path == path) return GCO.fp_done;

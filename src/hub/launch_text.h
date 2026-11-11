@@ -24,6 +24,8 @@ struct LaunchStates {
     bool rp_pending = false;      // Wii U remote play: Cemu started, streamrun not attached yet
     bool rp_stream = false;       // Wii U remote play: streamrun host running
     bool rp_probe = false;        // Wii U remote play: the direct-connection check is running
+    bool gc_process_alive = false;   // GameCube: Dolphin's process exists (the session is past "starting")
+    bool game_running = false;       // A.proc: a game process of any kind is running on this PC
 };
 inline bool async_launch_in_progress(const LaunchStates& s) {
     return s.np3_pending || s.np3_active || s.gc_active || s.gc_guest_wait || s.gc_forwarder || s.rp_pending || s.rp_stream || s.rp_probe;
@@ -32,14 +34,35 @@ inline bool async_launch_in_progress(const LaunchStates& s) {
 inline bool within_debounce(unsigned long long now, unsigned long long pressed_at, unsigned long long window = kDebounceMs) {
     return pressed_at != 0 && now >= pressed_at && now - pressed_at < window;
 }
+/* HOW THE ROOM PAGE USES THESE (app.h: room_launch_busy / room_launch_busy_text):
+ *  - Host Launch button: after room_block_reason() (which already says "in a game" / "GameCube game running"), disable it while room_launch_busy().
+ *  - Label: show room_launch_busy_text() ("Starting <game>...") in place of the usual headline when it is non-empty. It is non-empty only in the
+ *    starting phase (before the game process exists, plus the 5 s after the press); while a GameCube / remote play session simply runs it is empty
+ *    although room_launch_busy() stays true, so fall back to the normal "game running" wording then. */
 inline bool launch_busy(const LaunchStates& s, unsigned long long now, unsigned long long pressed_at) {
     return async_launch_in_progress(s) || within_debounce(now, pressed_at);
+}
+/* The STARTING phase only (before the game process exists): what the "Starting <game>..." text may be shown for. GameCube / remote play keep
+ * GCO.active, the forwarder and the stream true for the whole session, so those are not "starting" once Dolphin / Cemu is up. */
+inline bool starting_phase(const LaunchStates& s) {
+    return s.np3_pending || s.gc_guest_wait || (s.gc_active && !s.gc_process_alive) || s.rp_pending || s.rp_probe || (s.np3_active && !s.game_running);
+}
+inline bool starting_text_active(const LaunchStates& s, unsigned long long now, unsigned long long pressed_at) {
+    return starting_phase(s) || (!s.game_running && within_debounce(now, pressed_at));
 }
 inline std::string starting_text(const std::string& title) {
     return title.empty() ? std::string("Starting the game...") : "Starting " + title + "...";
 }
 
 /* ---- wording shown to the player ---- */
+/* "<why> Going back to your previous room." - `why` may be a raw server reason: end it with a full stop first. */
+inline std::string back_to_previous_room_text(std::string why) {
+    while (!why.empty() && (why.back() == ' ' || why.back() == '\r' || why.back() == '\n')) why.pop_back();
+    if (why.empty()) return "Going back to your previous room.";
+    const char c = why.back();
+    if (c != '.' && c != '!' && c != '?') why += '.';
+    return why + " Going back to your previous room.";
+}
 inline std::string core_missing_text(const std::string& system) {
     return "RetroHub is missing a file it needs for " + system + ". Reinstall RetroHub or check for updates.";
 }
