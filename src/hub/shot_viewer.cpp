@@ -18,8 +18,9 @@
 /* ---------- Full-size screenshot viewer (modal) ----------
  * Opened by the screenshots strip (quickmenu.cpp shots_gallery, which also serves the details modal's Screenshots tab).
  * Pad: left/right (or LB/RB) = previous/next picture, B = close (or cancel the delete question), up/down + A = actions.
- * Actions: Copy to clipboard (CF_DIB), Set as cover (prefs covers[key]; shown by the L3 "make it yours" work later), Delete (asks),
- * Open in viewer (the default Windows image app), Send to a friend (STUB, see shot_send_to_friend). */
+ * Actions: Copy to clipboard (CF_DIB), Set as cover (custom_set_cover: copied into the synced vault and stored as the game's cover),
+ * Delete (asks, then moves the file to the Recycle Bin), Open in viewer (the default Windows image app),
+ * Send to a friend (friend picker, then upload + DM, see shot_send_to_friend). */
 
 namespace {
 
@@ -96,7 +97,7 @@ bool shot_copy_to_clipboard(const std::string& path) {
     return ok;
 }
 
-/* prefs covers[key] = path (field-wise merge keeps this PC's other prefs; L3 reads it later). */
+/* Set the game's cover to this picture (customize_ui.cpp custom_set_cover: copies it into the vault so it syncs). */
 bool shot_set_cover(const std::string& game_key, const std::string& path) {
     return custom_set_cover(game_key, path);   // customize_ui.cpp: copies it into the vault (synced) and stores that path
 }
@@ -253,15 +254,14 @@ bool shot_viewer_draw() {
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         ImGui::TextDisabled("Left / Right: next picture\nB: close");
     } else {
-        ImGui::TextWrapped("Delete this picture for good?");
+        ImGui::TextWrapped("Delete this picture? It goes to the Recycle Bin.");
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         if (V.focus_first) { ImGui::SetKeyboardFocusHere(0); V.focus_first = false; }
         if (ui::button("Yes, delete", bsz, true)) {
-            std::error_code ec;
-            std::filesystem::remove(std::filesystem::u8path(path), ec);
-            if (is_clip) { std::error_code ec2; std::filesystem::remove(std::filesystem::u8path(path + ".jpg"), ec2); }
+            bool gone = runctl::delete_user_file(path);   // Recycle Bin (so a slip can be undone); permanent delete only if the bin refuses
+            if (is_clip) runctl::delete_user_file(path + ".jpg");
             V.confirm_delete = false;
-            if (!ec) {
+            if (gone) {
                 deleted = true;
                 V.files.erase(V.files.begin() + V.idx);
                 if (V.files.empty()) { ImGui::EndChild(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return true; }

@@ -11,6 +11,7 @@
  * start-up counts as already handled), then writes the ack. Pure helpers; no SDL. */
 #include <cstdint>
 #include <ctime>
+#include <functional>
 #include <string>
 
 namespace runctl {
@@ -111,9 +112,18 @@ struct Sidecar {
 std::string make_sidecar(const Sidecar& s);
 bool parse_sidecar(const std::string& text, Sidecar* out);
 
-/* Atomic small-file write (tmp + rename). */
+/* Atomic small-file write (tmp + rename). A rename blocked by a reader that holds the target open is retried for up to ~300 ms;
+ * it never falls back to a non-atomic write (returns false instead, target untouched). */
 bool write_text_atomic(const std::string& path, const std::string& text);
 bool read_text(const std::string& path, std::string* out);
+
+/* Delete to the Windows Recycle Bin (no dialog, no confirmation). */
+std::wstring shfile_path_buffer(const std::wstring& path);   // SHFileOperation wants "path\0\0": path plus two NULs (size() == path.size() + 2)
+bool move_to_recycle_bin(const std::string& utf8_path);       // true when the file is gone into the bin
+using DeleteFn = std::function<bool(const std::string&)>;
+/* Delete a user file: Recycle Bin first (`recycle`, default move_to_recycle_bin; tests inject a fake), and only if that fails the plain
+ * permanent delete. A file that is already gone counts as deleted. True when the file no longer exists. */
+bool delete_user_file(const std::string& utf8_path, const DeleteFn& recycle = nullptr);
 
 /* Hub side: write the next command for a run (seq = previous seq in the file + 1). Returns the seq, 0 on failure.
  * The file holds ONE command: a Quit the runner has not acked yet is never replaced by another command (0 is returned), so a
