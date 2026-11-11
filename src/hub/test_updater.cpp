@@ -697,6 +697,36 @@ int main(int argc, char** argv) {
         std::filesystem::remove_all(d, ec);
     }
 
+    // --- "Try again" never leaks into a later automatic check; a blocked tag's leftovers are deleted ---
+    {
+        set_busy_for_test(true, false);
+        CHECK(!retry_bad_version());                                                  // a check is already running: nothing starts, nothing is kept
+        set_busy_for_test(false, true);
+        CHECK(!retry_bad_version());                                                  // a download is running
+        set_busy_for_test(false, false);
+        CHECK(!checking() && !downloading());                                         // and no stale state was left behind by those calls
+
+        std::filesystem::path d = std::filesystem::temp_directory_path() / ("hub_updater_blocked_test_" + std::to_string(_getpid()));
+        std::error_code ec; std::filesystem::remove_all(d, ec); std::filesystem::create_directories(d / "staged" / "sub", ec);
+        auto put = [](const std::filesystem::path& p, const std::string& s) { std::ofstream o(p, std::ios::binary | std::ios::trunc); o << s; };
+        put(d / "staged" / "RetroHub.exe", "hub"); put(d / "staged" / "BattleShip.exe", "bs"); put(d / "staged" / "sub" / "x.dat", "xx");
+        const std::string ud = d.u8string();
+        CHECK(write_staged_manifest(ud, "v1.42.0"));
+        ResumeKey rk; rk.tag = "v1.42.0"; rk.asset = "BattleShip-windows.zip"; rk.sha256 = std::string(64, 'a'); rk.size = 100;
+        put(d / "update.zip", "partial"); put(d / "update.zip.resume", resume_record_json(rk));
+        discard_blocked_artifacts(ud, "v1.43.0");                                     // another tag: everything stays
+        CHECK(exists(ud + "\\staged.json") && exists(ud + "\\staged\\RetroHub.exe") && exists(ud + "\\update.zip"));
+        discard_blocked_artifacts(ud, "");
+        CHECK(exists(ud + "\\staged.json") && exists(ud + "\\update.zip"));
+        discard_blocked_artifacts(ud, "1.42.0");                                      // the blocked tag (v prefix ignored): staged folder, zip and record go
+        CHECK(!exists(ud + "\\staged.json"));
+        CHECK(!exists(ud + "\\staged"));
+        CHECK(!exists(ud + "\\update.zip"));
+        CHECK(!exists(ud + "\\update.zip.resume"));
+        discard_blocked_artifacts(ud, "v1.42.0");                                     // nothing there: no harm
+        std::filesystem::remove_all(d, ec);
+    }
+
     // --- download robustness: no hard cap, stall detector, retries, resume only for the same release ---
     {
         const std::string fl = download_flags(false), flr = download_flags(true);

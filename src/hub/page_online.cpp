@@ -311,12 +311,12 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
     if (A.room_update_pending && !hubupdate::checking()) {   // "Update now" was pressed: start the download once the check finished
         A.room_update_pending = false;
         if (hubupdate::update_available()) hubupdate::start_update();
-        else if (!hubupdate::check_failed()) A.room_update_none = true;
+        else if (!hubupdate::check_failed() && !hubupdate::update_blocked_bad_version()) A.room_update_none = true;
     }
     group_decorate_room_action(update_mode, st.is_launch, st.ready_on, st.button_enabled, st.button_label, st.headline);
     std::string extra;
     if (update_mode && !dl_busy) {
-        if (hubupdate::check_failed() && !hubupdate::status().empty()) extra = hubupdate::status();
+        if ((hubupdate::check_failed() || hubupdate::update_blocked_bad_version()) && !hubupdate::status().empty()) extra = hubupdate::status();
         else if (A.room_update_none) extra = "No newer release is published yet. Ask the host which version they're on.";
     }
 

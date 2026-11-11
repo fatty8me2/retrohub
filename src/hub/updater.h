@@ -36,7 +36,7 @@ bool check_failed();
  * false. update_blocked_bad_version() is true meanwhile; the "Try again" button calls retry_bad_version(), which clears the record and
  * checks once more. A different, newer release is handled normally. */
 bool update_blocked_bad_version();
-void retry_bad_version();
+bool retry_bad_version();   // true when a check was started (false: one is already running, or a download; nothing is cleared then)
 std::string latest_version();      // release tag, e.g. "v1.8.0"
 std::string release_notes();       // plain text, markdown stripped
 std::string current_version();     // HUB_VERSION_STR
@@ -249,6 +249,13 @@ std::string bad_version_message(const std::string& candidate_tag, const std::str
 /* Reads the record under <install>\\updates (a missing or malformed one is ignored). true => this candidate must NOT be downloaded or installed
  * (*why = the calm message). A forced retry, or a different tag, clears the record and returns false. */
 bool bad_version_gate(const std::wstring& install, const std::string& candidate_tag, bool retry_requested, std::string* why);
+
+/* A blocked tag will never be installed: its unpacked folder (staged.json + staged\\) and its zip (update.zip + .resume) are deleted, but only
+ * when they belong to THAT tag (another release's files are left alone). */
+void discard_blocked_artifacts(const std::string& updates_dir, const std::string& tag);
+#ifdef RETROHUB_UPDATER_TESTING
+void set_busy_for_test(bool checking, bool downloading);   // tests only: pretend a check / download is running
+#endif
 
 /* ---- a staged folder that keeps failing its check is not retried forever ----
  * Each time an unpacked folder of the SAME tag is found untrusted and discarded, note_discard counts it; after kMaxStagedDiscards the tag is

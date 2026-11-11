@@ -64,6 +64,14 @@ void page_about() {
             std::string lbl = "Update to " + hubupdate::latest_version();
             if (ImGui::Button(lbl.c_str())) hubupdate::start_update();
         }
+        if (hubupdate::update_blocked_bad_version()) {   // the installer rolled this release back: only a deliberate "Try again" clears that
+            ImGui::SameLine();
+            if (ImGui::Button("Try again")) {
+                A.update_prompt_dismissed = false;
+                A.update_check_requested = true;
+                hubupdate::retry_bad_version();
+            }
+        }
         std::string st = hubupdate::status();
         if (!st.empty()) text_wrapped_disabled(st.c_str());
         else if (A.update_check_requested && !hubupdate::checking() && !hubupdate::update_available() && !hubupdate::check_failed())
