@@ -10,6 +10,7 @@
 #include "libview_ui.h"
 #include "../saves/savestore.h"
 #include "state_slots.h"
+#include "tex_cache_logic.h"
 
 namespace {
 
@@ -18,14 +19,12 @@ struct Tex {
     int w = 0, h = 0;
     uint64_t stamp = 0;
 };
-std::map<std::string, Tex> g_tex;
+hubtex::TexCache<Tex> g_tex(48, [](Tex& t) { if (t.t) SDL_DestroyTexture(t.t); });   // LRU; evicted textures are freed next frame (tex_cache_logic.h)
 
 SDL_Texture* thumb_tex(const hubui::StateSlot& s, int* w, int* h) {
     if (s.thumb_path.empty()) return nullptr;
-    auto it = g_tex.find(s.thumb_path);
-    if (it != g_tex.end() && it->second.stamp == s.time + s.bytes) { *w = it->second.w; *h = it->second.h; return it->second.t; }
-    if (it != g_tex.end()) { if (it->second.t) SDL_DestroyTexture(it->second.t); g_tex.erase(it); }
-    if (g_tex.size() > 48) state_textures_clear();
+    Tex* hit = g_tex.find(s.thumb_path);
+    if (hit && hit->stamp == s.time + s.bytes) { *w = hit->w; *h = hit->h; return hit->t; }
     Tex t;
     t.stamp = s.time + s.bytes;
     std::ifstream f(std::filesystem::u8path(s.thumb_path), std::ios::binary);
@@ -43,7 +42,7 @@ SDL_Texture* thumb_tex(const hubui::StateSlot& s, int* w, int* h) {
         }
     }
     if (px) stbi_image_free(px);
-    g_tex[s.thumb_path] = t;
+    g_tex.insert(s.thumb_path, t);   // a stale texture for this slot is buried, not destroyed mid-frame
     *w = t.w;
     *h = t.h;
     return t.t;
@@ -56,10 +55,8 @@ std::string slot_path(const hub::GameEntry& e, int slot) {
 
 }  // namespace
 
-void state_textures_clear() {
-    for (auto& kv : g_tex) if (kv.second.t) SDL_DestroyTexture(kv.second.t);
-    g_tex.clear();
-}
+void state_textures_clear() { g_tex.clear_deferred(); }   // freed at the next begin_frame, never mid-frame
+void state_textures_begin_frame() { g_tex.begin_frame(); }
 
 bool has_resume(const hub::GameEntry& e) {
     if (!hubui::system_has_states(sys_short(e), is_native(e))) return false;
