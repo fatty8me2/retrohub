@@ -908,7 +908,7 @@ bool draw_players_strip(int players) {
         ImGui::SameLine(0, sp(1.f));
         bool has = i < (int)pads.size();
         std::string t = std::to_string(i + 1) + "  " + (has ? hubpadname::label(pads[i].name, pads[i].xinput) : std::string("no controller"));
-        pill(t.c_str(), has ? COL_ACCENT : COL_PANEL2);
+        pill(t.c_str(), has ? COL_ACCENT : COL_PANEL2, has ? IM_COL32_WHITE : ui::PILL_FG);   // PILL_FG: white text on the pale Light-theme pill was invisible
     }
     ImGui::SameLine(0, sp(1.5f));
     if (button("Reassign", ImVec2(0, sp(4.f)), false, true, ui::Icon::Gamepad)) clicked = true;

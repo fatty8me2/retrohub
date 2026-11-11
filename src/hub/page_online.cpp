@@ -333,6 +333,11 @@ static void room_banner(bool host, const hub::GameEntry* rg, const std::vector<h
         else if (!hubupdate::check_failed() && !hubupdate::update_blocked_bad_version()) A.room_update_none = true;
     }
     group_decorate_room_action(update_mode, st.is_launch, st.ready_on, st.button_enabled, st.button_label, st.headline);
+    if (host && !update_mode && block.empty() && st.is_launch && room_launch_busy()) {   // a launch is already starting: no second press
+        st.button_enabled = false;
+        const std::string starting = room_launch_busy_text();
+        if (!starting.empty()) st.headline = starting;
+    }
     std::string extra;
     if (update_mode && !dl_busy) {
         if ((hubupdate::check_failed() || hubupdate::update_blocked_bad_version()) && !hubupdate::status().empty()) extra = hubupdate::status();
