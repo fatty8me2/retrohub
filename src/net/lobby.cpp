@@ -1,6 +1,7 @@
 #include "net_internal.h"
 #include "log.h"
 #include "session.h"
+#include "ws_error_text.h"
 
 #include <cstdio>
 
@@ -258,7 +259,7 @@ void LobbyClient::update_tail()
             return;
         }
         d.failed = true;
-        d.status = d.was_welcomed ? "Connection lost. Press Rejoin to try again." : d.ws.error();
+        d.status = d.was_welcomed ? "Connection lost. Press Rejoin to try again." : ws_error_player_text(d.ws.error());   // raw text stays in the log above
         return;
     }
     if (d.welcomed && now - d.last_keepalive >= 20000) {

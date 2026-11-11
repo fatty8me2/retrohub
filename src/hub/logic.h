@@ -98,6 +98,7 @@ struct Settings {
     std::string ps2_bios_dir;         // user-chosen folder with the PS2 BIOS ("" = look next to the games / Desktop\Everything\BIOS)
     /* Plan 4 Wave 3 D1/D2 (display) */
     bool reduce_motion = false;       // calmer UI: no slides, pans, spins or shelf tilt (read by every animation)
+    bool large_text = false;          // "Larger small text": hints and captions at 14 / 18 px (layout scale unchanged)
     int ui_scale = 100;               // UI scale in percent (80..200), on top of the monitor DPI
     bool remember_window = true;      // reopen on the same monitor, position and size
     int win_x = 0, win_y = 0, win_w = 0, win_h = 0;   // last normal window rect (0 size = never saved)
@@ -172,7 +173,7 @@ std::string ready_block_reason(const std::string& my_app, const std::string& hos
 GuestVersionAction guest_version_action(const std::string& my_app, const std::string& host_app, bool host_hello);
 
 /* ---- room action banner (READY / LAUNCH at the top of the room) ---- */
-struct RoomMember { std::string name; bool ready = false; bool host = false; bool me = false; };
+struct RoomMember { std::string name; bool ready = false; bool host = false; bool me = false; bool in_game = false; };   // in_game: that member's game is running right now
 enum class RoomTone { Neutral, Good, Warn, Bad };
 struct RoomActionState {
     std::string headline, detail, button_label;
@@ -188,6 +189,38 @@ std::string join_names(const std::vector<std::string>& names);
  * missing game / version / unpacking / Kanto / in-game checks). The host counts as ready. */
 RoomActionState room_action_state(bool host, bool have_game, const std::string& game_title, const std::string& block,
                                   bool my_ready, const std::vector<RoomMember>& members);
+/* "Mia is still in a game." / "Mia and Zed are still in a game." ("" when nobody is in a game). */
+std::string still_in_game_text(const std::vector<std::string>& names);
+/* A guest whose host picked a game this PC does not own: why READY stays off. */
+std::string missing_game_block(const std::string& title);
+/* Why Host / Join are greyed out on the Play Online page ("" = they are usable). */
+std::string online_start_block(bool game_running, bool access_ok);
+
+/* A dead room: which message and buttons the failed strip shows, picked from the lobby's status text. */
+enum class RoomFailureKind { LostConnection, Closed, CouldntJoin, Blocked };
+struct RoomFailure {
+    RoomFailureKind kind = RoomFailureKind::LostConnection;
+    std::string title, detail;
+    bool can_rejoin = true;      // lost connection only
+    bool can_host_new = false;   // "Host a new room" is offered
+};
+RoomFailure room_failure_kind(const std::string& status, const std::string& code);
+
+/* The Join box: what a pasted invite link, "ABC-234", a spaced or lower-case code leaves. `code` is the cleaned code (up to 6
+ * characters; a link gives all 6); `hint` is a short message when something could not be used ("" = nothing to say). */
+struct RoomCodeInput { std::string code, hint; };
+RoomCodeInput room_code_from_text(const std::string& text);
+
+/* May Esc / pad B leave the room right now? Only in the first "connecting" phase (nothing joined yet) and on a terminal failure; never while
+ * connected, never during an automatic reconnect ("Connection lost - reconnecting ...", "Server busy ..."), never with a game running
+ * (leaving a room ends this PC's online game). `status` is the lobby client's status text. */
+bool room_back_may_leave(bool in_room, bool connected, bool failed, const std::string& status, bool game_running);
+
+/* "Connecting" screen: wording changes after kConnectSlowMs (fake clock friendly: both times are millisecond counters, wrap safe). */
+enum class ConnectPhase { Contacting, StillTrying };
+constexpr unsigned kConnectSlowMs = 8000;
+ConnectPhase connect_phase(unsigned started_ms, unsigned now_ms);
+std::string connect_phase_text(ConnectPhase p);
 /* `core` (optional): the host's GB/GBC core so all peers run the same one. */
 /* `delay` 0 = auto. `share_host_save`: N64 online, every PC uses the host's save. */
 struct PortPlan;

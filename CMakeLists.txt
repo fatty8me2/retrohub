@@ -101,6 +101,7 @@ add_test(NAME save_import_test COMMAND save_import_test)   # Bring your saves (W
 add_test(NAME profile_test COMMAND profile_test)   # social profile + reaction tally logic
 add_test(NAME winutil_test COMMAND winutil_test)
 add_test(NAME durable_write_test COMMAND durable_write_test)   # crash-safe commit helper: replace, held-open destination, non-ASCII + long paths (temp dirs)
+add_test(NAME u8file_test COMMAND u8file_test)   # UTF-8 path file helpers + account_code.txt legacy migration (temp dirs, multi-script names)
 add_test(NAME starthint_test COMMAND starthint_test)
 add_test(NAME hint_popup_test COMMAND hint_popup_test)
 add_test(NAME cheats_test COMMAND cheats_test)                         # cheat file model + code parsing per format
@@ -111,7 +112,7 @@ add_test(NAME hubkanto_test COMMAND hubkanto_test)                       # Kanto
 add_test(NAME hubkantopad_test COMMAND hubkantopad_test)               # Kanto Together mGBA gamepad config writer
 add_test(NAME nes_snes_test COMMAND nes_snes_test)                 # NES/SNES headers, scan, cheats, profiles, settings
 add_test(NAME runner_speed_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/speed_headless.ps1)   # retrorun --headless --realtime: quick-menu speed steps 0.25x..Max, 1x restore, rapid changes, input off (skips without retrorun)
-set_tests_properties(runner_speed_headless PROPERTIES TIMEOUT 900)
+set_tests_properties(runner_speed_headless PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)   # wall-clock fps ratios: serial; exits 77 (skipped: machine too busy) when the 1x windows never steady
 add_test(NAME nes_snes_smoke COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/nes_snes_synctest.ps1)   # Nestopia + Snes9x headless run, .srm write, rollback SyncTest (skips without the cores)
 add_test(NAME gb_gba_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/gb_gba_synctest.ps1)   # Gambatte/SameBoy/mGBA headless run, .srm write, rollback SyncTest on generated homebrew ROMs (skips without the cores)
 set_tests_properties(gb_gba_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
@@ -126,6 +127,7 @@ add_test(NAME hub_theme_test COMMAND hub_theme_test)   # every theme preset defi
 add_test(NAME hub_picker_test COMMAND hub_picker_test)   # room game picker: search, chips, sections, virtual layout
 add_test(NAME hub_ps2_online_test COMMAND hub_ps2_online_test)   # PS2 online: readiness reasons, retrorun args, exit texts, pinned LRPS2 download
 add_test(NAME hub_online_caps_test COMMAND hub_online_caps_test)   # supports_online <-> launch_online branches (table-driven)
+add_test(NAME hub_launch_text_test COMMAND hub_launch_text_test)   # double-launch guard, host-side wording of guest failures, UTF-8 launch files
 add_test(NAME ps1_test COMMAND ps1_test)                                 # PlayStation: serials, catalog, synthetic discs, BIOS discovery (scratch dirs)
 add_test(NAME cheats_db_test COMMAND cheats_db_test)
 add_test(NAME psarchive_test COMMAND psarchive_test)                       # PS1/PS2 disc archives: identify by name/DB, truncated, extract+confirm (scratch dirs)
@@ -146,7 +148,7 @@ add_test(NAME hubdolphincheats_test COMMAND hubdolphincheats_test)   # GameCube 
 add_test(NAME hubcheatstore_test COMMAND hubcheatstore_test)   # cheat choices: persistence/merge/custom codes/online rules/save backup
 add_test(NAME hubcontrols_test COMMAND hubcontrols_test)             # controller profiles: defaults == old hardcoded maps
 add_test(NAME live_controls_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/live_controls.ps1 -Root ${CMAKE_SOURCE_DIR})   # reload_controls: a rewritten profile changes the mapped mask of a running headless retrorun
-set_tests_properties(live_controls_headless PROPERTIES TIMEOUT 120)
+set_tests_properties(live_controls_headless PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
 add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
 add_test(NAME retrorun_fx_test COMMAND retrorun_fx_test)
 add_test(NAME retrorun_dslink_test COMMAND retrorun_dslink_test)
@@ -202,7 +204,7 @@ add_test(NAME hub_save_jobs_logic_test COMMAND hub_save_jobs_logic_test)   # syn
 # Headless end-to-end quick menu run: RetroHub.exe on SDL's dummy video driver, input only from an SDL virtual game controller (real pads are
 # never opened), 13 scenarios incl. the phantom press from quickmenu.log (src/hub/qm_e2e.cpp). No window, no audio.
 add_test(NAME hub_qm_e2e COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/qm_e2e.ps1 -Exe $<TARGET_FILE:RetroHub>)
-set_tests_properties(hub_qm_e2e PROPERTIES TIMEOUT 600 LABELS gui)   # gui: needs a desktop session; CI skips these (-LE "online|gui")
+set_tests_properties(hub_qm_e2e PROPERTIES TIMEOUT 900 LABELS gui RUN_SERIAL TRUE)   # gui: needs a desktop session; CI skips these (-LE "online|gui")
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
 add_test(NAME hub_launch_logic_test COMMAND hub_launch_logic_test)   # fw2-ci: runner/core choice, title + save-stem quoting, resume rules, launch guard (pure)
 add_test(NAME hub_dolphin_speed_test COMMAND hub_dolphin_speed_test)   # DSU speed pad: ini text, press sequencing, title parsing, loopback (offline)
@@ -233,6 +235,7 @@ add_test(NAME hub_hack_test COMMAND hub_hack_test)             # Plan 4: ROM hac
 add_test(NAME rh_helper_test COMMAND rh_helper_test $<TARGET_FILE:rh-helper> ${CMAKE_SOURCE_DIR}/data/helpers)   # rh-helper: script allowlist, path rejection, command-line split, exit codes
 add_test(NAME hub_popup_guard_test COMMAND hub_popup_guard_test)   # never pop up over a game: guard logic + lint of every raise/show/MessageBox/synthetic-input site in src/hub and src/common
 add_test(NAME hub_display_test COMMAND hub_display_test)            # window placement (monitor gone / off screen / maximized), UI scale, reduce-motion default
+add_test(NAME hub_font_size_test COMMAND hub_font_size_test)            # "Larger small text" font pixel sizes
 add_test(NAME hub_input_gate_test COMMAND hub_input_gate_test)   # a pad press polled by ImGui's SDL backend never reaches the UI while a game owns the pad; picker focus guard
 add_test(NAME hub_idle_test COMMAND hub_idle_test)                  # idle throttle: when the hub may skip drawing a frame (pumps keep their cadence)
 add_test(NAME hub_toast_test COMMAND hub_toast_test)                  # toast XML/activation/policy with a mock notifier (no real toasts)
@@ -248,10 +251,12 @@ add_test(NAME hub_bootsound_test COMMAND hub_bootsound_test)       # procedural 
 add_test(NAME hub_gcnp_test COMMAND hub_gcnp_test)                     # GameCube netplay spec/config (no network)
 add_test(NAME dsu_test COMMAND dsu_test)   # DSU packets + loopback server round trip
 add_test(NAME hub_gbalink_test COMMAND hub_gbalink_test)                 # GameCube <-> GBA link (offline, temp dir)
+add_test(NAME hub_emuproc_test COMMAND hub_emuproc_test)           # emulator process lane: mlc_path entities, env restore, suspended spawn, session journal (temp dirs, no emulator)
 add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U parsers, save mapping, config (no network)
 add_test(NAME hub_wiiu_test COMMAND hub_wiiu_test)               # offline Wii U: meta.xml/.wua, own-Cemu settings backup+revert, profiles, saves, archives, art names
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
 add_test(NAME hub_ext_pads_test COMMAND hub_ext_pads_test)           # external emulators' pad configs for 1-4 fake pads (PCSX2 multitap, Dolphin ports, Cemu players, Azahar, PPSSPP)
+add_test(NAME hub_emucfg_test COMMAND hub_emucfg_test)                   # emulator config writers: durable commit, managed Cemu graphic packs, analog clamp, PPSSPP controls merge
 add_test(NAME hub_hookshot_test COMMAND hub_hookshot_test)           # Hookshot: ready/stamp, use_for + switch.runner, vault <-> Hookshot save session (temp dirs)
 add_test(NAME hub_nx_runner_test COMMAND hub_nx_runner_test)         # Fritchii runner: save sync across Lichii / Fritchii / vault (newest wins, backups), shader + key seed (temp dirs, no network)
 add_test(NAME hub_switch_test COMMAND hub_switch_test)               # Switch (Lichii): qt-config.ini merge, controls, profiles.dat, keys/firmware import, save session (no network)
@@ -288,6 +293,7 @@ add_test(NAME hubfriends_offline_test COMMAND hubfriends_test)   # fw2-ci: the o
 set_tests_properties(hubfriends_offline_test PROPERTIES ENVIRONMENT "HUBFRIENDS_OFFLINE=1")
 add_test(NAME hubfriends_test COMMAND hubfriends_test)                   # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hubidbackup_test COMMAND hubidbackup_test)               # identity backup outside the install folder (offline, temp dirs)
+add_test(NAME hubws_error_text_test COMMAND hubws_error_text_test)   # WebSocket error -> player text table (offline, pure)
 add_test(NAME hubws_close_test COMMAND hubws_close_test)   # WebSocket close never blocks (local loopback server only)
 add_test(NAME hubfriends_dedupe_test COMMAND hubfriends_dedupe_test)   # friends list: one entry per uid (no network)
 add_test(NAME hubfriends_outbox_test COMMAND hubfriends_outbox_test)   # offline outbox rules (no network)

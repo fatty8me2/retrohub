@@ -4,6 +4,7 @@
  * It calls enter_room / the ready flag / host_launch_selected(), i.e. the same code the buttons run, so launch_online and the
  * Dolphin NetPlay driver are exercised end to end. Progress goes to <data>\autotest.log. */
 #include "app.h"
+#include "u8file.h"
 
 static const char* env(const char* k) { const char* v = std::getenv(k); return v && *v ? v : nullptr; }
 
@@ -24,7 +25,7 @@ bool autotest_active() { static bool on = env("RETROHUB_AUTOTEST") != nullptr; r
 void autotest_log(const std::string& line) {
     if (!autotest_active()) return;
     static std::string path = hub::data_dir() + "autotest.log";
-    std::ofstream f(path, std::ios::app | std::ios::binary);
+    std::ofstream f = u8file::open_out(path, std::ios::app | std::ios::binary);
     static ULONGLONG t0 = GetTickCount64();
     char ts[24];
     std::snprintf(ts, sizeof ts, "[%6.1fs] ", (double)(GetTickCount64() - t0) / 1000.0);
@@ -34,14 +35,14 @@ void autotest_log(const std::string& line) {
 void online_log(const std::string& line) {
     static std::string dir = hub::data_dir() + "logs\\";
     static std::string path = dir + "online.log";
-    CreateDirectoryA(dir.c_str(), nullptr);
+    CreateDirectoryW(durable::utf8_to_wide(dir).c_str(), nullptr);
     WIN32_FILE_ATTRIBUTE_DATA fad{};
-    if (GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad) && fad.nFileSizeHigh == 0 && fad.nFileSizeLow > 1000000)
-        MoveFileExA(path.c_str(), (path + ".1").c_str(), MOVEFILE_REPLACE_EXISTING);
+    if (GetFileAttributesExW(durable::utf8_to_wide(path).c_str(), GetFileExInfoStandard, &fad) && fad.nFileSizeHigh == 0 && fad.nFileSizeLow > 1000000)
+        MoveFileExW(durable::utf8_to_wide(path).c_str(), durable::utf8_to_wide(path + ".1").c_str(), MOVEFILE_REPLACE_EXISTING);
     SYSTEMTIME st; GetLocalTime(&st);
     char ts[40];
     std::snprintf(ts, sizeof ts, "%04d-%02d-%02d %02d:%02d:%02d ", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-    { std::ofstream f(path, std::ios::app | std::ios::binary); f << ts << line << "\n"; }
+    { std::ofstream f = u8file::open_out(path, std::ios::app | std::ios::binary); f << ts << line << "\n"; }
     autotest_log(line);
 }
 

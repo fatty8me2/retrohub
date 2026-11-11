@@ -2,6 +2,7 @@
 #include "launch_settings.h"
 #include "launch_guard_logic.h"
 #include "capture_hold_logic.h"
+#include "ctl_pad_logic.h"
 #include <cstdio>
 using namespace hub; using namespace hub::gs;
 static int g_fail = 0;
@@ -104,6 +105,45 @@ int main(int argc, char** argv) {
         CHECK(hubui::play_first_step(false, false, true).step == PlayFirst::Continue && !hubui::play_first_step(false, false, true).clear_pass);   // cloud_gate_begin consumes the pass itself
         CHECK(hubui::play_first_step(false, false, false).step == PlayFirst::Continue);
         CHECK(hubui::play_first_step(true, true, false).step == PlayFirst::GateBusy && hubui::play_first_step(true, false, true).step == PlayFirst::GateBusy);
+    }
+    {   // Undo card: Y acts only while the card shows, in pad mode, with the hub in front and no typing
+        hubui::UndoPadIn u; u.card_visible = u.pad_mode = u.y_pressed = true;
+        CHECK(hubui::undo_card_pad_press(u));
+        hubui::UndoPadIn v = u; v.card_visible = false; CHECK(!hubui::undo_card_pad_press(v));   // no card: Y stays with the screen underneath
+        v = u; v.pad_mode = false; CHECK(!hubui::undo_card_pad_press(v));
+        v = u; v.input_blocked = true; CHECK(!hubui::undo_card_pad_press(v));
+        v = u; v.text_input = true; CHECK(!hubui::undo_card_pad_press(v));
+        v = u; v.y_pressed = false; CHECK(!hubui::undo_card_pad_press(v));
+    }
+    {   // Assign players: A edges, never a held A, never an activating press; B / Esc end it
+        hubui::AssignAGate g;
+        g.prime("p1", true);                                   // A held while the mode opened
+        CHECK(!g.a_press("p1", true, false));                  // still held: no claim
+        CHECK(!g.a_press("p1", false, false));
+        CHECK(g.a_press("p1", true, false));                   // fresh press claims
+        CHECK(!g.a_press("p1", true, false));                  // held: once only
+        CHECK(!g.a_press("p1", false, false));
+        CHECK(!g.a_press("p1", true, true));                   // that press activates a focused button: no claim
+        CHECK(!g.a_press("p1", true, false));                  // and it is not a delayed claim once the flag drops
+        CHECK(!g.a_press("p2", true, false));                  // a pad never primed: primed, not claimed
+        CHECK(!g.a_press("p2", true, false) && !g.a_press("p2", false, false) && g.a_press("p2", true, false));
+        g.forget("p2"); CHECK(!g.known("p2")); g.clear(); CHECK(!g.known("p1"));
+    }
+    {   // Assign players state machine: every way out ends the mode AND releases A; running keeps A locked; Y starts over in pad mode only
+        using hubui::AssignFrameIn; using hubui::assign_frame;
+        AssignFrameIn r; r.active = true;
+        CHECK(!assign_frame(r).end && assign_frame(r).lock_a && !assign_frame(r).release_a);
+        AssignFrameIn x;
+        x = r; x.b_pressed = true;      CHECK(assign_frame(x).end && assign_frame(x).release_a && !assign_frame(x).lock_a && assign_frame(x).swallow_b);
+        x = r; x.esc_pressed = true;    CHECK(assign_frame(x).end && assign_frame(x).release_a && assign_frame(x).swallow_b);
+        x = r; x.done_clicked = true;   CHECK(assign_frame(x).end && assign_frame(x).release_a && !assign_frame(x).swallow_b);
+        x = r; x.all_ports_set = true;  CHECK(assign_frame(x).end && assign_frame(x).release_a);
+        x = r; x.timed_out = true;      CHECK(assign_frame(x).end && assign_frame(x).release_a);
+        x = r; x.input_blocked = true;  CHECK(assign_frame(x).end && assign_frame(x).release_a && !assign_frame(x).swallow_b);   // unfocused: B belongs to the game
+        x = r; x.page_visible = false;  CHECK(assign_frame(x).end && assign_frame(x).release_a && !assign_frame(x).lock_a);
+        AssignFrameIn off; CHECK(!assign_frame(off).end && assign_frame(off).release_a && !assign_frame(off).lock_a);   // inactive: always released
+        x = r; x.y_pressed = true;      CHECK(!assign_frame(x).start_over);                      // mouse / keyboard: no Y route
+        x.pad_mode = true;              CHECK(assign_frame(x).start_over && assign_frame(x).lock_a && !assign_frame(x).end);
     }
     std::printf(g_fail ? "FAILED\n" : "launch settings OK\n");
     return g_fail != 0;

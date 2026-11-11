@@ -29,10 +29,17 @@ std::string no_slash(std::string p) {
 
 static bool g_scan_again = false;   // a scan was asked for while one ran: run it when that one lands
 
-void start_scan() {
+/* help_ui.cpp: the scan clock for the caption, and the result report (a toast only for a scan the player asked for) */
+void scan_note_started();
+void scan_finished(bool user_requested);
+static bool g_scan_user = false;   // the player asked for the scan that is running / queued (sticky until its result is reported)
+
+void start_scan(bool user_requested) {
     hubgp::request_recheck();   // a rescan also looks for new games in the shared Drive packs
+    if (user_requested) g_scan_user = true;
     if (A.scanning) { g_scan_again = true; return; }   // never dropped: the running scan may have started before the new game's folder existed
     if (A.scan_th.joinable()) A.scan_th.join();
+    scan_note_started();
     A.scanning = true;
     A.scan_done = 0;
     A.scan_total = 0;
@@ -318,7 +325,8 @@ void apply_scan() {
     A.hello_dirty = true;
     A.info_at = -100;
     A.scanned_once = true;
-    if (g_scan_again) { g_scan_again = false; start_scan(); }
+    if (g_scan_again) { g_scan_again = false; start_scan(); }   // the queued scan reports instead (the user flag stays set)
+    else { const bool user = g_scan_user; g_scan_user = false; scan_finished(user); }   // once per finished scan, whatever page is open
 }
 
 /* Curated catalog entry for a scanned game (id/MD5 first, then serial + system). */

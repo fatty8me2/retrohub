@@ -90,6 +90,12 @@ void display_settings_ui() {
     gap();
     if (ImGui::Checkbox("Reduce motion", &A.st.reduce_motion)) { ui::reduce_motion = A.st.reduce_motion; mark_dirty(); }
     text_wrapped_disabled("Turns off slides, pans, spins and the shelf tilt. The start-up animation stays still; its sound still plays. It starts out matching Windows' \"Show animations\" setting.");
+    gap();
+    if (ImGui::Checkbox("Larger small text", &A.st.large_text)) {
+        mark_dirty();
+        tvmode::request_font_rebuild();   // same scale, so set_base_scale would ignore it; fonts rebuild before the next frame
+    }
+    text_wrapped_disabled("Makes hints and captions bigger, so they are easier to read from the sofa. The rest of the layout stays the same size.");
 }
 
 /* "Unpacked games" cache section. Disk usage is measured on a background thread (on open and after clearing), never per frame. */
@@ -219,7 +225,7 @@ void tab_general() {
     if (remove_at >= 0) {
         A.st.rom_folders.erase(A.st.rom_folders.begin() + remove_at);
         mark_dirty();
-        start_scan();
+        start_scan(true);   // the player removed a folder
     }
     add_rom_folder(button("Add folder...", ImVec2(0, 0), false, true, ui::Icon::Plus));
     ImGui::SameLine();
@@ -227,7 +233,7 @@ void tab_general() {
     ImGui::SameLine();
     if (button("Run setup again", ImVec2(0, 0), false, true, ui::Icon::Gamepad)) wizard_open();
     ImGui::SameLine();
-    if (button("Rescan", ImVec2(0, 0), false, !A.scanning, ui::Icon::Refresh)) start_scan();
+    if (button("Rescan", ImVec2(0, 0), false, !A.scanning, ui::Icon::Refresh)) start_scan(true);
     { ImGui::SameLine(); hidden_games_row(); }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     settings_label("Shared game packs");

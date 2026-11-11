@@ -402,7 +402,7 @@ void cheats_pad_watch() {
             if (has(SDL_CONTROLLER_BUTTON_BACK) && has(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) && !has(SDL_CONTROLLER_BUTTON_Y)) reset = true;
         }
     }
-    const long long now = (long long)GetTickCount64();
+    const long long now = (long long)qm_now_ms();
     if (gate.update(down, qm_is_open(), now)) { qm_log("pad combo View+Y: open"); qm_open_live(); }
     else if (down && !qm_is_open()) { /* held or inside the cooldown: ignored on purpose */ }
     if (reset_hold.update(reset, now)) { qm_log("pad combo View+LB held 1 s: Dolphin speed reset"); qm_dolphin_reset(); }

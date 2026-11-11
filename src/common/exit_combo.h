@@ -29,6 +29,26 @@ inline bool clip_combo_down(const PadState& s) {
     return s.b[kBtnBack] && s.b[kBtnLB] && !s.b[kBtnStart] && !s.b[kBtnYButton] && s.a[kAxisLT] < kTriggerOn && s.a[kAxisRT] < kTriggerOn;
 }
 
+/* Wii U "pad screen" toggle: hold View/Back + RB for kPadScreenHoldMs. Same exclusions as the replay combo (Start, Y, LT, RT must NOT be
+ * held), so a game that uses Minus+R, and View+Start+RB on the way to the exit combo, never toggles the screen. RB is checked by SDL index. */
+constexpr int kBtnRB = 10;            // SDL_CONTROLLER_BUTTON_RIGHTSHOULDER
+constexpr int kPadScreenHoldMs = 250;
+inline bool pad_screen_combo_down(const PadState& s) {
+    return s.b[kBtnBack] && s.b[kBtnRB] && !s.b[kBtnStart] && !s.b[kBtnYButton] && s.a[kAxisLT] < kTriggerOn && s.a[kAxisRT] < kTriggerOn;
+}
+
+/* XInput state -> the PadState the combos above take (pure; RetroHub reads Xbox pads directly while a game has the focus).
+ * wButtons bits: DPAD 0x1-0x8, START 0x10, BACK 0x20, LTHUMB 0x40, RTHUMB 0x80, LB 0x100, RB 0x200, A 0x1000, B 0x2000, X 0x4000, Y 0x8000.
+ * Triggers are 0..255 and scaled to the SDL range 0..32767 (so kTriggerOn 16000 is a byte value of about 125). */
+inline PadState pad_from_xinput(unsigned short w, unsigned char lt, unsigned char rt) {
+    PadState s;
+    s.b[0] = (w & 0x1000) != 0; s.b[1] = (w & 0x2000) != 0; s.b[2] = (w & 0x4000) != 0; s.b[kBtnYButton] = (w & 0x8000) != 0;
+    s.b[kBtnBack] = (w & 0x20) != 0; s.b[kBtnStart] = (w & 0x10) != 0;
+    s.b[kBtnLB] = (w & 0x100) != 0; s.b[kBtnRB] = (w & 0x200) != 0;
+    s.a[kAxisLT] = lt * 32767 / 255; s.a[kAxisRT] = rt * 32767 / 255;
+    return s;
+}
+
 class ExitCombo {
   public:
     explicit ExitCombo(int hold_ms = kExitHoldMs) : hold_(hold_ms) {}
@@ -52,6 +72,15 @@ class ExitCombo {
     int hold_;
     bool held_ = false, fired_ = false;
     long long since_ = 0;
+};
+
+/* Pad-screen toggle with its hold requirement: feed it "some pad satisfies pad_screen_combo_down" each poll; true once per hold. */
+class PadScreenCombo {
+  public:
+    bool update(bool down, long long now_ms) { return c_.update(down, now_ms); }
+    void reset() { c_.reset(); }
+  private:
+    ExitCombo c_{kPadScreenHoldMs};
 };
 
 }  // namespace hubctl
