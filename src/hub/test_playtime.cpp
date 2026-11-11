@@ -30,32 +30,52 @@ int main() {
     CHECK(group_thousands(1000000) == "1,000,000");
     CHECK(group_thousands(1234567) == "1,234,567");
 
-    /* ---- hours_text: tenths = (secs + 180) / 360 (min 1); from 1000 tenths: (secs + 1800) / 3600 ---- */
-    CHECK(hours_text(0) == "");
-    CHECK(hours_text(1) == "0.1 hours");
-    CHECK(hours_text(179) == "0.1 hours");
-    CHECK(hours_text(180) == "0.1 hours");      // 360 / 360 = 1
-    CHECK(hours_text(539) == "0.1 hours");      // 719 / 360 = 1
-    CHECK(hours_text(540) == "0.2 hours");      // 720 / 360 = 2
-    CHECK(hours_text(1440) == "0.4 hours");     // 1620 / 360 = 4
-    CHECK(hours_text(3600) == "1.0 hours");     // 3780 / 360 = 10
-    CHECK(hours_text(45000) == "12.5 hours");   // 45180 / 360 = 125
-    CHECK(hours_text(153360) == "42.6 hours");  // 153540 / 360 = 426
-    CHECK(hours_text(359819) == "99.9 hours");  // 359999 / 360 = 999
-    CHECK(hours_text(359820) == "100 hours");   // 360000 / 360 = 1000 -> (361620) / 3600 = 100
-    CHECK(hours_text(360000) == "100 hours");
-    CHECK(hours_text(1234ull * 3600) == "1,234 hours");
-    CHECK(hours_text(1234ull * 3600 + 1799) == "1,234 hours");
-    CHECK(hours_text(1234ull * 3600 + 1800) == "1,235 hours");
-    CHECK(hours_text(3600ull * 1000000) == "1,000,000 hours");
+    /* ---- duration_text / hours_text (long) / hours_compact: the one play-time formatter ---- */
+    struct Row { uint64_t secs; const char* compact; const char* lng; };
+    const Row table[] = {
+        {0, "", ""},
+        {1, "<1 min", "Under a minute"},
+        {59, "<1 min", "Under a minute"},
+        {60, "1 min", "1 minute"},
+        {119, "1 min", "1 minute"},
+        {120, "2 min", "2 minutes"},
+        {59 * 60, "59 min", "59 minutes"},
+        {3599, "59 min", "59 minutes"},
+        {3600, "1 h", "1 hour"},                     // never "1.0"
+        {3779, "1 h", "1 hour"},                     // 3959 / 360 = 10 tenths
+        {3780, "1.1 h", "1.1 hours"},
+        {5400, "1.5 h", "1.5 hours"},
+        {7200, "2 h", "2 hours"},
+        {27000, "7.5 h", "7.5 hours"},
+        {35640, "9.9 h", "9.9 hours"},               // 9.9 h
+        {35819, "9.9 h", "9.9 hours"},               // 35999 / 360 = 99 tenths
+        {35820, "10 h", "10 hours"},                 // 36000 / 360 = 100 tenths: whole hours from here
+        {36000, "10 h", "10 hours"},
+        {99 * 3600 + 1800, "100 h", "100 hours"},    // 99.5 h rounds up
+        {100 * 3600, "100 h", "100 hours"},
+        {45000, "13 h", "13 hours"},                 // 12.5 h: halves up
+        {1000ull * 3600, "1,000 h", "1,000 hours"},
+        {1204ull * 3600, "1,204 h", "1,204 hours"},
+        {12345ull * 3600, "12,345 h", "12,345 hours"},
+        {12345ull * 3600 + 1799, "12,345 h", "12,345 hours"},
+        {12345ull * 3600 + 1800, "12,346 h", "12,346 hours"},
+    };
+    for (const Row& r : table) {
+        CHECK(duration_text(r.secs, true) == r.compact);
+        CHECK(duration_text(r.secs, false) == r.lng);
+        CHECK(hours_compact(r.secs) == r.compact);
+        CHECK(hours_text(r.secs) == r.lng);
+    }
 
     /* ---- hours_played / sort_tile_text ---- */
     CHECK(hours_played(0) == "");
-    CHECK(hours_played(45000) == "12.5 hours played");
+    CHECK(hours_played(45000) == "13 hours played");
+    CHECK(hours_played(27000) == "7.5 hours played");
+    CHECK(hours_played(3600) == "1 hour played");
     CHECK(hours_played(1234ull * 3600) == "1,234 hours played");
     CHECK(sort_tile_text(0) == "Not played yet");
-    CHECK(sort_tile_text(45000) == "12.5 hours");
-    CHECK(sort_tile_text(1) == "0.1 hours");
+    CHECK(sort_tile_text(27000) == "7.5 h");
+    CHECK(sort_tile_text(1) == "<1 min");
 
     /* ---- calendar ---- */
     CHECK(dfc(1970, 1, 1) == 0);
@@ -140,11 +160,11 @@ int main() {
     {
         const int64_t now = ts(2026, 11, 9, 12);
         const std::string sep = " | ";
-        CHECK(header_line(153360, (uint64_t)(now - 100), now, 0, sep) == "42.6 hours played | Last played: Today");
-        CHECK(header_line(153360, 0, now, 0, sep) == "42.6 hours played");
+        CHECK(header_line(153360, (uint64_t)(now - 100), now, 0, sep) == "43 hours played | Last played: Today");
+        CHECK(header_line(153360, 0, now, 0, sep) == "43 hours played");
         CHECK(header_line(0, (uint64_t)ts(2026, 11, 3, 8), now, 0, sep) == "Last played: Nov 3");
         CHECK(header_line(0, 0, now, 0, sep) == "Not played yet");
-        CHECK(header_line(5, (uint64_t)ts(2025, 12, 31, 8), now, 0, sep) == "0.1 hours played | Last played: Dec 31, 2025");
+        CHECK(header_line(5, (uint64_t)ts(2025, 12, 31, 8), now, 0, sep) == "Under a minute played | Last played: Dec 31, 2025");
     }
 
     /* ---- same_pc ---- */
@@ -228,8 +248,8 @@ int main() {
         std::vector<Session> v = {S(now - 100000, 3600, "PC-A"), S(now - 50000, 7200, "PC-A"), S(now - 10, 100, "PC-A"), S(now - 5000, 500, "PC-B"),
                                   S(now - 4000, 700, "pc-b"), S(now - 3000, 60, "PC-C")};
         GameStats g = game_stats(20000, (uint64_t)(now - 5), v, "PC-A", now);
-        // total = 20000 + 1260 = 21260 s -> 21440 / 360 = 59 "5.9 hours"; recent = 3600 + 7200 + 10 + 1260 = 12070 s -> 12250 / 360 = 34 "3.4 hours";
-        // this PC 20000 s -> 20180 / 360 = 56 "5.6 hours"; other 1260 s -> 1440 / 360 = 4 "0.4 hours"
+        // total = 20000 + 1260 = 21260 s -> "5.9 hours"; recent = 3600 + 7200 + 10 + 1260 = 12070 s -> "3.4 hours";
+        // this PC 20000 s -> "5.6 hours"; other 1260 s -> "21 minutes"
         std::vector<Cell> c = strip_cells(g, now, 0);
         CHECK(c.size() == 6);
         CHECK(c.size() == 6 && c[0].label == "Play time" && c[0].value == "5.9 hours");
@@ -237,18 +257,18 @@ int main() {
         CHECK(c.size() == 6 && c[2].label == "Sessions" && c[2].value == "6");
         CHECK(c.size() == 6 && c[3].label == "Last 2 weeks" && c[3].value == "3.4 hours");
         CHECK(c.size() == 6 && c[4].label == "This PC" && c[4].value == "5.6 hours");
-        CHECK(c.size() == 6 && c[5].label == "Other PCs" && c[5].value == "0.4 hours");
+        CHECK(c.size() == 6 && c[5].label == "Other PCs" && c[5].value == "21 minutes");
 
         std::vector<Session> one = {S(now - 100, 3600, "PC-B")};
         c = strip_cells(game_stats(3600, (uint64_t)(now - 86400), one, "PC-A", now), now, 0);   // one other PC
-        // total 7200 s -> 7380 / 360 = 20 "2.0 hours"; recent 100 s -> 280 / 360 = 0 -> min "0.1 hours"
+        // total 7200 s -> "2 hours"; recent 100 s -> "1 minute"
         CHECK(c.size() == 6);
-        CHECK(c.size() == 6 && c[0].label == "Play time" && c[0].value == "2.0 hours");
+        CHECK(c.size() == 6 && c[0].label == "Play time" && c[0].value == "2 hours");
         CHECK(c.size() == 6 && c[1].label == "Last played" && c[1].value == "Today");   // the other PC's session is newer than library.json's stamp
         CHECK(c.size() == 6 && c[2].label == "Sessions" && c[2].value == "1");
-        CHECK(c.size() == 6 && c[3].label == "Last 2 weeks" && c[3].value == "0.1 hours");
-        CHECK(c.size() == 6 && c[4].label == "This PC" && c[4].value == "1.0 hours");
-        CHECK(c.size() == 6 && c[5].label == "Other PC" && c[5].value == "1.0 hours");
+        CHECK(c.size() == 6 && c[3].label == "Last 2 weeks" && c[3].value == "1 minute");
+        CHECK(c.size() == 6 && c[4].label == "This PC" && c[4].value == "1 hour");
+        CHECK(c.size() == 6 && c[5].label == "Other PC" && c[5].value == "1 hour");
 
         {   // played only on another PC (library.json 0 / 0): no "This PC" cell
             std::vector<Session> lap = {S(now - 3 * 86400, 5400, "LAPTOP")};   // Nov 6 12:00, 1.5 h
@@ -274,14 +294,14 @@ int main() {
 
         GameStats a; a.total_secs = 90000;                                      // total only: no date, sessions, recent
         c = strip_cells(a, now, 0);
-        CHECK(c.size() == 1 && c[0].label == "Play time" && c[0].value == "25.0 hours");
+        CHECK(c.size() == 1 && c[0].label == "Play time" && c[0].value == "25 hours");
         GameStats b; b.last_played = (uint64_t)ts(2026, 11, 7, 12);             // date only: no play time cell
         c = strip_cells(b, now, 0);
         CHECK(c.size() == 1 && c[0].label == "Last played" && c[0].value == "Nov 7");
         GameStats d; d.total_secs = 1234ull * 3600; d.this_pc_secs = 1134ull * 3600; d.last_played = (uint64_t)ts(2025, 12, 31, 12); d.sessions = 1234; d.recent_secs = 7200; d.other_secs = 3600 * 100; d.other_pcs = 3;
         c = strip_cells(d, now, 0);
         CHECK(c.size() == 6);
-        CHECK(c.size() == 6 && c[0].value == "1,234 hours" && c[1].value == "Dec 31, 2025" && c[2].value == "1,234" && c[3].value == "2.0 hours");
+        CHECK(c.size() == 6 && c[0].value == "1,234 hours" && c[1].value == "Dec 31, 2025" && c[2].value == "1,234" && c[3].value == "2 hours");
         CHECK(c.size() == 6 && c[4].label == "This PC" && c[4].value == "1,134 hours" && c[5].label == "Other PCs" && c[5].value == "100 hours");
         d.sessions = 0; d.recent_secs = 0;                                      // sessions / recent drop out when zero
         c = strip_cells(d, now, 0);

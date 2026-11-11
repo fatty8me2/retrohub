@@ -2,6 +2,8 @@
 /* Home "Continue" hero + "Recently played" row, pure logic (no ImGui, no files): which game the hero shows, where its backdrop picture comes
  * from, the relative-time wording, the Continue-vs-Play label rules and which recently played games fill the row. Unit tested by
  * hub_continue_test. The UI is continue_ui.cpp. */
+#include "playtime_logic.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -89,19 +91,10 @@ inline std::string relative_time(uint64_t now, uint64_t t) {
     return plural(days / 30, "month");
 }
 
-/* "14 h total" "2.5 h total" "40 min total"; "" under a minute. */
-inline std::string total_time(uint64_t secs) {
-    if (secs < 60) return "";
-    if (secs < 3600) return std::to_string(secs / 60) + " min total";
-    char b[32];
-    if (secs < 36000) {
-        std::snprintf(b, sizeof b, "%.1f h total", (double)(secs / 360) / 10.0);   // truncated to a tenth of an hour
-        return b;
-    }
-    return std::to_string(secs / 3600) + " h total";
-}
+/* "14 hours played" "2.5 hours played" "40 minutes played" (playtime_logic.h, long form); "" under a minute. */
+inline std::string total_time(uint64_t secs) { return secs < 60 ? std::string() : pt::hours_played(secs); }
 
-/* The hero's second line: "Last played 2 hours ago  .  14 h total" (the separator is passed in; the total is dropped when unknown). */
+/* The hero's second line: "Last played 2 hours ago  .  14 hours played" (the separator is passed in; the total is dropped when unknown). */
 inline std::string last_played_line(uint64_t now, uint64_t last_played, uint64_t play_seconds, const std::string& sep) {
     std::string s = last_played ? "Last played " + relative_time(now, last_played) : std::string("Not played yet");
     const std::string tot = total_time(play_seconds);
