@@ -288,6 +288,7 @@ add_test(NAME hubfriends_offline_test COMMAND hubfriends_test)   # fw2-ci: the o
 set_tests_properties(hubfriends_offline_test PROPERTIES ENVIRONMENT "HUBFRIENDS_OFFLINE=1")
 add_test(NAME hubfriends_test COMMAND hubfriends_test)                   # server: $RETROHUB_TEST_SERVER at run time
 add_test(NAME hubidbackup_test COMMAND hubidbackup_test)               # identity backup outside the install folder (offline, temp dirs)
+add_test(NAME hubws_error_text_test COMMAND hubws_error_text_test)   # WebSocket error -> player text table (offline, pure)
 add_test(NAME hubws_close_test COMMAND hubws_close_test)   # WebSocket close never blocks (local loopback server only)
 add_test(NAME hubfriends_dedupe_test COMMAND hubfriends_dedupe_test)   # friends list: one entry per uid (no network)
 add_test(NAME hubfriends_outbox_test COMMAND hubfriends_outbox_test)   # offline outbox rules (no network)
