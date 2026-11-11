@@ -5,6 +5,8 @@
 #include "ps2.h"
 #include "pcsx2.h"
 #include "online_caps.h"
+#include "launch_text.h"
+#include "hub_log.h"
 
 #include <fstream>
 
@@ -193,8 +195,8 @@ std::string ps1_online_block() {
     if (now - at < 2.0) return cached;
     at = now;
     cached.clear();
-    if (find_core("beetle_psx").empty()) cached = "The PlayStation emulator core (beetle_psx_libretro.dll) is missing from the cores folder.";
-    else if (find_all().empty() && !A.st.ps1_openbios) cached = "Your PC has no PlayStation BIOS (scph5501.bin) - add it, or turn on OpenBIOS, in Settings > Playing. Everyone in the room needs the same setup.";
+    if (find_core("beetle_psx").empty()) cached = hublaunch::ps1_files_missing_text();
+    else if (find_all().empty() && !A.st.ps1_openbios) cached = std::string("This PC has no PlayStation BIOS (scph5501.bin). Add one, or turn on OpenBIOS, in Settings > Playing. ") + hublaunch::ps1_bios_own_text() + " Everyone in the room needs the same setup.";
     return cached;
 }
 
@@ -202,11 +204,11 @@ bool ps1_online_args(const hub::GameEntry& e, const std::string& net, const std:
                      hub::gs::Values gsv, std::string* args, std::string* err) {
     if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) { *err = "Unpacking " + e.title + " first - try again when it is done."; return false; }
     std::string core = find_core("beetle_psx");
-    if (core.empty()) { *err = "The PlayStation emulator core (beetle_psx_libretro.dll) was not found in the cores folder."; return false; }
+    if (core.empty()) { hublog::info("ps1 online: beetle_psx core not found"); *err = hublaunch::ps1_files_missing_text(); return false; }   // launch_online sends the older wording (hublaunch::wire_for)
     std::vector<hub::ps1::BiosFound> bios = find_all();
     std::string sysdir = staging_dir();
     if (bios.empty() && !A.st.ps1_openbios) {
-        *err = "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Playing.";
+        *err = std::string("PlayStation online needs a BIOS file (scph5501.bin) on every PC, or OpenBIOS on every PC. Set it up in Settings > Playing. ") + hublaunch::ps1_bios_own_text();   // launch_online sends the older wording (hublaunch::wire_for)
         return false;
     }
     if (!bios.empty()) hub::ps1::stage_bios(bios, sysdir);
