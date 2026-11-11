@@ -32,6 +32,7 @@
 
 #include "hub_version.h"
 #include "update_apply.h"
+#include "hub_log.h"
 
 namespace hubupdate {
 
@@ -120,6 +121,7 @@ void ulog(const char* fmt, ...) {
     va_list ap; va_start(ap, fmt);
     std::vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
+    hublog::info("updater: %s", buf);
     SYSTEMTIME t; GetLocalTime(&t);
     std::fprintf(f, "[%04d-%02d-%02d %02d:%02d:%02d] %s\r\n", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, buf);
     std::fclose(f);

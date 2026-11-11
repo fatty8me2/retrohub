@@ -52,6 +52,7 @@
 #include "hookshot.h"
 #include "hookshot_build.h"
 #include "nup_repair.h"
+#include "hub_log.h"
 #include <thread>
 #include <xinput.h>
 
@@ -489,6 +490,7 @@ void poll_process() {
         if (secs >= 1) fr_playtime_session_ended();
         refresh_state(A.run.key);
     }
+    hublog::info("game exited: emulator kind %d, exit code 0x%lx, session %llu s", A.run.emu_kind, (unsigned long)code, (unsigned long long)secs);
     crash_note_session_ended(A.run.emu_kind, A.run.emu_exe, A.run.emu_dir, A.run.title, proc_id, code, (long long)A.run.start_unix, (long long)secs);   // a crash (not a hub-ended or normal exit) -> a note for the next time the hub is in front
     A.vault_dirty = true;
     A.info_at = -100;

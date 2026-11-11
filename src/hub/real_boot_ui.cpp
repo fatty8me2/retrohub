@@ -1,3 +1,4 @@
+#include "console_names.h"
 #include "app.h"
 #include "real_boot.h"
 #include "pcsx2.h"
@@ -132,7 +133,7 @@ void real_boot_settings_ui() {
     }
     for (auto& r : rows) {
         bool on = hub::realboot::enabled_for(A.st.real_boot_off, r.first);
-        std::string label = std::string(hub::system_name(r.first)) + "##rb" + hub::system_short(r.first);
+        std::string label = std::string(hub::full_name(r.first)) + "##rb" + hub::system_short(r.first);
         if (ImGui::Checkbox(label.c_str(), &on)) { A.st.real_boot_off = hub::realboot::set_enabled(A.st.real_boot_off, r.first, on); looked = -10; mark_dirty(); }
         text_wrapped_disabled(r.second.have ? (r.second.stage.detail.empty() ? std::string("Your BIOS was found: the real startup plays.") : r.second.stage.detail)
                                             : std::string(hub::realboot::file_hint(r.first)));

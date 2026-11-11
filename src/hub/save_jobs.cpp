@@ -1,5 +1,6 @@
 #include "app.h"
 #include "save_jobs_logic.h"
+#include "hub_log.h"
 #include <atomic>
 #include <chrono>
 #include <list>
@@ -15,6 +16,7 @@ void set_toast(const std::string& s, bool good, double secs) {
 
 /* Cloud problems that are not shown as toasts go to cloud_saves.log in the data dir (job thread only). */
 static void log_cloud(const std::string& msg) {
+    hublog::info("cloud saves: %s", msg.c_str());
     std::ofstream f(hub::data_dir() + "cloud_saves.log", std::ios::app);
     if (!f) return;
     std::time_t t = std::time(nullptr);

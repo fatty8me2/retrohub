@@ -1,3 +1,4 @@
+#include "console_names.h"
 #include "hack_ui.h"
 #include "hack_core.h"
 #include "hack_logic.h"
@@ -28,7 +29,7 @@ std::string data_root() {
 /* Console name of a base candidate: a Switch 2 game in the library reads "Nintendo Switch 2" (Cand carries only the System). */
 std::string cand_console(const hk::Cand& c) {
     const hub::GameEntry* e = c.system == hub::System::Switch ? find_entry(c.key) : nullptr;
-    return e ? std::string(hub::console_name(*e)) : std::string(hub::system_name(c.system));
+    return e ? std::string(hub::console_name(*e)) : std::string(hub::full_name(c.system));
 }
 std::string cache_dir_for(const std::string& key) { return data_root() + "\\rom-cache\\hacks\\" + hk::cache_folder(key); }
 

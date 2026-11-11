@@ -1,3 +1,4 @@
+#include "console_names.h"
 #include "gamepack.h"
 
 #ifndef NOMINMAX
@@ -1219,7 +1220,7 @@ void Installer::start(const std::string& sys, const std::string& title, const st
                                 for (const hub::GameEntry& g : found) if (g.system == want_sys) any_same = true;
                                 if (!any_same) {   // filed under the wrong console in the pack: it is kept and listed under its real one
                                     std::lock_guard<std::mutex> lk(mu);
-                                    note = this->title + " is a " + hub::system_name(found[0].system) + " game (the pack had it under " + hub::system_name(want_sys) + "). It is in your library as " + hub::system_name(found[0].system) + ".";
+                                    note = this->title + " is a " + hub::full_name(found[0].system) + " game (the pack had it under " + hub::full_name(want_sys) + "). It is in your library as " + hub::full_name(found[0].system) + ".";
                                 }
                             }
                         }

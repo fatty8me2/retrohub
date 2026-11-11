@@ -280,7 +280,7 @@ static void gamepack_self_heal_tick() {
             std::error_code e2;
             for (std::filesystem::directory_iterator g(c->path(), e2), ge; !e2 && g != ge; g.increment(e2)) {
                 if (!g->is_directory(e2) || !std::filesystem::is_regular_file(g->path() / "gamepack.done", e2)) continue;
-                std::string dir = g->path().string();
+                std::string dir = g->path().u8string();
                 bool have = false;
                 for (const hub::GameEntry& e : A.lib) if (path_under(e.path, dir)) { have = true; break; }
                 if (!have) dirs.push_back(dir);
