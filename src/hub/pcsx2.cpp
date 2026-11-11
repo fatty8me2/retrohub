@@ -13,6 +13,7 @@
 
 #include "logic.h"
 #include "winutil.h"
+#include "cfg_write.h"
 
 namespace hubemu {
 
@@ -29,14 +30,7 @@ static std::string read_text(const std::string& p) {
     std::ifstream f(P(p), std::ios::binary);
     return f ? std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()) : std::string();
 }
-static bool write_text(const std::string& p, const std::string& t) {
-    std::error_code ec;
-    fs::create_directories(P(p).parent_path(), ec);
-    std::ofstream f(P(p), std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f.write(t.data(), (std::streamsize)t.size());
-    return (bool)f;
-}
+static bool write_text(const std::string& p, const std::string& t) { return hubcfg::write_utf8(p, t); }   // durable: flush + one atomic replace; skipped when unchanged
 
 /* ------------------------------------------------------------------ BIOS */
 
@@ -289,8 +283,13 @@ std::string pcsx2_ini_pads(const std::string& in, const Ps2Pads& pads, const hub
         if (sdl >= 0) {
             t = hubui::ini_set(t, sec, "LargeMotor", "SDL-" + std::to_string(sdl) + "/LargeMotor");
             t = hubui::ini_set(t, sec, "SmallMotor", "SDL-" + std::to_string(sdl) + "/SmallMotor");
-            auto it = prof.analogs.find("left_stick");
-            double dz = it == prof.analogs.end() ? 0.0 : it->second.deadzone;
+            /* the pad has one Deadzone: the larger of the two sticks' sliders (0 = PCSX2's own default, nothing is written). The profile
+             * value is written as stored, like before (the profile loader already limits it to 0..0.95). */
+            double dz = 0.0;
+            for (const char* name : {"left_stick", "right_stick"}) {
+                auto st = prof.analogs.find(name);
+                if (st != prof.analogs.end() && st->second.deadzone > dz) dz = st->second.deadzone;
+            }
             if (dz > 0) t = hubui::ini_set(t, sec, "Deadzone", num(dz));
         } else {
             t = hubui::ini_set(t, sec, "LargeMotor", "");
