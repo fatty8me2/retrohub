@@ -51,6 +51,7 @@ constexpr const char* kSumsAssetName = "SHA256SUMS.txt";
 constexpr const char* kManualUrl = "https://github.com/fatty8me2/retrohub/releases/latest";
 
 std::atomic<bool> s_checked{false};
+std::atomic<unsigned long long> s_last_fail_ms{0};   // GetTickCount64 of the last FAILED check (network / unreadable answer)
 std::atomic<bool> s_available{false};
 std::atomic<bool> s_checking{false};
 std::atomic<bool> s_failed{false};
@@ -139,7 +140,9 @@ std::vector<int> parse_version(const std::string& v) {
     return parts;
 }
 
-int run_capture(std::string cmd, const std::function<void(const std::string&)>& onLine) {
+constexpr int kRunTimedOut = -2;
+/* timeout_ms: when the process runs longer it is ended by its own handle (never by name) and kRunTimedOut is returned. */
+int run_capture(std::string cmd, const std::function<void(const std::string&)>& onLine, DWORD timeout_ms = INFINITE) {
     HANDLE rd = nullptr, wr = nullptr;
     SECURITY_ATTRIBUTES sa{}; sa.nLength = sizeof(sa); sa.bInheritHandle = TRUE;
     if (!CreatePipe(&rd, &wr, &sa, 0)) return -1;
@@ -151,6 +154,17 @@ int run_capture(std::string cmd, const std::function<void(const std::string&)>& 
     BOOL ok = CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
     CloseHandle(wr);
     if (!ok) { CloseHandle(rd); return -1; }
+    std::atomic<bool> timedOut{false};
+    std::thread watcher;
+    if (timeout_ms != INFINITE) {   // ending the process closes its end of the pipe, which also frees the read loop below
+        HANDLE ph = pi.hProcess;
+        watcher = std::thread([ph, timeout_ms, &timedOut]() {
+            if (WaitForSingleObject(ph, timeout_ms) == WAIT_TIMEOUT) {
+                DWORD c = 0;   // it may have exited normally in the meantime: only a still-running process counts as a timeout
+                if (GetExitCodeProcess(ph, &c) && c == STILL_ACTIVE) { timedOut.store(true); TerminateProcess(ph, 1); }
+            }
+        });
+    }
     std::string line; char buf[512]; DWORD got = 0;
     while (ReadFile(rd, buf, sizeof(buf), &got, nullptr) && got > 0) {
         for (DWORD i = 0; i < got; ++i) {
@@ -162,9 +176,10 @@ int run_capture(std::string cmd, const std::function<void(const std::string&)>& 
     if (!line.empty()) onLine(line);
     CloseHandle(rd);
     WaitForSingleObject(pi.hProcess, INFINITE);
+    if (watcher.joinable()) watcher.join();
     DWORD code = 0; GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-    return (int)code;
+    return timedOut.load() ? kRunTimedOut : (int)code;
 }
 
 std::string sha256_file(const std::string& path) {
@@ -661,7 +676,7 @@ bool launch_check_disabled() {
 
 void check_async(bool force) {
     if (s_checking.load() || s_downloading.load()) return;
-    if (!force && s_checked.load()) return;
+    if (!force && !detail::check_retry_due(s_checked.load(), s_last_fail_ms.load(), GetTickCount64())) return;
     if (!force && launch_check_disabled()) {
         s_checked.store(true);
         set_status("Update check disabled.");
@@ -680,6 +695,7 @@ void check_async(bool force) {
         int code = run_capture(cmd, [&](const std::string& l) { response += l; });
         if (code != 0 || response.empty()) {
             ulog("check failed (curl exit %d)", code);
+            s_checked.store(false); s_last_fail_ms.store(GetTickCount64() | 1);   // a network failure is not an answer: the next automatic check may retry, spaced
             s_failed.store(true);
             set_status("Unable to check for updates.");
             s_checking.store(false);
@@ -688,6 +704,7 @@ void check_async(bool force) {
         detail::Release rel = detail::parse_release(response);
         if (!rel.ok) {
             ulog("check failed: unreadable release JSON");
+            s_checked.store(false); s_last_fail_ms.store(GetTickCount64() | 1);
             s_failed.store(true);
             set_status("Unable to read update information.");
             s_checking.store(false);
@@ -840,9 +857,14 @@ void start_update() {
             std::filesystem::remove_all(P(staged), fec);
             std::filesystem::create_directories(P(staged), fec);
             std::string tarCmd = "\"" + U8(systemRoot) + "\\System32\\tar.exe\" -xf \"" + zipPath + "\" -C \"" + staged + "\"";
-            int tarCode = run_capture(tarCmd, [](const std::string&) {});
+            int tarCode = run_capture(tarCmd, [](const std::string&) {}, detail::kTarTimeoutMs);   // a stuck tar is ended by its handle; the install is untouched either way
             rm_file(zipPath);
-            if (tarCode != 0) { std::filesystem::remove_all(P(staged), fec); fail("could not unpack the update."); return; }
+            if (tarCode != 0) {
+                std::filesystem::remove_all(P(staged), fec);
+                if (tarCode == kRunTimedOut) ulog("unpacking the update timed out after %lu s", detail::kTarTimeoutMs / 1000);
+                fail(tarCode == kRunTimedOut ? "unpacking the update took too long." : "could not unpack the update.");
+                return;
+            }
             for (const char* req : {"RetroHub.exe", "BattleShip.exe"}) {
                 if (hubOnly && std::strcmp(req, "BattleShip.exe") == 0) continue;
                 if (GetFileAttributesW(W(staged + "\\" + req).c_str()) == INVALID_FILE_ATTRIBUTES) {

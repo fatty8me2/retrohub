@@ -710,6 +710,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     // clean shutdown
     hubdisplay::tick(A.win, true, tvmode::active());   // last window rect / monitor / maximized, before the window is hidden
+    hang_watchdog_stop();   // before every shutdown join (updater startup thread, art worker): a slow join must not trip the watchdog on a normal exit
     hubupdate::shutdown();   // stop waiting for a game to close, drop the unused installer copy, join the startup pass
     SDL_HideWindow(A.win);   // the joins below can wait on a slow network: never leave a frozen-looking window up meanwhile
     dolphin_speed_stop();   // the Dolphin speed DSU server (if a GameCube game ran)
@@ -731,7 +732,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     for (auto* p : A.pads) SDL_GameControllerClose(p);
     g_io_shutdown = true;
     hubart::shutdown();
-    hang_watchdog_stop();
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

@@ -154,6 +154,16 @@ enum class GateState {
 };
 GateState gate_step(Gate& g, bool ready, bool session_busy, bool install_busy, unsigned long long now_ms, unsigned long long settle_ms = kSettleMs);
 
+/* ---- retry spacing and the unpack timeout (pure) ---- */
+constexpr unsigned long long kCheckRetryMs = 5ull * 60 * 1000;   // after a FAILED check, the next automatic check waits this long (a dead network is not hammered)
+constexpr unsigned long kTarTimeoutMs = 10ul * 60 * 1000;        // a stuck tar.exe is ended after this long and the update fails cleanly
+/* May an automatic (not user-forced) check run now? checked = an earlier check in this session finished (success or a final answer);
+ * last_fail_ms = tick of the last failed check (0 = none). A failed check does not count as "checked", but waits kCheckRetryMs. */
+inline bool check_retry_due(bool checked, unsigned long long last_fail_ms, unsigned long long now_ms) {
+    if (checked) return false;
+    return last_fail_ms == 0 || now_ms < last_fail_ms || now_ms - last_fail_ms >= kCheckRetryMs;
+}
+
 /* ---- staged files kept for a retry ("updates\staged.json" beside "updates\staged\") ---- */
 struct StagedInfo {
     std::string version;
