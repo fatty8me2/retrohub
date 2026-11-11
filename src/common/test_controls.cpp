@@ -418,6 +418,16 @@ static void test_exit_combo_and_cursor() {
       q = p; q.a[hubctl::kAxisRT] = 100; q.a[hubctl::kAxisLT] = 100; CHECK(hubctl::pad_screen_combo_down(q));   // light trigger rest noise is fine
       q = p; q.b[hubctl::kBtnRB] = false; CHECK(!hubctl::pad_screen_combo_down(q));
       q = p; q.b[hubctl::kBtnLB] = true; CHECK(hubctl::pad_screen_combo_down(q) && hubctl::clip_combo_down(q));
+      { // XInput mapping: BACK 0x20 + RB 0x200 is the combo; Start 0x10, Y 0x8000, a pressed trigger (>= 125/255) cancel it
+        CHECK(hubctl::pad_screen_combo_down(hubctl::pad_from_xinput(0x20 | 0x200, 0, 0)));
+        CHECK(!hubctl::pad_screen_combo_down(hubctl::pad_from_xinput(0x20, 0, 0)) && !hubctl::pad_screen_combo_down(hubctl::pad_from_xinput(0x200, 0, 0)));
+        CHECK(!hubctl::pad_screen_combo_down(hubctl::pad_from_xinput(0x20 | 0x200 | 0x10, 0, 0)));
+        CHECK(!hubctl::pad_screen_combo_down(hubctl::pad_from_xinput(0x20 | 0x200 | 0x8000, 0, 0)));
+        CHECK(!hubctl::pad_screen_combo_down(hubctl::pad_from_xinput(0x20 | 0x200, 200, 0)) && !hubctl::pad_screen_combo_down(hubctl::pad_from_xinput(0x20 | 0x200, 0, 200)));
+        CHECK(hubctl::pad_screen_combo_down(hubctl::pad_from_xinput(0x20 | 0x200, 30, 30)));   // trigger rest noise
+        CHECK(hubctl::exit_combo_down(hubctl::pad_from_xinput(0x30, 0, 0)) && hubctl::xinput_combo_down(0x30));
+        CHECK(hubctl::clip_combo_down(hubctl::pad_from_xinput(0x20 | 0x100, 0, 0)) && hubctl::boost_combo_down(hubctl::pad_from_xinput(0x20, 0, 255)));
+      }
       hubctl::PadScreenCombo c;
       CHECK(!c.update(true, 1000));             // press edge: not yet
       CHECK(!c.update(true, 1249));
