@@ -134,7 +134,7 @@ DiscVer disc_version_from_header(const unsigned char* h, size_t n) {
 }
 
 static bool read_range(const std::string& path, uint64_t off, size_t len, std::vector<unsigned char>* out) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) return false;
     f.seekg((std::streamoff)off);
     out->assign(len, 0);

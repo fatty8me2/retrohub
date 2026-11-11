@@ -3,8 +3,10 @@
 #include "history.h"
 #include "playstats.h"
 #include "savestore.h"
+#include "miniz.h"
 
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -73,6 +75,25 @@ int main() {
     CHECK(export_game_zip(U(g), U(root / "o.zip"), false, &err));
     CHECK(fs::file_size(root / "o.zip") > 20);
     CHECK(!export_game_zip(U(root / "none"), U(root / "n.zip"), false, &err));
+    {   // a game folder and zip path with characters from several scripts: the zip is written there and holds every file's bytes
+        const fs::path uni = root / fs::u8path(std::string("Zo\xC3\xAB_\xD0\x96_\xE6\x97\xA5\xE6\x9C\xAC"));
+        const fs::path ug = uni / "game";
+        put(ug / "battery" / "a.sra", std::string("uni\0bytes", 9));
+        put(ug / "meta.json", "{}");
+        const fs::path uz = uni / "out" / "o.zip";
+        CHECK(export_game_zip(U(ug), U(uz), false, &err));
+        CHECK(fs::exists(uz) && !fs::exists(fs::path(uz).concat(".hubtmp")));
+        const std::string zb = get(uz);
+        mz_zip_archive za;
+        memset(&za, 0, sizeof za);
+        CHECK(mz_zip_reader_init_mem(&za, zb.data(), zb.size(), 0));
+        CHECK(mz_zip_reader_get_num_files(&za) == 2);
+        size_t n = 0;
+        void* p = mz_zip_reader_extract_file_to_heap(&za, "battery/a.sra", &n, 0);
+        CHECK(p && n == 9 && memcmp(p, "uni\0bytes", 9) == 0);
+        mz_free(p);
+        mz_zip_reader_end(&za);
+    }
 
     // stats
     CHECK(playlog_line(5, 60) == "5,60\n");

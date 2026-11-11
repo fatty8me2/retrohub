@@ -54,4 +54,4 @@ target_link_libraries(qa_cloud_tool PRIVATE hubsaves_mock hubnet)
 
 # Save history + play stats unit test.
 add_executable(hubhistory_test test_history.cpp)
-target_link_libraries(hubhistory_test PRIVATE hubsaves)
+target_link_libraries(hubhistory_test PRIVATE hubsaves hubminiz)

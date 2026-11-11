@@ -8,6 +8,8 @@ add_executable(json_test test_json.cpp)
 target_link_libraries(json_test PRIVATE hubbase)
 add_executable(durable_write_test test_durable_write.cpp)
 target_link_libraries(durable_write_test PRIVATE hubbase)
+add_executable(u8file_test test_u8file.cpp)
+target_link_libraries(u8file_test PRIVATE hubbase)
 add_executable(winutil_test test_winutil.cpp)
 target_link_libraries(winutil_test PRIVATE hubbase shell32)
 
