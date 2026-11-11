@@ -320,6 +320,7 @@ add_executable(hub_qm_test test_qm_logic.cpp)
 target_link_libraries(hub_qm_test PRIVATE hubcommon)
 add_executable(hub_qm_nav_test test_qm_nav.cpp)
 add_executable(hub_disc_id_test test_disc_id.cpp)
+add_executable(hub_resume_more_test test_resume_more.cpp)
 target_link_libraries(hub_disc_id_test PRIVATE hubcommon)
 
 # Dolphin speed over a virtual DSU pad (no keyboard injection / focus): server wrapper + title readback; pure logic test; hidden-desktop live test.
