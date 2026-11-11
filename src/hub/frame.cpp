@@ -221,8 +221,11 @@ void global_input() {
         if (ImGui::IsKeyDown(ImGuiKey_GamepadBack) && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false))) view_combo = true;
         if (ImGui::IsKeyReleased(ImGuiKey_GamepadBack) && !view_combo && !A.proc) fr_toggle_panel();
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
         if (fr_handle_back()) return;
+        extern bool room_leave_on_back();   // page_online.cpp: Esc / B leaves a room that is connecting or failed
+        if (A.page == Page::Online && room_leave_on_back()) return;
+    }
     int dir = 0;
     if (FR.panel_focused) {}
     else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) dir = 1;
