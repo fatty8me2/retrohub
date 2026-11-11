@@ -488,9 +488,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         /* The installer replaces our files and relaunches us. It was started only when no session was running (hubupdate::tick); if one
          * started in the second since, stay: quitting now would leave the installer waiting on a game. */
         if (hubupdate::installer_started() && !update_hold()) running = false;
-        if (A.dirty && !g_headless && !ImGui::IsAnyItemActive()) {
-            hubui::save_settings(A.settings_path, A.st);
-            A.dirty = false;
+        static double settings_retry_at = 0;   // a failed save stays dirty and is retried every few seconds, not every frame
+        if (A.dirty && !g_headless && !ImGui::IsAnyItemActive() && ImGui::GetTime() >= settings_retry_at) {
+            if (hubui::save_settings(A.settings_path, A.st)) A.dirty = false;
+            else settings_retry_at = ImGui::GetTime() + 5.0;
         }
         if (prefill_cleanup_pending && A.st.setup_done) {   // the first-run wizard was finished or skipped: the installer's hand-off file has done its job
             prefill_cleanup_pending = false;
