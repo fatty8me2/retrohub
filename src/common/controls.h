@@ -60,7 +60,8 @@ struct Analog {
  *   Azahar   deadzone 0..0.95 fraction (deadzone:); no sensitivity
  *   Pcsx2    deadzone 0..0.95 fraction (Pad "Deadzone", 0..1 scale); no sensitivity written
  *   Lichii   deadzone 0..0.95 fraction (deadzone:), sensitivity 0.25..1.5 (range:, the range Lichii's own stick dialog offers)
- * Out-of-range input is clamped, NaN becomes the model default (0.08 / 1). */
+ * Out-of-range input is clamped with the exact std::min(hi, std::max(lo, x)) the call sites always used: NaN gives the LOWER bound
+ * (deadzone 0, Lichii range 0.25, n64run sensitivity 0.1), +inf the upper, -inf the lower. */
 enum class AnalogTarget { N64Run, Dolphin, Cemu, Azahar, Pcsx2, Lichii };
 struct AnalogOut { double deadzone; double sensitivity; };
 AnalogOut clamp_analog(AnalogTarget target, double deadzone, double sensitivity);

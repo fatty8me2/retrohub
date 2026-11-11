@@ -2135,24 +2135,46 @@ bool prepare_cemu_own_settings(const std::string& user_data, const hub::gs::Valu
 /* Managed Cemu "graphic packs off": the player's <GraphicPack> block is parked in a state file BESIDE settings.xml (Cemu rewrites
  * settings.xml in its own form on exit and drops elements it does not know, so nothing parked inside it survives) and Cemu sees an
  * empty list. Turning packs on puts the block back byte for byte. Cemu keeps the empty <GraphicPack/> placeholder, but if it drops it
- * the block is re-inserted before </content>. The parked block is never overwritten or lost. */
+ * the block is re-inserted before </content>. The player's most recent choice wins and nothing is silently discarded: a block that is
+ * replaced by a newer list (or displaced by one the player enabled inside Cemu) goes to a dated backup file beside the state file. */
 static bool cemu_gp_has_entries(const std::string& t, size_t a, size_t b) { return t.substr(a, b - a).find("<Entry") != std::string::npos; }
+
+/* The empty list as Cemu may write it: <GraphicPack/> or <GraphicPack />. */
+static bool cemu_gp_placeholder(const std::string& t, size_t* pos, size_t* len) {
+    static const std::string tag = "<GraphicPack";
+    for (size_t p = t.find(tag); p != std::string::npos; p = t.find(tag, p + 1)) {
+        size_t q = p + tag.size();
+        while (q < t.size() && (t[q] == ' ' || t[q] == '\t' || t[q] == '\r' || t[q] == '\n')) ++q;
+        if (q + 1 < t.size() && t[q] == '/' && t[q + 1] == '>') { *pos = p; *len = q + 2 - p; return true; }
+    }
+    return false;
+}
 
 std::string cemu_managed_gp_apply(const std::string& in, bool packs_on, CemuOwnState* st) {
     std::string t = in;
+    st->gp_displaced.clear();
     size_t a = 0, b = 0;
     const bool span = cemu_gp_span(t, &a, &b);
+    const bool entries = span && cemu_gp_has_entries(t, a, b);
     if (!packs_on) {
-        if (span && cemu_gp_has_entries(t, a, b)) {
-            if (!st->gp_stripped || st->gp_block.empty()) { st->gp_block = t.substr(a, b - a); st->gp_stripped = true; }   // an already parked original is kept
+        if (entries) {
+            const std::string cur = t.substr(a, b - a);
+            if (st->gp_stripped && !st->gp_block.empty() && st->gp_block != cur) st->gp_displaced = st->gp_block;   // the older selection is kept aside
+            st->gp_block = cur;   // the list in settings.xml is the newer choice
+            st->gp_stripped = true;
             t.replace(a, b - a, "<GraphicPack/>");
         }
         return t;
     }
     if (!st->gp_stripped || st->gp_block.empty()) return t;
-    if (span && cemu_gp_has_entries(t, a, b)) { st->gp_stripped = false; st->gp_block.clear(); return t; }   // the block is already there: no duplicate
-    size_t sc = t.find("<GraphicPack/>");
-    if (sc != std::string::npos) t.replace(sc, 14, st->gp_block);
+    if (entries) {   // the player enabled packs inside Cemu: that list stays, the parked one is kept aside
+        if (t.substr(a, b - a) != st->gp_block) st->gp_displaced = st->gp_block;
+        st->gp_stripped = false;
+        st->gp_block.clear();
+        return t;
+    }
+    size_t sc = 0, sl = 0;
+    if (cemu_gp_placeholder(t, &sc, &sl)) t.replace(sc, sl, st->gp_block);
     else if (span) t.replace(a, b - a, st->gp_block);
     else {
         size_t end = t.rfind("</content>");
@@ -2164,23 +2186,54 @@ std::string cemu_managed_gp_apply(const std::string& in, bool packs_on, CemuOwnS
     return t;
 }
 
+/* A state file is usable only when it is complete: all three keys, a final newline, and a parked block that is a whole element. */
+bool cemu_gp_state_parse(const std::string& text, CemuOwnState* st) {
+    if (text.empty() || text.back() != '\n') return false;
+    if (text.find("\nfs_touched=") == std::string::npos || text.find("\ngp_stripped=") == std::string::npos || text.find("\ngp_block=") == std::string::npos) return false;
+    CemuOwnState o;
+    if (!cemu_own_state_parse(text, &o)) return false;
+    if (o.gp_stripped && (o.gp_block.compare(0, 13, "<GraphicPack>") != 0 || o.gp_block.size() < 27 || o.gp_block.compare(o.gp_block.size() - 14, 14, "</GraphicPack>") != 0)) return false;
+    *st = o;
+    return true;
+}
+
+static std::string stamp_now() {
+    SYSTEMTIME s;
+    GetLocalTime(&s);
+    char b[32];
+    std::snprintf(b, sizeof b, "%04d%02d%02d-%02d%02d%02d", s.wYear, s.wMonth, s.wDay, s.wHour, s.wMinute, s.wSecond);
+    return b;
+}
+static std::string unused_name(const std::string& base, const std::string& ext) {
+    std::string p = base + ext;
+    for (int i = 1; file_exists(p) && i < 1000; ++i) p = base + "." + std::to_string(i) + ext;
+    return p;
+}
+
 bool apply_cemu_managed_settings(const std::string& portable_dir, const hub::gs::Values& v) {
     const std::string settings = join(portable_dir, "settings.xml"), sf = join(portable_dir, "retrohub-cemu-gp-state.txt");
     if (!file_exists(settings)) return false;
     auto it = v.find("wiiu.graphic_packs");
     const bool on = it == v.end() || it->second != "false";
     CemuOwnState st;
-    if (file_exists(sf)) cemu_own_state_parse(read_text(sf), &st);
+    if (file_exists(sf)) {
+        if (!cemu_gp_state_parse(read_text(sf), &st)) {   // damaged: kept aside, never deleted, treated as nothing parked
+            st = CemuOwnState();
+            std::error_code ec;
+            fs::rename(P(sf), P(unused_name(sf, ".bad")), ec);
+        }
+    }
     std::string cur = read_text(settings);
     std::string t = cemu_settings_apply(cur, hub::gs::Values());   // older builds renamed the list inside settings.xml: put that name back
     t = cemu_managed_gp_apply(t, on, &st);
     t = cemu_fullscreen_apply(t, hub::gs::is_fullscreen(v));
-    if (!on && st.gp_stripped) { if (!write_text(sf, cemu_own_state_text(st))) return false; }   // park first, then change settings.xml
-    bool ok = write_text(settings, t);
-    if (ok && on && file_exists(sf)) {
-        if (st.gp_stripped) write_text(sf, cemu_own_state_text(st));   // restore could not be placed yet: keep the parked block
-        else { std::error_code ec; fs::remove(P(sf), ec); }
+    if (!st.gp_displaced.empty()) {   // a parked selection that a newer list replaced: keep it in a dated file
+        std::string base = join(portable_dir, "retrohub-cemu-gp-parked-" + stamp_now());
+        if (!write_text(unused_name(base, ".txt"), st.gp_displaced + "\n")) return false;
     }
+    if (st.gp_stripped) { if (!write_text(sf, cemu_own_state_text(st))) return false; }   // park first, then change settings.xml
+    bool ok = write_text(settings, t);
+    if (ok && !st.gp_stripped && file_exists(sf)) { std::error_code ec; fs::remove(P(sf), ec); }
     return ok;
 }
 

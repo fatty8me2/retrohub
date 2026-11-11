@@ -283,10 +283,10 @@ target_link_libraries(RetroHub PRIVATE xinput setupapi)
 target_link_libraries(RetroHub PRIVATE hubminiz)
 add_executable(hub_emu_test test_emulators.cpp lichii.cpp emulators.cpp ppsspp.cpp)
 target_include_directories(hub_emu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
-target_link_libraries(hub_emu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+target_link_libraries(hub_emu_test PRIVATE hubcrashlog hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 add_executable(hub_gbalink_test test_gba_link.cpp emulators.cpp lichii.cpp ppsspp.cpp)   # X2 GC<->GBA: targets, choices, Dolphin.ini, save round trip, pads coexistence
 target_include_directories(hub_gbalink_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
-target_link_libraries(hub_gbalink_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+target_link_libraries(hub_gbalink_test PRIVATE hubcrashlog hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 add_executable(hub_wiiu_test test_wiiu_offline.cpp emulators.cpp lichii.cpp art_match.cpp)   # offline Wii U: .wua/meta.xml, own-Cemu settings, profiles, saves, art names
 target_include_directories(hub_wiiu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common ${libchdr_SOURCE_DIR}/deps/zstd-1.5.7)
 target_link_libraries(hub_wiiu_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
@@ -401,7 +401,7 @@ target_link_libraries(hub_hookshot_build_test PRIVATE hublogic hubcommon hubmini
 # PlayStation Portable via PPSSPP (docs/EMULATORS.md): PARAM.SFO / ISO / CSO / CHD / PBP identification (synthetic images), PS1-vs-PSP routing, scan, SAVEDATA mapping, ppsspp.ini + controls.ini
 add_executable(hub_psp_test test_psp.cpp ppsspp.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_psp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
-target_link_libraries(hub_psp_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+target_link_libraries(hub_psp_test PRIVATE hubcrashlog hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # Hookshot (native Ocarina of Time, docs/EMULATORS.md): ready/stamp/use_for + save session in temp dirs
 add_executable(hub_hookshot_test test_hookshot.cpp hookshot.cpp emulators.cpp lichii.cpp)
@@ -421,12 +421,12 @@ target_link_libraries(hub_nx_test PRIVATE hublogic hubcommon hubminiz bcrypt win
 # External emulators' pad configs for 1-4 fake pads (PCSX2, Dolphin, Cemu, Azahar, PPSSPP): distinct correct devices, full button sets, nothing bound twice
 add_executable(hub_ext_pads_test test_ext_pads.cpp pcsx2.cpp ppsspp.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_ext_pads_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
-target_link_libraries(hub_ext_pads_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+target_link_libraries(hub_ext_pads_test PRIVATE hubcrashlog hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # Emulator config writers: durable commit (bytes identical to the old helper), managed Cemu graphic-pack parking, analog clamp, PCSX2 deadzone, PPSSPP controls.ini merge (temp dirs only)
 add_executable(hub_emucfg_test test_emucfg.cpp pcsx2.cpp ppsspp.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_emucfg_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
-target_link_libraries(hub_emucfg_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
+target_link_libraries(hub_emucfg_test PRIVATE hubcrashlog hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
 # PS2 online (docs/PS2_ONLINE.md): readiness reasons, retrorun arguments, exit-code texts, the pinned LRPS2 download
 add_executable(hub_ps2_online_test test_ps2_online.cpp emulators.cpp lichii.cpp)

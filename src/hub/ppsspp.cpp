@@ -11,6 +11,9 @@
 #include "logic.h"
 #include "winutil.h"
 #include "cfg_write.h"
+#include "hub_log.h"
+#include <algorithm>
+#include <set>
 
 namespace hubemu {
 
@@ -106,22 +109,101 @@ std::string ppsspp_controls_ini(const hubctl::Profile& prof, int slot) {
     return o;
 }
 
-std::string ppsspp_controls_merge(const std::string& existing, const hubctl::Profile& prof, int slot) {
-    const std::string gen = ppsspp_controls_ini(prof, slot);
-    bool blank = true;
-    for (char c : existing) if (c != ' ' && c != '\t' && c != '\r' && c != '\n') { blank = false; break; }
-    if (blank) return gen;
-    std::string t = existing;
-    size_t pos = 0;
-    while (pos < gen.size()) {
-        size_t nl = gen.find('\n', pos);
-        std::string line = gen.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
-        pos = nl == std::string::npos ? gen.size() : nl + 1;
+/* One "Key = value" line of the generated mapping, split out. */
+static bool gen_line(const std::string& gen, size_t* pos, std::string* key, std::string* val) {
+    while (*pos < gen.size()) {
+        size_t nl = gen.find('\n', *pos);
+        std::string line = gen.substr(*pos, nl == std::string::npos ? std::string::npos : nl - *pos);
+        *pos = nl == std::string::npos ? gen.size() : nl + 1;
         size_t eq = line.find(" = ");
         if (line.empty() || line[0] == '#' || line[0] == '[' || eq == std::string::npos) continue;
-        t = hubui::ini_set(t, "ControlMapping", line.substr(0, eq), line.substr(eq + 3));
+        *key = line.substr(0, eq);
+        *val = line.substr(eq + 3);
+        return true;
     }
-    return t;
+    return false;
+}
+
+static std::string strip_bom(const std::string& s, bool* bom) {
+    *bom = s.compare(0, 3, "\xEF\xBB\xBF") == 0;
+    return *bom ? s.substr(3) : s;
+}
+
+std::string ppsspp_controls_merge(const std::string& existing, const hubctl::Profile& prof, int slot) {
+    const std::string gen = ppsspp_controls_ini(prof, slot);
+    bool bom = false;
+    const std::string body = strip_bom(existing, &bom);
+    bool blank = true;
+    for (char c : body) if (c != ' ' && c != '\t' && c != '\r' && c != '\n') { blank = false; break; }
+    if (blank) return gen;
+    size_t crlf = 0, lf = 0;
+    for (size_t i = 0; i < body.size(); ++i) if (body[i] == '\n') { if (i > 0 && body[i - 1] == '\r') ++crlf; else ++lf; }
+    std::string t = body;
+    size_t pos = 0;
+    std::string key, val;
+    while (gen_line(gen, &pos, &key, &val)) t = hubui::ini_set(t, "ControlMapping", key, val);
+    if (crlf > lf) {   // the player's file uses CRLF: keep it (ini_set writes LF)
+        std::string o;
+        for (char c : t) { if (c == '\n') o += '\r'; o += c; }
+        t = o;
+    }
+    return bom ? std::string("\xEF\xBB\xBF") + t : t;
+}
+
+static std::string lower_s(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
+static std::string trim_s(const std::string& s) {
+    size_t b = s.find_first_not_of(" \t\r"), e = s.find_last_not_of(" \t\r");
+    return b == std::string::npos ? std::string() : s.substr(b, e - b + 1);
+}
+
+std::vector<std::string> ppsspp_controls_collisions(const std::string& existing, const hubctl::Profile& prof, int slot) {
+    /* What RetroHub relies on: every key it writes in controls.ini (authoritative) and the F2 / F4 accelerators it sends for quick
+     * save / load (Android key codes 132 / 134, device 1 = keyboard); Save State / Load State are deliberately left unmapped. */
+    struct Use { std::string token, what; };
+    std::vector<Use> use = {{"1-132", "Save State"}, {"1-134", "Load State"}};
+    std::set<std::string> managed;
+    const std::string gen = ppsspp_controls_ini(prof, slot);
+    size_t pos = 0;
+    std::string key, val;
+    while (gen_line(gen, &pos, &key, &val)) {
+        managed.insert(lower_s(key));
+        size_t a = 0;
+        while (a <= val.size()) {
+            size_t c = val.find(',', a);
+            std::string tok = trim_s(val.substr(a, c == std::string::npos ? std::string::npos : c - a));
+            if (!tok.empty()) use.push_back({tok, key});
+            if (c == std::string::npos) break;
+            a = c + 1;
+        }
+    }
+    std::vector<std::string> out;
+    bool bom = false;
+    const std::string body = strip_bom(existing, &bom);
+    std::string section;
+    size_t p = 0;
+    while (p < body.size()) {
+        size_t nl = body.find('\n', p);
+        std::string line = trim_s(body.substr(p, nl == std::string::npos ? std::string::npos : nl - p));
+        p = nl == std::string::npos ? body.size() : nl + 1;
+        if (line.size() >= 2 && line.front() == '[' && line.back() == ']') { section = lower_s(line.substr(1, line.size() - 2)); continue; }
+        size_t eq = line.find('=');
+        if (section != "controlmapping" || eq == std::string::npos) continue;
+        std::string k = trim_s(line.substr(0, eq)), lk = lower_s(k);
+        if (managed.count(lk)) continue;   // overwritten with RetroHub's mapping anyway
+        size_t a = eq + 1;
+        while (a <= line.size()) {
+            size_t c = line.find(',', a);
+            std::string tok = trim_s(line.substr(a, c == std::string::npos ? std::string::npos : c - a));
+            for (const auto& u : use)
+                if (!tok.empty() && tok == u.token && lower_s(u.what) != lk) {
+                    std::string m = "controls.ini: '" + k + "' uses " + tok + ", which RetroHub uses for " + u.what;
+                    if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m);
+                }
+            if (c == std::string::npos) break;
+            a = c + 1;
+        }
+    }
+    return out;
 }
 
 std::string prepare_ppsspp(const std::string& install_dir, const hubctl::Profile& prof, int slot, const hub::gs::Values& v) {
@@ -136,7 +218,10 @@ std::string prepare_ppsspp(const std::string& install_dir, const hubctl::Profile
     if (!write_text(ini, t)) return "could not write ppsspp.ini";
     if (first) write_text(marker, "RetroHub wrote PPSSPP's defaults once; controls.ini is rewritten before every launch.\n");
     const std::string cini = join(dir, "controls.ini");
-    if (!write_text(cini, ppsspp_controls_merge(read_text(cini), prof, slot))) return "could not write controls.ini";
+    const std::string have = read_text(cini);
+    int shown = 0;
+    for (const auto& w : ppsspp_controls_collisions(have, prof, slot)) if (shown++ < 5) hublog::warn("%s", w.c_str());   // the player's line stays as it is
+    if (!write_text(cini, ppsspp_controls_merge(have, prof, slot))) return "could not write controls.ini";
     return "";
 }
 

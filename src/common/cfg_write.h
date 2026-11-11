@@ -10,6 +10,8 @@
 #include <string>
 #include <system_error>
 
+#include <windows.h>
+
 #include "durable_write.h"
 
 namespace hubcfg {
@@ -30,6 +32,10 @@ inline bool same_on_disk(const std::filesystem::path& p, const std::string& byte
 inline bool write_file(const std::filesystem::path& p, const std::string& bytes, bool skip_if_same = true) {
     std::error_code ec;
     if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path(), ec);
+    /* A player may mark a config read-only so the hub leaves it alone: the old truncate-and-write failed there, so this fails too
+     * (durable::commit_replace would otherwise clear the attribute and replace the file). */
+    DWORD attr = GetFileAttributesW(p.wstring().c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY)) return false;
     if (skip_if_same && same_on_disk(p, bytes)) return true;
     return durable::write_file_durable(p.wstring(), bytes);
 }

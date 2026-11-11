@@ -186,8 +186,18 @@ static void test_clamp() {
         auto o = hubctl::clamp_analog(r.t, r.dz, r.sens);
         CHECK(o.deadzone == r.edz && o.sensitivity == r.esens);
     }
-    auto o = hubctl::clamp_analog(AnalogTarget::N64Run, std::nan(""), std::nan(""));
-    CHECK(o.deadzone == 0.08 && o.sensitivity == 1.0);
+    // NaN / inf behave exactly like the std::min(hi, std::max(lo, x)) the call sites used: NaN gives the lower bound
+    const double nan = std::nan(""), inf = HUGE_VAL;
+    auto o = hubctl::clamp_analog(AnalogTarget::Lichii, nan, nan);
+    CHECK(o.deadzone == 0.0 && o.sensitivity == 0.25);
+    o = hubctl::clamp_analog(AnalogTarget::Lichii, inf, inf);
+    CHECK(o.deadzone == 0.95 && o.sensitivity == 1.5);
+    o = hubctl::clamp_analog(AnalogTarget::Lichii, -inf, -inf);
+    CHECK(o.deadzone == 0.0 && o.sensitivity == 0.25);
+    o = hubctl::clamp_analog(AnalogTarget::N64Run, nan, nan);
+    CHECK(o.deadzone == 0.0 && o.sensitivity == 0.1);
+    o = hubctl::clamp_analog(AnalogTarget::Dolphin, nan, inf);
+    CHECK(o.deadzone == 0.0 && o.sensitivity == 1.0);
 }
 
 static void test_deadzone() {
@@ -244,15 +254,134 @@ static void test_ppsspp(const fs::path& root) {
     CHECK(!has_tmp(ci.parent_path()));
 }
 
+static int count_files(const fs::path& dir, const std::string& prefix) {
+    int n = 0;
+    std::error_code ec;
+    for (auto& e : fs::directory_iterator(dir, ec)) if (e.path().filename().string().compare(0, prefix.size(), prefix) == 0) ++n;
+    return n;
+}
+static std::string first_file(const fs::path& dir, const std::string& prefix) {
+    std::error_code ec;
+    for (auto& e : fs::directory_iterator(dir, ec)) if (e.path().filename().string().compare(0, prefix.size(), prefix) == 0) return slurp(e.path());
+    return "";
+}
+
+static void test_readonly(const fs::path& root) {
+    fs::path p = root / "ro.ini";
+    put(p, "KEEP\n");
+    SetFileAttributesW(p.wstring().c_str(), FILE_ATTRIBUTE_READONLY);
+    CHECK(!old_write(p, "NEW\n"));            // what the old helper did
+    CHECK(!hubcfg::write_file(p, "NEW\n"));   // same result now, and the file is untouched
+    CHECK(!hubcfg::write_file(p, "KEEP\n"));  // even identical bytes: same failure as before
+    CHECK(slurp(p) == "KEEP\n" && (GetFileAttributesW(p.wstring().c_str()) & FILE_ATTRIBUTE_READONLY));
+    SetFileAttributesW(p.wstring().c_str(), FILE_ATTRIBUTE_NORMAL);
+    CHECK(hubcfg::write_file(p, "NEW\n") && slurp(p) == "NEW\n");
+}
+
+static void test_cemu_gp_more(const fs::path& root) {
+    hub::gs::Values off, on;
+    off["wiiu.graphic_packs"] = "false";
+    on["wiiu.graphic_packs"] = "true";
+    const fs::path dir = root / "cemu2", sx = dir / "settings.xml", sf = dir / "retrohub-cemu-gp-state.txt";
+    const std::string orig = cemu_xml(kBlock);
+    const std::string newer = "<GraphicPack>\n\t\t<Entry filename=\"graphicPacks/NEW/rules.txt\"/>\n\t</GraphicPack>";
+    // (a1) off, the player enables other packs inside Cemu, off again: the newer list is parked, the older one kept in a dated file
+    fs::remove_all(dir);
+    put(sx, orig);
+    CHECK(hubemu::apply_cemu_managed_settings(u8(dir), off));
+    put(sx, cemu_xml(newer));
+    CHECK(hubemu::apply_cemu_managed_settings(u8(dir), off));
+    CHECK(slurp(sx).find("<GraphicPack>") == std::string::npos);
+    CHECK(count_files(dir, "retrohub-cemu-gp-parked-") == 1 && first_file(dir, "retrohub-cemu-gp-parked-").find("graphicPacks/a/rules.txt") != std::string::npos);
+    CHECK(hubemu::apply_cemu_managed_settings(u8(dir), on));
+    CHECK(slurp(sx).find(newer) != std::string::npos && slurp(sx).find("graphicPacks/a/") == std::string::npos);   // most recent choice wins
+    // (a2) on while a list is in settings.xml and one is parked: the list stays, the parked block goes to a dated file, not deleted
+    fs::remove_all(dir);
+    put(sx, orig);
+    CHECK(hubemu::apply_cemu_managed_settings(u8(dir), off));
+    put(sx, cemu_xml(newer));
+    CHECK(hubemu::apply_cemu_managed_settings(u8(dir), on));
+    CHECK(slurp(sx).find(newer) != std::string::npos && !fs::exists(sf));
+    CHECK(count_files(dir, "retrohub-cemu-gp-parked-") == 1 && first_file(dir, "retrohub-cemu-gp-parked-").find(kBlock) != std::string::npos);
+    // (b) damaged state files are renamed aside, never deleted, and mean "nothing parked"
+    const std::string good = [&] { hubemu::CemuOwnState s; s.fs_touched = true; s.gp_stripped = true; s.gp_block = kBlock; return hubemu::cemu_own_state_text(s); }();
+    hubemu::CemuOwnState chk;
+    CHECK(hubemu::cemu_gp_state_parse(good, &chk) && chk.gp_block == kBlock);
+    const std::string bad[] = {good.substr(0, good.size() / 2), good.substr(0, good.size() - 1), "garbage\n", "", "gp_stripped=1\ngp_block=nope\n"};
+    for (const auto& b : bad) {
+        hubemu::CemuOwnState x;
+        CHECK(!hubemu::cemu_gp_state_parse(b, &x));
+        fs::remove_all(dir);
+        put(sx, cemu_xml(newer));
+        put(sf, b);
+        CHECK(hubemu::apply_cemu_managed_settings(u8(dir), on));
+        CHECK(slurp(sx) == cemu_xml(newer));
+        CHECK(!fs::exists(sf) && count_files(dir, "retrohub-cemu-gp-state.txt.bad") == 1 && first_file(dir, "retrohub-cemu-gp-state.txt.bad") == b);
+    }
+    // (c) <GraphicPack /> with whitespace is the same placeholder
+    fs::remove_all(dir);
+    put(sx, orig);
+    CHECK(hubemu::apply_cemu_managed_settings(u8(dir), off));
+    std::string sp = slurp(sx);
+    sp.replace(sp.find("<GraphicPack/>"), 14, "<GraphicPack />");
+    put(sx, sp);
+    CHECK(hubemu::apply_cemu_managed_settings(u8(dir), on));
+    CHECK(slurp(sx).find(kBlock) != std::string::npos && slurp(sx).find("<GraphicPack />") == std::string::npos && !fs::exists(sf));
+}
+
+static void test_ppsspp_more() {
+    using namespace hubemu;
+    hubctl::Profile prof = hubctl::default_profile("psp");
+    const std::string gen = ppsspp_controls_ini(prof, 0);
+    std::string user = "# my binds\n[ControlMapping]\nCross = 10-190\nCustom Thing = 1-99\n";
+    std::string crlf;
+    for (char c : user) { if (c == '\n') crlf += '\r'; crlf += c; }
+    std::string m = ppsspp_controls_merge(crlf, prof, 0);
+    CHECK(m.find("\r\n") != std::string::npos);
+    for (size_t i = 0; i < m.size(); ++i) if (m[i] == '\n') { CHECK(i > 0 && m[i - 1] == '\r'); }
+    CHECK(m.find("Custom Thing = 1-99\r\n") != std::string::npos && ppsspp_controls_merge(m, prof, 0) == m);
+    CHECK(ppsspp_controls_merge(user, prof, 0).find('\r') == std::string::npos);   // LF stays LF
+    // BOM: kept, and no second [ControlMapping] section
+    std::string bomf = "\xEF\xBB\xBF" + user;
+    std::string mb = ppsspp_controls_merge(bomf, prof, 0);
+    CHECK(mb.compare(0, 3, "\xEF\xBB\xBF") == 0 && mb.compare(3, 3, "\xEF\xBB\xBF") != 0);
+    size_t first = mb.find("[ControlMapping]");
+    CHECK(first != std::string::npos && mb.find("[ControlMapping]", first + 1) == std::string::npos);
+    CHECK(ppsspp_controls_merge(mb, prof, 0) == mb);
+    std::string bomcr = "\xEF\xBB\xBF" + crlf;
+    std::string mc = ppsspp_controls_merge(bomcr, prof, 0);
+    CHECK(mc.compare(0, 3, "\xEF\xBB\xBF") == 0 && mc.find("[ControlMapping]", mc.find("[ControlMapping]") + 1) == std::string::npos && mc.find("\n\n") == std::string::npos);
+    // collisions: the player's own line stays, the report names it
+    CHECK(ppsspp_controls_collisions(gen, prof, 0).empty());   // a file RetroHub wrote: no collisions
+    CHECK(ppsspp_controls_collisions("", prof, 0).empty());
+    std::string col = "[ControlMapping]\nPause = 1-132\nTurbo = 1-134,1-60\nSave State = 1-132\nMy Vol = 1-37\nCross = 1-132\n";
+    auto w = ppsspp_controls_collisions(col, prof, 0);
+    bool f2 = false, f4 = false, an = false, save_ok = true, cross = false;
+    for (const auto& s : w) {
+        if (s.find("'Pause'") != std::string::npos && s.find("1-132") != std::string::npos) f2 = true;
+        if (s.find("'Turbo'") != std::string::npos && s.find("1-134") != std::string::npos) f4 = true;
+        if (s.find("'My Vol'") != std::string::npos && s.find("An.Up") != std::string::npos) an = true;
+        if (s.find("'Save State'") != std::string::npos) save_ok = false;   // its own function: not a collision
+        if (s.find("'Cross'") != std::string::npos) cross = true;           // managed key: overwritten, not reported
+    }
+    CHECK(f2 && f4 && an && save_ok && !cross);
+    std::string kept = ppsspp_controls_merge(col, prof, 0);
+    CHECK(hubui::ini_get(kept, "ControlMapping", "Pause", "") == "1-132" && hubui::ini_get(kept, "ControlMapping", "Turbo", "") == "1-134,1-60");   // player's lines untouched
+    CHECK(hubui::ini_get(kept, "ControlMapping", "Cross", "") == hubui::ini_get(gen, "ControlMapping", "Cross", "x"));                       // hub mapping stays authoritative
+}
+
 int main() {
     fs::path root = fs::temp_directory_path() / ("hub_emucfg_test_" + std::to_string(GetCurrentProcessId()));
     fs::remove_all(root);
     fs::create_directories(root);
     test_durable(root / "durable");
     test_cemu_gp(root / "cemugp");
+    test_readonly(root / "ro");
+    test_cemu_gp_more(root / "cemugp2");
     test_clamp();
     test_deadzone();
     test_ppsspp(root / "ppsspp");
+    test_ppsspp_more();
     std::error_code ec;
     fs::remove_all(root, ec);
     if (g_fail) { std::printf("%d check(s) failed\n", g_fail); return 1; }

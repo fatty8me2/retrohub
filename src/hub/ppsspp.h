@@ -30,6 +30,9 @@ std::string ppsspp_controls_ini(const hubctl::Profile& profile, int xinput_slot)
 /* The same mapping merged into an existing controls.ini: only the keys RetroHub manages (the PSP buttons and An.*) are updated in place;
  * every other key, section and comment of the player's file stays. An empty/missing file gives exactly ppsspp_controls_ini. */
 std::string ppsspp_controls_merge(const std::string& existing, const hubctl::Profile& profile, int xinput_slot);
+/* Lines of the player's file (not managed by RetroHub) that use a key RetroHub relies on (its own mapping, F2 / F4 for quick save / load)
+ * for another function. The merge leaves those lines untouched; the caller only logs them. */
+std::vector<std::string> ppsspp_controls_collisions(const std::string& existing, const hubctl::Profile& profile, int xinput_slot);
 /* Windows virtual-key codes of the chord that saves (F2) / loads (F4) the quick-save state. */
 std::vector<int> ppsspp_state_keys(bool save);
 
