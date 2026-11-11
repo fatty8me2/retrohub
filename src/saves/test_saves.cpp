@@ -104,6 +104,20 @@ static bool make_zip(const std::string& path, const std::vector<std::pair<std::s
     return ok;
 }
 
+/* Enumeration-error injection (set_enum_error_hook): mode 1 = a battery folder cannot be opened, 2 = its listing breaks after the
+ * first file, 3 = a file appears in the folder right after it was listed. Only folders whose path contains g_hook_match. */
+static int g_hook_mode = 0;
+static std::string g_hook_match;
+static unsigned long enum_hook(const std::string& dir, int seen) {
+    const std::string tail = "\\battery";
+    if (!g_hook_mode || dir.find(g_hook_match) == std::string::npos) return 0;
+    if (dir.size() < tail.size() || dir.compare(dir.size() - tail.size(), tail.size(), tail) != 0) return 0;
+    if (g_hook_mode == 1 && seen == 0) return ERROR_ACCESS_DENIED;
+    if (g_hook_mode == 2 && seen == 3) return ERROR_SHARING_VIOLATION;   // ".", "..", first file done
+    if (g_hook_mode == 3 && seen == -1) { g_hook_mode = 0; write_file(P(dir) / "late.sav", "cloud-late", 20); }
+    return 0;
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     fs::path base = fs::temp_directory_path() / ("hubsaves_test_" + std::to_string(GetCurrentProcessId()));
@@ -373,6 +387,126 @@ int main() {
         CHECK(nr.ok && nr.pulled == 2 && nr.conflicts == 0);
         CHECK(read_file(N2 / "nds/nds_adae-05ca37/battery/Pokemon - Diamond Version (USA) (Rev 5).srm") == save);
         CHECK(battery_dir("nds", key) == N2.u8string() + "\\nds\\nds_adae-05ca37\\battery\\");
+    }
+
+    printf("[12] one-side-changed: an older / empty incoming file never overwrites a newer one without a backup copy\n");
+    {
+        fs::path V = base / "s1V", sf = base / "s1sync";
+        set_vault_dir(V.u8string());
+        auto conflicts_of = [&](const fs::path& root, const std::wstring& what) {
+            int n = 0;
+            for (auto& kv : tree(root)) if (kv.first.rfind(L"_conflicts/", 0) == 0 && kv.first.find(what) != std::wstring::npos) n++;
+            return n;
+        };
+        auto conflict_of = [&](const fs::path& root, const std::wstring& what) {
+            for (auto& kv : tree(root)) if (kv.first.rfind(L"_conflicts/", 0) == 0 && kv.first.find(what) != std::wstring::npos) return kv.second;
+            return std::string("<none>");
+        };
+        write_file(V / "n64/g/battery/x.sav", "new-vault-save", 100);
+        write_file(V / "n64/g/battery/y.sav", "good-vault-save", 100);
+        write_file(V / "n64/g/battery/z.sav", "z-v1", 100);
+        write_file(V / "n64/g/battery/w.sav", "w-old-vault", 5000);
+        SyncReport s = sync_folder(sf.u8string(), false);
+        CHECK(s.ok && s.pushed == 4 && s.conflicts == 0);
+        /* the cloud client restored an old version: only the sync-folder side differs from the manifest; the winner stays the same */
+        write_file(sf / "n64/g/battery/x.sav", "old-restored", 5000);
+        /* a half-written (empty) file that is even NEWER than the vault's */
+        write_file(sf / "n64/g/battery/y.sav", "", 50);
+        /* a normal, newer edit from the other PC */
+        write_file(sf / "n64/g/battery/z.sav", "z-v2", 10);
+        /* the other direction: the vault file changed to something OLDER than the sync folder's unchanged copy */
+        write_file(V / "n64/g/battery/w.sav", "w-restored-older", 9000);
+        s = sync_folder(sf.u8string(), false);
+        dump(s);
+        CHECK(s.ok);
+        CHECK(read_file(V / "n64/g/battery/x.sav") == "old-restored");     // who wins is unchanged
+        CHECK(read_file(V / "n64/g/battery/y.sav") == "");
+        CHECK(read_file(V / "n64/g/battery/z.sav") == "z-v2");
+        CHECK(read_file(sf / "n64/g/battery/w.sav") == "w-restored-older");
+        CHECK(conflicts_of(V, L"x.sav") == 1 && conflict_of(V, L"x.sav") == "new-vault-save" && conflicts_of(sf, L"x.sav") == 1);
+        CHECK(conflicts_of(V, L"y.sav") == 1 && conflict_of(V, L"y.sav") == "good-vault-save");
+        CHECK(conflicts_of(V, L"w.sav") == 1 && conflict_of(V, L"w.sav") == "w-old-vault");   // the overwritten sync-folder copy is on both sides
+        CHECK(conflict_of(sf, L"w.sav") == "w-old-vault");
+        CHECK(conflicts_of(V, L"z.sav") == 0 && conflicts_of(sf, L"z.sav") == 0);             // normal newer save: no extra copy
+        s = sync_folder(sf.u8string(), false);
+        CHECK(s.ok && s.pushed == 0 && s.pulled == 0 && s.conflicts == 0);                    // settles
+    }
+
+    printf("[13] an enumeration error changes nothing; an unexpectedly present destination is never replaced\n");
+    {
+        fs::path V = base / "s2V", sf = base / "s2sync";
+        set_vault_dir(V.u8string());
+        write_file(V / "n64/g/battery/a.sav", "a-v1", 100);
+        write_file(V / "n64/g/battery/b.sav", "b-v1", 100);
+        write_file(V / "n64/g/battery/c.sav", "c-v1", 100);
+        SyncReport s = sync_folder(sf.u8string(), false);
+        CHECK(s.ok && s.pushed == 3);
+        write_file(V / "n64/g/battery/a.sav", "a-edit", 10);
+        write_file(V / "n64/g/battery/b.sav", "b-edit", 10);
+        write_file(V / "n64/g/battery/c.sav", "c-edit", 10);
+        auto same = [&](const char* tag) {
+            CHECK(read_file(V / "n64/g/battery/a.sav") == "a-edit"); CHECK(read_file(V / "n64/g/battery/b.sav") == "b-edit"); CHECK(read_file(V / "n64/g/battery/c.sav") == "c-edit");
+            CHECK(read_file(sf / "n64/g/battery/a.sav") == "a-v1" && read_file(sf / "n64/g/battery/b.sav") == "b-v1" && read_file(sf / "n64/g/battery/c.sav") == "c-v1");
+            CHECK(count_conflicts(V) == 0 && count_conflicts(sf) == 0);
+            (void)tag;
+        };
+        /* the vault's battery folder cannot be opened (antivirus / sync-client lock) */
+        g_hook_mode = 1; g_hook_match = "s2V";
+        set_enum_error_hook(enum_hook);
+        s = sync_folder(sf.u8string(), false);
+        dump(s);
+        CHECK(!s.ok && !s.error.empty());
+        CHECK(s.pushed == 0 && s.pulled == 0);
+        same("open");
+        /* the listing breaks after the first file */
+        g_hook_mode = 2;
+        s = sync_folder(sf.u8string(), false);
+        CHECK(!s.ok && !s.error.empty() && s.pushed == 0 && s.pulled == 0);
+        same("mid");
+        /* the sync folder's listing breaks */
+        g_hook_mode = 2; g_hook_match = "s2sync";
+        s = sync_folder(sf.u8string(), false);
+        CHECK(!s.ok && s.pushed == 0 && s.pulled == 0);
+        same("root");
+        /* no error: the normal push of the edits works again */
+        g_hook_mode = 0;
+        s = sync_folder(sf.u8string(), false);
+        CHECK(s.ok && s.pushed == 3 && s.conflicts == 0);
+        CHECK(read_file(sf / "n64/g/battery/b.sav") == "b-edit");
+
+        /* a file that appears in the sync folder right after it was listed is not overwritten by the "only the vault has it" push */
+        write_file(V / "n64/g/battery/late.sav", "vault-late", 10);
+        g_hook_mode = 3; g_hook_match = "s2sync";
+        s = sync_folder(sf.u8string(), false);
+        dump(s);
+        set_enum_error_hook(nullptr);
+        CHECK(s.ok && s.conflicts == 1);
+        CHECK(read_file(sf / "n64/g/battery/late.sav") == "vault-late");      // the newer one wins
+        { bool kept = false; for (auto& kv : tree(sf)) if (kv.first.rfind(L"_conflicts/", 0) == 0 && kv.second == "cloud-late") kept = true; CHECK(kept); }
+        { bool kept = false; for (auto& kv : tree(V)) if (kv.first.rfind(L"_conflicts/", 0) == 0 && kv.second == "cloud-late") kept = true; CHECK(kept); }
+    }
+
+    printf("[14] cloud / OS junk files are not synced, in either direction, and nothing is deleted\n");
+    {
+        fs::path V = base / "s3V", sf = base / "s3sync";
+        set_vault_dir(V.u8string());
+        const char* junk[] = {"desktop.ini", "Thumbs.db", ".DS_Store", "~$lock.sav", ".~lock.real.sav#", ".dropbox", ".dropbox.attr", ".sync", ".syncthing.real.sav.tmp", "x.crdownload", "x.sav.!sync"};
+        for (const char* j : junk) write_file(V / "n64/j/battery" / j, std::string("junk-v-") + j, 100);
+        write_file(V / "n64/j/battery/real.sav", "real", 100);
+        write_file(V / "n64/j/battery/keep.tmp", "tmp-save", 100);      // a game's own file name: still a save
+        write_file(V / "n64/j/battery/game.sav~", "tilde-save", 100);
+        write_file(sf / "n64/j/battery/THUMBS.DB", "junk-from-cloud", 100);
+        write_file(sf / "n64/j/battery/Desktop.INI", "junk-from-cloud", 100);
+        SyncReport s = sync_folder(sf.u8string(), false);
+        dump(s);
+        CHECK(s.ok && s.pushed == 3 && s.pulled == 0 && s.conflicts == 0);
+        for (const char* j : junk) CHECK(!fs::exists(sf / "n64/j/battery" / j) || std::string(j) == "Thumbs.db" || std::string(j) == "desktop.ini");
+        CHECK(read_file(sf / "n64/j/battery/real.sav") == "real" && read_file(sf / "n64/j/battery/keep.tmp") == "tmp-save" && read_file(sf / "n64/j/battery/game.sav~") == "tilde-save");
+        CHECK(read_file(sf / "n64/j/battery/THUMBS.DB") == "junk-from-cloud");   // left alone in the folder, never deleted
+        CHECK(read_file(V / "n64/j/battery/desktop.ini") == "junk-v-desktop.ini" && fs::exists(V / "n64/j/battery/.DS_Store"));   // and in the vault
+        CHECK(!fs::exists(V / "n64/j/battery/Thumbs.db") || read_file(V / "n64/j/battery/Thumbs.db") == "junk-v-Thumbs.db");
+        { std::ifstream t(sf / "n64/j/battery/Desktop.INI", std::ios::binary); CHECK((bool)t); }
+        { bool pulled = false; for (auto& kv : tree(V)) if (kv.second == "junk-from-cloud") pulled = true; CHECK(!pulled); }
     }
 
     { std::error_code ec; fs::remove_all(fs::path(L"\\\\?\\" + fs::absolute(base).wstring()), ec); }

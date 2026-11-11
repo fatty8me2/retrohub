@@ -52,6 +52,12 @@ struct SyncReport {
  * it is left alone and ignored). */
 SyncReport sync_folder(const std::string& sync_root, bool include_states);
 
+/* Test seam, inert unless a test sets it. Called for every directory a scan lists: with entries_seen == 0 just after
+ * the directory was opened, with N > 0 before the next entry is read, and with -1 when the directory is finished
+ * (return value ignored). A non-zero return is injected as that Win32 error code (an enumeration failure). */
+typedef unsigned long (*EnumErrorHook)(const std::string& dir_utf8, int entries_seen);
+void set_enum_error_hook(EnumErrorHook h);
+
 /* Whole-vault backup/restore. Import merges: newer file wins, older kept in _conflicts/.
  * Neither direction carries the account secret: the zip has no _identity/, and an
  * import skips such entries (logged), so a zip from someone else can never switch the account. */
