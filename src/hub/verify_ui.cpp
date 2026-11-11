@@ -320,43 +320,33 @@ void verify_details_section(const hub::GameEntry& e) {
     }
 }
 
-void verify_library_card() {
+bool verify_library_card(bool compact) {
     using ui::sp;
     tick();
     const bool running = V.runner.running();
     const int counted = (int)V.notes.size();
     const bool offer = !V.ever_checked && V.cartridges > 0;   // the way in: until the first check, a quiet one-line card
-    if (!running && counted == 0 && !offer && V.summary.empty()) return;   // nothing to say
-    if (A.lib.empty()) return;
-
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::PANEL);
-    ImGui::PushStyleColor(ImGuiCol_Border, ui::HAIRLINE);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, sp(1.f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.f)));
-    ImGui::BeginChild("##verify_card", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
-                      ImGuiWindowFlags_NoScrollbar);
-    ImGui::PopStyleVar(2);
+    if (!running && counted == 0 && !offer && V.summary.empty()) return false;   // nothing to say
+    if (A.lib.empty()) return false;
 
     std::string label;
     if (running) label = "Library health: checking...";
     else if (counted > 0) label = "Library health: " + plural(counted, "note", "notes");
     else if (V.ever_checked) label = "Library health: all good";
     else label = "Library health";
-    if (ui::chip(label.c_str(), V.expanded, counted > 0 ? ui::WARN : ui::GOOD)) V.expanded = !V.expanded;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip(V.expanded ? "Hide the details" : "Show the details");
 
-    ImGui::SameLine(0, sp(1.5f));
-    if (running) {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("Checking %d of %d", std::min(V.runner.done() + 1, V.runner.total()), V.runner.total());
-        ImGui::SameLine(0, sp(1.5f));
-        if (ui::button("Stop", ImVec2(0, sp(3.5f)))) V.runner.cancel();
-    } else if (ui::button("Verify my games", ImVec2(0, sp(3.5f)), false, !A.scanning && V.cartridges > 0, ui::Icon::Check)) {
-        start_check(false);
-    }
-    if (ImGui::IsItemHovered() && !running) ImGui::SetTooltip("Compare your cartridge games (N64, DS, GBA, GB, GBC, NES, SNES) with the known good dumps. Nothing is changed or sent anywhere.");
-
-    if (V.expanded) {
+    auto draw_actions = [&]() {   // progress + Stop, or "Verify my games"
+        if (running) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Checking %d of %d", std::min(V.runner.done() + 1, V.runner.total()), V.runner.total());
+            ImGui::SameLine(0, sp(1.5f));
+            if (ui::button("Stop", ImVec2(0, sp(3.5f)))) V.runner.cancel();
+        } else if (ui::button("Verify my games", ImVec2(0, sp(3.5f)), false, !A.scanning && V.cartridges > 0, ui::Icon::Check)) {
+            start_check(false);
+        }
+        if (ImGui::IsItemHovered() && !running) ImGui::SetTooltip("Compare your cartridge games (N64, DS, GBA, GB, GBC, NES, SNES) with the known good dumps. Nothing is changed or sent anywhere.");
+    };
+    auto draw_details = [&]() {   // summary, notes, optional lines
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.25f)));   // a compact list: the grid still needs the room
         ImGui::Dummy(ImVec2(0, sp(0.25f)));
         if (!V.summary.empty()) {
@@ -398,8 +388,45 @@ void verify_library_card() {
             ImGui::PopStyleColor();
         }
         ImGui::PopStyleVar();
+    };
+
+    if (compact) {   /* short window: one small chip (drawn by the caller inside the filter chip row) that opens the same panel as a popup */
+        if (ui::chip(label.c_str(), false, counted > 0 ? ui::WARN : ui::GOOD)) ImGui::OpenPopup("##verify_pop");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the library health details");
+        const ImVec2 c0 = ImGui::GetItemRectMin(), c1 = ImGui::GetItemRectMax();
+        const ImVec2 ds = ImGui::GetIO().DisplaySize;
+        const float pw = std::min(sp(64.f), ds.x * 0.92f);
+        const float px = std::max(sp(1.f), std::min(c0.x, ds.x - pw - sp(1.f)));
+        const float py = c1.y + sp(0.5f);
+        ImGui::SetNextWindowPos(ImVec2(px, py));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(pw, 0), ImVec2(pw, std::max(sp(12.f), ds.y - py - sp(1.f))));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.f)));
+        if (ImGui::BeginPopup("##verify_pop")) {
+            draw_actions();
+            draw_details();
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleVar();
+        return true;
     }
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::PANEL);
+    ImGui::PushStyleColor(ImGuiCol_Border, ui::HAIRLINE);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, sp(1.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.f)));
+    ImGui::BeginChild("##verify_card", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
+                      ImGuiWindowFlags_NoScrollbar);
+    ImGui::PopStyleVar(2);
+
+    if (ui::chip(label.c_str(), V.expanded, counted > 0 ? ui::WARN : ui::GOOD)) V.expanded = !V.expanded;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(V.expanded ? "Hide the details" : "Show the details");
+
+    ImGui::SameLine(0, sp(1.5f));
+    draw_actions();
+
+    if (V.expanded) draw_details();
     ImGui::EndChild();
     ImGui::PopStyleColor(2);
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    return true;
 }
