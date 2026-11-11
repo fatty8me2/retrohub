@@ -1,5 +1,6 @@
 // Console test for the updater: pure logic + a live release check (no download/install).
 #include "updater.h"
+#include "update_apply.h"
 
 #include <process.h>
 #include <chrono>
@@ -9,6 +10,9 @@
 #include <thread>
 #include <atomic>
 #include <fstream>
+#include <functional>
+#include <sstream>
+#include <vector>
 #include <map>
 #include <filesystem>
 #ifndef WIN32_LEAN_AND_MEAN
@@ -82,6 +86,8 @@ struct FakeServer {
     int port = 0;
     std::map<std::string, std::string> routes;
     std::atomic<bool> stop{false};
+    std::atomic<long long> last_range{-1};   // start offset of the last request's Range header (-1: none)
+    std::atomic<bool> ignore_range{false};   // answer a ranged request with the whole file (a server that cannot resume)
     std::thread th;
     bool start() {
         WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
@@ -107,7 +113,15 @@ struct FakeServer {
                 if (sp != std::string::npos && e != std::string::npos) path = req.substr(sp + 1, e - sp - 1);
                 auto it = routes.find(path);
                 std::string out;
+                long long rangeFrom = -1;   // "Range: bytes=N-" (what curl -C - sends)
+                { std::string low = req; for (char& ch : low) ch = (char)tolower((unsigned char)ch);
+                  size_t rp = low.find("range: bytes="); if (rp != std::string::npos) rangeFrom = std::atoll(low.c_str() + rp + 13); }
+                last_range.store(rangeFrom);
                 if (it == routes.end()) out = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                else if (rangeFrom >= 0 && !ignore_range && (size_t)rangeFrom < it->second.size())
+                    out = "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + std::to_string(rangeFrom) + "-" + std::to_string(it->second.size() - 1) + "/" +
+                          std::to_string(it->second.size()) + "\r\nContent-Length: " + std::to_string(it->second.size() - (size_t)rangeFrom) +
+                          "\r\nConnection: close\r\n\r\n" + it->second.substr((size_t)rangeFrom);
                 else out = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(it->second.size()) + "\r\nConnection: close\r\n\r\n" + it->second;
                 for (size_t off = 0; off < out.size();) { int n = send(c, out.data() + off, (int)(out.size() - off), 0); if (n <= 0) break; off += n; }
                 shutdown(c, SD_SEND); closesocket(c);
@@ -131,6 +145,31 @@ int main(int argc, char** argv) {
     CHECK(compare_versions("dev", "v0.0.1") == -1);
     CHECK(compare_versions("v2.0.0", "dev") == 1);
     CHECK(compare_versions("dev", "dev") == 0);
+
+    // --- curl.exe / tar.exe are resolved to the Windows system folder, never searched for ---
+    {
+        std::string sd = system_dir();
+        wchar_t wbuf[MAX_PATH + 1]; UINT wn = GetSystemDirectoryW(wbuf, MAX_PATH);
+        CHECK(!sd.empty() && wn > 0 && sd.size() >= 4 && sd[1] == ':' && sd.back() != '\\');   // absolute, no trailing slash
+        std::string cp, tp, e;
+        CHECK(find_system_tool("curl.exe", &cp, &e) && cp == sd + "\\curl.exe");              // Windows 10 1803+ ships both
+        CHECK(find_system_tool("tar.exe", &tp, &e) && tp == sd + "\\tar.exe");
+        // the folder the exe runs from is never consulted: a curl.exe planted in a scratch "install folder" is not what resolves
+        std::filesystem::path pd = std::filesystem::temp_directory_path() / ("hub_updater_sys_test_" + std::to_string(_getpid()));
+        std::error_code pec; std::filesystem::remove_all(pd, pec); std::filesystem::create_directories(pd, pec);
+        std::string pds = pd.u8string();
+        std::string out = "untouched";
+        e.clear();
+        CHECK(!resolve_system_tool(pds, "curl.exe", &out, &e) && out == "untouched" && e.find("curl.exe") != std::string::npos);   // missing: a clear message
+        CHECK(e.find("not found") != std::string::npos && e.find(pds) != std::string::npos);
+        { std::ofstream o(pd / "curl.exe", std::ios::binary); o << "x"; }
+        CHECK(resolve_system_tool(pds, "curl.exe", &out, &e) && out == pds + "\\curl.exe");
+        CHECK(resolve_system_tool(pds + "\\", "curl.exe", &out, &e) && out == pds + "\\curl.exe");   // trailing slash tolerated
+        std::filesystem::create_directories(pd / "tar.exe", pec);
+        CHECK(!resolve_system_tool(pds, "tar.exe", &out, &e));                                       // a folder is not a tool
+        CHECK(!resolve_system_tool("", "curl.exe", &out, &e) && !resolve_system_tool(pds, "", &out, &e));
+        std::filesystem::remove_all(pd, pec);
+    }
 
     // --- release JSON ---
     Release r = parse_release(kSample);
@@ -445,6 +484,272 @@ int main(int argc, char** argv) {
         std::filesystem::remove_all(d, ec);
     }
 
+    // --- the staged folder is trusted only when every file still matches the SHA-256 taken at unpack time ---
+    {
+        std::filesystem::path d = std::filesystem::temp_directory_path() / ("hub_updater_stagedsha_test_" + std::to_string(_getpid()));
+        std::error_code ec; std::filesystem::remove_all(d, ec);
+        std::filesystem::create_directories(d / "staged" / "sub" / "deeper", ec);
+        auto put = [](const std::filesystem::path& p, const std::string& s) { std::ofstream o(p, std::ios::binary | std::ios::trunc); o << s; };
+        auto reset = [&]() {
+            std::filesystem::remove_all(d / "staged", ec);
+            std::filesystem::create_directories(d / "staged" / "sub" / "deeper", ec);
+            put(d / "staged" / "RetroHub.exe", "new-hub");
+            put(d / "staged" / "BattleShip.exe", "new-bs");
+            put(d / "staged" / "sub" / "x.dat", std::string(100, 'x'));
+            put(d / "staged" / "sub" / "deeper" / "y.dat", "yy");
+        };
+        reset();
+        const std::string ud = d.u8string(), sd = ud + "\\staged";
+        std::vector<StagedFile> list;
+        CHECK(hash_staged(sd, &list) && list.size() == 4);
+        CHECK(list[0].path == "BattleShip.exe" && list[1].path == "RetroHub.exe" && list[2].path == "sub/deeper/y.dat" && list[3].path == "sub/x.dat");   // sorted, '/' separators
+        CHECK(list[3].size == 100 && list[3].sha256.size() == 64);
+        CHECK(verify_staged_list(sd, list) && !verify_staged_list(sd, {}));
+        std::atomic<bool> cancelled{true};
+        CHECK(!verify_staged_list(sd, list, &cancelled) && !hash_staged(sd, &list, &cancelled));   // cancel stops the hashing
+        CHECK(!hash_staged(ud + "\\no_such_folder", &list));
+        CHECK(write_staged_manifest(ud, "v1.41.1") && staged_reusable(ud, "v1.41.1"));
+        CHECK(!write_staged_manifest(ud, "v1.41.1", false, "", &cancelled));
+        // the manifest carries the list and round-trips it
+        { std::ifstream in(d / "staged.json", std::ios::binary); std::stringstream ss; ss << in.rdbuf();
+          StagedInfo m; CHECK(parse_staged_manifest(ss.str(), &m) && m.list.size() == 4 && m.list[3].path == "sub/x.dat" && m.list[3].sha256 == list[3].sha256 && m.files == 4); }
+        // tamper cases: each one must make the staged folder not reusable
+        put(d / "staged" / "sub" / "x.dat", std::string(100, 'y'));                        // same size, other content (counts and bytes still match)
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); CHECK(staged_reusable(ud, "v1.41.1"));                                      // restored: trusted again
+        put(d / "staged" / "RetroHub.exe", "new-hub!");                                      // one byte longer
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); put(d / "staged" / "RetroHub.exe", "new-hux");                              // one byte flipped, same size
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); std::filesystem::remove(d / "staged" / "sub" / "deeper" / "y.dat", ec);     // missing file
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); put(d / "staged" / "extra.dll", "");                                        // extra file (even an empty one)
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); put(d / "staged" / "sub" / "deeper" / "y.dat", "zz"); std::filesystem::remove(d / "staged" / "sub" / "x.dat", ec); put(d / "staged" / "sub" / "z.dat", std::string(100, 'x'));   // a file swapped for another of the same size
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); CHECK(staged_reusable(ud, "v1.41.1"));
+        // a tampered manifest: wrong hash, wrong size, duplicate path, file count lying, unreadable list
+        auto manifest_with = [&](const std::function<void(StagedInfo&)>& edit) {
+            StagedInfo m; { std::ifstream in(d / "staged.json", std::ios::binary); std::stringstream ss; ss << in.rdbuf(); parse_staged_manifest(ss.str(), &m); }
+            edit(m); put(d / "staged.json", staged_manifest_json(m));
+        };
+        manifest_with([](StagedInfo& m) { m.list[0].sha256 = std::string(64, '0'); });
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        CHECK(write_staged_manifest(ud, "v1.41.1") && staged_reusable(ud, "v1.41.1"));
+        manifest_with([](StagedInfo& m) { m.list[1].size += 1; });
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        CHECK(write_staged_manifest(ud, "v1.41.1"));
+        manifest_with([](StagedInfo& m) { m.list[1] = m.list[0]; });
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        CHECK(write_staged_manifest(ud, "v1.41.1"));
+        manifest_with([](StagedInfo& m) { m.list.pop_back(); });                             // list shorter than the manifest's own file count
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        CHECK(write_staged_manifest(ud, "v1.41.1"));
+        manifest_with([](StagedInfo& m) { m.list[0].path = "../BattleShip.exe"; });         // a path that is not under the folder
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        CHECK(write_staged_manifest(ud, "v1.41.1"));
+        { StagedInfo m; CHECK(!parse_staged_manifest("{\"version\":\"v1\",\"files\":1,\"bytes\":1,\"list\":[{\"p\":\"a\",\"n\":1,\"h\":\"short\"}]}", &m));
+          CHECK(!parse_staged_manifest("{\"version\":\"v1\",\"files\":1,\"bytes\":1,\"list\":5}", &m)); }
+        // a manifest written by RetroHub 1.41.0 (counts and bytes only, no list) is never trusted: download again
+        put(d / "staged.json", "{\"v\":1,\"version\":\"v1.41.1\",\"files\":4,\"bytes\":" + std::to_string(7 + 6 + 100 + 2) + "}\n");
+        { StagedInfo m; CHECK(parse_staged_manifest("{\"v\":1,\"version\":\"v1.41.1\",\"files\":4,\"bytes\":115}", &m) && m.list.empty()); }
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        // hub-only keeps working through the list
+        CHECK(write_staged_manifest(ud, "v1.41.1", true, std::string(64, 'c')));
+        bool kind = false; std::string h;
+        CHECK(staged_reusable(ud, "v1.41.1", &kind, &h) && kind && h == std::string(64, 'c'));
+        std::filesystem::remove_all(d, ec);
+    }
+
+    // --- free disk space: arithmetic, wording, and reading the unpacked size from a zip ---
+    {
+        const unsigned long long MB = 1ull << 20, GB = 1ull << 30;
+        CHECK(kSpaceMargin >= 64 * MB && kSpaceMargin <= 2 * GB);
+        CHECK(space_needed_for_download(100 * MB, 0) == 100 * MB + 100 * MB + kSpaceMargin);              // zip + unpacked estimate + margin
+        CHECK(space_needed_for_download(100 * MB, 40 * MB) == 60 * MB + 100 * MB + kSpaceMargin);         // a resumed partial file already holds part of the zip
+        CHECK(space_needed_for_download(100 * MB, 100 * MB) == 100 * MB + kSpaceMargin);
+        CHECK(space_needed_for_download(100 * MB, 900 * MB) == 100 * MB + kSpaceMargin);                  // a bogus "have" never makes the sum wrap
+        CHECK(space_needed_for_unpack(500 * MB) == 500 * MB + kSpaceMargin && space_needed_for_unpack(0) == kSpaceMargin);
+        CHECK(enough_space(100, 100) && enough_space(100, 101) && !enough_space(100, 99) && !enough_space(100, 0));
+        CHECK(enough_space(100, -1) && enough_space(~0ull >> 1, -1));                                      // unknown free space never blocks an update
+        CHECK(format_bytes(300 * MB, false) == "300 MB" && format_bytes(300 * MB + 1, true) == "301 MB" && format_bytes(300 * MB + 1, false) == "300 MB");
+        CHECK(format_bytes(GB + GB / 2, false) == "1.5 GB" && format_bytes(GB + 1, true) == "1.1 GB" && format_bytes(GB + 1, false) == "1.0 GB");
+        CHECK(format_bytes(10, false) == "under 1 MB" && format_bytes(0, true) == "under 1 MB" && format_bytes(10, true) == "1 MB");
+        std::string m = low_space_message(GB + GB / 2 + 1, 300 * MB + 5, "C:\\Games\\RetroHub\\updates");
+        CHECK(m == "There is not enough free space to install this update. It needs about 1.6 GB free on drive C: but only 300 MB is free. Free up some space and try again.");
+        CHECK(low_space_message(10 * MB, 1, "\\\\server\\share\\x").find("on the install drive") != std::string::npos);
+        CHECK(m.find("\xE2\x80\x94") == std::string::npos);                                                // plain English, no em dash
+        { const long long fb = free_bytes_on(std::filesystem::temp_directory_path().u8string()); CHECK(fb > 0); }
+        CHECK(free_bytes_on("Q:\\no\\such\\drive\\at all\\") == -1 || free_bytes_on("Q:\\no\\such\\drive\\at all\\") >= 0);   // either way, no crash
+
+        // zip_unpacked_size: a hand-built central directory (names, extra field, comment all skipped correctly)
+        auto le16 = [](std::string& o, unsigned v) { o += (char)(v & 255); o += (char)((v >> 8) & 255); };
+        auto le32 = [](std::string& o, unsigned long long v) { for (int i = 0; i < 4; i++) o += (char)((v >> (8 * i)) & 255); };
+        auto build_zip = [&](const std::vector<std::pair<std::string, unsigned long long>>& files, unsigned eocdCount, unsigned long long cdOffOverride) {
+            std::string cd;
+            for (const auto& fe : files) {
+                le32(cd, 0x02014b50ull); le16(cd, 20); le16(cd, 20); le16(cd, 0); le16(cd, 0); le16(cd, 0); le16(cd, 0);
+                le32(cd, 0); le32(cd, 5); le32(cd, fe.second);
+                le16(cd, (unsigned)fe.first.size()); le16(cd, 4); le16(cd, 3); le16(cd, 0); le16(cd, 0); le32(cd, 0); le32(cd, 0);
+                cd += fe.first; cd += "EXTR"; cd += "cmt";
+            }
+            std::string z = "junk-before-the-index";
+            const unsigned long long off = z.size();
+            z += cd;
+            le32(z, 0x06054b50ull); le16(z, 0); le16(z, 0); le16(z, eocdCount); le16(z, eocdCount); le32(z, cd.size());
+            le32(z, cdOffOverride == ~0ull ? off : cdOffOverride); le16(z, 0);
+            return z;
+        };
+        std::filesystem::path d = std::filesystem::temp_directory_path() / ("hub_updater_space_test_" + std::to_string(_getpid()));
+        std::error_code ec; std::filesystem::remove_all(d, ec); std::filesystem::create_directories(d, ec);
+        auto put = [](const std::filesystem::path& p, const std::string& s) { std::ofstream o(p, std::ios::binary | std::ios::trunc); o << s; };
+        const std::string zp = (d / "t.zip").u8string();
+        put(d / "t.zip", build_zip({{"RetroHub.exe", 1000}, {"dir/", 0}, {"dir/data.bin", 2500000000ull}}, 3, ~0ull));
+        CHECK(zip_unpacked_size(zp) == 1000 + 2500000000ll);                                               // sums sizes above 2 GB without wrapping
+        put(d / "t.zip", build_zip({}, 0, ~0ull));
+        CHECK(zip_unpacked_size(zp) == 0);
+        put(d / "t.zip", build_zip({{"a", 7}, {"b", 0xFFFFFFFFull}}, 2, ~0ull));
+        CHECK(zip_unpacked_size(zp) == -1);                                                                // zip64 marker: the caller estimates instead
+        put(d / "t.zip", build_zip({{"a", 7}}, 2, ~0ull));
+        CHECK(zip_unpacked_size(zp) == -1);                                                                // the record promises more entries than exist
+        put(d / "t.zip", build_zip({{"a", 7}}, 1, 99999));
+        CHECK(zip_unpacked_size(zp) == -1);                                                                // an index offset outside the file
+        put(d / "t.zip", "not a zip at all, just some bytes that are long enough to be read");
+        CHECK(zip_unpacked_size(zp) == -1);
+        put(d / "t.zip", "tiny");
+        CHECK(zip_unpacked_size(zp) == -1 && zip_unpacked_size((d / "missing.zip").u8string()) == -1);
+        // a real zip, made by Windows' own tar.exe (the same tool that unpacks the update)
+        {
+            std::filesystem::create_directories(d / "src" / "sub", ec);
+            put(d / "src" / "a.bin", std::string(4000, 'a')); put(d / "src" / "sub" / "b.bin", std::string(123, 'b'));
+            std::string tarExe, terr;
+            CHECK(find_system_tool("tar.exe", &tarExe, &terr));
+            int rc = run_command("\"" + tarExe + "\" -a -c -f \"" + (d / "real.zip").u8string() + "\" -C \"" + (d / "src").u8string() + "\" a.bin sub", [](const std::string&) {}, 60000);
+            CHECK(rc == 0 && zip_unpacked_size((d / "real.zip").u8string()) == 4123);
+        }
+        std::filesystem::remove_all(d, ec);
+    }
+
+    // --- shell/antivirus droppings do not make a staged folder untrusted; a repeatedly discarded tag stops being retried ---
+    {
+        std::filesystem::path d = std::filesystem::temp_directory_path() / ("hub_updater_dropping_test_" + std::to_string(_getpid()));
+        std::error_code ec; std::filesystem::remove_all(d, ec); std::filesystem::create_directories(d / "staged", ec);
+        auto put = [](const std::filesystem::path& p, const std::string& s) { std::ofstream o(p, std::ios::binary | std::ios::trunc); o << s; };
+        put(d / "staged" / "RetroHub.exe", "new-hub"); put(d / "staged" / "BattleShip.exe", "new-bs");
+        const std::string ud = d.u8string();
+        CHECK(write_staged_manifest(ud, "v1.42.0") && staged_reusable(ud, "v1.42.0"));
+        put(d / "staged" / "desktop.ini", "[.ShellClassInfo]"); put(d / "staged" / "Thumbs.db", "x"); put(d / "staged" / "THUMBS.DB", "y");
+        put(d / "staged" / "av_scan.tmp", "z"); SetFileAttributesW((d / "staged" / "av_scan.tmp").c_str(), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+        CHECK(staged_reusable(ud, "v1.42.0"));                                                  // all four ignored
+        CHECK(scan_staged(ud + "\\staged").files == 2);
+        put(d / "staged" / "hidden_only.txt", "h"); SetFileAttributesW((d / "staged" / "hidden_only.txt").c_str(), FILE_ATTRIBUTE_HIDDEN);
+        CHECK(!staged_reusable(ud, "v1.42.0"));                                                 // hidden alone is a real file
+        std::filesystem::remove(d / "staged" / "hidden_only.txt", ec);
+        CHECK(staged_reusable(ud, "v1.42.0"));
+        put(d / "staged" / "notes.txt", "n");
+        CHECK(!staged_reusable(ud, "v1.42.0"));                                                 // an ordinary extra file still counts
+        // droppings never hide a changed real file
+        std::filesystem::remove(d / "staged" / "notes.txt", ec); put(d / "staged" / "RetroHub.exe", "new-hux");
+        CHECK(!staged_reusable(ud, "v1.42.0"));
+        std::filesystem::remove_all(d, ec);
+
+        DiscardGuard g;
+        CHECK(discard_allowed(g, "v1.42.0"));
+        note_discard(g, "v1.42.0"); CHECK(discard_allowed(g, "v1.42.0"));                      // first discard: retry
+        note_discard(g, "v1.42.0"); CHECK(!discard_allowed(g, "v1.42.0"));                     // second: stop for this tag
+        CHECK(discard_allowed(g, "v1.42.1"));                                                   // another tag is unaffected
+        note_discard(g, "v1.42.1"); CHECK(g.tag == "v1.42.1" && g.count == 1 && discard_allowed(g, "v1.42.1") && discard_allowed(g, "v1.42.0"));
+        note_discard(g, "v1.42.1"); note_staged_ok(g); CHECK(discard_allowed(g, "v1.42.1") && g.count == 0);   // a good reuse resets
+        std::string dm = discard_message("v1.42.0");
+        CHECK(dm.find("v1.42.0") != std::string::npos && dm.find("\xE2\x80\x94") == std::string::npos);
+    }
+
+    // --- a version the installer rolled back is not offered again (updates\bad_version.json) ---
+    {
+        CHECK(bad_version_verdict("v1.42.0", "v1.42.0", false) == BadVerdict::Skip);
+        CHECK(bad_version_verdict("v1.42.0", "1.42.0", false) == BadVerdict::Skip && bad_version_verdict("1.42.0", "V1.42.0", false) == BadVerdict::Skip);   // v prefix ignored
+        CHECK(bad_version_verdict("v1.42.0", "v1.42.0", true) == BadVerdict::ForcedRetry);
+        CHECK(bad_version_verdict("v1.42.1", "v1.42.0", false) == BadVerdict::Proceed && bad_version_verdict("v1.42.1", "v1.42.0", true) == BadVerdict::Proceed);
+        CHECK(bad_version_verdict("v1.42.0", "", false) == BadVerdict::Proceed && bad_version_verdict("", "", false) == BadVerdict::Proceed);
+        CHECK(bad_version_verdict("v1.42.0", "v1.4.20", false) == BadVerdict::Proceed);           // a different version that merely looks alike
+        CHECK(bad_version_message("v1.42.0", "v1.41.0") == "Version 1.42.0 could not start on this PC, so RetroHub stayed on version 1.41.0.");
+
+        std::filesystem::path d = std::filesystem::temp_directory_path() / ("hub_updater_bad_test_" + std::to_string(_getpid()));
+        std::error_code ec; std::filesystem::remove_all(d, ec); std::filesystem::create_directories(d / "updates", ec);
+        const std::wstring inst = d.wstring();
+        auto write_bad = [&](const std::string& v) { apply::BadVersion b; b.version = v; b.from = "v1.41.0"; b.reason = "did not start"; b.at = 1700000000; b.exit_code = 70; return apply::bad_version_write(inst, b); };
+        auto record_there = [&]() { apply::BadVersion b; return apply::bad_version_read(inst, &b); };
+        std::string why;
+        CHECK(!bad_version_gate(inst, "v1.42.0", false, &why) && why.empty());                  // no file: ignored
+        CHECK(write_bad("v1.42.0") && record_there());
+        CHECK(bad_version_gate(inst, "v1.42.0", false, &why) && why.find("could not start on this PC") != std::string::npos && record_there());   // same tag: skipped, record kept
+        why.clear();
+        CHECK(bad_version_gate(inst, "1.42.0", false, &why) && record_there());                  // automatic checks keep skipping it
+        why.clear();
+        CHECK(!bad_version_gate(inst, "v1.42.0", true, &why) && why.empty() && !record_there());   // "Try again": record cleared, this one try proceeds
+        CHECK(!bad_version_gate(inst, "v1.42.0", false, &why));                                  // ... and nothing blocks it now
+        CHECK(write_bad("v1.42.0") && !bad_version_gate(inst, "v1.43.0", false, &why) && !record_there());   // a newer tag proceeds and clears the stale record
+        // malformed or unreadable files are ignored
+        for (const char* junk : {"", "not json", "{\"v\":1}", "{\"v\":1,\"version\":\"\"}", "[1,2,3]", "{\"version\":5}"}) {
+            { std::ofstream o(d / "updates" / "bad_version.json", std::ios::binary | std::ios::trunc); o << junk; }
+            CHECK(!bad_version_gate(inst, "v1.42.0", false, &why));
+        }
+        std::filesystem::remove_all(d, ec);
+    }
+
+    // --- "Try again" never leaks into a later automatic check; a blocked tag's leftovers are deleted ---
+    {
+        set_busy_for_test(true, false);
+        CHECK(!retry_bad_version());                                                  // a check is already running: nothing starts, nothing is kept
+        set_busy_for_test(false, true);
+        CHECK(!retry_bad_version());                                                  // a download is running
+        set_busy_for_test(false, false);
+        CHECK(!checking() && !downloading());                                         // and no stale state was left behind by those calls
+
+        std::filesystem::path d = std::filesystem::temp_directory_path() / ("hub_updater_blocked_test_" + std::to_string(_getpid()));
+        std::error_code ec; std::filesystem::remove_all(d, ec); std::filesystem::create_directories(d / "staged" / "sub", ec);
+        auto put = [](const std::filesystem::path& p, const std::string& s) { std::ofstream o(p, std::ios::binary | std::ios::trunc); o << s; };
+        put(d / "staged" / "RetroHub.exe", "hub"); put(d / "staged" / "BattleShip.exe", "bs"); put(d / "staged" / "sub" / "x.dat", "xx");
+        const std::string ud = d.u8string();
+        CHECK(write_staged_manifest(ud, "v1.42.0"));
+        ResumeKey rk; rk.tag = "v1.42.0"; rk.asset = "BattleShip-windows.zip"; rk.sha256 = std::string(64, 'a'); rk.size = 100;
+        put(d / "update.zip", "partial"); put(d / "update.zip.resume", resume_record_json(rk));
+        discard_blocked_artifacts(ud, "v1.43.0");                                     // another tag: everything stays
+        CHECK(exists(ud + "\\staged.json") && exists(ud + "\\staged\\RetroHub.exe") && exists(ud + "\\update.zip"));
+        discard_blocked_artifacts(ud, "");
+        CHECK(exists(ud + "\\staged.json") && exists(ud + "\\update.zip"));
+        discard_blocked_artifacts(ud, "1.42.0");                                      // the blocked tag (v prefix ignored): staged folder, zip and record go
+        CHECK(!exists(ud + "\\staged.json"));
+        CHECK(!exists(ud + "\\staged"));
+        CHECK(!exists(ud + "\\update.zip"));
+        CHECK(!exists(ud + "\\update.zip.resume"));
+        discard_blocked_artifacts(ud, "v1.42.0");                                     // nothing there: no harm
+        std::filesystem::remove_all(d, ec);
+    }
+
+    // --- download robustness: no hard cap, stall detector, retries, resume only for the same release ---
+    {
+        const std::string fl = download_flags(false), flr = download_flags(true);
+        CHECK(fl.find(" -m ") == std::string::npos && fl.find("--max-time") == std::string::npos);   // a slow link must be able to finish
+        CHECK(fl.find("--speed-limit 1024") != std::string::npos && fl.find("--speed-time 60") != std::string::npos);
+        CHECK(fl.find("--retry 3") != std::string::npos && fl.find("--retry-delay") != std::string::npos);
+        CHECK(fl.find("-C -") == std::string::npos && flr.find(" -C -") != std::string::npos && flr.find("--speed-limit") != std::string::npos);
+        ResumeKey k; k.tag = "v1.40.0"; k.asset = "BattleShip-windows.zip"; k.sha256 = std::string(64, 'a'); k.size = 1000;
+        const std::string rec = resume_record_json(k);
+        CHECK(resume_eligible(rec, k, 1) && resume_eligible(rec, k, 999));
+        CHECK(!resume_eligible(rec, k, 0) && !resume_eligible(rec, k, -1));                     // nothing there
+        CHECK(!resume_eligible(rec, k, 1000) && !resume_eligible(rec, k, 5000));                // full size or bigger: a failed file, never resumed
+        { ResumeKey w = k; w.tag = "v1.40.1"; CHECK(!resume_eligible(rec, w, 500)); }
+        { ResumeKey w = k; w.asset = "RetroHub-windows.zip"; CHECK(!resume_eligible(rec, w, 500)); }
+        { ResumeKey w = k; w.size = 1001; CHECK(!resume_eligible(rec, w, 500)); }
+        { ResumeKey w = k; w.sha256 = std::string(64, 'b'); CHECK(!resume_eligible(rec, w, 500)); }
+        { ResumeKey w = k; w.sha256 = std::string(64, 'A'); CHECK(resume_eligible(rec, w, 500)); }   // hex case does not matter
+        { ResumeKey w = k; w.sha256.clear(); ResumeKey r2 = w; CHECK(!resume_eligible(resume_record_json(r2), w, 500)); }   // no listed hash to bind to
+        { ResumeKey w = k; w.tag.clear(); CHECK(!resume_eligible(resume_record_json(w), w, 500)); }
+        CHECK(!resume_eligible("", k, 500) && !resume_eligible("not json", k, 500) && !resume_eligible("{}", k, 500));
+        CHECK(!resume_eligible("{\"v\":2,\"tag\":\"v1.40.0\",\"asset\":\"BattleShip-windows.zip\",\"size\":1000,\"sha256\":\"" + std::string(64, 'a') + "\"}", k, 500));   // unknown record version
+    }
+
     // --- integration dry run: download_verified against a local server (127.0.0.1) ---
     {
         std::string zipBody(5000, '\0');
@@ -514,10 +819,90 @@ int main(int argc, char** argv) {
         f.sig_bytes.clear();                                                           // preset sums without any signature: refused too
         f.sums_text = std::string(64, '2') + "  BattleShip-windows.zip\n" + real + "  RetroHub-windows.zip\n";
         CHECK(!run("v1.40.0", "", "", N) && !exists(zipPath));
-        f.sums_text.clear(); f.asset_name.clear(); f.zip_url = base + "BattleShip-windows.zip";
+        // --- resume: a partial file of the SAME release is continued; anything else starts over; a file that fails verification is never resumed ---
+        {
+            f.asset_name = kHubAssetName; f.zip_url = base + "RetroHub-windows.zip";
+            f.sums_text = std::string(64, '2') + "  BattleShip-windows.zip\n" + real + "  RetroHub-windows.zip\n";
+            f.sig_bytes = sign_sums(tk, f.sums_text);
+            ResumeKey key; key.tag = "v1.40.0"; key.asset = kHubAssetName; key.sha256 = real; key.size = N;
+            const std::string rec = zipPath + ".resume";
+            const size_t half = zipBody.size() / 2;
+            auto put_partial = [&](size_t n, const ResumeKey& k, bool corrupt) {
+                std::string part = zipBody.substr(0, n);
+                if (corrupt && !part.empty()) part[10] ^= 1;
+                { std::ofstream o(std::filesystem::u8path(zipPath), std::ios::binary | std::ios::trunc); o.write(part.data(), (std::streamsize)part.size()); }
+                { std::ofstream o(std::filesystem::u8path(rec), std::ios::binary | std::ios::trunc); o << resume_record_json(k); }
+            };
+            // A: same release: the request continues at the partial's size, and the verified result is the whole file
+            put_partial(half, key, false); srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == (long long)half && exists(zipPath) && !exists(rec));
+            // B: a record naming another tag, size or hash: not continued, downloaded afresh
+            ResumeKey other = key; other.tag = "v1.39.0";
+            put_partial(half, other, false); srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == -1 && !exists(rec));
+            other = key; other.sha256 = std::string(64, '3');
+            put_partial(half, other, false); srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == -1);
+            // C: a partial file with no record at all (an older RetroHub left it): started afresh
+            put_partial(half, key, false); std::filesystem::remove(std::filesystem::u8path(rec), ec); srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == -1);
+            // D: a corrupt partial passes the record but fails the SHA-256: deleted with its record, and the next try starts from zero
+            put_partial(half, key, true); srv.last_range = -1;
+            CHECK(!run("v1.40.0", "", "", N) && srv.last_range.load() == (long long)half && !exists(zipPath) && !exists(rec) && err.find("checksum") != std::string::npos);
+            srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == -1);
+            // E: the server cannot continue: curl says so, the update starts over once and still succeeds
+            put_partial(half, key, false); srv.ignore_range = true;
+            CHECK(run("v1.40.0", "", "", N) && exists(zipPath));
+            srv.ignore_range = false;
+            // F: a failed transfer keeps the partial file and its record for the next try (which then continues)
+            put_partial(half, key, false);
+            f.zip_url = base + "nothere.zip";
+            CHECK(!run("v1.40.0", "", "", N) && err == "download failed." && exists(zipPath) && exists(rec) && std::filesystem::file_size(std::filesystem::u8path(zipPath)) == half);
+            f.zip_url = base + "RetroHub-windows.zip"; srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == (long long)half && !exists(rec));
+        }
+        f.sums_text.clear(); f.sig_bytes.clear(); f.asset_name.clear(); f.zip_url = base + "BattleShip-windows.zip";
         set_pubkey_for_test(nullptr);
         CHECK(!run("v1.18.0", "good.txt", "", N) && !exists(zipPath) && err == kUnsignedMessage);   // the real (built-in) key does not accept the test key's lists
         std::filesystem::remove_all(dir, ec);
+    }
+
+    // --- worker threads are owned and joined; shutdown() ends a running child by its handle ---
+    {
+        OwnedThread ot;
+        std::atomic<bool> go{false};
+        CHECK(!ot.running() && ot.join_for(0));                       // never started: nothing to join
+        CHECK(ot.start([&] { while (!go.load()) Sleep(5); }));
+        CHECK(ot.running() && !ot.join_for(50));                      // still going: a bounded wait gives up
+        CHECK(!ot.start([] {}, 50) && ot.running());                  // a second run is refused while one is going
+        go = true;
+        CHECK(ot.join_for(3000) && !ot.running());
+        int ran = 0;
+        CHECK(ot.start([&] { ran++; }) && ot.join_for(3000) && ran == 1);   // restartable after a join
+        CHECK(ot.start([] { throw 1; }) && ot.join_for(3000));       // an exception never escapes the thread
+        CHECK(ot.start([&] { ran++; }));                              // start() joins the finished previous run itself
+        CHECK(ot.join_for(3000) && ran == 2);
+
+        const std::string sd = system_dir();
+        std::atomic<int> code{12345};
+        std::thread th([&] { code = run_command("\"" + sd + "\\ping.exe\" -n 60 127.0.0.1", [](const std::string&) {}); });   // harmless, long-running, loopback only
+        for (int i = 0; i < 100 && live_child_count() == 0; i++) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        CHECK(live_child_count() == 1);
+        auto t0 = std::chrono::steady_clock::now();
+        shutdown();                                                   // ends the child by its handle
+        th.join();
+        long long ms = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        CHECK(code.load() != 0 && code.load() != 12345);              // it did not run its 60 s
+        CHECK(ms < 8000);
+        CHECK(live_child_count() == 0);
+        // after shutdown() began, no new child is allowed to run
+        t0 = std::chrono::steady_clock::now();
+        CHECK(run_command("\"" + sd + "\\ping.exe\" -n 60 127.0.0.1", [](const std::string&) {}) != 0);
+        CHECK(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count() < 8000);
+        reset_quit_for_test();
+        CHECK(run_command("\"" + sd + "\\cmd.exe\" /c exit 0", [](const std::string&) {}) == 0);   // and works again once reset
+        CHECK(live_child_count() == 0);
     }
 
     std::printf("current_version=%s launch_check_disabled=%d\n", current_version().c_str(), (int)launch_check_disabled());

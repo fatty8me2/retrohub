@@ -16,9 +16,13 @@
  * UI contract: call tick() every frame (UI thread) and poll the getters; when installer_started() turns
  * true, quit the app (the installer is waiting for the exit). */
 
+#include <atomic>
 #include <functional>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace hubupdate {
@@ -27,6 +31,12 @@ void check_async(bool force);      // force=false honours launch_check_disabled(
 bool checking();
 bool update_available();
 bool check_failed();
+/* A release whose new RetroHub could not start on this PC is rolled back by the installer (updates\\bad_version.json). The updater then
+ * does not download, stage or install that same tag again by itself: the check says so calmly (status()) and update_available() stays
+ * false. update_blocked_bad_version() is true meanwhile; the "Try again" button calls retry_bad_version(), which clears the record and
+ * checks once more. A different, newer release is handled normally. */
+bool update_blocked_bad_version();
+bool retry_bad_version();   // true when a check was started (false: one is already running, or a download; nothing is cleared then)
 std::string latest_version();      // release tag, e.g. "v1.8.0"
 std::string release_notes();       // plain text, markdown stripped
 std::string current_version();     // HUB_VERSION_STR
@@ -133,10 +143,77 @@ struct FetchSpec {
 bool fetch_sums(const std::string& sums_url, const std::string& scratch_path, std::string* text, std::string* err);
 /* The signature file (tiny, size-capped). false + *err = kUnsignedMessage when it cannot be had. */
 bool fetch_sig(const std::string& sig_url, const std::string& scratch_path, std::string* bytes, std::string* err);
-/* Downloads (curl) + verifies the zip into zip_path. Caller must have vetted the URLs. On failure the file
- * is deleted and *err says why. Used by start_update(); tests drive it against a 127.0.0.1 server. */
+/* ---- a slow connection must be able to finish: no hard time cap, a stall detector, retries, and resume ---- */
+constexpr int kStallBytesPerSec = 1024;   // curl gives up when the speed stays below this ...
+constexpr int kStallSeconds = 60;         // ... for this long (a stalled link), however slow the rest of the download is
+constexpr int kRetryCount = 3, kRetryDelaySec = 2;
+/* curl's switches for the zip download (everything except the output file and the url). resume => "-C -" (continue the partial file). */
+std::string download_flags(bool resume);
+/* What a partial download is recorded as, in "<zip>.resume" beside it. Two releases never share a record: tag + asset name + exact size +
+ * the SHA-256 the signed SHA256SUMS.txt lists for that asset must all match. */
+struct ResumeKey { std::string tag, asset, sha256; long long size = 0; };
+std::string resume_record_json(const ResumeKey& k);
+/* May the partial file (partial_size bytes) be continued? Only when its record names exactly `want`, and the file is smaller than the
+ * expected size (a full-size file that is still here failed verification once: never resumed again). */
+bool resume_eligible(const std::string& record_text, const ResumeKey& want, long long partial_size);
+
+/* Downloads (curl) + verifies the zip into zip_path. Caller must have vetted the URLs. A partial file of the SAME release (see ResumeKey)
+ * is continued; one that fails the size or SHA-256 check is deleted for good (with its record). A failed transfer keeps its partial file
+ * for the next try. *err says why. Used by start_update(); tests drive it against a 127.0.0.1 server. */
 bool download_verified(const FetchSpec& f, const std::string& zip_path, std::string* err,
                        const std::function<void(const std::string&)>& on_progress_line);
+
+/* ---- system tools (curl.exe, tar.exe) are always run by absolute path ----
+ * A bare "curl" makes Windows look in the application's own folder first, so a planted curl.exe beside RetroHub.exe would run.
+ * The updater only ever runs <Windows system folder>\curl.exe and tar.exe. */
+std::string system_dir();   // GetSystemDirectoryW as UTF-8, no trailing slash ("" when unknown)
+/* dir + "\\" + exe_name when that file exists; otherwise false and *err says (in plain words) which file is missing. */
+bool resolve_system_tool(const std::string& dir, const char* exe_name, std::string* path, std::string* err);
+bool find_system_tool(const char* exe_name, std::string* path, std::string* err);   // resolve_system_tool(system_dir(), ...)
+
+/* ---- worker threads are owned, never detached ----
+ * The check, the download and the hand-off each run on an OwnedThread that shutdown() joins (with a bounded wait), so nothing touches
+ * this file's statics after the app has started to exit. */
+class OwnedThread {
+public:
+    OwnedThread() = default;
+    OwnedThread(const OwnedThread&) = delete;
+    OwnedThread& operator=(const OwnedThread&) = delete;
+    ~OwnedThread();                                       // a thread still running here is detached (shutdown() should have ended it)
+    /* Runs fn on a new thread. A previous run is joined first (it is waited for up to wait_prev_ms); false when that one is still going. */
+    bool start(std::function<void()> fn, unsigned wait_prev_ms = 3000);
+    bool running() const;                                 // started and fn has not returned yet
+    bool join_for(unsigned ms);                           // true when no thread is left (joined, or never started); false when still running after ms
+    void detach();                                        // last resort after a failed join_for
+private:
+    bool join_locked(unsigned ms);
+    mutable std::mutex mu_;
+    std::thread th_;
+    std::shared_ptr<std::atomic<bool>> done_;
+};
+/* The one place a child process (curl, tar) is run: output lines go to onLine, timeout_ms ends it by its HANDLE. Every child is registered,
+ * so shutdown() can end a running one at once (its exit code is then non-zero); no child is started once shutdown() began. */
+int run_command(const std::string& cmd, const std::function<void(const std::string&)>& onLine, unsigned long timeout_ms = 0xFFFFFFFFul);
+int live_child_count();   // children currently registered (tests)
+#ifdef RETROHUB_UPDATER_TESTING
+void reset_quit_for_test();   // tests only: undo shutdown()'s "leaving" state
+#endif
+
+/* ---- free disk space: checked before the download and before the unpack, with a plain message ---- */
+constexpr unsigned long long kSpaceMargin = 256ull << 20;   // headroom on top of the files themselves (logs, the installer's backup, other programs)
+constexpr unsigned long long kDiskFullBytes = 64ull << 20;  // after a failed unpack, less than this free means the disk filled up
+/* Before the download: the zip (minus what a resumed partial file already holds) + the unpacked files (estimated as the zip's size: the
+ * exact figure is checked again before the unpack) + the margin. */
+unsigned long long space_needed_for_download(unsigned long long zip_bytes, unsigned long long already_have_bytes);
+/* Before the unpack: the zip is on disk already, so the unpacked files + the margin. */
+unsigned long long space_needed_for_unpack(unsigned long long unpacked_bytes);
+/* free < 0 means "could not be read": never blocks an update. */
+inline bool enough_space(unsigned long long needed, long long free_bytes) { return free_bytes < 0 || (unsigned long long)free_bytes >= needed; }
+std::string format_bytes(unsigned long long bytes, bool round_up);   // "1.4 GB", "300 MB", "under 1 MB"
+/* "There is not enough free space ... It needs about X free on drive C: but only Y is free. Free up some space and try again." */
+std::string low_space_message(unsigned long long needed, unsigned long long free_bytes, const std::string& path);
+long long free_bytes_on(const std::string& path);              // GetDiskFreeSpaceExW for the volume of path (available to this user); -1 when unknown
+long long zip_unpacked_size(const std::string& zip_path);      // sum of the uncompressed sizes in the zip's central directory; -1 when unreadable (or zip64)
 
 /* ---- the deferred hand-off (pure state machine; time is injected) ---- */
 constexpr unsigned long long kSettleMs = 2500;   // nothing running for this long before the installer starts (a game's exit is followed by save work)
@@ -164,21 +241,56 @@ inline bool check_retry_due(bool checked, unsigned long long last_fail_ms, unsig
     return last_fail_ms == 0 || now_ms < last_fail_ms || now_ms - last_fail_ms >= kCheckRetryMs;
 }
 
+/* ---- do not offer again a version that could not start here (the applier's updates\\bad_version.json) ---- */
+enum class BadVerdict { Proceed, Skip, ForcedRetry };
+/* Same tag (a leading "v" ignored) => Skip, or ForcedRetry when the user asked to try again; anything else (no record, another tag) => Proceed. */
+BadVerdict bad_version_verdict(const std::string& candidate_tag, const std::string& bad_tag, bool retry_requested);
+std::string bad_version_message(const std::string& candidate_tag, const std::string& current_version);   // "Version X could not start on this PC, so RetroHub stayed on version Y."
+/* Reads the record under <install>\\updates (a missing or malformed one is ignored). true => this candidate must NOT be downloaded or installed
+ * (*why = the calm message). A forced retry, or a different tag, clears the record and returns false. */
+bool bad_version_gate(const std::wstring& install, const std::string& candidate_tag, bool retry_requested, std::string* why);
+
+/* A blocked tag will never be installed: its unpacked folder (staged.json + staged\\) and its zip (update.zip + .resume) are deleted, but only
+ * when they belong to THAT tag (another release's files are left alone). */
+void discard_blocked_artifacts(const std::string& updates_dir, const std::string& tag);
+#ifdef RETROHUB_UPDATER_TESTING
+void set_busy_for_test(bool checking, bool downloading);   // tests only: pretend a check / download is running
+#endif
+
+/* ---- a staged folder that keeps failing its check is not retried forever ----
+ * Each time an unpacked folder of the SAME tag is found untrusted and discarded, note_discard counts it; after kMaxStagedDiscards the tag is
+ * not downloaded again in this session (discard_allowed false) and discard_message is shown instead. A good reuse resets the count. */
+constexpr int kMaxStagedDiscards = 2;
+struct DiscardGuard { std::string tag; int count = 0; };
+bool discard_allowed(const DiscardGuard& g, const std::string& tag);
+void note_discard(DiscardGuard& g, const std::string& tag);
+void note_staged_ok(DiscardGuard& g);
+std::string discard_message(const std::string& tag);
+
 /* ---- staged files kept for a retry ("updates\staged.json" beside "updates\staged\") ---- */
+struct StagedFile { std::string path; long long size = 0; std::string sha256; };   // path: relative to the staged dir, '/' separators
 struct StagedInfo {
     std::string version;
     long long files = 0, bytes = 0;
     bool hub_only = false;   // unpacked from RetroHub-windows.zip (no Smash Classic files); manifests without "payload" are full
     std::string smash_sha256; // hub-only: the BattleShip.exe hash the (signed) marker named; the applier re-checks the installed exe against it
+    std::vector<StagedFile> list;   // every unpacked file with its SHA-256, taken right after the unpack ("list" in staged.json). A manifest without it
+                                    // (written by RetroHub 1.41.0 or older) is not trusted for reuse: the folder is discarded and downloaded again.
 };
+/* Every regular file under staged_dir with its size and SHA-256, sorted by path. false when a file cannot be read or *cancel became true. */
+bool hash_staged(const std::string& staged_dir, std::vector<StagedFile>* out, const std::atomic<bool>* cancel = nullptr);
+/* The folder holds EXACTLY these files (no extra, none missing) and every size and SHA-256 matches. An empty list never matches. */
+bool verify_staged_list(const std::string& staged_dir, const std::vector<StagedFile>& list, const std::atomic<bool>* cancel = nullptr);
 StagedInfo scan_staged(const std::string& staged_dir);                       // counts the regular files under the dir
 std::string staged_manifest_json(const StagedInfo& s);
 bool parse_staged_manifest(const std::string& text, StagedInfo* out);
-/* The manifest names `version`, matches what is on disk, and the required exes are there (RetroHub.exe, plus BattleShip.exe for a
+/* The manifest names `version`, its per-file SHA-256 list matches what is on disk exactly, and the required exes are there (RetroHub.exe, plus BattleShip.exe for a
  * full payload): the download can be skipped. *hub_only (optional) says which kind is staged. */
-bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only = nullptr, std::string* smash_sha256 = nullptr);
+bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only = nullptr, std::string* smash_sha256 = nullptr,
+                    const std::atomic<bool>* cancel = nullptr);
 /* A hub-only manifest without a valid smash_sha256 is not reusable (the hand-off could not re-check the installed Smash Classic). */
-bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only = false, const std::string& smash_sha256 = std::string());
+bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only = false, const std::string& smash_sha256 = std::string(),
+                           const std::atomic<bool>* cancel = nullptr);   // hashes every file: the (large) cost of making a staged folder trustworthy
 }
 
 } // namespace hubupdate

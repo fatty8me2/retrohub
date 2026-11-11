@@ -106,6 +106,19 @@ not scanned.)
   was in use", "Update postponed: a game was running", ...), never a window. The unpacked files stay in `updates\staged` with
   `updates\staged.json` (version, file count, bytes) so a retry skips the download when they still match exactly; a successful install
   removes both. The first update that brings these changes is still applied by the previous version's applier.
+- **Boot check and automatic way back.** After copying, the applier keeps its backup and relaunches the new RetroHub with
+  `--boot-ok "<install>\updates\boot_ok" "<version>"`. The new RetroHub calls `note_boot_ok()` after its first presented frame (or while up
+  minimised behind a game) and writes the version to that marker (temp + rename). The applier (still alive, no window) waits: marker =
+  delete the backup and exit 0. The new process exits non-zero (or cannot be started) without the marker = rollback: restore the replaced
+  files (RetroHub.exe first) and remove the files the update added (`added.txt`), relaunch the OLD RetroHub quietly, write
+  `userdata\update_status.json` (`rolled_back`, one calm bell line) and `updates\bad_version.json`, exit 5. Still running after
+  `--boot-wait-secs` (45): keep waiting, never ended; after `--boot-cap-secs` (600): stop watching, change nothing, exit 4 (the next start of the
+  new version cleans the backup up). Exit code 0 from the new process (a second instance handing over, the player closed it) keeps the update.
+  A rollback waits while anything runs from the install folder (a game) and, if that outlasts `--wait-secs`, changes nothing and keeps the backup
+  (exit 6). The applier never terminates any process. The manifest in `%TEMP%\RetroHub-update-<pid>` gets `"booting":true` once all files
+  are copied; `recover_interrupted` treats "booting + the new version is running (or its marker matches)" as healthy (drops the backup, never
+  restores) and "booting + the old version running" as the ordinary restore (plus removing the added files). `bad_version.json` format:
+  `{"v":1,"version":"<tag>","from":"<tag>","at":<unix>,"reason":"did not start","exit_code":<n>}`; the updater must not offer that tag again.
 - Tests: `hub_updater_test` (gate state machine, staged reuse), `hub_apply_test` (a fake game under the install folder survives the applier, failed restore keeps the backup, recovery cases, status note), `qa\update_during_game.ps1` (the same with the real `RetroHub.exe` and a real long-running process).
 
 **First run** (`wizard_logic.h`, `main.cpp`). The installer pre-fills a games folder (`userdata\installer_games_dir.txt`, written only by a
