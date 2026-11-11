@@ -337,22 +337,7 @@ void auto_sync() {
 }
 
 std::string report_summary(const hub::saves::SyncReport& r, const char* sent_word, const char* got_word) {
-<<<<<<< HEAD
     return hubsave::report_summary(r, sent_word, got_word);   // save_jobs_logic.h
-=======
-    if (!r.ok) return "Failed: " + (r.error.empty() ? std::string("unknown error") : r.error);
-    if (r.pushed == 0 && r.pulled == 0 && r.conflicts == 0) return "Everything is already up to date.";
-    auto files = [](int n, const char* word) { return std::to_string(n) + (n == 1 ? " file " : " files ") + word; };
-    std::string s;
-    if (std::string(sent_word) == got_word) {   // an import: "restored" both ways is one number, not two
-        if (r.pushed + r.pulled) s += files(r.pushed + r.pulled, sent_word);
-    } else {
-        if (r.pushed) s += files(r.pushed, sent_word);
-        if (r.pulled) s += (s.empty() ? "" : ", ") + files(r.pulled, got_word);
-    }
-    if (r.conflicts) s += (s.empty() ? "" : ", ") + std::to_string(r.conflicts) + (r.conflicts == 1 ? " conflict" : " conflicts") + " (the older copy was kept as a backup)";
-    return s + ".";
->>>>>>> agent/x-dialogs
 }
 
 void poll_job() {
@@ -385,9 +370,6 @@ void poll_job() {
     } else if (j.kind == SaveJob::Import) {
         A.import_ok = j.report.ok;
         A.import_result = report_summary(j.report, "restored", "restored");
-        if (j.report.ok && (j.report.pushed + j.report.pulled) > 0)
-            A.import_result = std::to_string(j.report.pushed + j.report.pulled) + " file(s) restored" +
-                              (j.report.conflicts ? ", " + std::to_string(j.report.conflicts) + " conflict(s) (older copy kept)" : "") + ".";
         set_toast(j.report.ok ? "Saves imported." : A.import_result, j.report.ok);
     }
     if ((j.kind == SaveJob::Sync || j.kind == SaveJob::Import) && j.report.ok) fr_adopt_identity_after_vault_change();
