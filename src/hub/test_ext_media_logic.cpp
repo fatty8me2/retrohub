@@ -1,6 +1,7 @@
 // Console test for the "was the capture black?" check (ext_media_logic.h) with synthetic BGRA buffers. No windows, no D3D.
 #include "ext_media_logic.h"
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
@@ -11,66 +12,101 @@ struct Img {
     int w, h, stride;
     std::vector<uint8_t> px;
     Img(int w_, int h_, int stride_) : w(w_), h(h_), stride(stride_), px(h_ > 0 && w_ > 0 ? size_t(h_ - 1) * stride_ + size_t(w_) * 4 : 0, 0) {}
+    Img(int w_, int h_) : Img(w_, h_, w_ * 4) {}
     void set(int x, int y, uint8_t b, uint8_t g, uint8_t r, uint8_t a = 255) {
         uint8_t* p = &px[size_t(y) * stride + size_t(x) * 4];
         p[0] = b; p[1] = g; p[2] = r; p[3] = a;
     }
+    void fill(int x0, int y0, int x1, int y1, uint8_t b, uint8_t g, uint8_t r) { for (int y = y0; y < y1; ++y) for (int x = x0; x < x1; ++x) set(x, y, b, g, r); }
     bool black() const { return all_black(px.data(), w, h, stride); }
 };
 
 int main() {
-    {   // all black
-        Img i(64, 48, 64 * 4);
+    {   // pure black, alpha ignored
+        Img i(640, 360);
         CHECK(i.black());
-        // alpha is ignored: fully opaque black is still black
-        for (int y = 0; y < i.h; ++y) for (int x = 0; x < i.w; ++x) i.set(x, y, 0, 0, 0, 255);
+        i.fill(0, 0, i.w, i.h, 0, 0, 0);   // opaque black
         CHECK(i.black());
+        Img a(640, 360);
+        for (int y = 0; y < a.h; ++y) for (int x = 0; x < a.w; ++x) a.px[size_t(y) * a.stride + x * 4 + 3] = 255;
+        CHECK(a.black());
     }
-    {   // a bright pixel on the sampled grid (every 5th column, every 7th row) is seen, in each channel
-        Img i(64, 48, 64 * 4);
-        i.set(0, 0, 255, 255, 255); CHECK(!i.black());
-        Img b(64, 48, 64 * 4); b.set(10, 14, 255, 0, 0); CHECK(!b.black());
-        Img g(64, 48, 64 * 4); g.set(10, 14, 0, 255, 0); CHECK(!g.black());
-        Img r(64, 48, 64 * 4); r.set(10, 14, 0, 0, 255); CHECK(!r.black());
-        Img last(64, 48, 64 * 4); last.set(60, 42, 1, 1, 1); CHECK(!last.black());   // last sampled column / row
-    }
-    {   // near-black noise: ANY non-zero channel on the grid counts as picture (there is no threshold)
-        Img i(64, 48, 64 * 4);
-        i.set(5, 7, 1, 0, 0); CHECK(!i.black());
-        Img j(64, 48, 64 * 4); j.set(5, 7, 0, 0, 2); CHECK(!j.black());
-        Img k(64, 48, 64 * 4); k.set(5, 7, 0, 0, 0, 200); CHECK(k.black());   // alpha alone is not picture
-    }
-    {   // KNOWN LIMIT (by design, sampled): a bright pixel off the grid is not seen. A single lit pixel can be missed.
-        Img i(64, 48, 64 * 4);
-        i.set(1, 1, 255, 255, 255);
-        CHECK(i.black());   // characterisation of current behaviour, not an endorsement
-        i.set(4, 6, 255, 255, 255);
+    {   // noise up to the threshold (every channel, every pixel) is still black; one step above on every pixel is picture
+        Img i(640, 360);
+        std::srand(7);
+        for (int y = 0; y < i.h; ++y) for (int x = 0; x < i.w; ++x) i.set(x, y, uint8_t(std::rand() % 17), uint8_t(std::rand() % 17), uint8_t(std::rand() % 17));
         CHECK(i.black());
-        // but any real picture (every pixel lit) is never mistaken for black
-        for (int y = 0; y < i.h; ++y) for (int x = 0; x < i.w; ++x) i.set(x, y, 40, 40, 40);
+        Img j(640, 360);
+        j.fill(0, 0, j.w, j.h, 17, 0, 0);
+        CHECK(!j.black());
+        Img k(640, 360);
+        k.fill(0, 0, k.w, k.h, 0, 0, 16);
+        CHECK(k.black());
+    }
+    {   // hot pixels and compression speckle: a handful of bright pixels in a large black frame is still black
+        Img i(1280, 720);
+        i.set(3, 3, 255, 255, 255); i.set(1000, 500, 255, 255, 255); i.set(641, 17, 200, 0, 0);
+        CHECK(i.black());
+        // but a clear amount of picture is kept (about 1 pixel in 1000)
+        Img j(1280, 720);
+        for (int k = 0; k < 1000; ++k) j.set((k * 37) % j.w, (k * 11) % j.h, 255, 255, 255);
+        CHECK(!j.black());
+    }
+    {   // one thin bright line (1 px) off any coarse grid, horizontal and vertical, in HD and 4K frames: kept
+        for (int dims : {0, 1}) {
+            const int W = dims ? 3840 : 1920, H = dims ? 2160 : 1080;
+            Img h1(W, H); h1.fill(0, 541, W, 542, 255, 255, 255); CHECK(!h1.black());
+            Img h2(W, H); h2.fill(0, 4, W, 5, 0, 200, 0); CHECK(!h2.black());
+            Img v1(W, H); v1.fill(1001, 0, 1002, H, 255, 255, 255); CHECK(!v1.black());
+            Img v2(W, H); v2.fill(W - 1, 0, W, H, 0, 0, 90); CHECK(!v2.black());
+            Img z(W, H); CHECK(z.black());
+        }
+    }
+    {   // a dark game scene (mostly 20-40) is picture, in every channel position
+        Img i(640, 480);
+        std::srand(3);
+        for (int y = 0; y < i.h; ++y) for (int x = 0; x < i.w; ++x) i.set(x, y, uint8_t(20 + std::rand() % 21), uint8_t(20 + std::rand() % 21), uint8_t(20 + std::rand() % 21));
         CHECK(!i.black());
+        Img j(640, 480); j.fill(0, 0, j.w, j.h, 0, 0, 20); CHECK(!j.black());
+        Img k(640, 480); k.fill(0, 0, k.w, k.h, 20, 0, 0); CHECK(!k.black());
     }
-    {   // zero / tiny sizes: nothing sampled, no read at all
+    {   // letterboxed picture: black bars, a picture in the middle (also a small one)
+        Img i(1920, 1080);
+        i.fill(0, 140, 1920, 940, 60, 90, 120);
+        CHECK(!i.black());
+        Img j(1920, 1080);
+        j.fill(900, 500, 1020, 580, 120, 120, 120);
+        CHECK(!j.black());
+    }
+    {   // tiny frames: a single lit pixel is picture (too little data to call it black)
+        Img one(1, 1); CHECK(one.black());
+        one.set(0, 0, 0, 90, 0); CHECK(!one.black());
+        Img row(300, 1); row.set(295, 0, 0, 0, 70); CHECK(!row.black());
+        Img col(1, 300); col.set(0, 294, 0, 70, 0); CHECK(!col.black());
+        Img small(64, 48); CHECK(small.black());
+        small.set(1, 1, 255, 255, 255); CHECK(!small.black());
+    }
+    {   // zero / negative sizes or no buffer: nothing read, reported black (there is no picture)
         CHECK(all_black(nullptr, 0, 0, 0));
         CHECK(all_black(nullptr, 0, 10, 0));
         CHECK(all_black(nullptr, 10, 0, 40));
         CHECK(all_black(nullptr, -5, -5, 0));
-        Img one(1, 1, 4); CHECK(one.black());
-        one.set(0, 0, 0, 9, 0); CHECK(!one.black());
-        Img row(300, 1, 300 * 4); row.set(295, 0, 0, 0, 7); CHECK(!row.black());
-        Img col(1, 300, 4); col.set(0, 294, 0, 7, 0); CHECK(!col.black());
+        uint8_t px[4] = {255, 255, 255, 255};
+        CHECK(all_black(px, 0, 1, 4));
+        CHECK(all_black(px, 1, -1, 4));
     }
     {   // stride wider than the row, including odd (non multiple of 4) strides: padding bytes are never read as picture
         for (int pad : {1, 2, 3, 4, 7, 61}) {
-            Img i(33, 29, 33 * 4 + pad);
-            for (int y = 0; y < i.h - 1; ++y) for (int p = 0; p < pad; ++p) i.px[size_t(y) * i.stride + 33 * 4 + p] = 0xFF;   // padding is bright
+            Img i(133, 129, 133 * 4 + pad);
+            for (int y = 0; y < i.h - 1; ++y) for (int p = 0; p < pad; ++p) i.px[size_t(y) * i.stride + 133 * 4 + p] = 0xFF;   // padding is bright
             CHECK(i.black());
-            i.set(10, 14, 0, 0, 5);   // row 14 sits at 14*stride
+            i.fill(0, 64, i.w, 65, 0, 0, 200);   // a full bright row
             CHECK(!i.black());
         }
-        // exact-size buffer: the last sampled row/col must not read past the end (would crash under a sanitizer / guard page)
-        Img e(11, 15, 11 * 4); CHECK(e.black());
+        // exact-size buffers: the last row / column must not read past the end (a sanitizer or guard page would catch it)
+        Img e(11, 15); CHECK(e.black());
         Img e2(6, 8, 6 * 4 + 3); CHECK(e2.black());
+        e2.set(5, 7, 0, 0, 99); CHECK(!e2.black());
     }
     if (g_fail) { std::printf("%d failure(s)\n", g_fail); return 1; }
     std::printf("hub_ext_media_logic_test: all passed\n");
