@@ -315,7 +315,8 @@ inline bool feature_row_visible(QmFeature f, bool has_ctl, bool online, bool is_
 inline bool ack_means_unsupported(const std::string& msg) {
     std::string m;
     for (char c : msg) m += (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
-    return m == "unsupported" || m == "unknown command" || m == "not supported for this system" || m.find("is not available for this game") != std::string::npos;
+    return m == "unsupported" || m == "unknown command" || m == "not supported for this system" || m.find("is not available for this game") != std::string::npos ||
+           m.find("hardcore") != std::string::npos;   // RetroAchievements hardcore turns rewind off for the whole session
 }
 struct FeatureHide {
     bool hidden[kQmFeatures] = {false, false, false};
