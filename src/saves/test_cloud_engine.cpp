@@ -284,14 +284,16 @@ static void test_failure_text() {
     printf(" failure text per cause\n");
     CHECK(sync_failure_text(0, "") == "Offline: will sync when you are back.");
     CHECK(sync_failure_text(0, "deadline").find("Offline") == str::npos);
-    CHECK(sync_failure_text(401, "").find("account") != str::npos);
-    CHECK(sync_failure_text(507, "").find("full") != str::npos);
-    CHECK(sync_failure_text(500, "").find("busy") != str::npos);
     CHECK(sync_failure_text(400, "bad-plan").find("could not take") != str::npos);
-    CHECK(sync_failure_text(0, "file-locked").find("in use by another program") != str::npos);
+    CHECK(sync_failure_text(0, "backup-failed").find("safety copy") != str::npos);
+    CHECK(sync_failure_text(0, "file-locked").find("Another program") != str::npos);
+    CHECK(sync_failure_text(0, "access-denied") == "Windows would not allow writing the file.");
     CHECK(sync_failure_text(0, "disk-full").find("disk space") != str::npos);
-    const char* codes[] = {"", "deadline", "file-locked", "disk-full"};
-    for (int st : {0, 400, 401, 500, 507}) for (const char* c : codes) { str m = sync_failure_text(st, c); CHECK(!m.empty() && m.size() < 80); }
+    CHECK(sync_failure_text(0, "write-failed") == "Could not write the save on this PC.");   // a LOCAL failure is never called "Offline"
+    const char* locals[] = {"backup-failed", "merge-failed", "file-locked", "access-denied", "disk-full", "write-failed"};
+    for (const char* c : locals) CHECK(sync_failure_text(0, c).find("Offline") == str::npos);
+    const char* codes[] = {"", "deadline", "file-locked", "disk-full", "backup-failed", "merge-failed", "access-denied", "write-failed"};
+    for (int st : {0, 400, 404}) for (const char* c : codes) { str m = sync_failure_text(st, c); CHECK(!m.empty() && m.size() < 80); }
 }
 
 /* The state file is replaced crash-safely: a failed swap leaves the old file readable and no temp file behind. */
@@ -681,19 +683,101 @@ static void test_loser_backup_is_taken_before_the_pull() {
     const str local_bytes = rnd(6000, 21), cloud_bytes = rnd(6000, 22);
     put(pc2.game() / "states" / "slot2.state", local_bytes, now_unix() - 500);
     bool seeded = false;
-    g_srv->before_plan = [&]() {      // another PC pushes a NEWER copy between this PC's manifest and its plan: the plan answers "conflict"
+    g_srv->set_before_plan([&]() {      // another PC pushes a NEWER copy between this PC's manifest and its plan: the plan answers "conflict"
         if (seeded) return;
         seeded = true;
         g_srv->seed_file(g_uid, GK, "states/slot2.state", cloud_bytes, now_unix() - 10, "PC-ELSE", now_unix());
-    };
+    });
     exit_game();
-    g_srv->before_plan = nullptr;
+    g_srv->set_before_plan(nullptr);
     CHECK(seeded);
     CHECK(get(pc2.game() / "states" / "slot2.state") == cloud_bytes);
     int kept = 0;
     fs::path cd = pc2.vault / "_conflicts";
     if (fs::exists(cd)) for (auto& e : fs::recursive_directory_iterator(cd)) if (e.is_regular_file()) { kept++; CHECK(get(e.path()) == local_bytes); }
     CHECK(kept == 1);
+}
+
+/* A refused safety copy (here: _conflicts cannot be created because a FILE sits where the folder belongs) must change nothing and download nothing. */
+static void block_conflicts(const Pc& pc) {
+    std::error_code ec;
+    fs::remove_all(pc.vault / "_conflicts", ec);
+    put(pc.vault / "_conflicts", "not a folder");
+}
+static void test_no_copy_no_overwrite() {
+    printf(" no safety copy: nothing is overwritten, nothing is downloaded, the game is not Synced\n");
+    GameCloudInfo gi;
+    {   /* newest-wins conflict at plan time (the fixed pull sites) */
+        Pc pc2("pc2");
+        use(pc2);
+        put(pc2.game() / "states" / "slot3.state", rnd(6000, 30), now_unix() - 900);
+        cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+        cloud_prelaunch(G, SyncMode::ReadWrite); play();
+        const str local_bytes = rnd(6000, 31), cloud_bytes = rnd(6000, 32);
+        put(pc2.game() / "states" / "slot3.state", local_bytes, now_unix() - 500);
+        bool seeded = false;
+        g_srv->set_before_plan([&]() {
+            if (seeded) return;
+            seeded = true;
+            g_srv->seed_file(g_uid, GK, "states/slot3.state", cloud_bytes, now_unix() - 10, "PC-ELSE", now_unix());
+        });
+        block_conflicts(pc2);
+        int gets = g_srv->n_get, puts = g_srv->n_put;
+        exit_game();
+        g_srv->set_before_plan(nullptr);
+        CHECK(seeded);
+        CHECK(get(pc2.game() / "states" / "slot3.state") == local_bytes);          // untouched
+        CHECK(g_srv->n_get == gets && g_srv->n_put == puts);                       // no pull request, no upload
+        CHECK(cloud_game(G, &gi) && gi.state == CloudState::Waiting && gi.message.find("safety copy") != str::npos);
+    }
+    {   /* "use the cloud's" */
+        fresh_account();
+        Pc pc1("pc1"), pc2("pc2");
+        use(pc1);
+        put(pc1.game() / "battery" / "s.sra", rnd(3000, 41), now_unix() - 5000);
+        cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+        use(pc2);
+        cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+        use(pc1);
+        put(pc1.game() / "battery" / "s.sra", rnd(3000, 42), now_unix() - 3000);
+        cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+        use(pc2);
+        put(pc2.game() / "battery" / "s.sra", rnd(3000, 43), now_unix() - 2000);
+        PrelaunchResult r = cloud_prelaunch(G, SyncMode::ReadWrite);
+        CHECK(r.action == PrelaunchResult::NeedConflictDecision);
+        block_conflicts(pc2);
+        int gets = g_srv->n_get;
+        cloud_resolve_conflict(G, ConflictChoice::UseCloud);
+        CHECK(get(pc2.game() / "battery" / "s.sra") == rnd(3000, 43));             // untouched
+        CHECK(g_srv->n_get == gets);
+        CHECK(cloud_game(G, &gi) && gi.state == CloudState::NeedsAttention && gi.message == "Could not keep a copy of your current save, so nothing was changed.");
+        r = cloud_prelaunch(G, SyncMode::ReadWrite);                               // still a conflict the player can decide again
+        CHECK(r.action == PrelaunchResult::NeedConflictDecision);
+    }
+    {   /* account prefs merge: the copy comes first, so no download and no upload either */
+        namespace pf = hub::prefs;
+        fresh_account();
+        Pc pc1("pa1"), pc2("pa2");
+        fs::path lib = scratch_root() / "nc_lib";
+        fs::remove_all(lib); fs::create_directories(lib);
+        hub::library_set_data_dir(lib.u8string());
+        use(pc1);
+        { pf::Prefs p; pf::load(pc1.vault.u8string(), &p); pf::set_favorites(&p, {"n64:one"}, 1000); pf::save(pc1.vault.u8string(), p); }
+        cloud_account_prefs_changed(); pump();
+        use(pc2);
+        cloud_sync_all_now(); pump();
+        { pf::Prefs p; pf::load(pc2.vault.u8string(), &p); pf::set_favorite(&p, "gba:two", true, 3000); pf::save(pc2.vault.u8string(), p); }
+        cloud_account_prefs_changed(); pump();                                     // PC2 pushes first
+        use(pc1);
+        { pf::Prefs p; pf::load(pc1.vault.u8string(), &p); pf::set_favorite(&p, "snes:three", true, 2000); pf::save(pc1.vault.u8string(), p); }
+        str before = get(pc1.vault / "_account" / "prefs.json");
+        block_conflicts(pc1);
+        int gets = g_srv->n_get, puts = g_srv->n_put;
+        cloud_account_prefs_changed(); pump();
+        CHECK(g_srv->n_get == gets && g_srv->n_put == puts);
+        CHECK(get(pc1.vault / "_account" / "prefs.json") == before);               // neither merged nor replaced
+        hub::library_set_data_dir("");
+    }
 }
 
 /* A plain both-sides-edited conflict (no "decide later" involved) must be visible without launching the game:
@@ -1632,6 +1716,7 @@ int main(int argc, char** argv) {
     RUN_SCENARIO(test_conflict);
     RUN_SCENARIO(test_plain_conflict_surfaces);
     RUN_SCENARIO(test_loser_backup_is_taken_before_the_pull);
+    RUN_SCENARIO(test_no_copy_no_overwrite);
     RUN_SCENARIO(test_states_switch);
     RUN_SCENARIO(test_states_never_prompt);
     RUN_SCENARIO(test_deleted_state_stays_deleted);
