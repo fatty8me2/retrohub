@@ -9,6 +9,9 @@
 #include <thread>
 #include <atomic>
 #include <fstream>
+#include <functional>
+#include <sstream>
+#include <vector>
 #include <map>
 #include <filesystem>
 #ifndef WIN32_LEAN_AND_MEAN
@@ -477,6 +480,83 @@ int main(int argc, char** argv) {
         CHECK(parse_staged_manifest(staged_manifest_json(hi), &hp) && hp.hub_only && hp.smash_sha256 == SH);
         hi.hub_only = false;
         CHECK(parse_staged_manifest(staged_manifest_json(hi), &hp) && !hp.hub_only && staged_manifest_json(hi).find("payload") == std::string::npos);   // older manifests stay as they were
+        std::filesystem::remove_all(d, ec);
+    }
+
+    // --- the staged folder is trusted only when every file still matches the SHA-256 taken at unpack time ---
+    {
+        std::filesystem::path d = std::filesystem::temp_directory_path() / ("hub_updater_stagedsha_test_" + std::to_string(_getpid()));
+        std::error_code ec; std::filesystem::remove_all(d, ec);
+        std::filesystem::create_directories(d / "staged" / "sub" / "deeper", ec);
+        auto put = [](const std::filesystem::path& p, const std::string& s) { std::ofstream o(p, std::ios::binary | std::ios::trunc); o << s; };
+        auto reset = [&]() {
+            std::filesystem::remove_all(d / "staged", ec);
+            std::filesystem::create_directories(d / "staged" / "sub" / "deeper", ec);
+            put(d / "staged" / "RetroHub.exe", "new-hub");
+            put(d / "staged" / "BattleShip.exe", "new-bs");
+            put(d / "staged" / "sub" / "x.dat", std::string(100, 'x'));
+            put(d / "staged" / "sub" / "deeper" / "y.dat", "yy");
+        };
+        reset();
+        const std::string ud = d.u8string(), sd = ud + "\\staged";
+        std::vector<StagedFile> list;
+        CHECK(hash_staged(sd, &list) && list.size() == 4);
+        CHECK(list[0].path == "BattleShip.exe" && list[1].path == "RetroHub.exe" && list[2].path == "sub/deeper/y.dat" && list[3].path == "sub/x.dat");   // sorted, '/' separators
+        CHECK(list[3].size == 100 && list[3].sha256.size() == 64);
+        CHECK(verify_staged_list(sd, list) && !verify_staged_list(sd, {}));
+        std::atomic<bool> cancelled{true};
+        CHECK(!verify_staged_list(sd, list, &cancelled) && !hash_staged(sd, &list, &cancelled));   // cancel stops the hashing
+        CHECK(!hash_staged(ud + "\\no_such_folder", &list));
+        CHECK(write_staged_manifest(ud, "v1.41.1") && staged_reusable(ud, "v1.41.1"));
+        CHECK(!write_staged_manifest(ud, "v1.41.1", false, "", &cancelled));
+        // the manifest carries the list and round-trips it
+        { std::ifstream in(d / "staged.json", std::ios::binary); std::stringstream ss; ss << in.rdbuf();
+          StagedInfo m; CHECK(parse_staged_manifest(ss.str(), &m) && m.list.size() == 4 && m.list[3].path == "sub/x.dat" && m.list[3].sha256 == list[3].sha256 && m.files == 4); }
+        // tamper cases: each one must make the staged folder not reusable
+        put(d / "staged" / "sub" / "x.dat", std::string(100, 'y'));                        // same size, other content (counts and bytes still match)
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); CHECK(staged_reusable(ud, "v1.41.1"));                                      // restored: trusted again
+        put(d / "staged" / "RetroHub.exe", "new-hub!");                                      // one byte longer
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); put(d / "staged" / "RetroHub.exe", "new-hux");                              // one byte flipped, same size
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); std::filesystem::remove(d / "staged" / "sub" / "deeper" / "y.dat", ec);     // missing file
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); put(d / "staged" / "extra.dll", "");                                        // extra file (even an empty one)
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); put(d / "staged" / "sub" / "deeper" / "y.dat", "zz"); std::filesystem::remove(d / "staged" / "sub" / "x.dat", ec); put(d / "staged" / "sub" / "z.dat", std::string(100, 'x'));   // a file swapped for another of the same size
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        reset(); CHECK(staged_reusable(ud, "v1.41.1"));
+        // a tampered manifest: wrong hash, wrong size, duplicate path, file count lying, unreadable list
+        auto manifest_with = [&](const std::function<void(StagedInfo&)>& edit) {
+            StagedInfo m; { std::ifstream in(d / "staged.json", std::ios::binary); std::stringstream ss; ss << in.rdbuf(); parse_staged_manifest(ss.str(), &m); }
+            edit(m); put(d / "staged.json", staged_manifest_json(m));
+        };
+        manifest_with([](StagedInfo& m) { m.list[0].sha256 = std::string(64, '0'); });
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        CHECK(write_staged_manifest(ud, "v1.41.1") && staged_reusable(ud, "v1.41.1"));
+        manifest_with([](StagedInfo& m) { m.list[1].size += 1; });
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        CHECK(write_staged_manifest(ud, "v1.41.1"));
+        manifest_with([](StagedInfo& m) { m.list[1] = m.list[0]; });
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        CHECK(write_staged_manifest(ud, "v1.41.1"));
+        manifest_with([](StagedInfo& m) { m.list.pop_back(); });                             // list shorter than the manifest's own file count
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        CHECK(write_staged_manifest(ud, "v1.41.1"));
+        manifest_with([](StagedInfo& m) { m.list[0].path = "../BattleShip.exe"; });         // a path that is not under the folder
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        CHECK(write_staged_manifest(ud, "v1.41.1"));
+        { StagedInfo m; CHECK(!parse_staged_manifest("{\"version\":\"v1\",\"files\":1,\"bytes\":1,\"list\":[{\"p\":\"a\",\"n\":1,\"h\":\"short\"}]}", &m));
+          CHECK(!parse_staged_manifest("{\"version\":\"v1\",\"files\":1,\"bytes\":1,\"list\":5}", &m)); }
+        // a manifest written by RetroHub 1.41.0 (counts and bytes only, no list) is never trusted: download again
+        put(d / "staged.json", "{\"v\":1,\"version\":\"v1.41.1\",\"files\":4,\"bytes\":" + std::to_string(7 + 6 + 100 + 2) + "}\n");
+        { StagedInfo m; CHECK(parse_staged_manifest("{\"v\":1,\"version\":\"v1.41.1\",\"files\":4,\"bytes\":115}", &m) && m.list.empty()); }
+        CHECK(!staged_reusable(ud, "v1.41.1"));
+        // hub-only keeps working through the list
+        CHECK(write_staged_manifest(ud, "v1.41.1", true, std::string(64, 'c')));
+        bool kind = false; std::string h;
+        CHECK(staged_reusable(ud, "v1.41.1", &kind, &h) && kind && h == std::string(64, 'c'));
         std::filesystem::remove_all(d, ec);
     }
 
