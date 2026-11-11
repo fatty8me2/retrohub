@@ -477,37 +477,40 @@ void cloud_ui_overlays() {
             if (cb) cb(c);
         };
         if (ui::modal_back()) finish(hs::ConflictChoice::DecideLater);
-        ImGui::PushTextWrapPos(std::min(sp(58.f), io.DisplaySize.x * 0.85f));
+        const float wrap_w = std::min(sp(58.f), io.DisplaySize.x * 0.85f);
+        ImGui::PushTextWrapPos(wrap_w);
         ImGui::PushFont(ui::F.title);
-        ImGui::TextUnformatted(conflict_summary(CD.title).c_str());
+        ImGui::TextWrapped("%s", conflict_summary(CD.title).c_str());
         ImGui::PopFont();
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        text_wrapped_disabled("Both this PC and the cloud have a newer save than the last time they matched.");
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        text_wrapped_disabled(conflict_intro());
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        const int64_t now_t = (int64_t)std::time(nullptr);
         for (size_t i = 0; i < CD.items.size() && i < 3; ++i) {
             const auto& it = CD.items[i];
             ImGui::PushFont(ui::F.bold);
-            ImGui::TextUnformatted(it.path.c_str());
+            ImGui::TextUnformatted(cap_first(conflict_what(it)).c_str());
             ImGui::PopFont();
             const bool ln = local_is_newer(it);
-            ImGui::TextColored(ImColor(ln ? ui::GOOD : ui::TEXT2), "%s%s", side_line(it.local, false).c_str(), ln ? "   (newer)" : "");
-            ImGui::TextColored(ImColor(!ln ? ui::GOOD : ui::TEXT2), "%s%s", side_line(it.cloud, true).c_str(), !ln ? "   (newer)" : "");
+            ImGui::TextColored(ImColor(ln ? ui::GOOD : ui::TEXT2), "%s%s", conflict_side_line(it.local, false, now_t).c_str(), ln ? "  (newer)" : "");
+            ImGui::TextColored(ImColor(!ln ? ui::GOOD : ui::TEXT2), "%s%s", conflict_side_line(it.cloud, true, now_t).c_str(), !ln ? "  (newer)" : "");
+            ImGui::Dummy(ImVec2(0, sp(0.75f)));
         }
-        if (CD.items.size() > 3) ImGui::TextDisabled("and %zu more files", CD.items.size() - 3);
-        ImGui::Dummy(ImVec2(0, sp(1.5f)));
+        if (CD.items.size() > 3) ImGui::TextDisabled("and %zu more", CD.items.size() - 3);
+        ImGui::Dummy(ImVec2(0, sp(0.75f)));
         static hs::ConflictChoice hint = hs::ConflictChoice::UseNewer;
         const hs::ConflictChoice order[] = {hs::ConflictChoice::UseNewer, hs::ConflictChoice::UseLocal, hs::ConflictChoice::UseCloud, hs::ConflictChoice::DecideLater};
+        const float gap = sp(1.f), bw = (wrap_w - gap) * 0.5f;
         for (int i = 0; i < 4; ++i) {
-            if (i) ImGui::SameLine();
+            if (i % 2) ImGui::SameLine(0, gap);
             ImGui::PushID(i);
-            if (button(conflict_button(order[i]), ImVec2(0, sp(5.5f)), i == 0, true)) finish(order[i]);
+            if (button(conflict_button(order[i]), ImVec2(bw, sp(5.f)), i == 0, true)) finish(order[i]);
             if (i == 0) ImGui::SetItemDefaultFocus();
             if (ImGui::IsItemFocused() || ImGui::IsItemHovered()) hint = order[i];
             ImGui::PopID();
         }
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         text_wrapped_disabled(conflict_hint(hint));
-        text_wrapped_disabled("Whichever you do not pick is kept, so nothing is lost.");
         ImGui::PopTextWrapPos();
         ImGui::EndPopup();
     }
