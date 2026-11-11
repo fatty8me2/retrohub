@@ -3,8 +3,11 @@
  * clock once per frame. While a game runs nothing pops up: the reminder and the start notice go to the bell only. */
 #include <cstdlib>
 #include <ctime>
+#include <filesystem>
 
 #include "app.h"
+#include <shellapi.h>
+#include "savestore.h"
 #include "friends_ui.h"
 #include "gamenight_logic.h"
 #include "gamenight_sched.h"
@@ -27,6 +30,8 @@ struct GnState {
     // host flow: after the room opens, invite these friends once
     std::vector<std::string> pending_invite;
     double pending_at = 0;
+    // "Add to calendar": the last .ics written (path empty = the last try failed; msg says why)
+    std::string ics_path, ics_msg;
 };
 GnState GN;
 
@@ -79,6 +84,31 @@ void toast_sync(bool force, bool for_exit = false) {
         /* Backup for exits that skip gn_shutdown(). Once gn_shutdown() ran (the session state is torn down after it) this does nothing. */
         std::atexit([] { if (g_exit_done) return; g_exit_done = true; try { toast_sync(true, true); } catch (...) {} });
     }
+}
+
+/* Writes the .ics next to the game's screenshots (the folder the Wrapped picture goes to); a game that is not in this library
+ * falls back to <user data>\calendar. Nothing is opened here: Open / Show in folder act on click only. */
+void export_ics(const Night& n) {
+    std::string dir;
+    const hub::GameEntry* e = n.game_id.empty() ? nullptr : find_room_entry(n.game_id);
+    if (e && !is_remote_stand_in(*e)) dir = no_slash(hub::saves::game_dir(sys_short(*e), e->key)) + "\\shots";
+    else dir = no_slash(hub::data_dir()) + "\\calendar";
+    make_dirs(dir);
+    const std::string file = dir + "\\" + ics_file_name(n);
+    const std::string body = make_ics(n, wall_ms());
+    FILE* f = _wfopen(std::filesystem::u8path(file).c_str(), L"wb");
+    const bool ok = f && std::fwrite(body.data(), 1, body.size(), f) == body.size();
+    if (f) std::fclose(f);
+    if (!ok) { GN.ics_path.clear(); GN.ics_msg = "Could not write the calendar file to " + dir + "."; return; }
+    GN.ics_path = file;
+    GN.ics_msg = "Calendar file saved to " + file;
+}
+
+void shell_ics(bool show) {
+    if (GN.ics_path.empty() || g_headless) return;
+    const std::wstring w = std::filesystem::u8path(GN.ics_path).wstring();
+    if (show) ShellExecuteW(nullptr, L"open", L"explorer.exe", (L"/select,\"" + w + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+    else ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 std::string who(const Night& n) { return n.mine ? std::string("You") : (n.host_name.empty() ? std::string("A friend") : n.host_name); }
@@ -238,7 +268,21 @@ void gn_plan_popup() {
     if (!act.empty()) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         ImGui::TextDisabled("Coming up");
-        for (auto* n : act) ImGui::BulletText("%s - %s (%s)", n->game_title.c_str(), local_label(n->start_ms).c_str(), who(*n).c_str());
+        for (auto* n : act) {
+            ImGui::BulletText("%s - %s (%s)", n->game_title.c_str(), local_label(n->start_ms).c_str(), who(*n).c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton(("Add to calendar##ics" + n->id).c_str())) export_ics(*n);
+        }
+        if (!GN.ics_msg.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, GN.ics_path.empty() ? ui::WARN : ui::TEXT2);
+            ImGui::TextWrapped("%s", GN.ics_msg.c_str());
+            ImGui::PopStyleColor();
+            if (!GN.ics_path.empty()) {
+                if (ImGui::SmallButton("Open##icsopen")) shell_ics(false);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Show in folder##icsshow")) shell_ics(true);
+            }
+        }
     }
     ImGui::Dummy(ImVec2(0, sp(0.75f)));
     if (ui::button("Send invite", ImVec2(sp(14.f), sp(4.5f)), true, !gs.empty())) {

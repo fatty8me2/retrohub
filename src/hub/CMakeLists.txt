@@ -84,7 +84,7 @@ target_include_directories(hub_username_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 
 # Home fun (Wave 3 L6/L7/L8): attract-mode idle + slideshow maths, Surprise-me pick weighting, Wrapped aggregation (pure headers).
 add_executable(hub_homefun_test test_homefun.cpp)
-target_link_libraries(hub_homefun_test PRIVATE hublogic)
+target_link_libraries(hub_homefun_test PRIVATE hublogic hubattach)
 
 # Home Continue hero + Recently played row: hero pick, backdrop source, relative time, Continue/Play label (pure header).
 add_executable(hub_continue_test test_continue.cpp)

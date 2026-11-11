@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -230,6 +231,108 @@ inline bool save(const std::string& path, const Plans& p) {
     if (ec) { std::filesystem::remove(path, ec); std::filesystem::rename(tmp, path, ec); }
     return !ec;
 }
+
+/* ---- "Add to calendar": a standard iCalendar (RFC 5545) file for one game night ----
+ * Plans are single events (no recurrence in the model), so there is no RRULE. UTC times, CRLF line ends, lines folded at 75 octets
+ * (never inside a UTF-8 character), TEXT values escaped. */
+constexpr int64_t kIcsDurationMs = 90LL * 60 * 1000;   // same window the Host / Join card stays offered
+constexpr int kIcsAlarmMinutes = 15;
+
+/* RFC 5545 TEXT escaping: backslash, semicolon, comma, newline. Other control characters become spaces. */
+inline std::string ics_escape(const std::string& s) {
+    std::string o;
+    for (size_t i = 0; i < s.size(); ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '\\') o += "\\\\";
+        else if (c == ';') o += "\\;";
+        else if (c == ',') o += "\\,";
+        else if (c == '\r') { if (i + 1 < s.size() && s[i + 1] == '\n') ++i; o += "\\n"; }
+        else if (c == '\n') o += "\\n";
+        else if (c < 0x20 || c == 0x7f) o += ' ';
+        else o += (char)c;
+    }
+    return o;
+}
+
+/* Folds a content line (no line end) at 75 octets: each continuation starts with one space. Returns CRLF-terminated text. */
+inline std::string ics_fold(const std::string& line) {
+    std::string o;
+    size_t pos = 0, limit = 75;   // octets allowed on this physical line, including the leading space of continuations
+    bool first = true;
+    while (pos < line.size()) {
+        size_t room = first ? limit : limit - 1;
+        size_t take = std::min(room, line.size() - pos);
+        if (pos + take < line.size())   // do not cut a multi-byte character: back up to a character start
+            while (take > 0 && ((unsigned char)line[pos + take] & 0xC0) == 0x80) --take;
+        if (take == 0) take = std::min(room, line.size() - pos);   // malformed input: still make progress
+        if (!first) o += ' ';
+        o.append(line, pos, take);
+        o += "\r\n";
+        pos += take;
+        first = false;
+    }
+    if (line.empty()) o = "\r\n";
+    return o;
+}
+
+/* "YYYYMMDDTHHMMSSZ" for unix seconds (proleptic Gregorian, no locale / timezone). */
+inline std::string ics_utc(int64_t secs) {
+    int64_t days = secs / 86400, rem = secs % 86400;
+    if (rem < 0) { rem += 86400; --days; }
+    int64_t z = days + 719468;
+    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    int64_t doe = z - era * 146097;
+    int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int64_t y = yoe + era * 400;
+    int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    int64_t mp = (5 * doy + 2) / 153;
+    int d = (int)(doy - (153 * mp + 2) / 5 + 1);
+    int m = (int)(mp < 10 ? mp + 3 : mp - 9);
+    if (m <= 2) ++y;
+    char b[32];
+    std::snprintf(b, sizeof b, "%04d%02d%02dT%02d%02d%02dZ", (int)y, m, d, (int)(rem / 3600), (int)(rem % 3600 / 60), (int)(rem % 60));
+    return b;
+}
+
+/* A stable id: the same night always gives the same UID, so importing twice updates the entry instead of duplicating it. */
+inline std::string ics_uid(const Night& n) {
+    std::string o;
+    for (char c : n.id) o += (std::isalnum((unsigned char)c) || c == '-' || c == '.' || c == '_' || c == '@') ? c : '-';
+    if (o.empty()) o = std::to_string(n.start_ms / 1000);
+    return "gamenight-" + o + "@retrohub";
+}
+
+/* now_ms only feeds DTSTAMP. */
+inline std::string make_ics(const Night& n, int64_t now_ms) {
+    const std::string title = n.game_title.empty() ? std::string("a session") : n.game_title;
+    std::string desc = "Game night in RetroHub: " + title + ".";
+    if (!n.mine && !n.host_name.empty()) desc += "\nPlanned by " + n.host_name + ".";
+    desc += "\nOpen RetroHub a few minutes before the start to host or join.";
+    std::string o;
+    auto L = [&](const std::string& l) { o += ics_fold(l); };
+    L("BEGIN:VCALENDAR");
+    L("VERSION:2.0");
+    L("PRODID:-//RetroHub//Game night//EN");
+    L("CALSCALE:GREGORIAN");
+    L("BEGIN:VEVENT");
+    L("UID:" + ics_uid(n));
+    L("DTSTAMP:" + ics_utc(now_ms / 1000));
+    L("DTSTART:" + ics_utc(n.start_ms / 1000));
+    L("DTEND:" + ics_utc((n.start_ms + kIcsDurationMs) / 1000));
+    L("SUMMARY:" + ics_escape("Game night: " + title));
+    L("DESCRIPTION:" + ics_escape(desc));
+    L("BEGIN:VALARM");
+    L("ACTION:DISPLAY");
+    L("TRIGGER:-PT" + std::to_string(kIcsAlarmMinutes) + "M");
+    L("DESCRIPTION:" + ics_escape("Game night starts in " + std::to_string(kIcsAlarmMinutes) + " minutes: " + title));
+    L("END:VALARM");
+    L("END:VEVENT");
+    L("END:VCALENDAR");
+    return o;
+}
+
+/* "game-night-20261112T200000Z.ics" (UTC start, so two nights never share a name). */
+inline std::string ics_file_name(const Night& n) { return "game-night-" + ics_utc(n.start_ms / 1000) + ".ics"; }
 
 }  // namespace night
 }  // namespace hubui
