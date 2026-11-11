@@ -344,7 +344,7 @@ TileSpec spec_for_entry(const hub::GameEntry& e, const char* shelf, bool recent_
     if (recent_sub && gs.last_played) t.subtitle = fmt_ago(gs.last_played);
     else if (!recent_sub && A.sort_mode == hubui::SortMode::MostPlayed && shelf && (std::strcmp(shelf, "grid") == 0 || std::strncmp(shelf, "console:", 8) == 0))
         t.subtitle = hubui::pt::sort_tile_text(gs.play_seconds);   // Steam-style hours while sorted by play time: All Games grid / compact and the console shelves (they follow the sort); never the room picker, party view or Favorites
-    else if (gs.play_seconds) t.subtitle = hubui::format_play_time(gs.play_seconds) + " played";
+    else if (gs.play_seconds) t.subtitle = hubui::pt::hours_compact(gs.play_seconds) + " played";
     else t.subtitle = cat && cat->year ? std::to_string(cat->year) : std::string("Not played yet");
     return t;
 }

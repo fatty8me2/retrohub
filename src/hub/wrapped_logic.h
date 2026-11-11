@@ -5,6 +5,7 @@
  * groups (group_logic.h) for the most-played-with friend. Nothing here touches files or the UI. */
 
 #include "playstats.h"
+#include "playtime_logic.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -179,15 +180,8 @@ inline const char* weekday_name(int wd) {
     return wd >= 0 && wd <= 6 ? n[wd] : "";
 }
 
-/* "12 h 30 min" style text for the cards. */
-inline std::string hours_text(int64_t secs) {
-    if (secs <= 0) return "0 min";
-    if (secs < 60) return "<1 min";
-    const int64_t mins = secs / 60;
-    if (mins < 60) return std::to_string(mins) + " min";
-    const int64_t h = mins / 60, m = mins % 60;
-    return m ? std::to_string(h) + " h " + std::to_string(m) + " min" : std::to_string(h) + " h";
-}
+/* Play time for the cards, in the hub's compact form (playtime_logic.h): "0 min", "<1 min", "45 min", "7.5 h", "1,204 h". */
+inline std::string hours_text(int64_t secs) { return secs <= 0 ? std::string("0 min") : pt::hours_compact((uint64_t)secs); }
 
 /* File name of the saved sheet: "wrapped-2026-10.png" for a month, "wrapped-2026.png" for a year. */
 inline std::string image_file_name(const Range& r) {

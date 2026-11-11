@@ -402,7 +402,7 @@ int main() {
     }
 
     {   // friends' play time
-        CHECK(friend_hours_text(0) == "" && friend_hours_text(45) == "45m" && friend_hours_text(180) == "3h" && friend_hours_text(870) == "14h" && friend_hours_text(570) == "9h 30m");
+        CHECK(friend_hours_text(0) == "" && friend_hours_text(45) == "45 min" && friend_hours_text(180) == "3 h" && friend_hours_text(870) == "15 h" && friend_hours_text(570) == "9.5 h");
         std::map<std::string, std::vector<PlaytimeEntry>> by;
         by["u1"] = {{"k1", "Smash", 840}, {"k2", "Metroid", 10}};
         by["u2"] = {{"k1", "Smash", 180}};
@@ -410,9 +410,9 @@ int main() {
         by["u4"] = {{"k1", "Smash", 60}};
         by["u5"] = {{"k1", "Smash", 30}};
         std::map<std::string, std::string> nm = {{"u1", "Mickey"}, {"u2", "camer"}, {"u4", "Zed"}, {"u5", "Al"}};
-        CHECK(friends_playtime_line(by, nm, "k1") == std::string("Mickey 14h \xC2\xB7 camer 3h \xC2\xB7 Zed 1h"));
-        CHECK(friends_playtime_line(by, nm, "k2") == "Mickey 10m" && friends_playtime_line(by, nm, "zz").empty());
-        CHECK(friend_top_games_text(by["u1"]) == "Top games: Smash 14h, Metroid 10m" && friend_top_games_text({}).empty());
+        CHECK(friends_playtime_line(by, nm, "k1") == std::string("Mickey 14 h \xC2\xB7 camer 3 h \xC2\xB7 Zed 1 h"));
+        CHECK(friends_playtime_line(by, nm, "k2") == "Mickey 10 min" && friends_playtime_line(by, nm, "zz").empty());
+        CHECK(friend_top_games_text(by["u1"]) == "Top games: Smash 14 h, Metroid 10 min" && friend_top_games_text({}).empty());
         Settings a; CHECK(a.share_playtime); a.share_playtime = false; Settings b;
         CHECK(settings_from_json(settings_to_json(a), &b) && !b.share_playtime);
     }
@@ -425,8 +425,8 @@ int main() {
         std::vector<PlaytimeEntry> g = {{"a", "Zelda: The Wind Waker", 840}, {"b", "The Legend of Zelda: Twilight Princess (GameCube", 588},
                                         {"c", "Mario Golf", 200}, {"d", "", 0}, {"e", "Twilight", 0}, {"f", "The Legend of Zelda: Twilight Princess (GameCube)", 12}};
         auto tg = friend_top_games(g, 5);
-        CHECK(tg.size() == 3 && tg[0].title == "Zelda: The Wind Waker" && tg[0].hours == "14h");
-        CHECK(tg[1].title == "The Legend of Zelda: Twilight Princess" && tg[1].minutes == 600 && tg[1].hours == "10h" && tg[2].title == "Mario Golf" && tg[2].hours == "3h 20m");
+        CHECK(tg.size() == 3 && tg[0].title == "Zelda: The Wind Waker" && tg[0].hours == "14 h");
+        CHECK(tg[1].title == "The Legend of Zelda: Twilight Princess" && tg[1].minutes == 600 && tg[1].hours == "10 h" && tg[2].title == "Mario Golf" && tg[2].hours == "3.3 h");
         CHECK(friend_top_games(g, 2).size() == 2 && friend_top_games({}, 3).empty());
         CHECK(friend_top_games_text(g, 3).find("(GameCube") == std::string::npos);
         using I = FriendMenuItem; using M = FriendMoreItem;
@@ -445,8 +445,8 @@ int main() {
     }
     CHECK(format_play_time(0) == "Never played");
     CHECK(format_play_time(30) == "Under a minute");
-    CHECK(format_play_time(35 * 60) == "35 min");
-    CHECK(format_play_time(2 * 3600 + 5 * 60) == "2h 05m");
+    CHECK(format_play_time(35 * 60) == "35 minutes");
+    CHECK(format_play_time(2 * 3600 + 5 * 60) == "2.1 hours");
     CHECK(sanitize_player_name("") == "Player");
     CHECK(sanitize_player_name("  Bob \"x\" ") == "Bob x");
     CHECK(sanitize_player_name("ABCDEFGHIJKLMNOPQRSTUVWXYZ").size() == 16);
@@ -666,12 +666,12 @@ int main() {
             a.updated_ms = NOW - 30000;
             CHECK(friend_presence_line(a, NOW) == "Smash Classic \xC2\xB7 2/4");
             a.updated_ms = NOW - 65 * 60000;
-            CHECK(friend_presence_line(a, NOW) == "Smash Classic \xC2\xB7 2/4 \xC2\xB7 1h 5m");
+            CHECK(friend_presence_line(a, NOW) == "Smash Classic \xC2\xB7 2/4 \xC2\xB7 1.1 h");
             FriendRow g = row("g", "Gus", FS_InGame, false, 0, "Mario Kart 64");
             CHECK(friend_presence_line(g, NOW) == "Mario Kart 64");
             CHECK(friend_presence_line(row("o", "Oz", FS_Online, false, 5), NOW) == "Online");
             CHECK(friend_presence_line(row("z", "Zed", FS_Offline, false, NOW - 3 * 3600000LL), NOW) == "Last seen 3h ago");
-            CHECK(format_dur_short(59999) == "" && format_dur_short(60000) == "1 min" && format_dur_short(3600000) == "1h");
+            CHECK(format_dur_short(59999) == "" && format_dur_short(60000) == "1 min" && format_dur_short(3600000) == "1 h");
             CHECK(!friend_can_ask(a) && friend_can_ask(g) && !friend_can_ask(row("o", "Oz", FS_Online, false, 5)));
             g.in_my_room = true;
             CHECK(!friend_can_ask(g));
