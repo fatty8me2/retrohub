@@ -414,7 +414,6 @@ target_link_libraries(hub_boot_anim_test PRIVATE hublogic)
 add_executable(hub_uisound_test test_ui_sound.cpp boot_synth.cpp)
 target_include_directories(hub_uisound_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_uisound_test PRIVATE hubcommon)
-target_compile_definitions(hub_uisound_test PRIVATE HUB_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}")   # the test lints frame.cpp for the sound gate
 add_executable(hub_bootsound_test test_boot_sound.cpp boot_synth.cpp)
 target_include_directories(hub_bootsound_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_bootsound_test PRIVATE hubcommon)

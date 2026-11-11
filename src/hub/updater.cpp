@@ -159,7 +159,10 @@ int run_capture(std::string cmd, const std::function<void(const std::string&)>& 
     if (timeout_ms != INFINITE) {   // ending the process closes its end of the pipe, which also frees the read loop below
         HANDLE ph = pi.hProcess;
         watcher = std::thread([ph, timeout_ms, &timedOut]() {
-            if (WaitForSingleObject(ph, timeout_ms) == WAIT_TIMEOUT) { timedOut.store(true); TerminateProcess(ph, 1); }
+            if (WaitForSingleObject(ph, timeout_ms) == WAIT_TIMEOUT) {
+                DWORD c = 0;   // it may have exited normally in the meantime: only a still-running process counts as a timeout
+                if (GetExitCodeProcess(ph, &c) && c == STILL_ACTIVE) { timedOut.store(true); TerminateProcess(ph, 1); }
+            }
         });
     }
     std::string line; char buf[512]; DWORD got = 0;
