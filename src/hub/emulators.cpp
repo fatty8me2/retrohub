@@ -1,4 +1,5 @@
 #include "winutil.h"
+#include "cfg_write.h"
 #include <cctype>
 #include <cstdlib>
 #include <ctime>
@@ -72,13 +73,7 @@ static std::string read_text(const std::string& p) {
     if (!f) return "";
     return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
-static bool write_text(const std::string& p, const std::string& t) {
-    make_dirs(S(P(p).parent_path()));
-    std::ofstream f(P(p), std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f.write(t.data(), (std::streamsize)t.size());
-    return (bool)f;
-}
+static bool write_text(const std::string& p, const std::string& t) { return hubcfg::write_utf8(p, t); }   // durable: flush + one atomic replace; skipped when unchanged
 static void remove_tree(const std::string& p) {
     std::error_code ec;
     fs::remove_all(P(p), ec);
@@ -1993,7 +1988,7 @@ void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::
         return;   // written by prepare_pcsx2 / prepare_ppsspp (pcsx2.h, ppsspp.h)
     } else {   // RetroHub's own portable Cemu (a user's own install goes through prepare_cemu_own_settings)
         std::string f = join(install_dir, "portable\\settings.xml");
-        if (file_exists(f)) write_text(f, cemu_fullscreen_apply(cemu_settings_apply(read_text(f), v), hub::gs::is_fullscreen(v)));
+        if (file_exists(f)) apply_cemu_managed_settings(join(install_dir, "portable"), v);
     }
 }
 
@@ -2135,6 +2130,58 @@ bool prepare_cemu_own_settings(const std::string& user_data, const hub::gs::Valu
     std::string out = cemu_own_settings_apply(orig, v, &st);
     if (!write_text(join(user_data, "retrohub-cemu-state.txt"), cemu_own_state_text(st))) return false;
     return write_text(settings, out);
+}
+
+/* Managed Cemu "graphic packs off": the player's <GraphicPack> block is parked in a state file BESIDE settings.xml (Cemu rewrites
+ * settings.xml in its own form on exit and drops elements it does not know, so nothing parked inside it survives) and Cemu sees an
+ * empty list. Turning packs on puts the block back byte for byte. Cemu keeps the empty <GraphicPack/> placeholder, but if it drops it
+ * the block is re-inserted before </content>. The parked block is never overwritten or lost. */
+static bool cemu_gp_has_entries(const std::string& t, size_t a, size_t b) { return t.substr(a, b - a).find("<Entry") != std::string::npos; }
+
+std::string cemu_managed_gp_apply(const std::string& in, bool packs_on, CemuOwnState* st) {
+    std::string t = in;
+    size_t a = 0, b = 0;
+    const bool span = cemu_gp_span(t, &a, &b);
+    if (!packs_on) {
+        if (span && cemu_gp_has_entries(t, a, b)) {
+            if (!st->gp_stripped || st->gp_block.empty()) { st->gp_block = t.substr(a, b - a); st->gp_stripped = true; }   // an already parked original is kept
+            t.replace(a, b - a, "<GraphicPack/>");
+        }
+        return t;
+    }
+    if (!st->gp_stripped || st->gp_block.empty()) return t;
+    if (span && cemu_gp_has_entries(t, a, b)) { st->gp_stripped = false; st->gp_block.clear(); return t; }   // the block is already there: no duplicate
+    size_t sc = t.find("<GraphicPack/>");
+    if (sc != std::string::npos) t.replace(sc, 14, st->gp_block);
+    else if (span) t.replace(a, b - a, st->gp_block);
+    else {
+        size_t end = t.rfind("</content>");
+        if (end == std::string::npos) return t;   // not a Cemu settings file: keep the parked block for later
+        t.insert(end, "\t" + st->gp_block + "\n");
+    }
+    st->gp_stripped = false;
+    st->gp_block.clear();
+    return t;
+}
+
+bool apply_cemu_managed_settings(const std::string& portable_dir, const hub::gs::Values& v) {
+    const std::string settings = join(portable_dir, "settings.xml"), sf = join(portable_dir, "retrohub-cemu-gp-state.txt");
+    if (!file_exists(settings)) return false;
+    auto it = v.find("wiiu.graphic_packs");
+    const bool on = it == v.end() || it->second != "false";
+    CemuOwnState st;
+    if (file_exists(sf)) cemu_own_state_parse(read_text(sf), &st);
+    std::string cur = read_text(settings);
+    std::string t = cemu_settings_apply(cur, hub::gs::Values());   // older builds renamed the list inside settings.xml: put that name back
+    t = cemu_managed_gp_apply(t, on, &st);
+    t = cemu_fullscreen_apply(t, hub::gs::is_fullscreen(v));
+    if (!on && st.gp_stripped) { if (!write_text(sf, cemu_own_state_text(st))) return false; }   // park first, then change settings.xml
+    bool ok = write_text(settings, t);
+    if (ok && on && file_exists(sf)) {
+        if (st.gp_stripped) write_text(sf, cemu_own_state_text(st));   // restore could not be placed yet: keep the parked block
+        else { std::error_code ec; fs::remove(P(sf), ec); }
+    }
+    return ok;
 }
 
 std::string cemu_profile_apply(const std::string& in, const hub::gs::Values& v) {

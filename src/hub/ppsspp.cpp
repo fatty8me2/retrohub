@@ -10,6 +10,7 @@
 
 #include "logic.h"
 #include "winutil.h"
+#include "cfg_write.h"
 
 namespace hubemu {
 
@@ -24,14 +25,7 @@ static std::string read_text(const std::string& p) {
     std::ifstream f(P(p), std::ios::binary);
     return f ? std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()) : std::string();
 }
-static bool write_text(const std::string& p, const std::string& t) {
-    std::error_code ec;
-    fs::create_directories(P(p).parent_path(), ec);
-    std::ofstream f(P(p), std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f.write(t.data(), (std::streamsize)t.size());
-    return (bool)f;
-}
+static bool write_text(const std::string& p, const std::string& t) { return hubcfg::write_utf8(p, t); }   // durable: flush + one atomic replace; skipped when unchanged
 
 std::string ppsspp_system_dir(const std::string& d) { return join(d, "memstick\\PSP\\SYSTEM"); }
 
@@ -112,6 +106,24 @@ std::string ppsspp_controls_ini(const hubctl::Profile& prof, int slot) {
     return o;
 }
 
+std::string ppsspp_controls_merge(const std::string& existing, const hubctl::Profile& prof, int slot) {
+    const std::string gen = ppsspp_controls_ini(prof, slot);
+    bool blank = true;
+    for (char c : existing) if (c != ' ' && c != '\t' && c != '\r' && c != '\n') { blank = false; break; }
+    if (blank) return gen;
+    std::string t = existing;
+    size_t pos = 0;
+    while (pos < gen.size()) {
+        size_t nl = gen.find('\n', pos);
+        std::string line = gen.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        pos = nl == std::string::npos ? gen.size() : nl + 1;
+        size_t eq = line.find(" = ");
+        if (line.empty() || line[0] == '#' || line[0] == '[' || eq == std::string::npos) continue;
+        t = hubui::ini_set(t, "ControlMapping", line.substr(0, eq), line.substr(eq + 3));
+    }
+    return t;
+}
+
 std::string prepare_ppsspp(const std::string& install_dir, const hubctl::Profile& prof, int slot, const hub::gs::Values& v) {
     std::error_code ec;
     fs::remove(P(join(install_dir, "installed.txt")), ec);   // would send PPSSPP to the user's Documents folder; RetroHub's copy stays portable
@@ -123,7 +135,8 @@ std::string prepare_ppsspp(const std::string& install_dir, const hubctl::Profile
     t = ppsspp_ini_launch(t, v);
     if (!write_text(ini, t)) return "could not write ppsspp.ini";
     if (first) write_text(marker, "RetroHub wrote PPSSPP's defaults once; controls.ini is rewritten before every launch.\n");
-    if (!write_text(join(dir, "controls.ini"), ppsspp_controls_ini(prof, slot))) return "could not write controls.ini";
+    const std::string cini = join(dir, "controls.ini");
+    if (!write_text(cini, ppsspp_controls_merge(read_text(cini), prof, slot))) return "could not write controls.ini";
     return "";
 }
 

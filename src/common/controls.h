@@ -53,6 +53,18 @@ struct Analog {
     bool operator==(const Analog& o) const { return x == o.x && y == o.y && deadzone == o.deadzone && sensitivity == o.sensitivity; }
 };
 
+/* What an emulator's config can take of a profile stick. Units per target (the profile stores deadzone 0..0.95 radial and sensitivity 0.1..4):
+ *   N64Run   deadzone 0..0.95 fraction, sensitivity 0.1..4 (n64run scales the output)
+ *   Dolphin  deadzone 0..0.95 fraction, written as percent ("Dead Zone" = fraction * 100); no sensitivity (reported as 1)
+ *   Cemu     deadzone 0..0.95 fraction (<deadzone> element); no sensitivity
+ *   Azahar   deadzone 0..0.95 fraction (deadzone:); no sensitivity
+ *   Pcsx2    deadzone 0..0.95 fraction (Pad "Deadzone", 0..1 scale); no sensitivity written
+ *   Lichii   deadzone 0..0.95 fraction (deadzone:), sensitivity 0.25..1.5 (range:, the range Lichii's own stick dialog offers)
+ * Out-of-range input is clamped, NaN becomes the model default (0.08 / 1). */
+enum class AnalogTarget { N64Run, Dolphin, Cemu, Azahar, Pcsx2, Lichii };
+struct AnalogOut { double deadzone; double sensitivity; };
+AnalogOut clamp_analog(AnalogTarget target, double deadzone, double sensitivity);
+
 struct Profile {
     std::string name;     // "default-n64", "n64-custom", "game:<id>" ...
     std::string system;

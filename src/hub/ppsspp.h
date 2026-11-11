@@ -27,6 +27,9 @@ std::string ppsspp_binding(const hubctl::Term& t, int xinput_slot);
  * keyboard keys; every hotkey (pause, fast-forward, screenshot, rewind ...) is left empty, because PPSSPP erases its defaults for every name when the
  * section exists. Save State / Load State stay unmapped on purpose: PPSSPP then keeps its built-in F2 / F4 accelerators, which RetroHub sends. */
 std::string ppsspp_controls_ini(const hubctl::Profile& profile, int xinput_slot);
+/* The same mapping merged into an existing controls.ini: only the keys RetroHub manages (the PSP buttons and An.*) are updated in place;
+ * every other key, section and comment of the player's file stays. An empty/missing file gives exactly ppsspp_controls_ini. */
+std::string ppsspp_controls_merge(const std::string& existing, const hubctl::Profile& profile, int xinput_slot);
 /* Windows virtual-key codes of the chord that saves (F2) / loads (F4) the quick-save state. */
 std::vector<int> ppsspp_state_keys(bool save);
 

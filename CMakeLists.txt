@@ -252,6 +252,7 @@ add_test(NAME hub_emu_test COMMAND hub_emu_test)                     # 3DS/Wii U
 add_test(NAME hub_wiiu_test COMMAND hub_wiiu_test)               # offline Wii U: meta.xml/.wua, own-Cemu settings backup+revert, profiles, saves, archives, art names
 add_test(NAME hub_ps2_test COMMAND hub_ps2_test)                   # PS2: images, BIOS, PCSX2.ini, pads, card session (no network)
 add_test(NAME hub_ext_pads_test COMMAND hub_ext_pads_test)           # external emulators' pad configs for 1-4 fake pads (PCSX2 multitap, Dolphin ports, Cemu players, Azahar, PPSSPP)
+add_test(NAME hub_emucfg_test COMMAND hub_emucfg_test)                   # emulator config writers: durable commit, managed Cemu graphic packs, analog clamp, PPSSPP controls merge
 add_test(NAME hub_hookshot_test COMMAND hub_hookshot_test)           # Hookshot: ready/stamp, use_for + switch.runner, vault <-> Hookshot save session (temp dirs)
 add_test(NAME hub_nx_runner_test COMMAND hub_nx_runner_test)         # Fritchii runner: save sync across Lichii / Fritchii / vault (newest wins, backups), shader + key seed (temp dirs, no network)
 add_test(NAME hub_switch_test COMMAND hub_switch_test)               # Switch (Lichii): qt-config.ini merge, controls, profiles.dat, keys/firmware import, save session (no network)
