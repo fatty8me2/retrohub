@@ -71,9 +71,8 @@ void finish_setup_card() {
     ImGui::PushFont(ui::F.bold);
     ImGui::TextUnformatted("Finish setup");
     ImGui::PopFont();
-    std::string line;
-    for (auto& s : steps) line += (line.empty() ? "" : "  -  ") + s;
-    text_wrapped_disabled(line);
+    for (size_t i = 0; i < steps.size(); ++i) text_wrapped_disabled(std::to_string(i + 1) + ". " + steps[i]);   // short numbered steps, one per line
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
     if (button("Continue setup", ImVec2(0, 0), true, true, ui::Icon::ChevronR)) wizard_open();
     ImGui::SameLine();
     if (button("Not now", ImVec2(0, 0))) dismissed = true;
