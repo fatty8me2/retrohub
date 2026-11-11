@@ -2,6 +2,7 @@
 
 #include "games.h"
 #include "savestore.h"
+#include "durable_write.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -74,8 +75,7 @@ bool copy_files(const std::vector<F>& fl, const fs::path& from, const fs::path& 
         tmp += ".hubtmp";
         fs::copy_file(from / P(f.rel), tmp, fs::copy_options::overwrite_existing, ec);
         if (ec) return false;
-        fs::rename(tmp, dst, ec);
-        if (ec) { fs::remove(tmp, ec); return false; }
+        if (!durable::commit_replace(tmp.wstring(), dst.wstring(), durable::kRetryLongMs)) { fs::remove(tmp, ec); return false; }
     }
     return true;
 }
@@ -237,7 +237,7 @@ bool export_game_zip(const std::string& game_dir, const std::string& zip_path, b
     }
     if (ok) ok = mz_zip_writer_finalize_archive(&z) != 0;
     mz_zip_writer_end(&z);
-    if (ok) { fs::remove(dst, ec); fs::rename(tmp, dst, ec); ok = !ec; }
+    if (ok) ok = durable::commit_replace(tmp.wstring(), dst.wstring(), durable::kRetryLongMs);
     if (!ok) { fs::remove(tmp, ec); return fail("Writing the zip failed."); }
     return true;
 }

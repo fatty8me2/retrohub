@@ -23,6 +23,7 @@
 #include <system_error>
 #include <vector>
 
+#include "durable_write.h"
 #include "gba_save.h"
 #include "json.h"
 #include "logic.h"
@@ -228,8 +229,7 @@ inline bool write_atomic(const std::string& p, const std::string& data) {
         f.write(data.data(), (std::streamsize)data.size());
         if (!f) return false;
     }
-    fs::rename(U(tmp), U(p), ec);
-    if (ec) { fs::remove(U(tmp), ec); return false; }
+    if (!durable::commit_replace(U(tmp).wstring(), U(p).wstring())) { fs::remove(U(tmp), ec); return false; }
     return true;
 }
 /* A copy of `file` in `dir` that never overwrites an earlier backup: <name>.<n>.bak */
