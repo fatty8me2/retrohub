@@ -66,6 +66,8 @@ std::atomic<bool> s_ready{false};
 std::atomic<bool> s_handing{false};
 std::atomic<bool> s_deferred{false};
 std::atomic<bool> s_quit{false};
+std::atomic<bool> s_blocked_bad{false};   // the latest release is the one that could not start here: not offered
+std::atomic<bool> s_retry_bad{false};     // the user pressed "Try again": the next check may clear the record
 
 struct Pending {
     std::wstring apply_exe, apply_dir, staged, exe_dir, marker;
@@ -834,6 +836,34 @@ GateState gate_step(Gate& g, bool ready, bool session_busy, bool install_busy, u
     return GateState::Settling;
 }
 
+static std::string strip_v(std::string t) {
+    while (!t.empty() && (t.front() == ' ' || t.front() == '\t')) t.erase(t.begin());
+    while (!t.empty() && (t.back() == ' ' || t.back() == '\t' || t.back() == '\r' || t.back() == '\n')) t.pop_back();
+    if (!t.empty() && (t[0] == 'v' || t[0] == 'V')) t.erase(t.begin());
+    return t;
+}
+BadVerdict bad_version_verdict(const std::string& cand, const std::string& bad, bool retry) {
+    if (bad.empty() || strip_v(cand).empty() || strip_v(cand) != strip_v(bad)) return BadVerdict::Proceed;
+    return retry ? BadVerdict::ForcedRetry : BadVerdict::Skip;
+}
+std::string bad_version_message(const std::string& cand, const std::string& cur) {
+    return "Version " + strip_v(cand) + " could not start on this PC, so RetroHub stayed on version " + strip_v(cur) + ".";
+}
+bool bad_version_gate(const std::wstring& install, const std::string& cand, bool retry, std::string* why) {
+    apply::BadVersion b;
+    if (!apply::bad_version_read(install, &b) || b.version.empty()) return false;   // none, or unreadable: ignored
+    switch (bad_version_verdict(cand, b.version, retry)) {
+        case BadVerdict::Skip:
+            if (why) *why = bad_version_message(cand, current_version());
+            return true;
+        case BadVerdict::ForcedRetry:   // the user asked: the record goes, this one try is allowed
+        case BadVerdict::Proceed:       // another (newer) release: the stale record goes
+            apply::bad_version_clear(install);
+            return false;
+    }
+    return false;
+}
+
 bool discard_allowed(const DiscardGuard& g, const std::string& tag) { return !(g.tag == tag && g.count >= kMaxStagedDiscards); }
 void note_discard(DiscardGuard& g, const std::string& tag) { if (g.tag != tag) { g.tag = tag; g.count = 0; } g.count++; }
 void note_staged_ok(DiscardGuard& g) { g = DiscardGuard(); }
@@ -1021,6 +1051,7 @@ void check_async(bool force) {
     s_checked.store(true);
     s_checking.store(true);
     s_failed.store(false);
+    s_blocked_bad.store(false);
     s_available.store(false);
     set_status("");
 
@@ -1041,6 +1072,7 @@ void check_async(bool force) {
             s_checking.store(false);
             return;
         }
+        const bool retryBad = s_retry_bad.exchange(false);   // consumed by exactly one check
         detail::Release rel = detail::parse_release(response);
         if (!rel.ok) {
             ulog("check failed: unreadable release JSON");
@@ -1061,6 +1093,11 @@ void check_async(bool force) {
         if (detail::compare_versions(rel.tag, cur) <= 0) {
             set_status("Up to date (" + cur + ").");
             ulog("up to date: have %s, latest %s", cur.c_str(), rel.tag.c_str());
+        } else if (std::string badWhy; detail::bad_version_gate(W(trim_slash(hub::exe_dir())), rel.tag, retryBad, &badWhy)) {
+            /* The installer rolled this very version back because it would not start: not downloaded, staged or installed again by itself. */
+            s_blocked_bad.store(true);
+            set_status(badWhy);
+            ulog("latest %s is the version that could not start here; not offered (%s)", rel.tag.c_str(), badWhy.c_str());
         } else if ((rel.has_asset || rel.has_hub_asset) && (rel.sums_url.empty() || rel.sig_url.empty())) {
             /* Unsigned (or no checksums): refused up front, nothing is offered or downloaded. */
             s_failed.store(true);
@@ -1109,6 +1146,15 @@ void start_update() {
         set_status("Error: No update download available.");
         s_downloading.store(false);
         return;
+    }
+    {   // never download or stage a version the installer already rolled back (a retry clears it first, in the check)
+        std::string why;
+        if (detail::bad_version_gate(W(trim_slash(hub::exe_dir())), version, false, &why)) {
+            s_blocked_bad.store(true);
+            set_status(why);
+            s_downloading.store(false);
+            return;
+        }
     }
     const bool gaming = s_session_probe && s_session_probe();   // read here, on the UI thread
     set_status(gaming ? "Starting download (it installs when you finish playing)..." : "Starting download...");
@@ -1468,6 +1514,8 @@ bool latest_skipped() {
 bool checking() { return s_checking.load(); }
 bool update_available() { return s_available.load(); }
 bool check_failed() { return s_failed.load(); }
+bool update_blocked_bad_version() { return s_blocked_bad.load(); }
+void retry_bad_version() { s_retry_bad.store(true); check_async(true); }
 bool downloading() { return s_downloading.load(); }
 float download_progress() { return s_progress.load(); }
 bool installer_started() { return s_started.load(); }

@@ -1,5 +1,6 @@
 // Console test for the updater: pure logic + a live release check (no download/install).
 #include "updater.h"
+#include "update_apply.h"
 
 #include <process.h>
 #include <chrono>
@@ -661,6 +662,39 @@ int main(int argc, char** argv) {
         note_discard(g, "v1.42.1"); note_staged_ok(g); CHECK(discard_allowed(g, "v1.42.1") && g.count == 0);   // a good reuse resets
         std::string dm = discard_message("v1.42.0");
         CHECK(dm.find("v1.42.0") != std::string::npos && dm.find("\xE2\x80\x94") == std::string::npos);
+    }
+
+    // --- a version the installer rolled back is not offered again (updates\bad_version.json) ---
+    {
+        CHECK(bad_version_verdict("v1.42.0", "v1.42.0", false) == BadVerdict::Skip);
+        CHECK(bad_version_verdict("v1.42.0", "1.42.0", false) == BadVerdict::Skip && bad_version_verdict("1.42.0", "V1.42.0", false) == BadVerdict::Skip);   // v prefix ignored
+        CHECK(bad_version_verdict("v1.42.0", "v1.42.0", true) == BadVerdict::ForcedRetry);
+        CHECK(bad_version_verdict("v1.42.1", "v1.42.0", false) == BadVerdict::Proceed && bad_version_verdict("v1.42.1", "v1.42.0", true) == BadVerdict::Proceed);
+        CHECK(bad_version_verdict("v1.42.0", "", false) == BadVerdict::Proceed && bad_version_verdict("", "", false) == BadVerdict::Proceed);
+        CHECK(bad_version_verdict("v1.42.0", "v1.4.20", false) == BadVerdict::Proceed);           // a different version that merely looks alike
+        CHECK(bad_version_message("v1.42.0", "v1.41.0") == "Version 1.42.0 could not start on this PC, so RetroHub stayed on version 1.41.0.");
+
+        std::filesystem::path d = std::filesystem::temp_directory_path() / ("hub_updater_bad_test_" + std::to_string(_getpid()));
+        std::error_code ec; std::filesystem::remove_all(d, ec); std::filesystem::create_directories(d / "updates", ec);
+        const std::wstring inst = d.wstring();
+        auto write_bad = [&](const std::string& v) { apply::BadVersion b; b.version = v; b.from = "v1.41.0"; b.reason = "did not start"; b.at = 1700000000; b.exit_code = 70; return apply::bad_version_write(inst, b); };
+        auto record_there = [&]() { apply::BadVersion b; return apply::bad_version_read(inst, &b); };
+        std::string why;
+        CHECK(!bad_version_gate(inst, "v1.42.0", false, &why) && why.empty());                  // no file: ignored
+        CHECK(write_bad("v1.42.0") && record_there());
+        CHECK(bad_version_gate(inst, "v1.42.0", false, &why) && why.find("could not start on this PC") != std::string::npos && record_there());   // same tag: skipped, record kept
+        why.clear();
+        CHECK(bad_version_gate(inst, "1.42.0", false, &why) && record_there());                  // automatic checks keep skipping it
+        why.clear();
+        CHECK(!bad_version_gate(inst, "v1.42.0", true, &why) && why.empty() && !record_there());   // "Try again": record cleared, this one try proceeds
+        CHECK(!bad_version_gate(inst, "v1.42.0", false, &why));                                  // ... and nothing blocks it now
+        CHECK(write_bad("v1.42.0") && !bad_version_gate(inst, "v1.43.0", false, &why) && !record_there());   // a newer tag proceeds and clears the stale record
+        // malformed or unreadable files are ignored
+        for (const char* junk : {"", "not json", "{\"v\":1}", "{\"v\":1,\"version\":\"\"}", "[1,2,3]", "{\"version\":5}"}) {
+            { std::ofstream o(d / "updates" / "bad_version.json", std::ios::binary | std::ios::trunc); o << junk; }
+            CHECK(!bad_version_gate(inst, "v1.42.0", false, &why));
+        }
+        std::filesystem::remove_all(d, ec);
     }
 
     // --- download robustness: no hard cap, stall detector, retries, resume only for the same release ---
