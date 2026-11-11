@@ -1,5 +1,6 @@
 /* Console test for the save vault: simulates two PCs (two vault dirs) sharing one sync folder. */
 #include "savestore.h"
+#include "library.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -519,11 +520,11 @@ int main() {
         set_vault_dir(V.u8string());
         write_file(V / "n64/g/battery/g.sav", "g-v1", 100);
         write_file(sf / "foreign stuff/sub/x.dat", "foreign-cloud", 100);       // a top-level folder that is no system
-        SyncReport s = sync_folder(sf.u8string(), false);
-        CHECK(s.ok && s.pushed == 1 && s.pulled == 1);
-        write_file(V / "n64/g/battery/g.sav", "g-v2", 10);
-        set_enum_error_hook(enum_hook);
+        set_enum_error_hook(enum_hook);   // (a folder the vault does not have is foreign; one the vault has counts as a save tree)
         g_hook_mode = 1; g_hook_tail = "foreign stuff"; g_hook_match = "s4sync";
+        SyncReport s = sync_folder(sf.u8string(), false);
+        CHECK(s.ok && s.pushed == 1 && s.pulled == 0 && !fs::exists(V / "foreign stuff"));
+        write_file(V / "n64/g/battery/g.sav", "g-v2", 10);
         s = sync_folder(sf.u8string(), false);
         dump(s);
         CHECK(s.ok && s.error.empty() && s.pushed == 1);                         // the rest synced
@@ -540,6 +541,22 @@ int main() {
         CHECK(!s.ok && !s.error.empty() && s.pushed == 0 && read_file(sf / "n64/g/battery/g.sav") == "g-v2");
         g_hook_mode = 0; g_hook_tail = "\\battery";
         set_enum_error_hook(nullptr);
+    }
+
+    printf("[15b] every system of the canonical table is a protected save-tree folder\n");
+    {
+        int n = 0;
+        for (int i = 1; i < 64; i++) {
+            const char* sh = hub::system_short((hub::System)i);
+            if (!sh || !*sh) continue;
+            n++;
+            CHECK(is_system_folder_name(sh));
+            std::string up = sh; for (auto& c : up) c = (char)toupper((unsigned char)c);
+            CHECK(is_system_folder_name(up));
+        }
+        CHECK(n >= 14);
+        CHECK(is_system_folder_name("switch2"));
+        CHECK(!is_system_folder_name("foreign stuff") && !is_system_folder_name("_conflicts") && !is_system_folder_name(""));
     }
 
     printf("[16] a half-failed backup removes the vault copy it just made (no pile-up on retries)\n");

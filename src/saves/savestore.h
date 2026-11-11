@@ -59,6 +59,10 @@ SyncReport sync_folder(const std::string& sync_root, bool include_states);
 typedef unsigned long (*EnumErrorHook)(const std::string& dir_utf8, int entries_seen);
 void set_enum_error_hook(EnumErrorHook h);
 
+/* True when `name` (any case) is a system folder of the canonical system table (library.h system_short / console_id): such a
+ * top-level vault folder is a save tree, whose listing errors are never skipped as "foreign". */
+bool is_system_folder_name(const std::string& name);
+
 /* Whole-vault backup/restore. Import merges: newer file wins, older kept in _conflicts/.
  * Neither direction carries the account secret: the zip has no _identity/, and an
  * import skips such entries (logged), so a zip from someone else can never switch the account. */
