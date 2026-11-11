@@ -34,6 +34,35 @@ inline EventRoute route_event(bool game_active, bool session_active, bool runner
     return r;
 }
 
+/* In-hub chimes and toast cards (DMs, friend requests, invites, "came online", game night). While a game or session runs they are HELD:
+ * no sound, no toast. The item itself stays (chat unread count, bell entry); HeldNotices counts them so that when play ends the hub
+ * shows ONE quiet summary toast instead of replaying every stale toast and chime. Headless runs (screenshots) are never held. */
+struct InHubRoute { bool sound = true; bool toast = true; bool hold = false; };
+inline InHubRoute in_hub_route(bool game_active, bool session_active, bool headless) {
+    InHubRoute r;
+    r.hold = !headless && (game_active || session_active);
+    r.sound = r.toast = !r.hold;
+    return r;
+}
+/* Whether "NAME came online" may notify at all: its own switch (default on) AND the friend is on the watch list (caller checks that). */
+inline bool online_alert_wanted(bool setting_on) { return setting_on; }
+
+struct HeldNotices {
+    int count = 0;
+    bool was_busy = false;
+    void note() { if (count < 1000) ++count; }
+    /* Call once per frame with the current busy state. Returns the summary text on the frame play ends (and resets), else "". */
+    std::string tick(bool busy) {
+        std::string out;
+        if (was_busy && !busy && count > 0)
+            out = count == 1 ? "1 new notification while you played. Open the bell to see it."
+                             : std::to_string(count) + " new notifications while you played. Open the bell to see them.";
+        if (!busy) count = 0;
+        was_busy = busy;
+        return out;
+    }
+};
+
 /* "just now", "5 min ago", "3 hours ago", "yesterday", "2 days ago", "3 weeks ago", "5 months ago". */
 inline std::string ago_text(int64_t at, int64_t now) {
     if (at <= 0) return "";

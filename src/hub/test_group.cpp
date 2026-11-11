@@ -162,6 +162,31 @@ int main() {
         CHECK(d.bell && !d.windows_toast && !d.osd);
     }
 
+    {   // in-hub notifications are held while a game runs; one quiet summary afterwards
+        InHubRoute idle = in_hub_route(false, false, false);
+        CHECK(idle.sound && idle.toast && !idle.hold);
+        InHubRoute g = in_hub_route(true, false, false), s = in_hub_route(false, true, false), both = in_hub_route(true, true, false);
+        CHECK(!g.sound && !g.toast && g.hold && !s.sound && !s.toast && s.hold && both.hold);
+        InHubRoute hl = in_hub_route(true, true, true);   // headless screenshots keep their toasts
+        CHECK(hl.sound && hl.toast && !hl.hold);
+        CHECK(online_alert_wanted(true) && !online_alert_wanted(false));
+
+        HeldNotices h;
+        CHECK(h.tick(false).empty());
+        h.note();                                   // while idle nothing is held (callers only note while busy)
+        CHECK(h.tick(false).empty() && h.count == 0);
+        CHECK(h.tick(true).empty());
+        h.note(); h.note(); h.note();
+        CHECK(h.tick(true).empty());                // still playing: nothing yet
+        std::string sum = h.tick(false);            // play ends: exactly one summary
+        CHECK(sum == "3 new notifications while you played. Open the bell to see them.");
+        CHECK(h.tick(false).empty() && h.tick(false).empty());   // never again
+        h.tick(true); h.note();
+        CHECK(h.tick(false) == "1 new notification while you played. Open the bell to see it.");
+        h.tick(true);
+        CHECK(h.tick(false).empty());               // played with nothing arriving: silent
+    }
+
     fs::remove_all(base);
     if (fails) { std::printf("%d failures\n", fails); return 1; }
     std::printf("hub_group_test: ok\n");

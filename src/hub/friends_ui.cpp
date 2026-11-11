@@ -496,19 +496,30 @@ void fr_send_text(const std::string& uid, const std::string& text) {
     if (FR.fake) return;
     FR.cli.send_message(uid, text);
 }
+static hubui::group::HeldNotices FR_HELD;
+/* While a game or session runs: no chime, no toast card (held; counted for one quiet summary when play ends). */
+static hubui::group::InHubRoute fr_in_hub_route() {
+    const hubui::group::InHubRoute r = hubui::group::in_hub_route(game_active(), session_active(), g_headless);
+    if (r.hold) FR_HELD.note();
+    return r;
+}
 void fr_notify_night(const std::string& night_id, const std::string& who) {
-    ui_sound::play(ui_sound::Sfx::Notify);
+    const hubui::group::InHubRoute rt = fr_in_hub_route();
+    if (rt.sound) ui_sound::play(ui_sound::Sfx::Notify);
     Notif n;
     n.id = FR.next_id++; n.invite = false; n.night_id = night_id; n.name = who; n.t0 = ImGui::GetTime();
+    n.toast = rt.toast;
     FR.notifs.push_back(n);
 }
 
 void fr_notify(bool invite, const std::string& uid, const std::string& name, const hubnet::Invite& inv) {
-    ui_sound::play(ui_sound::Sfx::Notify);
+    const hubui::group::InHubRoute in_rt = fr_in_hub_route();
+    if (in_rt.sound) ui_sound::play(ui_sound::Sfx::Notify);
     for (auto& o : FR.notifs)
         if (!o.done && !o.ask && o.invite == invite && o.uid == uid && (!invite || o.inv.lobby_code == inv.lobby_code)) o.done = true;
     Notif n;
     n.id = FR.next_id++; n.invite = invite; n.uid = uid; n.name = name; n.inv = inv; n.t0 = ImGui::GetTime();
+    n.toast = in_rt.toast;   // held while playing: the invite waits in the bell, no stale card after the game
     FR.notifs.push_back(n);
     FR.notifs.erase(std::remove_if(FR.notifs.begin(), FR.notifs.end(), [](const Notif& x) { return x.done; }), FR.notifs.end());
     if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
@@ -641,10 +652,11 @@ static void fr_toggle_watch(const hubnet::Friend& f) {
 }
 /* The server says a watched friend just came online: a bell entry and an in-hub toast; the opt-in Windows toast only when nothing runs. */
 static void fr_friend_online(const std::string& uid, const std::string& name) {
+    if (!hubui::group::online_alert_wanted(A.st.notify_online)) return;   // its own switch: nothing at all
     const hubnet::Friend* f = fr_find(uid);
     const std::string who = !name.empty() ? name : (f ? f->name : std::string());
     group_note(hubui::group::Kind::FriendOnline, uid, who, "", "", "", "", 0);
-    push_toast((who.empty() ? std::string("A friend") : who) + " came online", ui::ACCENT, 5.0);
+    if (fr_in_hub_route().toast) push_toast((who.empty() ? std::string("A friend") : who) + " came online", ui::ACCENT, 5.0);
     /* While a game or session runs "came online" goes to the bell only (above); otherwise the opt-in Windows toast (as before). */
     if (hubui::group::route_event(game_active(), session_active(), false, g_headless).windows_toast) hubtoast::notify_online(hubtoast::system_notifier(), A.st.notify_in_game, game_active(), who);
 }
@@ -716,6 +728,7 @@ void fr_adopt_identity_after_vault_change() {
 }
 
 void fr_tick() {
+    { const std::string sum = FR_HELD.tick(!g_headless && (game_active() || session_active())); if (!sum.empty()) push_toast(sum, ui::ACCENT, 6.0); }   // one quiet summary, no chime
     fr_run_pending_join();
     hubui::attach_send_tick();
     if (FR.fake) { gn_tick(); return; }
@@ -747,7 +760,7 @@ void fr_tick() {
                     else if (!e.msg.card.empty() && e.text.empty()) shown = "sent you a challenge";
                     qm_chat_incoming(true, e.uid, e.name, shown);
                     if (fr_panel_shown() && FR.chat_uid == e.uid) fr_mark_read(e.uid);
-                    else { ui_sound::play(ui_sound::Sfx::Notify); push_toast(e.name + ": " + (shown.size() > 80 ? shown.substr(0, 77) + "..." : shown), ui::ACCENT, 5.0); }
+                    else if (const hubui::group::InHubRoute rt = fr_in_hub_route(); rt.toast) { if (rt.sound) ui_sound::play(ui_sound::Sfx::Notify); push_toast(e.name + ": " + (shown.size() > 80 ? shown.substr(0, 77) + "..." : shown), ui::ACCENT, 5.0); }
                 }
                 break;
             case hubnet::Event::ReactionReceived:
@@ -1035,7 +1048,7 @@ void fr_accept(const std::string& uid, const std::string& name) {
     } else FR.cli.accept(uid);
     group_resolve(hubui::group::Kind::FriendRequest, uid);
     if (!FR.fake && !fr_connected()) return;   // offline: the outbox keeps it and says so (Event::Queued); no false "now friends"
-    set_toast("You and " + name + " are now friends.");
+    if (FR.fake) set_toast("You and " + name + " are now friends.");   // live: the server's friend_added event (fr_tick) toasts once
 }
 void fr_join_notif(Notif& n) {
     fr_join_lobby(n.inv.lobby_code, n.inv.game_id, n.inv.game_title, n.name);
@@ -1090,6 +1103,7 @@ void fr_notify_ask(const std::string& uid, const std::string& name, const hubnet
     for (auto& o : FR.notifs) if (o.ask && o.uid == uid) o.done = true;
     Notif n;
     n.id = FR.next_id++; n.invite = false; n.ask = true; n.ask_host = host; n.uid = uid; n.name = name; n.inv = game; n.t0 = ImGui::GetTime();
+    n.toast = fr_in_hub_route().toast;   // held while playing; the bell entry below keeps it
     FR.notifs.push_back(n);
     FR.notifs.erase(std::remove_if(FR.notifs.begin(), FR.notifs.end(), [](const Notif& x) { return x.done; }), FR.notifs.end());
     if (FR.notifs.size() > 30) FR.notifs.erase(FR.notifs.begin());
