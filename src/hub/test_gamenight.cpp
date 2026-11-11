@@ -113,18 +113,31 @@ int main() {
     {   // ---- iCalendar export ----
         CHECK(ics_utc(1794513600) == "20261112T200000Z" && ics_utc(0) == "19700101T000000Z" && ics_utc(951868799) == "20000229T235959Z");
         CHECK(ics_escape("a,b;c\\d\ne") == "a\\,b\\;c\\\\d\\ne" && ics_escape("x\r\ny") == "x\\ny");
-        Night g; g.id = "u1@1794513600"; g.host_name = "Mia"; g.game_id = "mk64"; g.game_title = "Mario Kart 64"; g.start_ms = 1794513600000LL;
+        Night g; g.id = "hostuid42@1794513600"; g.host_uid = "hostuid42"; g.host_name = "Mia"; g.game_id = "mk64"; g.game_title = "Mario Kart 64"; g.start_ms = 1794513600000LL;
         const int64_t stamp = 1794312000000LL;
         const std::string want =
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//RetroHub//Game night//EN\r\nCALSCALE:GREGORIAN\r\nBEGIN:VEVENT\r\n"
-            "UID:gamenight-u1@1794513600@retrohub\r\nDTSTAMP:20261110T120000Z\r\nDTSTART:20261112T200000Z\r\nDTEND:20261112T213000Z\r\n"
+            "UID:" + ics_uid(g) + "\r\nDTSTAMP:20261110T120000Z\r\nDTSTART:20261112T200000Z\r\nDTEND:20261112T213000Z\r\n"
             "SUMMARY:Game night: Mario Kart 64\r\n"
             "DESCRIPTION:Game night in RetroHub: Mario Kart 64.\\nPlanned by Mia.\\nOpen R\r\n"
             " etroHub a few minutes before the start to host or join.\r\n"
             "BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Game night starts in 15 minutes: Mario Kart 64\r\nEND:VALARM\r\n"
             "END:VEVENT\r\nEND:VCALENDAR\r\n";
         CHECK(make_ics(g, stamp) == want);
-        CHECK(ics_uid(g) == ics_uid(g) && ics_file_name(g) == "game-night-20261112T200000Z.ics");
+        // UID / file name: stable, hashed, and free of account ids
+        CHECK(sha256_hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" && sha256_hex("").size() == 64);
+        {
+            Night g2 = g; g2.invitees = {"frienduid77"}; g2.mine = true;
+            const std::string u = ics_uid(g), f = ics_file_name(g);
+            CHECK(u == ics_uid(g2) && f == ics_file_name(g2));                        // same night, same UID and name, whatever else changes
+            CHECK(u.size() == 10 + 32 + 9 && u.compare(0, 10, "gamenight-") == 0 && u.find("@retrohub") == 42);
+            CHECK(f.find("game-night-20261112-2000-") == 0 && f.size() == 25 + 8 + 4 && f.substr(f.size() - 4) == ".ics");
+            Night g3 = g; g3.id = "other@1794513600";                                  // same second, different night: different UID and name
+            CHECK(ics_uid(g3) != u && ics_file_name(g3) != f);
+            const std::string all = make_ics(g2, stamp) + f;
+            CHECK(all.find("hostuid42") == std::string::npos && all.find("frienduid77") == std::string::npos && all.find("1794513600") == std::string::npos);
+            g2.mine = false; CHECK(make_ics(g2, stamp).find("frienduid77") == std::string::npos);
+        }
         g.mine = true; CHECK(make_ics(g, stamp).find("Planned by") == std::string::npos);
 
         // commas, semicolons, non-ASCII and a very long title: every physical line <= 75 octets, CRLF only, unfolds back to the escaped text

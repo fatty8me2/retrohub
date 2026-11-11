@@ -386,6 +386,15 @@ std::string save_image(const wr::Data& d, const std::string& player, std::string
 
 /* Share actions: each writes the picture first (same file and place as "Save as image"), then acts on it. */
 void share_action(int what, const std::string& player) {   // 0 copy, 1 send, 2 open folder
+    if (g_headless) {   // never touch the real vault, clipboard, Explorer or server from a headless run
+        WS.status_ok = true;
+        if (what == 1 && std::getenv("HUB_SHOT_FAKE_FRIENDS")) {   // fake friends: show the picker only, nothing is uploaded (send_path stays empty)
+            WS.send_path.clear();
+            g_wpick.open("Send your Wrapped", "Pick who should get it. They see it in your chat and can open it for 7 days (max 8 MB).");
+            WS.status = "Headless run: picker shown, nothing is sent.";
+        } else WS.status = std::string(what == 0 ? "Not copied" : what == 1 ? "Not sent" : "Not opened") + ": headless run, nothing was saved or changed.";
+        return;
+    }
     std::string err;
     const std::string path = save_image(WS.data, player, &err);
     if (path.empty()) { WS.status_ok = false; WS.status = err; return; }
@@ -401,10 +410,10 @@ void share_action(int what, const std::string& player) {   // 0 copy, 1 send, 2 
         g_wpick.open("Send your Wrapped", "Pick who should get it. They see it in your chat and can open it for 7 days (max 8 MB).");
         WS.status_ok = true;
         WS.status = "Saved to " + path;
-    } else if (!g_headless) {   // only on this click
-        ShellExecuteW(nullptr, L"open", L"explorer.exe", (L"/select,\"" + std::filesystem::u8path(path).wstring() + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
-        WS.status_ok = true;
-        WS.status = "Opened the folder: " + path;
+    } else {   // only on this click
+        HINSTANCE r = ShellExecuteW(nullptr, L"open", L"explorer.exe", (L"/select,\"" + std::filesystem::u8path(path).wstring() + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+        WS.status_ok = (INT_PTR)r > 32;
+        WS.status = WS.status_ok ? "Opened the folder: " + path : "Windows could not open the folder. The picture is saved at " + path;
     }
 }
 
