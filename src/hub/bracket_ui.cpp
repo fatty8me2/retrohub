@@ -166,41 +166,44 @@ void draw_tree() {
 }
 
 void draw_setup() {
-    ImGui::TextWrapped("Pick 2 to 16 players. Smash Classic and Smash 64 / Remix results fill the bracket in by themselves; for other games you pick the winner.");
-    // the ladder
-    auto& l = ladder_entries();
-    if (l.size() > 1) {
-        ImGui::Dummy(ImVec2(0, sp(1.5f)));
-        ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted("Friends ladder"); ImGui::PopFont();
-        ImGui::TextDisabled("Elo from your Smash matches. Used to seed.");
-        for (size_t i = 0; i < l.size() && i < 5; ++i)
-            ImGui::Text("#%d   %s   %d   (%d games)", (int)i + 1, l[i].me ? "You" : l[i].name.c_str(), l[i].rating, l[i].games);
-    }
+    text_wrapped_disabled("Pick 2 to 16 players. Results from Smash Classic and Super Smash Bros. on Nintendo 64 fill in the bracket by themselves. For other games, you pick the winner.");
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    // players card
+    begin_panel("bk_players");
+    section_title("Players (" + std::to_string(BK.entrants.size()) + " of 16)");
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    ImGui::PushFont(ui::F.bold); ImGui::Text("Players (%d/16)", (int)BK.entrants.size()); ImGui::PopFont();
     int rm = -1;
+    const float rh = sp(5.f);
     for (size_t i = 0; i < BK.entrants.size(); ++i) {
         ImGui::PushID((int)i);
         auto& e = BK.entrants[i];
-        std::string t = std::to_string(i + 1) + ".  " + e.name + (e.uid.empty() ? "" : "   (" + std::to_string(e.rating) + ")");
-        ImGui::TextUnformatted(t.c_str());
-        ImGui::SameLine(sp(30.f));
-        if (ui::button("Remove", ImVec2(sp(8.f), sp(3.f)))) rm = (int)i;
-        if (BK.seeding == 2) {
-            ImGui::SameLine();
-            if (i > 0 && ui::button("Up", ImVec2(sp(5.f), sp(3.f)))) std::swap(BK.entrants[i], BK.entrants[i - 1]);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 o = ImGui::GetCursorScreenPos();
+        const float rw = ImGui::GetContentRegionAvail().x;
+        dl->AddRectFilled(o, o + ImVec2(rw, rh), ui::PANEL2, sp(1.5f));
+        std::string t = std::to_string(i + 1) + ".  " + e.name + (e.uid.empty() ? "" : "   (rating " + std::to_string(e.rating) + ")");
+        dl->AddText(ui::F.bold, ui::F.bold->FontSize, o + ImVec2(sp(2.f), (rh - ui::F.bold->FontSize) * 0.5f), ui::TEXT, t.c_str());
+        float x = o.x + rw - sp(0.5f) - sp(12.f);
+        ImGui::SetCursorScreenPos(ImVec2(x, o.y + sp(0.5f)));
+        if (button("Remove", ImVec2(sp(12.f), rh - sp(1.f)))) rm = (int)i;
+        if (BK.seeding == 2 && i > 0) {
+            x -= sp(0.75f) + sp(8.f);
+            ImGui::SetCursorScreenPos(ImVec2(x, o.y + sp(0.5f)));
+            if (button("Up", ImVec2(sp(8.f), rh - sp(1.f)))) std::swap(BK.entrants[i], BK.entrants[i - 1]);
         }
+        ImGui::SetCursorScreenPos(o + ImVec2(0, rh + sp(0.75f)));
+        ImGui::Dummy(ImVec2(rw, 0));
         ImGui::PopID();
     }
     if (rm >= 0) BK.entrants.erase(BK.entrants.begin() + rm);
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    ImGui::SetNextItemWidth(sp(20.f));
+    if (BK.entrants.empty()) { ImGui::TextDisabled("Nobody yet. Type a name or pick a friend below."); ImGui::Dummy(ImVec2(0, sp(0.5f))); }
+    ImGui::SetNextItemWidth(sp(28.f));
     bool enter = osk::input("##bkname", "Type a name", BK.name_buf, sizeof BK.name_buf, ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
-    if (ui::button("Add", ImVec2(sp(8.f), sp(3.5f))) || enter) { add_entrant(BK.name_buf, ""); BK.name_buf[0] = 0; }
+    ImGui::SameLine(0, sp(1.f));
+    if (button("Add", ImVec2(sp(12.f), sp(4.5f))) || enter) { add_entrant(BK.name_buf, ""); BK.name_buf[0] = 0; }
     if (in_room()) {
-        ImGui::SameLine();
-        if (ui::button("Add room", ImVec2(sp(10.f), sp(3.5f))))
+        ImGui::SameLine(0, sp(1.f));
+        if (button("Add everyone in the room", ImVec2(0, sp(4.5f))))
             for (auto& m : room_members()) {
                 std::string uid;
                 if (m.slot == room_my_slot()) { add_entrant(m.name, ""); continue; }
@@ -208,27 +211,47 @@ void draw_setup() {
                 add_entrant(m.name, uid);
             }
     }
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    ImGui::TextDisabled("Friends:");
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted("Friends"); ImGui::PopFont();
     int shown = 0;
     for (auto& f : fr_friends()) {
         if (has_name(f.name) || shown >= 12) continue;
         ImGui::PushID(f.uid.c_str());
-        if (shown % 4) ImGui::SameLine();
-        if (ui::button(f.name.c_str(), ImVec2(sp(12.f), sp(3.f)))) add_entrant(f.name, f.uid);
+        if (shown % 4) ImGui::SameLine(0, sp(1.f));
+        if (button(f.name.c_str(), ImVec2(sp(16.f), sp(4.5f)))) add_entrant(f.name, f.uid);
         ImGui::PopID();
         ++shown;
     }
-    if (shown == 0) ImGui::TextDisabled("(none left to add)");
+    if (shown == 0) ImGui::TextDisabled("No more friends to add.");
+    end_panel();
+    // ladder card
+    auto& l = ladder_entries();
+    if (l.size() > 1) {
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        begin_panel("bk_ladder");
+        section_title("Friends ladder");
+        ImGui::TextDisabled("Ratings from your Smash matches. They decide who plays whom when you seed by rating.");
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        for (size_t i = 0; i < l.size() && i < 5; ++i)
+            ImGui::Text("#%d   %s   %d   (%d games)", (int)i + 1, l[i].me ? "You" : l[i].name.c_str(), l[i].rating, l[i].games);
+        end_panel();
+    }
+    // format card
     ImGui::Dummy(ImVec2(0, sp(1.f)));
+    begin_panel("bk_format");
+    section_title("How to run it");
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
     static const char* fm[] = {"Single elimination", "Double elimination"};
     BK.fmt = ui::segmented("##bkfmt", fm, 2, BK.fmt);
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
     static const char* sd[] = {"Seed by rating", "Random", "As listed"};
     BK.seeding = ui::segmented("##bksd", sd, 3, BK.seeding);
-    if (BK.fmt == 1) { ImGui::Checkbox("Grand final reset (losers bracket player must win twice)", &BK.reset); }
+    if (BK.fmt == 1) { ImGui::Dummy(ImVec2(0, sp(0.5f))); ImGui::Checkbox("Grand final reset (the player from the losers bracket must win twice)", &BK.reset); }
     if (!BK.note.empty()) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ui::BAD), "%s", BK.note.c_str());
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    if (ui::button("Start bracket", ImVec2(sp(16.f), sp(4.f)), true, BK.entrants.size() >= 2)) start_bracket();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    if (button("Start bracket", ImVec2(sp(20.f), sp(5.f)), true, BK.entrants.size() >= 2)) start_bracket();
+    end_panel();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
 }
 
 void draw_champion() {
@@ -265,17 +288,17 @@ void draw_page() {
             if (edit) {
                 ImGui::Dummy(ImVec2(0, sp(0.5f)));
                 std::string la = b.seat_name(m.a.seat) + " won", lb = b.seat_name(m.b.seat) + " won";
-                if (ui::button(la.c_str(), ImVec2(sp(16.f), sp(4.f)), true)) { if (BK.b.report(c, m.a.seat)) { broadcast(); } }
+                if (button(la.c_str(), ImVec2(sp(20.f), sp(5.f)), true)) { if (BK.b.report(c, m.a.seat)) { broadcast(); } }
                 ImGui::SameLine();
-                if (ui::button(lb.c_str(), ImVec2(sp(16.f), sp(4.f)), true)) { if (BK.b.report(c, m.b.seat)) { broadcast(); } }
+                if (button(lb.c_str(), ImVec2(sp(20.f), sp(5.f)), true)) { if (BK.b.report(c, m.b.seat)) { broadcast(); } }
             }
         }
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
     }
     if (BK.have && edit) {
-        if (ui::button("Undo last result", ImVec2(sp(16.f), sp(3.5f)), false, b.can_undo())) { BK.b.undo(); broadcast(); }
+        if (button("Undo last result", ImVec2(sp(18.f), sp(4.5f)), false, b.can_undo())) { BK.b.undo(); broadcast(); }
         ImGui::SameLine();
-        if (ui::button(b.finished() ? "New bracket" : "Cancel bracket", ImVec2(sp(16.f), sp(3.5f)))) close_bracket();
+        if (button(b.finished() ? "New bracket" : "Cancel bracket", ImVec2(sp(18.f), sp(4.5f)))) close_bracket();
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
     }
     if (BK.have) {
@@ -334,19 +357,21 @@ void bracket_tick() {
 void bracket_draw() {
     if (BK.want_open) { BK.want_open = false; BK.open = true; ImGui::OpenPopup("Tournament bracket"); }
     if (!BK.open) return;
-    ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(2.f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
-    bool vis = ImGui::BeginPopupModal("Tournament bracket", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(sp(150.f), io.DisplaySize.x * 0.94f), io.DisplaySize.y * 0.92f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(2.5f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
+    bool vis = ImGui::BeginPopupModal("Tournament bracket", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings);
     ImGui::PopStyleVar(2);
     if (!vis) { if (!ImGui::IsPopupOpen("Tournament bracket")) BK.open = false; return; }
-    ImGui::PushFont(ui::F.h2);
+    ImGui::PushFont(ui::F.title);
     ImGui::TextUnformatted("Tournament");
     ImGui::PopFont();
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - sp(10.f));
-    bool back = ui::button("Close", ImVec2(sp(10.f), sp(3.5f)));
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - sp(14.f) + ImGui::GetCursorPosX());
+    bool back = button("Close", ImVec2(sp(14.f), sp(4.5f)), true, true, ui::Icon::Close);
     if (ui::modal_back()) back = true;
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
     draw_page();
     if (back) { BK.open = false; ImGui::CloseCurrentPopup(); }
     ImGui::EndPopup();
