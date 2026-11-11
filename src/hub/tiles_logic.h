@@ -13,7 +13,8 @@ namespace hubtiles {
 inline std::string size_text(uint64_t b) {
     char s[48];
     if (b < 1024) {
-        std::snprintf(s, sizeof s, b == 1 ? "1 byte" : "%llu bytes", (unsigned long long)b);
+        if (b == 1) std::snprintf(s, sizeof s, "1 byte");
+        else std::snprintf(s, sizeof s, "%llu bytes", (unsigned long long)b);
         return s;
     }
     static const char* const unit[] = {"bytes", "KB", "MB", "GB", "TB"};
@@ -96,6 +97,7 @@ inline std::string initials(const std::string& t) {
             break;
         }
     }
+    if (o.empty() && !t.empty()) o = "?";   // no letters or digits at all (punctuation, spaces): a "?" tile, never a blank one
     return o;
 }
 

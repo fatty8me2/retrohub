@@ -31,26 +31,21 @@ int main() {
         for (int y = 0; y < a.h; ++y) for (int x = 0; x < a.w; ++x) a.px[size_t(y) * a.stride + x * 4 + 3] = 255;
         CHECK(a.black());
     }
-    {   // noise up to the threshold (every channel, every pixel) is still black; one step above on every pixel is picture
+    {   // faint noise (1..8 on every channel, every pixel) is black; uniform 8 is black; uniform 10 is picture
         Img i(640, 360);
         std::srand(7);
-        for (int y = 0; y < i.h; ++y) for (int x = 0; x < i.w; ++x) i.set(x, y, uint8_t(std::rand() % 17), uint8_t(std::rand() % 17), uint8_t(std::rand() % 17));
+        for (int y = 0; y < i.h; ++y) for (int x = 0; x < i.w; ++x) i.set(x, y, uint8_t(1 + std::rand() % 8), uint8_t(1 + std::rand() % 8), uint8_t(1 + std::rand() % 8));
         CHECK(i.black());
-        Img j(640, 360);
-        j.fill(0, 0, j.w, j.h, 17, 0, 0);
-        CHECK(!j.black());
-        Img k(640, 360);
-        k.fill(0, 0, k.w, k.h, 0, 0, 16);
-        CHECK(k.black());
+        Img u8(640, 360); u8.fill(0, 0, u8.w, u8.h, 8, 8, 8); CHECK(u8.black());
+        Img u10(640, 360); u10.fill(0, 0, u10.w, u10.h, 10, 10, 10); CHECK(!u10.black());
+        Img u9(640, 360); u9.fill(0, 0, u9.w, u9.h, 0, 9, 0); CHECK(!u9.black());
     }
-    {   // hot pixels and compression speckle: a handful of bright pixels in a large black frame is still black
-        Img i(1280, 720);
-        i.set(3, 3, 255, 255, 255); i.set(1000, 500, 255, 255, 255); i.set(641, 17, 200, 0, 0);
-        CHECK(i.black());
-        // but a clear amount of picture is kept (about 1 pixel in 1000)
-        Img j(1280, 720);
-        for (int k = 0; k < 1000; ++k) j.set((k * 37) % j.w, (k * 11) % j.h, 255, 255, 255);
-        CHECK(!j.black());
+    {   // a single pixel at 9 anywhere (any channel, first/last/off any grid) in a large black frame is picture
+        Img a(1280, 720); a.set(1, 1, 9, 0, 0); CHECK(!a.black());
+        Img b(1280, 720); b.set(1279, 719, 0, 0, 9); CHECK(!b.black());
+        Img c(1280, 720); c.set(641, 357, 0, 9, 0); CHECK(!c.black());
+        Img d(1280, 720); d.set(641, 357, 8, 8, 8); CHECK(d.black());
+        Img e(1280, 720); e.set(3, 3, 255, 255, 255); CHECK(!e.black());   // a lone hot pixel is picture too
     }
     {   // one thin bright line (1 px) off any coarse grid, horizontal and vertical, in HD and 4K frames: kept
         for (int dims : {0, 1}) {

@@ -57,11 +57,13 @@ int main() {
         CHECK_EQ(initials("Mario_Kart"), "M");                        // underscore does not split
         CHECK_EQ(initials("  padded   name  "), "PN");
         CHECK_EQ(initials("...Hi"), "H");
-        CHECK_EQ(initials("-"), "");
-        CHECK_EQ(initials("   "), "");
+        CHECK_EQ(initials("-"), "?");
+        CHECK_EQ(initials("   "), "?");
         CHECK_EQ(initials("(Disc 1)"), "1");                          // a bracket starts no word
         CHECK_EQ(initials("Game (Disc 1)"), "G1");
-        CHECK_EQ(initials("!!! ???"), "");
+        CHECK_EQ(initials("!!! ???"), "?");
+        CHECK_EQ(initials("!!!"), "?");
+        CHECK_EQ(initials("?"), "?");
         // non-ASCII (UTF-8) first letters count. Latin-1 letters are upper-cased. Glyphs the tile font lacks (it draws U+0020..U+00FF) read as "?"
         CHECK_EQ(initials("\xC3\x9C" "ber Game"), "\xC3\x9C" "G");     // U-umlaut
         CHECK_EQ(initials("\xC3\xBC" "ber game"), "\xC3\x9C" "G");     // lower-case u-umlaut is upper-cased
