@@ -338,10 +338,15 @@ void auto_sync() {
 std::string report_summary(const hub::saves::SyncReport& r, const char* sent_word, const char* got_word) {
     if (!r.ok) return "Failed: " + (r.error.empty() ? std::string("unknown error") : r.error);
     if (r.pushed == 0 && r.pulled == 0 && r.conflicts == 0) return "Everything is already up to date.";
+    auto files = [](int n, const char* word) { return std::to_string(n) + (n == 1 ? " file " : " files ") + word; };
     std::string s;
-    if (r.pushed) s += std::to_string(r.pushed) + " file(s) " + sent_word;
-    if (r.pulled) s += (s.empty() ? "" : ", ") + std::to_string(r.pulled) + " file(s) " + got_word;
-    if (r.conflicts) s += (s.empty() ? "" : ", ") + std::to_string(r.conflicts) + " conflict(s) (older copy kept in _conflicts)";
+    if (std::string(sent_word) == got_word) {   // an import: "restored" both ways is one number, not two
+        if (r.pushed + r.pulled) s += files(r.pushed + r.pulled, sent_word);
+    } else {
+        if (r.pushed) s += files(r.pushed, sent_word);
+        if (r.pulled) s += (s.empty() ? "" : ", ") + files(r.pulled, got_word);
+    }
+    if (r.conflicts) s += (s.empty() ? "" : ", ") + std::to_string(r.conflicts) + (r.conflicts == 1 ? " conflict" : " conflicts") + " (the older copy was kept as a backup copy)";
     return s + ".";
 }
 

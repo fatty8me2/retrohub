@@ -1,4 +1,5 @@
 #include "app.h"
+#include "emu_error_text.h"
 
 /* ---------- 3DS / Wii U emulator download + unzip dialogs ---------- */
 
@@ -120,10 +121,15 @@ void draw_emulator_dialogs() {
                 if (back) EMU.state = hubemu::Installer::Idle;
                 std::string err;
                 { std::lock_guard<std::mutex> lk(EMU.mu); err = EMU.error; }
-                ImGui::TextWrapped("Could not install %s: %s", nm.c_str(), err.c_str());
+                ImGui::TextWrapped("%s could not be %s.", nm.c_str(), EMU.updating ? "updated" : "installed");
+                ImGui::Dummy(ImVec2(0, 2 * S));
+                ImGui::TextWrapped("%s", hubemu::plain_install_failure(err, nm).c_str());
+                if (!err.empty()) text_wrapped_disabled("Details: " + err);
                 ImGui::Dummy(ImVec2(0, 8 * S));
-                if (button("Close", ImVec2(160 * S, 44 * S), true)) EMU.state = hubemu::Installer::Idle;
+                if (button("Try again", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());   // the same install job, only when the player asks
                 ImGui::SetItemDefaultFocus();
+                ImGui::SameLine();
+                if (button("Close", ImVec2(160 * S, 44 * S))) EMU.state = hubemu::Installer::Idle;
             }
             if (EMU.state == hubemu::Installer::Idle) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();

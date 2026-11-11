@@ -3,6 +3,7 @@
  * event -> toast mapping, recovery code formatting. Unit tested in test_cloud_ui.cpp. Types come from cloud_engine.h. */
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <string>
 #include <vector>
@@ -278,6 +279,58 @@ inline std::string side_line(const FileSide& s, bool cloud) {
     if (!s.present) return cloud ? "Cloud: no save yet" : "This PC: no save yet";
     std::string who = s.device_name.empty() ? std::string(cloud ? "another PC" : "this PC") : s.device_name;
     return (cloud ? "Cloud: " + who + ", " : std::string("This PC: played ")) + when_text(s.mtime) + ", " + kb_text(s.size);
+}
+/* What a conflicting file is, in player terms (never the internal path): "save data", "save state 3", "screenshot". */
+inline std::string conflict_what(const ConflictItem& c) {
+    switch (c.cls) {
+        case FileClass::Shot: return "screenshot";
+        case FileClass::Settings: return "game settings";
+        case FileClass::Card: return "memory card save";
+        case FileClass::State: {
+            std::string p = c.path;
+            for (auto& ch : p) if (ch >= 'A' && ch <= 'Z') ch = (char)(ch + 32);
+            size_t i = p.rfind("slot");
+            if (i != std::string::npos) {
+                size_t j = i + 4, k = j;
+                while (k < p.size() && p[k] >= '0' && p[k] <= '9') ++k;
+                if (k > j) return "save state " + std::to_string(std::atoi(p.substr(j, k - j).c_str()));
+            }
+            if (p.find("auto") != std::string::npos) return "automatic save state";
+            return "save state";
+        }
+        default: return "save data";
+    }
+}
+inline std::string cap_first(std::string s) { if (!s.empty() && s[0] >= 'a' && s[0] <= 'z') s[0] = (char)(s[0] - 32); return s; }
+/* "today at 9:14 pm", "yesterday at 3:02 pm", else "20 Oct at 9:14 pm". Local time. now = unix seconds. */
+inline std::string friendly_when(int64_t now, int64_t t) {
+    if (t <= 0) return "an unknown time";
+    auto local = [](int64_t v) { std::time_t tt = (std::time_t)v; std::tm lt{};
+#ifdef _WIN32
+        localtime_s(&lt, &tt);
+#else
+        localtime_r(&tt, &lt);
+#endif
+        return lt; };
+    std::tm n = local(now), l = local(t);
+    char clock[24];
+    int h12 = l.tm_hour % 12 == 0 ? 12 : l.tm_hour % 12;
+    std::snprintf(clock, sizeof clock, "%d:%02d %s", h12, l.tm_min, l.tm_hour < 12 ? "am" : "pm");
+    auto same = [](const std::tm& a, const std::tm& b) { return a.tm_year == b.tm_year && a.tm_yday == b.tm_yday; };
+    if (same(n, l)) return std::string("today at ") + clock;
+    std::tm y = local(now - 86400);
+    if (same(y, l)) return std::string("yesterday at ") + clock;
+    static const char* mon[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    return std::to_string(l.tm_mday) + " " + mon[l.tm_mon % 12] + (n.tm_year != l.tm_year ? " " + std::to_string(l.tm_year + 1900) : std::string()) + " at " + clock;
+}
+/* "On this PC: saved today at 9:14 pm" / "In the cloud: saved yesterday at 3:02 pm, from PC-LIVING" */
+inline std::string conflict_side_line(const FileSide& s, bool cloud, int64_t now) {
+    if (!s.present) return cloud ? "In the cloud: no copy yet" : "On this PC: no copy yet";
+    if (!cloud) return "On this PC: saved " + friendly_when(now, s.mtime);
+    return "In the cloud: saved " + friendly_when(now, s.mtime) + (s.device_name.empty() ? std::string() : ", from " + s.device_name);
+}
+inline std::string conflict_intro() {
+    return "This PC and the cloud both changed since they last matched. Pick the copy to keep. The other copy is kept as a backup, so nothing is lost.";
 }
 inline std::string conflict_summary(const std::string& title) { return "Saves for " + title + " differ."; }
 
