@@ -421,7 +421,7 @@ bool fr_send_attach_dm(const std::string& uid, const std::string& text, const hu
         FR.f_conv[uid].push_back(m);
         return true;
     }
-    if (!FR.started) { set_toast("Offline - will send when connected.", false, 4.0); return false; }
+    if (!FR.started) { set_toast("Offline. Will send when connected.", false, 4.0); return false; }
     FR.cli.send_message(uid, text, &a, std::string());
     return true;
 }
@@ -455,26 +455,47 @@ void fr_invite_uids(const std::vector<std::string>& uids) {
     }
     if (FR.fake) set_toast("Invited " + names + " to room " + A.code + ".");   // live: the server's invite_result reports who was reached
 }
-void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who) {
-    if (launch_blocked("fr_join_lobby")) return;
-    fr_trace("join", code);
-    if (!hubnet::valid_room_code(code)) { set_notice("That lobby code is not valid any more."); return; }
-    if (session_active()) {   // any session (A.proc, GC NetPlay, remote play, Kanto, 3DS room) or a full-screen app: NEVER auto-join or launch after it closes; keep the invite in the bell, joinable by hand
-        if (hubui::join_while_running(A.in_room && A.code == code) == hubui::JoinWhileRunning::AlreadyInRoom) {
-            FR.pending_join = {}; set_notice("You are already in that room."); return;
-        }
-        FR.pending_join = {};
-        hubnet::Invite inv;
-        inv.lobby_code = code; inv.game_id = game_id; inv.game_title = title;
-        group_note_invite("link:" + code, who.empty() ? std::string("A friend") : who, inv);
-        return;   // no notice/toast either: the bell badge shows it when the hub is next opened
-    }
-    FR.pending_join = {};
-    if (A.in_room && A.code == code) { A.page = Page::Online; return; }
+/* Notices on the join paths: never a sound or a toast while a game runs (the hard rule); the invite waits in the bell instead. */
+static void fr_join_notice(const std::string& text, double secs = 8.0) { if (!game_active()) set_notice(text, secs); }
+static bool fr_join_now(const std::string& code, const std::string& game_id, const std::string& title, long long expires_at) {
+    if (launch_blocked("fr_join_lobby")) return false;
+    if (game_active() || session_active()) return false;   // a game started while the question was open: the invite stays in the bell
+    if (hubui::invite_expired(expires_at, wall_ms())) { fr_join_notice("That invite has expired."); return false; }
+    if (A.in_room && A.code == code) { A.page = Page::Online; return true; }
     bool owned = game_id.empty() || find_entry(game_id) || find_room_entry(game_id);
     enter_room(false, code);   // leaves any current room, switches to Play Online
-    if (A.in_room && A.code == code && !owned)
-        set_notice("You don't have " + (title.empty() ? std::string("that game") : title) + " yet - you can still join the room.", 12.0);
+    if (A.in_room && A.code == code && !owned) fr_join_notice(hubui::group::missing_game_notice(title), 12.0);
+    return true;
+}
+/* Returns true only when the join went ahead. False: a game runs (invite kept in the bell), we are asking the player to confirm leaving
+ * their room, or the code was bad. Callers that resolve a bell entry must do so only on true. `expires_at` = the invite's expiry (0 = none). */
+bool fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who, long long expires_at) {
+    if (launch_blocked("fr_join_lobby")) return false;
+    fr_trace("join", code);
+    if (!hubnet::valid_room_code(code)) { fr_join_notice("That room code is not valid any more."); return false; }
+    const bool game = game_active();       // ANY game, session or full-screen app owns the screen
+    const bool session = session_active(); // sessions the hub knows about
+    const hubui::group::JoinRoute route = hubui::group::join_route(game, session, hub_has_focus());
+    hubnet::Invite inv;
+    inv.lobby_code = code; inv.game_id = game_id; inv.game_title = title; inv.expires_at = expires_at;
+    const std::string bell_name = who.empty() ? std::string("A friend") : who;
+    if (route != hubui::group::JoinRoute::JoinNow) {   // NEVER auto-join or launch after it closes; keep the invite in the bell, joinable by hand
+        if (hubui::join_while_running(A.in_room && A.code == code) == hubui::JoinWhileRunning::AlreadyInRoom) {
+            fr_join_notice("You are already in that room."); return false;
+        }
+        group_note_invite("link:" + code, bell_name, inv);
+        // a game in front: silent, the bell badge shows it when the hub is next opened. The hub in front: one quiet line, no sound
+        if (route == hubui::group::JoinRoute::QuietToast)
+            push_toast("Saved in the bell. Join when your game ends.", ui::ACCENT, 5.0);
+        return false;
+    }
+    if (!(A.in_room && A.code == code) && hubui::group::join_needs_confirm(A.in_room, (int)room_members().size(), ::is_host())) {
+        if (who.empty()) group_note_invite("link:" + code, bell_name, inv);   // a link has no card: keep a bell entry in case the question expires
+        push_toast_action(hubui::group::join_confirm_text(who, ::is_host()), ui::WARN, "Leave and join",
+                          [code, game_id, title, who, expires_at]() { if (fr_join_now(code, game_id, title, expires_at) && who.empty()) group_resolve(hubui::group::Kind::Invite, "link:" + code, code); }, 12.0);   // letting the toast expire is "Stay"
+        return false;
+    }
+    return fr_join_now(code, game_id, title, expires_at);
 }
 void fr_open_chat(const std::string& uid) {
     fr_trace("chat", uid);
@@ -531,7 +552,7 @@ void fr_notify(bool invite, const std::string& uid, const std::string& name, con
     if (invite && rt.osd) {
         runctl::Command c;
         c.cmd = runctl::Cmd::OsdMsg;
-        c.text = (name.empty() ? std::string("A friend") : name) + " invited you - open RetroHub to join";
+        c.text = (name.empty() ? std::string("A friend") : name) + " invited you. Open RetroHub to join.";
         runctl::send_command_ex(A.run.ctl_path, c);
     }
 }
@@ -709,14 +730,6 @@ void fr_start() {
     fr_apply_watch();
 }
 
-void fr_run_pending_join() {
-    /* Joins are no longer queued behind a running game (they sit in the bell), so this only drains a stale entry. */
-    if (!hubui::pending_join_ready(!FR.pending_join.code.empty(), A.proc != nullptr)) return;
-    auto pj = FR.pending_join;
-    FR.pending_join = {};
-    fr_join_lobby(pj.code, pj.game_id, pj.title, pj.name);
-}
-
 /* After a save sync/import: a vault identity older than ours is the user's original account; adopt it. */
 void fr_adopt_identity_after_vault_change() {
     if ((g_headless && !shot_net()) || FR.fake) return;
@@ -730,7 +743,6 @@ void fr_adopt_identity_after_vault_change() {
 
 void fr_tick() {
     { const std::string sum = FR_HELD.tick(!g_headless && (game_active() || session_active()), hub_has_focus()); if (!sum.empty()) push_toast(sum, ui::ACCENT, 6.0); }   // one quiet summary (only once the hub is in front), no chime
-    fr_run_pending_join();
     hubui::attach_send_tick();
     if (FR.fake) { gn_tick(); return; }
     if (!FR.started) return;
@@ -773,7 +785,7 @@ void fr_tick() {
             case hubnet::Event::InviteRedeemed: lockout_invite_result(e.ok, e.text); break;
             case hubnet::Event::AdminJoinWaiting: admin_note_waiting(e.uid, e.name, e.text, e.msg.at); break;
             case hubnet::Event::AdminInviteUsed: admin_note_invite_used(e.uid, e.name, e.text); break;
-            case hubnet::Event::Queued: set_toast("Saved - will send when you're back online.", true, 4.0); break;
+            case hubnet::Event::Queued: set_toast("Saved. Will send when you're back online.", true, 4.0); break;
             case hubnet::Event::SendFailed: set_toast(e.text.empty() ? std::string("That could not be sent.") : e.text, false, 7.0); break;
             case hubnet::Event::AskReceived: fr_notify_ask(e.uid, e.name, e.invite, e.msg.ask_host); break;
             case hubnet::Event::WatchedOnline: fr_friend_online(e.uid, e.name); break;
@@ -1000,7 +1012,7 @@ int fr_invite_card(const Notif& n, float w, float frac, bool shadow) {
     for (auto& l : lines) { dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, y), ui::TEXT, l.c_str()); y += ui::F.bold->FontSize * 1.2f; }
     std::string sub = "Room " + n.inv.lobby_code;
     int left = hubui::invite_seconds_left(n.inv.expires_at, now);
-    sub += expired ? "  -  expired" : "  -  " + (left >= 120 ? std::to_string(left / 60) + " min left" : std::to_string(left) + "s left");
+    sub += expired ? ", expired" : ", " + (left >= 120 ? std::to_string(left / 60) + " min left" : std::to_string(left) + "s left");
     dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, y + sp(0.25f)), expired ? ui::BAD : ui::TEXT2, ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, tw).c_str());
     bool owned = n.inv.game_id.empty() || find_entry(n.inv.game_id) || find_room_entry(n.inv.game_id);
     if (!owned) dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, y + sp(0.25f) + ui::F.cap->FontSize * 1.25f), ui::WARN,
@@ -1063,8 +1075,8 @@ void fr_accept(const std::string& uid, const std::string& name) {
     if (FR_FRIEND_TOAST.allow(uid, wall_ms())) set_toast("You and " + name + " are now friends.");   // the later friend_added event for this person is deduped
 }
 void fr_join_notif(Notif& n) {
-    fr_join_lobby(n.inv.lobby_code, n.inv.game_id, n.inv.game_title, n.name);
-    group_resolve(hubui::group::Kind::Invite, n.uid, n.inv.lobby_code);
+    if (fr_join_lobby(n.inv.lobby_code, n.inv.game_id, n.inv.game_title, n.name, n.inv.expires_at))
+        group_resolve(hubui::group::Kind::Invite, n.uid, n.inv.lobby_code);   // otherwise the invite stays in the bell
     n.done = true;
 }
 
@@ -1136,7 +1148,7 @@ void fr_ask_accept(Notif& n) {
 /* Invite toast, shrunk form: after kInvitePillAfter s the card collapses to a one-line pill; clicking it opens the full card again. */
 static const double kInvitePillAfter = 10.0;
 static float fr_invite_pill_h() { return sp(4.f); }
-static std::string fr_invite_pill_text(const Notif& n) { return n.name + " invited you  -  Join"; }
+static std::string fr_invite_pill_text(const Notif& n) { return n.name + " invited you. Join"; }
 /* Returns true when clicked. */
 static bool fr_invite_pill(const Notif& n, float w, float frac) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1221,6 +1233,11 @@ bool fr_join_invite_toast() {
     for (int i = (int)FR.notifs.size() - 1; i >= 0; --i) {
         auto& n = FR.notifs[i];
         if (n.done || !n.toast || !n.invite || ImGui::GetTime() - n.t0 > 30.0) continue;
+        if (hubui::invite_expired(n.inv.expires_at, wall_ms())) {
+            n.done = true;
+            fr_join_notice("That invite has expired.");
+            return true;
+        }
         shot_trace("join-toast", n.inv.lobby_code);
         fr_join_notif(n);
         return true;
@@ -1241,11 +1258,11 @@ void fr_top_bar() {
     else {
         hubnet::Status s = fr_desired_status();
         if (s.state == hubnet::PresenceState::InGame) { txt = "Playing " + s.game_title; dot = ui::ACCENT; }
-        else if (s.state == hubnet::PresenceState::InLobby) { txt = "In lobby " + A.code; dot = ui::WARN; }
+        else if (s.state == hubnet::PresenceState::InLobby) { txt = "In room " + A.code; dot = ui::WARN; }
         else { txt = "Online"; dot = ui::GOOD; }
         int on = 0;
         for (auto& f : fr_friends()) if (f.online()) ++on;
-        txt += "  -  " + std::to_string(on) + (on == 1 ? " friend online" : " friends online");
+        txt += ", " + std::to_string(on) + (on == 1 ? " friend online" : " friends online");
     }
     txt = ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, txt, std::max(sp(10.f), w - sp(12.f)));
     float pw = fr_tw(ui::F.cap, txt) + sp(4.f);
@@ -1347,7 +1364,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         can_dropin = dg && !is_remote_stand_in(*dg) && dropin_supported(*dg) &&
                      (dg->system == hub::System::N64 || hubui::friend_can_dropin(fr, true));   // N64: 2-3 humans; NES/SNES: 3
     }
-    const char* join_lbl = fr.state == hubui::FS_InGame ? "Join lobby" : "Join";
+    const char* join_lbl = fr.state == hubui::FS_InGame ? "Join room" : "Join";
     bool can_invite = false;   // in a room, they are online and not in it, and it has a free slot (full room: the picker explains why)
     if (fr_in_my_room() && f.online()) {
         const hub::GameEntry* rg = find_room_entry(A.selected_game);
@@ -1432,7 +1449,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
     dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.5f) + ui::F.bold->FontSize * 1.25f),
                 fr.state == hubui::FS_Offline ? ui::TEXT3 : ui::TEXT2,
                 ui::ellipsize(ui::F.cap, ui::F.cap->FontSize,
-                              hubui::friend_presence_line(fr, now) + (f.online() && !f.status.prof_status.empty() ? "  -  " + f.status.prof_status : std::string()) + (ladder_row_text(f.uid).empty() ? std::string() : "  -  " + ladder_row_text(f.uid)), tw).c_str());
+                              hubui::friend_presence_line(fr, now) + (f.online() && !f.status.prof_status.empty() ? ", " + f.status.prof_status : std::string()) + (ladder_row_text(f.uid).empty() ? std::string() : ", " + ladder_row_text(f.uid)), tw).c_str());
     if (focus) ui::focus_ring(dl, p0, p1, sp(1.5f));
 
     if (clicked) ImGui::OpenPopup("ctx");   // left-click on the row opens the actions menu (Message is its first entry); right-click does the same
@@ -1456,7 +1473,7 @@ void fr_friend_row(const hubnet::Friend& f, const hubui::FriendRow& fr, float w,
         for (hubui::FriendMenuItem it : hubui::friend_menu_items(mi)) {
             switch (it) {
                 case hubui::FriendMenuItem::Message: if (fr_menu_item(FrIcon::Chat, "Message")) fr_open_chat(f.uid); break;
-                case hubui::FriendMenuItem::JoinRoom: if (fr_menu_item(FrIcon::Send, fr.state == hubui::FS_InGame ? "Join lobby" : "Join room")) fr_join_lobby(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name); break;
+                case hubui::FriendMenuItem::JoinRoom: if (fr_menu_item(FrIcon::Send, "Join room")) fr_join_lobby(f.status.lobby_code, f.status.game_id, f.status.game_title, f.name); break;
                 case hubui::FriendMenuItem::Invite: if (fr_menu_item(FrIcon::UserPlus, "Invite to room")) fr_invite_uids({f.uid}); break;
                 case hubui::FriendMenuItem::Profile: if (fr_menu_item(FrIcon::People, "View profile")) fr_view_profile(f.uid); break;
                 case hubui::FriendMenuItem::CopyCode:
@@ -1672,7 +1689,7 @@ static void fr_view_modal() {
             if (place("edit", "Edit profile", true)) { ImGui::CloseCurrentPopup(); FR.open_prof = true; }
         } else {
             if (place("msg", "Message", !can_join)) { fr_open_chat(uid); ImGui::CloseCurrentPopup(); }
-            if (can_join && place("join", row.state == hubui::FS_InGame ? "Join their lobby" : "Join their room", true)) {
+            if (can_join && place("join", "Join their room", true)) {
                 fr_join_lobby(fp->status.lobby_code, fp->status.game_id, fp->status.game_title, fp->name); ImGui::CloseCurrentPopup();
             }
             if (can_invite && place("inv", "Invite to room", false)) fr_invite_uids({uid});
@@ -1711,7 +1728,7 @@ static void fr_view_modal() {
         if (!sess.empty()) fr_view_note(sess.c_str());
         if (has_last) {
             std::string ago = hubui::group::ago_text(lg_at, now);
-            fr_view_game_row(lg_id, hubui::clean_game_title(lg_title.empty() ? "a game" : lg_title), "Last played together" + (ago.empty() ? std::string() : "  -  " + ago), "", sp(5.2f));
+            fr_view_game_row(lg_id, hubui::clean_game_title(lg_title.empty() ? "a game" : lg_title), "Last played together" + (ago.empty() ? std::string() : ", " + ago), "", sp(5.2f));
         }
     }
 
@@ -1953,7 +1970,7 @@ static void fr_attach_card(const hubnet::Message& m, int idx, float aw, ImDrawLi
     }
     float tx = t1.x + sp(1.25f), tw2 = q1.x - pad - tx;
     cdl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, t0.y - sp(0.25f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, a.name.empty() ? "file" : a.name, tw2).c_str());
-    std::string sub = hub::attach::size_text(a.size) + " - " + fr_time(m.at);
+    std::string sub = hub::attach::size_text(a.size) + ", " + fr_time(m.at);
     cdl->AddText(bf, fs, ImVec2(tx, t0.y + ui::F.bold->FontSize * 1.2f), ui::TEXT2, ui::ellipsize(bf, fs, sub, tw2).c_str());
     float ly = t0.y + ui::F.bold->FontSize * 1.2f + fs * 1.3f;
     for (auto& l : slines) { cdl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, ly), sc, l.c_str()); ly += ui::F.cap->FontSize * 1.25f; }
@@ -2012,7 +2029,7 @@ void fr_chat_view(float cw) {
     float fs = bf->FontSize, pad = sp(1.25f);
     if (msgs.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
-        ImGui::TextWrapped("No messages yet. Say hi!");
+        ImGui::TextWrapped("No messages yet. Say hello.");
         ImGui::PopStyleColor();
     }
     for (size_t i = 0; i < msgs.size(); ++i) {
@@ -2056,15 +2073,15 @@ void fr_chat_view(float cw) {
             fr_game_thumb(cdl, m.inv.game_id, m.inv.game_title, t0, t0 + ImVec2(sp(7.f), sp(7.f)), sp(0.75f));
             float tx = t0.x + sp(8.5f), tw2 = q1.x - pad - tx;
             std::string gt = m.inv.game_title.empty() ? "a game" : m.inv.game_title;
-            cdl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, t0.y - sp(0.25f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, m.mine ? "You sent an invite" : "Lobby invite", tw2).c_str());
+            cdl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, t0.y - sp(0.25f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, m.mine ? "You sent an invite" : "Room invite", tw2).c_str());
             cdl->AddText(bf, fs, ImVec2(tx, t0.y + ui::F.bold->FontSize * 1.2f), ui::TEXT2, ui::ellipsize(bf, fs, gt, tw2).c_str());
-            std::string sub = tm + "  -  " + (expired ? "expired" : "room " + m.inv.lobby_code);
+            std::string sub = tm + ", " + (expired ? "expired" : "room " + m.inv.lobby_code);
             cdl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, t0.y + ui::F.bold->FontSize * 1.2f + fs * 1.25f), expired ? ui::BAD : ui::TEXT3, sub.c_str());
             if (!m.mine) {
                 ImGui::PushID((int)i);
                 ImGui::SetCursorScreenPos(ImVec2(q0.x + pad, q1.y - pad - sp(3.f)));
                 if (ui::button("Join", ImVec2(cwid - pad * 2, sp(3.f)), true, !expired))
-                    fr_join_lobby(m.inv.lobby_code, m.inv.game_id, m.inv.game_title, (fr_find(m.from) ? fr_find(m.from)->name : std::string()));
+                    fr_join_lobby(m.inv.lobby_code, m.inv.game_id, m.inv.game_title, (fr_find(m.from) ? fr_find(m.from)->name : std::string()), m.inv.expires_at);
                 ImGui::PopID();
             }
             ImGui::SetCursorScreenPos(c);
@@ -2205,7 +2222,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
             dl->AddCircleFilled(ImVec2(tx + sp(0.5f), c0.y + ch - sp(1.75f)), sp(0.45f), dc, 10);
             {   const std::string mps = fr_my_profile().status;
                 dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx + sp(1.5f), c0.y + ch - sp(1.75f) - ui::F.cap->FontSize * 0.5f), ui::TEXT2,
-                            ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, fr_status_text() + (mps.empty() ? std::string() : "  -  " + mps), tw - sp(1.5f)).c_str()); }
+                            ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, fr_status_text() + (mps.empty() ? std::string() : ", " + mps), tw - sp(1.5f)).c_str()); }
             ImGui::SetCursorScreenPos(ImVec2(cbx, c0.y + (ch - sp(3.5f)) * 0.5f));
             if (ui::button("Copy", ImVec2(cbw, sp(3.5f)), false, !fr_my_code().empty())) {
                 SDL_SetClipboardText(fr_my_code().c_str());
@@ -2246,7 +2263,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
                 else if (is_code ? code == fr_my_code() : hubnet::username_fold_key(typed) == hubnet::username_fold_key(A.st.name)) { FR.add_msg = is_code ? "That is your own code." : "That is your own username."; FR.add_msg_until = ImGui::GetTime() + 6; }
                 else {
                     if (!FR.fake) { if (is_code) FR.cli.add_friend(code); else FR.cli.add_friend_username(typed); }
-                    FR.add_msg = (!FR.fake && !fr_connected()) ? std::string("Offline - will send when connected.") : "Friend request sent to " + (is_code ? code : typed) + ".";
+                    FR.add_msg = (!FR.fake && !fr_connected()) ? std::string("Offline. Will send when connected.") : "Friend request sent to " + (is_code ? code : typed) + ".";
                     FR.add_msg_until = ImGui::GetTime() + 5;
                     FR.add_buf[0] = 0;
                 }
@@ -2271,7 +2288,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
         float lw = ImGui::GetContentRegionAvail().x - sp(0.5f);
         std::vector<hubnet::Request> in = fr_incoming(), out = fr_outgoing();
         if (!in.empty() || !out.empty()) {
-            fr_section("REQUESTS  -  " + std::to_string(in.size() + out.size()));
+            fr_section("REQUESTS " + std::to_string(in.size() + out.size()));
             for (auto& r : in) {
                 ImGui::PushID(("in" + r.uid).c_str());
                 ImVec2 p0 = ImGui::GetCursorScreenPos();
@@ -2353,19 +2370,19 @@ void fr_draw_panel(float disp_w, float disp_h) {
             ImGui::Dummy(ImVec2(0, bh + sp(1.f)));
         }
         if (!g.online.empty()) {
-            fr_section("ONLINE  -  " + std::to_string(g.online.size()));
+            fr_section("ONLINE " + std::to_string(g.online.size()));
             for (int i : g.online) fr_friend_row(fl[i], rows[i], lw, now);
         }
         if (!g.offline.empty()) {
             ImGui::Dummy(ImVec2(0, sp(0.5f)));
-            fr_section("OFFLINE  -  " + std::to_string(g.offline.size()));
+            fr_section("OFFLINE " + std::to_string(g.offline.size()));
             for (int i : g.offline) fr_friend_row(fl[i], rows[i], lw, now);
         }
         if (fl.empty()) {
             ImGui::Dummy(ImVec2(0, sp(1.f)));
             ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
             ImGui::PushTextWrapPos(lw);
-            ImGui::TextUnformatted("No friends yet. Share your friend code, or paste a friend's code above to send a request. Friends can see when you're online, message you and invite you to their lobby.");
+            ImGui::TextUnformatted("No friends yet. Share your friend code, or paste a friend's code above to send a request. Friends can see when you're online, message you and invite you to their room.");
             ImGui::PopTextWrapPos();
             ImGui::PopStyleColor();
         }
@@ -2440,7 +2457,7 @@ void fr_invite_button_and_picker(float btn_w, float btn_h, bool icon_only) {
         dl->AddRectFilled(p, p + ImVec2(cw, hh), ui::PANEL2, sp(1.5f));
         fr_game_thumb(dl, inv.game_id, inv.game_title, p + ImVec2(sp(1.f), sp(1.f)), p + ImVec2(sp(6.f), hh - sp(1.f)), sp(0.75f));
         dl->AddText(ui::F.bold, ui::F.bold->FontSize, p + ImVec2(sp(7.5f), sp(1.25f)), ui::TEXT, inv.game_title.empty() ? "No game picked yet" : inv.game_title.c_str());
-        dl->AddText(ui::F.cap, ui::F.cap->FontSize, p + ImVec2(sp(7.5f), sp(1.25f) + ui::F.bold->FontSize * 1.3f), ui::TEXT2, ("Room " + A.code + "  -  invites expire in 30 min").c_str());
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, p + ImVec2(sp(7.5f), sp(1.25f) + ui::F.bold->FontSize * 1.3f), ui::TEXT2, ("Room " + A.code + ". Invites expire in 30 min.").c_str());
         ImGui::Dummy(ImVec2(cw, hh + sp(1.f)));
     }
     std::vector<hubui::FriendRow> rows;

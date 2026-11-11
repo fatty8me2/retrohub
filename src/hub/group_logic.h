@@ -48,6 +48,29 @@ inline InHubRoute in_hub_route(bool game_active, bool session_active, bool headl
     r.hold = busy && !r.toast;
     return r;
 }
+/* Joining another room leaves the current one at once. Ask first when other people are in it (2 or more members, us included). */
+inline bool join_needs_confirm(bool in_room, int member_count, bool is_host) {
+    (void)is_host;   // the host and a guest both leave the others behind; only the wording differs
+    return in_room && member_count >= 2;
+}
+inline std::string join_confirm_text(const std::string& who, bool is_host) {
+    std::string t = "Leave your room and join " + (who.empty() ? std::string("that room") : who + "'s") + "?";
+    if (is_host) t += " Your guests will stay behind.";
+    return t;
+}
+/* Invite to a game we do not have: we can join and chat, not ready up. */
+inline std::string missing_game_notice(const std::string& title) {
+    return "You can join and chat, but you can't ready up until you add " + (title.empty() ? std::string("this game") : title) + " with Add games in your Library.";
+}
+/* A join request. Nothing running: join now. Any game on screen (a session OR a full-screen game the hub did not start) with another
+ * window in front: completely silent, the invite stays in the bell. The hub window in front while a session runs in the background:
+ * one quiet toast (no sound). A game detected without a hub session never gets a toast, whoever has focus. */
+enum class JoinRoute { JoinNow, SilentBell, QuietToast };
+inline JoinRoute join_route(bool game_active, bool session_active, bool hub_focused) {
+    if (!game_active && !session_active) return JoinRoute::JoinNow;
+    return (session_active && hub_focused) ? JoinRoute::QuietToast : JoinRoute::SilentBell;
+}
+
 /* Whether "NAME came online" may notify at all: its own switch (default on) AND the friend is on the watch list (caller checks that). */
 inline bool online_alert_wanted(bool setting_on) { return setting_on; }
 
