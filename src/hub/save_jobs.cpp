@@ -1,4 +1,5 @@
 #include "app.h"
+#include "save_jobs_logic.h"
 #include <atomic>
 #include <chrono>
 #include <list>
@@ -336,13 +337,7 @@ void auto_sync() {
 }
 
 std::string report_summary(const hub::saves::SyncReport& r, const char* sent_word, const char* got_word) {
-    if (!r.ok) return "Failed: " + (r.error.empty() ? std::string("unknown error") : r.error);
-    if (r.pushed == 0 && r.pulled == 0 && r.conflicts == 0) return "Everything is already up to date.";
-    std::string s;
-    if (r.pushed) s += std::to_string(r.pushed) + " file(s) " + sent_word;
-    if (r.pulled) s += (s.empty() ? "" : ", ") + std::to_string(r.pulled) + " file(s) " + got_word;
-    if (r.conflicts) s += (s.empty() ? "" : ", ") + std::to_string(r.conflicts) + " conflict(s) (older copy kept in _conflicts)";
-    return s + ".";
+    return hubsave::report_summary(r, sent_word, got_word);   // save_jobs_logic.h
 }
 
 void poll_job() {
