@@ -4,6 +4,11 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <chrono>
+#include <string>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 using namespace hubcrash;
@@ -31,7 +36,7 @@ int main() {
     CHECK(hex_code(0) == "0x00000000");
 
     // dump lookup
-    const fs::path dir = fs::temp_directory_path() / "retrohub_crashnote_test";
+    const fs::path dir = fs::temp_directory_path() / ("retrohub_crashnote_test_" + std::to_string((unsigned long)GetCurrentProcessId()) + "_" + std::to_string((unsigned long long)GetTickCount64()));
     std::error_code ec;
     fs::remove_all(dir, ec);
     CHECK(find_dump(dir.u8string(), "lichii.exe", 1234).empty());   // folder missing
@@ -48,6 +53,16 @@ int main() {
     CHECK(find_dump("", "lichii.exe", 1234).empty());
     CHECK(find_dump(dir.u8string(), "lichii.exe", 0).empty());
     CHECK(folder_of(hit) == dir.u8string());
+    // stale dump: written before the session start (a recycled pid)
+    {
+        const long long now = (long long)std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        CHECK(!find_dump(dir.u8string(), "lichii.exe", 1234, now - 60).empty());    // written just now, session began a minute ago
+        CHECK(find_dump(dir.u8string(), "lichii.exe", 1234, now + 3600).empty());   // session "began" after the file was written
+        CHECK(find_dump(dir.u8string(), "other.exe", 555, now + 3600).empty());     // same on the case-insensitive path
+        fs::last_write_time(dir / "lichii.exe.1234.dmp", fs::file_time_type::clock::now() - std::chrono::hours(48), ec);
+        CHECK(find_dump(dir.u8string(), "lichii.exe", 1234, now - 60).empty());     // an old file is ignored
+        CHECK(!find_dump(dir.u8string(), "lichii.exe", 1234).empty());              // no cutoff: still found
+    }
 
     // texts
     Crash c;
@@ -55,6 +70,14 @@ int main() {
     CHECK(headline(c) == "Fritchii stopped unexpectedly while running Zelda.");
     const std::string d = details_text(c);
     CHECK(d.find("Fritchii 5.7") != std::string::npos && d.find("0xC0000005") != std::string::npos && d.find("lichii.exe.1234.dmp") != std::string::npos);
+    // startup failures
+    CHECK(is_start_failure(0xC0000135u, -1) && is_start_failure(0xC0000142u, 500) && is_start_failure(0xC000007Bu, -1));
+    CHECK(is_start_failure(0xC0000005u, 3));            // any crash within 10 s
+    CHECK(!is_start_failure(0xC0000005u, 10));
+    CHECK(!is_start_failure(0xC0000005u, -1));           // duration unknown: a normal crash
+    CHECK(!is_start_failure(1, 2));                      // not a crash at all
+    { Crash f = c; f.exit_code = 0xC0000135u; CHECK(headline(f) == "Fritchii could not start Zelda."); f.game.clear(); CHECK(headline(f) == "Fritchii could not start."); }
+    { Crash f = c; f.session_secs = 4; CHECK(headline(f) == "Fritchii could not start Zelda."); f.session_secs = 400; CHECK(headline(f) == "Fritchii stopped unexpectedly while running Zelda."); }
     c.dump_path.clear(); c.game.clear();
     CHECK(headline(c) == "Fritchii stopped unexpectedly.");
     CHECK(details_text(c).find("none found") != std::string::npos);

@@ -1136,7 +1136,7 @@ void draw_welcome();    // welcome_ui.cpp, every frame: the one-time "Welcome ba
 /* ---- frame.cpp ---- */
 void draw_update_popup();
 void draw_crash_note();   // crash_note_ui.cpp: the "<Emulator> stopped unexpectedly" card (opens only when prompt_allowed())
-void crash_note_session_ended(int emu_kind, const std::string& exe_path, const std::string& emu_dir, const std::string& game, unsigned long pid, unsigned long exit_code);
+void crash_note_session_ended(int emu_kind, const std::string& exe_path, const std::string& emu_dir, const std::string& game, unsigned long pid, unsigned long exit_code, long long start_unix, long long session_secs);
 float draw_toasts(float bottom, float right, float top);   // returns the height the bottom stack used
 bool nav_item(Page pg, const char* label, ui::Icon ic, float w, float expand, ImU32 badge);
 void draw_footer(float h);

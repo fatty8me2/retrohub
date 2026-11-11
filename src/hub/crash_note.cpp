@@ -1,5 +1,6 @@
 #include "crash_note.h"
 
+#include <chrono>
 #include <cctype>
 #include <cstdlib>
 #include <ctime>
@@ -47,18 +48,32 @@ std::string default_dumps_dir() {
 
 static std::string lower(std::string s) { for (char& ch : s) ch = (char)std::tolower((unsigned char)ch); return s; }
 
-std::string find_dump(const std::string& dumps_dir, const std::string& exe_name, unsigned long pid) {
+bool is_start_failure(uint32_t c, long long secs) {
+    if (c == 0xC0000135u || c == 0xC0000142u || c == 0xC000007Bu) return true;   // DLL not found / DLL init failed / bad image format
+    return secs >= 0 && secs < kStartFailSecs && classify(c) == Verdict::Crash;
+}
+
+static bool write_time_ok(const fs::path& f, long long min_unix) {
+    if (min_unix <= 0) return true;
+    std::error_code ec;
+    const auto ft = fs::last_write_time(f, ec);
+    if (ec) return true;   // cannot tell: keep it
+    const auto sys = std::chrono::system_clock::now() + std::chrono::duration_cast<std::chrono::system_clock::duration>(ft - fs::file_time_type::clock::now());
+    return (long long)std::chrono::duration_cast<std::chrono::seconds>(sys.time_since_epoch()).count() >= min_unix;
+}
+
+std::string find_dump(const std::string& dumps_dir, const std::string& exe_name, unsigned long pid, long long min_write_unix) {
     if (dumps_dir.empty() || exe_name.empty() || pid == 0) return "";
     std::error_code ec;
     const fs::path dir = fs::u8path(dumps_dir);
     if (!fs::is_directory(dir, ec)) return "";
     const std::string want = lower(exe_name + "." + std::to_string(pid) + ".dmp");
     const fs::path exact = dir / fs::u8path(exe_name + "." + std::to_string(pid) + ".dmp");
-    if (fs::is_regular_file(exact, ec)) return exact.u8string();
+    if (fs::is_regular_file(exact, ec)) return write_time_ok(exact, min_write_unix) ? exact.u8string() : std::string();
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {   // a differently cased exe name
         std::error_code e2;
         if (!it->is_regular_file(e2)) continue;
-        if (lower(it->path().filename().u8string()) == want) return it->path().u8string();
+        if (lower(it->path().filename().u8string()) == want) return write_time_ok(it->path(), min_write_unix) ? it->path().u8string() : std::string();
     }
     return "";
 }
@@ -79,6 +94,7 @@ static std::string time_text(long long t) {
 
 std::string headline(const Crash& c) {
     std::string who = c.emulator.empty() ? std::string("The emulator") : c.emulator;
+    if (is_start_failure(c.exit_code, c.session_secs)) return who + " could not start" + (c.game.empty() ? std::string(".") : " " + c.game + ".");
     return who + " stopped unexpectedly" + (c.game.empty() ? std::string(".") : " while running " + c.game + ".");
 }
 
@@ -87,6 +103,7 @@ std::string details_text(const Crash& c) {
     s += "Emulator: " + c.emulator + (c.version.empty() ? std::string() : " " + c.version) + "\n";
     if (!c.game.empty()) s += "Game: " + c.game + "\n";
     s += "Exit code: " + hex_code(c.exit_code) + "\n";
+    if (c.session_secs >= 0) s += "Ran for: " + std::to_string(c.session_secs) + " s\n";
     s += "Time: " + time_text(c.time_unix) + "\n";
     if (!c.exe_name.empty()) s += "Process: " + c.exe_name + " (pid " + std::to_string(c.pid) + ")\n";
     s += "Crash dump: " + (c.dump_path.empty() ? std::string("none found") : c.dump_path) + "\n";
