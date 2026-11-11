@@ -3,6 +3,7 @@
 #include "libview_ui.h"
 #include "hack_ui.h"
 #include "playtime_logic.h"
+#include "tiles_logic.h"
 
 #include <atomic>
 #include <cstring>
@@ -130,11 +131,7 @@ void poll_save_info() {
 }
 
 std::string size_text(uint64_t b) {
-    char s[32];
-    if (b < 1024) std::snprintf(s, sizeof s, "%llu B", (unsigned long long)b);
-    else if (b < 1024 * 1024) std::snprintf(s, sizeof s, "%.1f KB", b / 1024.0);
-    else std::snprintf(s, sizeof s, "%.1f MB", b / 1048576.0);
-    return s;
+    return hubtiles::size_text(b);   // tiles_logic.h
 }
 
 void open_in_explorer(const std::string& dir) {
@@ -176,17 +173,7 @@ ArtRef art_for_pick(const GameInfo& g) {
 }
 
 std::string initials(const std::string& t) {
-    std::string o;
-    bool start = true;
-    for (unsigned char c : t) {
-        if (c == ' ' || c == '-' || c == ':' || c == '.') { start = true; continue; }
-        if (start && std::isalnum(c)) {
-            o += (char)std::toupper(c);
-            if (o.size() >= 3) break;
-        }
-        start = false;
-    }
-    return o;
+    return hubtiles::initials(t);   // tiles_logic.h
 }
 
 /* ---------- tiles ---------- */

@@ -43,6 +43,7 @@ add_executable(hubsaves_engine_test test_cloud_engine.cpp)
 target_link_libraries(hubsaves_engine_test PRIVATE hubsaves_mock)
 target_compile_definitions(hubsaves_engine_test PRIVATE CLOUD_CLASSIFY_CASES="${CMAKE_SOURCE_DIR}/docs/cloud_classify_cases.txt")
 
+
 add_executable(cloud_mock_server cloud_mock_server.cpp)
 target_link_libraries(cloud_mock_server PRIVATE hubsaves_mock)
 
