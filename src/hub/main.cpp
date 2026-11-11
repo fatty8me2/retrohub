@@ -9,6 +9,7 @@
 #include "dolphin_speed.h"
 #include "hang_watchdog.h"
 #include "hub_log.h"
+#include "session_journal.h"
 #include "hub_version.h"
 #include "crash_report.h"
 #include "crash_report_ui.h"
@@ -341,6 +342,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (qm_e2e_active()) qm_e2e_start();
     start_scan();
     cloud_boot();  // cloud saves v2: automatic for every account (startup delta + retry queue run in the background)
+    if (!g_headless) hubjournal::start_recovery(hubjournal::pending_dir(hub::data_dir()), [](const hubjournal::Entry& e) {   // a game that was still running when the hub was closed: its saves reach the vault now (session_journal.h)
+        if (e.system_short.empty() || e.game_key.empty()) return;
+        hub::saves::touch_game(e.system_short, e.game_key, e.title);
+        hub::saves::cloud_game_changed({e.system_short, e.game_key});
+    }, [](const std::string& m) { hublog::info("%s", m.c_str()); });
     auto_sync();
     SH.init(shot_path);
     hubupdate::set_game_probe(&game_active);
