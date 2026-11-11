@@ -24,13 +24,25 @@ bool spawn(const std::wstring& exe, std::wstring cmdline, const std::wstring& cw
     if (!ok) return false;
     out->process = pi.hProcess;
     out->pid = pi.dwProcessId;
-    creation_time(pi.hProcess, &out->created);
-    if (want_job) {   // follow every process it starts: in the job before its first instruction runs
-        HANDLE job = CreateJobObjectW(nullptr, nullptr);
-        if (job && !AssignProcessToJobObject(job, pi.hProcess)) { CloseHandle(job); job = nullptr; }
-        out->job = job;
+    try {
+        creation_time(pi.hProcess, &out->created);
+        if (want_job) {   // follow every process it starts: in the job before its first instruction runs
+            HANDLE job = CreateJobObjectW(nullptr, nullptr);
+            if (job && !AssignProcessToJobObject(job, pi.hProcess)) { CloseHandle(job); job = nullptr; }
+            out->job = job;
+        }
+        if (before_resume) {
+            try { before_resume(*out); } catch (...) {}   // a failing observer must not leave the player's game suspended
+        }
+    } catch (...) {   // anything unexpected after the process exists: end it by handle, never leave it suspended
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        if (out->job) CloseHandle(out->job);
+        *out = SpawnResult();
+        out->error = ERROR_INTERNAL_ERROR;
+        return false;
     }
-    if (before_resume) before_resume(*out);
     if (ResumeThread(pi.hThread) == (DWORD)-1) {
         const DWORD err = GetLastError();
         TerminateProcess(pi.hProcess, 1);

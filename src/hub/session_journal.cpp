@@ -1,11 +1,15 @@
 #include "session_journal.h"
 
 #include "durable_write.h"
+#include "emu_saves.h"
+#include "library.h"
+#include "lichii.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <atomic>
@@ -20,6 +24,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <cwctype>
 
 namespace hubjournal {
 
@@ -112,13 +117,13 @@ void remove_entry(const std::string& dir, const std::string& id) {
     fs::remove(u8(file_of(dir, id)), ec);
 }
 
-void set_aside(const fs::path& p) {
+void set_aside(const fs::path& p, const wchar_t* suffix) {
     std::error_code ec;
     fs::path to = p;
-    to += L".corrupt";
-    for (int n = 1; fs::exists(to, ec) && n < 1000; ++n) { to = p; to += L".corrupt" + std::to_wstring(n); }
+    to += suffix;
+    for (int n = 1; fs::exists(to, ec) && n < 1000; ++n) { to = p; to += suffix + std::to_wstring(n); }
     fs::rename(p, to, ec);
-    if (ec) fs::remove(p, ec) ;   // cannot even rename: it must not be trusted (or re-parsed) next time; a journal is never a save
+    if (ec) fs::remove(p, ec);   // cannot even rename: it must not be trusted (or re-parsed) next time; a journal is never a save
 }
 
 std::string new_id() {
@@ -127,8 +132,6 @@ std::string new_id() {
     std::snprintf(b, sizeof b, "%llx-%lx-%x", (unsigned long long)GetTickCount64() ^ ((unsigned long long)std::time(nullptr) << 20), (unsigned long)GetCurrentProcessId(), counter.fetch_add(1));
     return b;
 }
-
-std::mutex g_recover_mu;
 
 } // namespace
 
@@ -145,6 +148,8 @@ std::string serialize(const Entry& e) {
     kv("id", e.id);
     kv("kind", std::to_string(e.emu_kind));
     kv("exe", e.emu_exe);
+    kv("inst", e.inst_dir);
+    kv("inst_managed", e.inst_managed ? "1" : "0");
     kv("system", e.system_short);
     kv("game", e.game_key);
     kv("title", e.title);
@@ -202,6 +207,8 @@ bool parse(const std::string& text, Entry* out) {
         if (k == "id") { if (v.empty() || v.find_first_of("\\/:") != std::string::npos || v.find("..") != std::string::npos) return false; e.id = v; have_id = true; }
         else if (k == "kind") { if (!parse_int(v, &n) || n < 0 || n > 1000) return false; e.emu_kind = (int)n; have_kind = true; }
         else if (k == "exe") e.emu_exe = v;
+        else if (k == "inst") e.inst_dir = v;
+        else if (k == "inst_managed") { if (!flag(&e.inst_managed)) return false; }
         else if (k == "system") e.system_short = v;
         else if (k == "game") e.game_key = v;
         else if (k == "title") e.title = v;
@@ -244,6 +251,20 @@ bool begin(const std::string& dir, Entry& e) {
 
 bool update(const std::string& dir, const Entry& e) { return write_entry(dir, e); }
 
+std::mutex& session_lock() {
+    static std::mutex m;
+    return m;
+}
+
+namespace {
+std::function<void(bool, const std::string&)> g_log;
+std::function<void()> g_replay_hook;
+void log_line(bool warning, const std::string& m) { if (g_log) g_log(warning, m); }
+}
+
+void set_log(std::function<void(bool, const std::string&)> log) { g_log = std::move(log); }
+void set_replay_hook(std::function<void()> hook) { g_replay_hook = std::move(hook); }
+
 bool merge_nx_map(hubemu::SaveSession& s, const hubemu::NxSaveMap& m) {
     bool added = false;
     if (s.vault_rels.size() < s.rels.size()) for (size_t i = s.vault_rels.size(); i < s.rels.size(); ++i) s.vault_rels.push_back(s.rels[i]);
@@ -263,7 +284,9 @@ void run_exit(hubemu::SaveSession& s, const Entry& meta) {
     }
     if (s.active && meta.nx_title_id && !meta.nx_install_dir.empty()) {   // Switch: folders the emulator created during the session (nand\user\save\account\...) count too
         hubemu::NxSaveMap nm = hubemu::nx_save_map(meta.nx_install_dir, meta.nx_title_id, s.battery, false);
-        if (nm.error.empty() && nm.user_root == s.emu_root) merge_nx_map(s, nm);
+        /* only for the same user as at launch: a changed profile must not redirect the copy-back to another folder */
+        if (nm.error.empty() && nm.user_root == s.emu_root && !nm.rels.empty() && !s.rels.empty() && nm.rels[0] == s.rels[0]) merge_nx_map(s, nm);
+        else log_line(true, "save mapping at exit differs from the one at launch (" + meta.game_key + "): the launch-time folders are used");
     }
     hubemu::end_session(s);
 }
@@ -304,46 +327,166 @@ bool process_running(unsigned long pid, unsigned long long created) {
     return running;
 }
 
-RecoverReport recover(const std::string& dir, const std::function<void(const Entry&)>& after) {
-    std::lock_guard<std::mutex> lk(g_recover_mu);
+namespace {
+
+std::wstring norm_path(const std::string& p) {
+    std::wstring w = u8(p).wstring();
+    for (auto& c : w) { if (c == L'/') c = L'\\'; c = (wchar_t)towlower(c); }
+    while (w.size() > 3 && w.back() == L'\\') w.pop_back();
+    return w;
+}
+bool same_path(const std::string& a, const std::string& b) { return !a.empty() && !b.empty() && norm_path(a) == norm_path(b); }
+bool path_under(const std::string& p, const std::string& dir) {
+    std::wstring d = norm_path(dir), w = norm_path(p);
+    if (d.empty()) return false;
+    if (d.back() != L'\\') d.push_back(L'\\');
+    return w.size() > d.size() && w.compare(0, d.size(), d) == 0;
+}
+
+} // namespace
+
+bool image_running(const std::string& exe, const std::string& managed_dir) {
+    if (exe.empty() && managed_dir.empty()) return false;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof pe;
+    bool found = false;
+    const DWORD me = GetCurrentProcessId();
+    for (BOOL ok = Process32FirstW(snap, &pe); ok && !found; ok = Process32NextW(snap, &pe)) {
+        if (pe.th32ProcessID == me || pe.th32ProcessID == 0) continue;
+        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+        if (!h) continue;
+        wchar_t buf[2048];
+        DWORD n = (DWORD)(sizeof buf / sizeof buf[0]);
+        if (QueryFullProcessImageNameW(h, 0, buf, &n)) {
+            const std::string img = to_u8(fs::path(std::wstring(buf, n)));
+            if ((!exe.empty() && same_path(img, exe)) || (!managed_dir.empty() && path_under(img, managed_dir))) found = true;
+        }
+        CloseHandle(h);
+    }
+    CloseHandle(snap);
+    return found;
+}
+
+namespace {
+
+std::string join_path(const std::string& a, const std::string& b) { return to_u8(u8(a) / u8(b)); }
+std::string strip_sep(std::string s) { while (!s.empty() && (s.back() == '\\' || s.back() == '/')) s.pop_back(); return s; }
+
+/* Everything the replay will touch, derived again from the CURRENT configuration exactly as begin_session does. The journal only names identity.
+ * `why` says what disagrees. */
+bool derive(const Entry& e, const Config& cfg, Entry* out, std::string* why) {
+    *out = e;
+    hubemu::SaveSession& s = out->sess;
+    std::string dir;
+    bool managed = false;
+    if (!cfg.install || !cfg.install(e, &dir, &managed) || dir.empty()) { *why = "the emulator is not installed any more"; return false; }
+    if (!same_path(dir, e.inst_dir)) { *why = "the emulator now lives somewhere else"; return false; }
+    out->inst_managed = managed;
+    if (!e.nx_install_dir.empty() && !same_path(e.nx_install_dir, dir)) { *why = "the recorded Switch folder is not the install folder"; return false; }
+    if (!e.cemu_user.empty()) {
+        const std::string want = managed ? join_path(dir, "portable") : hubemu::cemu_user_data_dir(dir, cfg.appdata);
+        if (!same_path(e.cemu_user, want)) { *why = "Cemu's data folder is not where it was"; return false; }
+        out->cemu_user = want;
+    }
+    if (!s.active) return true;   // nothing is copied: only the reverts above
+    if (!cfg.battery_dir) { *why = "no vault configuration"; return false; }
+    const std::string battery = strip_sep(cfg.battery_dir(e.system_short, e.game_key));
+    if (battery.empty() || !same_path(battery, s.battery)) { *why = "the save vault is not where it was"; return false; }
+    const fs::path game = u8(battery).parent_path(), sysdir = game.parent_path(), vault = sysdir.parent_path();
+    std::string suffix;   // "-fritchii" etc.: what follows "emu-<system>-<game>" in the recorded manifest name
+    {
+        const std::string name = to_u8(u8(s.manifest_path).filename());
+        const std::string head = "emu-" + to_u8(sysdir.filename()) + "-" + to_u8(game.filename());
+        if (name.size() < head.size() + 5 || name.compare(0, head.size(), head) != 0 || name.compare(name.size() - 5, 5, ".json") != 0) { *why = "the recorded manifest does not belong to this game"; return false; }
+        suffix = name.substr(head.size(), name.size() - head.size() - 5);
+        if (suffix.size() > 24 || suffix.find_first_not_of("-abcdefghijklmnopqrstuvwxyz0123456789") != std::string::npos) { *why = "the recorded manifest name is not valid"; return false; }
+    }
+    std::string root;
+    const hub::System sys = hub::system_from_short(e.system_short);
+    if (e.emu_kind == 100) root = dir;                               // Hookshot: its user folder
+    else if (sys == hub::System::N3DS) root = hub::n3ds_sd_root(join_path(dir, "user"));
+    else if (sys == hub::System::WiiU) {
+        root = managed ? join_path(join_path(dir, "portable"), "mlc01") : hub::cemu_dirs_for(dir, cfg.appdata, hubemu::wiiu_probe()).mlc;
+        s.wiiu_save_parent = join_path(root, "usr\\save\\00050000");
+    }
+    else if (sys == hub::System::PS2) root = dir;
+    else if (sys == hub::System::PSP) root = join_path(dir, "memstick\\PSP");
+    else if (sys == hub::System::Switch) root = hubemu::lichii_user_dir(dir);
+    else if (sys == hub::System::GC) root = hubemu::dolphin_card_root(dir, e.game_key);
+    if (root.empty() || !same_path(root, s.emu_root)) { *why = "the emulator's save folder is not where it was"; return false; }
+    s.emu_root = root;
+    s.battery = battery;
+    s.backup_dir = to_u8(vault / L"_conflicts" / sysdir.filename() / game.filename() / L"battery");
+    s.manifest_path = hubemu::emu_manifest_path(battery, suffix.c_str());
+    return true;
+}
+
+std::mutex g_recover_mu;
+
+} // namespace
+
+RecoverReport recover(const std::string& dir, const Config& cfg, const std::function<void(const Entry&)>& after, const std::atomic<bool>* stop) {
+    std::lock_guard<std::mutex> rlk(g_recover_mu);
     RecoverReport rep;
     std::error_code ec;
     std::vector<fs::path> files;
     for (fs::directory_iterator it(u8(dir), ec), end; !ec && it != end; it.increment(ec))
         if (it->is_regular_file(ec) && it->path().extension() == L".session") files.push_back(it->path());
     std::sort(files.begin(), files.end());
+    struct CancelScope { CancelScope(const std::atomic<bool>* f) { hub::set_sync_cancel(f); } ~CancelScope() { hub::set_sync_cancel(nullptr); } } cancel_scope(stop);
+    auto stopped = [&] { return stop && stop->load(); };
     for (const fs::path& p : files) {
+        if (stopped()) break;
+        std::unique_lock<std::mutex> lk(session_lock(), std::defer_lock);   // a launch in progress owns the emulator's files: wait for it
+        while (!lk.try_lock()) { if (stopped()) return rep; std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
         std::string text;
         bool read_ok = false;
         {
             std::ifstream f(p, std::ios::binary);
-            if (f) { text.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); read_ok = !f.bad(); }
+            if (!f) { std::error_code e2; if (!fs::exists(p, e2)) continue; }   // replayed or removed meanwhile
+            else { text.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); read_ok = !f.bad(); }
         }
         Entry e;
         if (!read_ok || !parse(text, &e) || to_u8(p.stem()) != e.id) {
-            set_aside(p);
+            set_aside(p, L".corrupt");
             ++rep.corrupt;
-            rep.notes.push_back("pending session file " + to_u8(p.filename()) + " could not be read: set aside");
+            rep.warnings.push_back("pending session file " + to_u8(p.filename()) + " could not be read: set aside");
             continue;
         }
+        /* everything below is checked INSIDE the lock, after any launch finished: the emulator may have started since the last look */
         if (process_running(e.pid, e.created)) { ++rep.still_running; rep.notes.push_back("pending session " + e.id + ": emulator still running"); continue; }
-        if (live_kind(e.emu_kind) || (!e.emu_exe.empty() && hubemu::is_running(e.emu_exe))) {   // another session of this emulator runs: its files are not ours to touch
+        if (live_kind(e.emu_kind) || image_running(e.emu_exe, e.inst_managed ? e.inst_dir : std::string())) {
             ++rep.deferred;
             rep.notes.push_back("pending session " + e.id + ": the emulator is running again, waiting");
             continue;
         }
-        run_exit(e.sess, e);
-        if (e.sess.error.empty()) {
-            if (after) after(e);
+        Entry d;
+        std::string why;
+        if (!derive(e, cfg, &d, &why)) {
+            ++rep.failed;
+            ++e.attempts;
+            rep.warnings.push_back("pending session " + e.id + " kept (" + e.game_key + "): " + why + " (attempt " + std::to_string(e.attempts) + ")");
+            if (e.attempts >= 3) { set_aside(p, L".stale"); rep.warnings.push_back("pending session " + e.id + " set aside as " + to_u8(p.filename()) + ".stale: it never matched this setup"); }
+            else write_entry(dir, e);
+            continue;
+        }
+        if (g_replay_hook) g_replay_hook();
+        run_exit(d.sess, d);
+        if (d.sess.error.empty()) {
+            if (after) after(d);
             remove_entry(dir, e.id);
             ++rep.replayed;
-            rep.notes.push_back("pending session " + e.id + " replayed: " + e.sess.summary);
+            rep.notes.push_back("pending session " + e.id + " replayed: " + d.sess.summary);
+        } else if (stopped()) {
+            break;   // cut short by shutdown: the journal stays, no attempt is counted
         } else {
             ++rep.failed;
             ++e.attempts;
-            rep.notes.push_back("pending session " + e.id + " failed (attempt " + std::to_string(e.attempts) + "): " + e.sess.error);
-            if (e.attempts >= 3) set_aside(p);   // gives up; the emulator's own files and the vault are untouched
-            else { e.sess.active = true; e.sess.error.clear(); write_entry(dir, e); }
+            rep.warnings.push_back("pending session " + e.id + " failed (attempt " + std::to_string(e.attempts) + "): " + d.sess.error);
+            if (e.attempts >= 3) set_aside(p, L".stale");   // gives up; the emulator's own files and the vault are untouched
+            else write_entry(dir, e);
         }
     }
     return rep;
@@ -354,34 +497,35 @@ struct Recovery {
     std::thread th;
     std::mutex mu;
     std::condition_variable cv;
-    bool stop = false;
+    std::atomic<bool> stop{false};
     ~Recovery() { stop_recovery(); }
 };
 Recovery& rec() { static Recovery r; return r; }
 } // namespace
 
-void start_recovery(const std::string& dir, std::function<void(const Entry&)> after, std::function<void(const std::string&)> log) {
+void start_recovery(const std::string& dir, Config cfg, std::function<void(const Entry&)> after, std::function<void(bool, const std::string&)> log) {
     Recovery& r = rec();
     std::lock_guard<std::mutex> lk(r.mu);
     if (r.th.joinable()) return;
     r.stop = false;
-    r.th = std::thread([dir, after, log]() {
+    set_log(log);
+    r.th = std::thread([dir, cfg, after, log]() {
         Recovery& r = rec();
         for (;;) {
-            RecoverReport rep = recover(dir, after);
-            if (log) for (const auto& n : rep.notes) log(n);
-            if (rep.still_running + rep.deferred == 0) return;   // nothing waits for an emulator any more
+            RecoverReport rep = recover(dir, cfg, after, &r.stop);
+            if (log) { for (const auto& n : rep.notes) log(false, n); for (const auto& w : rep.warnings) log(true, w); }
+            if (r.stop || rep.still_running + rep.deferred == 0) return;   // nothing waits for an emulator any more
             std::unique_lock<std::mutex> lk(r.mu);
-            if (r.cv.wait_for(lk, std::chrono::seconds(15), [&] { return r.stop; })) return;
+            if (r.cv.wait_for(lk, std::chrono::seconds(15), [&] { return r.stop.load(); })) return;
         }
     });
 }
 
 void stop_recovery() {
     Recovery& r = rec();
+    r.stop = true;
     {
-        std::lock_guard<std::mutex> lk(r.mu);
-        r.stop = true;
+        std::lock_guard<std::mutex> lk(r.mu);   // pairs with the wait predicate: no lost wake-up
     }
     r.cv.notify_all();
     if (r.th.joinable() && r.th.get_id() != std::this_thread::get_id()) r.th.join();

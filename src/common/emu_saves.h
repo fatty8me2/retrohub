@@ -3,6 +3,7 @@
  * save data lives inside the emulator's user dir, and a newest-wins tree copy used to move it
  * between that folder and the RetroHub save vault. Pure logic: no UI, no process handling. */
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -77,6 +78,10 @@ uint64_t file_hash(const std::string& path);   // FNV-1a 64 of the content, 0 on
 TreeSyncReport sync_tree_newest(const std::string& src, const std::string& dst, const std::string& backup_dir,
                                 const std::string& backup_tag, SyncManifest* manifest = nullptr,
                                 const std::string& key_prefix = "", int keep_backups = 10);
+
+/* Lets the calling thread cut a sync_tree_newest short between files (shutdown): while the flag is set it stops with ok=false and error "cancelled".
+ * Per thread; nullptr (the default) never cancels. Nothing already copied is undone. */
+void set_sync_cancel(const std::atomic<bool>* flag);
 
 /* True when `dir` exists and holds at least one regular file. */
 bool tree_has_files(const std::string& dir);
