@@ -328,7 +328,7 @@ static std::string host_card_sync_impl(const std::string& card_dir, const std::s
             if (x == L".gci") gci.push_back(e.path());
         }
     if (ec) return fail("cannot list " + card_dir + ": " + ec.message());
-    for (const char* region : {"USA", "EUR", "JPN"}) {
+    for (const char* region : {"USA", "EUR", "JAP"}) {
         const fs::path dir = root / region;
         fs::create_directories(dir, ec);
         if (ec) return fail("cannot create " + winutil::to_utf8(dir.wstring()) + ": " + ec.message());
