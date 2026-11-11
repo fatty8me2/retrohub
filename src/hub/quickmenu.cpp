@@ -133,6 +133,13 @@ char g_ch_buf[48] = {0};
 long long g_pending = 0;                       // seq waiting for an ack (0 = none)
 std::string g_pending_what;                    // "Saved slot 3" ...
 static ULONGLONG g_open_ms = 0, g_activity_ms = 0;
+/* Clock for everything the menu's input handling measures in time (key-repeat delay/rate, open cooldown, B grace, overwrite confirm).
+ * Normal runs: the wall clock. Headless e2e (qm_e2e.cpp): a virtual clock the test advances a fixed step per frame, so a loaded PC
+ * (slow frames) cannot change how many repeats / which cooldowns a scenario sees. */
+static ULONGLONG g_e2e_clock_ms = 0;
+static bool g_e2e_clock_on = false;
+ULONGLONG qmnow() { return g_e2e_clock_on ? g_e2e_clock_ms : GetTickCount64(); }
+
 /* The menu's own controls (qm_nav.h): read straight from the pads every frame, independent of the OS focus and of ImGui's nav.
  * g_in gates buttons held at open (View+Y itself, A/B held in the game) until released; g_nav keeps the selected row by id. */
 hubqm::MenuInput g_in;
@@ -334,7 +341,7 @@ void slot_page(bool saving) {
     ImGui::TextDisabled(saving ? "Pick a slot. A used slot is replaced." : "Pick a slot to go back to.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     std::string dir = states_dir_of(g_key, g_sys);
-    if (saving) g_ovw.tick(g_nav.sel, (long long)GetTickCount64()); else g_ovw.cancel();   // any navigation (or a wait) cancels "press again to replace"
+    if (saving) g_ovw.tick(g_nav.sel, (long long)qmnow()); else g_ovw.cancel();   // any navigation (or a wait) cancels "press again to replace"
     const int cols = 5;
     int total = saving ? runctl::kSlots : runctl::kSlots + 1;   // load: + the resume point
     float gap = sp(1.f);
@@ -355,7 +362,7 @@ void slot_page(bool saving) {
         if (chosen) {
             if (saving) {
                 const bool used = read_slot(dir, slot).exists;
-                if (g_ovw.press(slot, used, (long long)GetTickCount64(), g_nav.sel) == hubqm::OverwriteConfirm::Result::Save)
+                if (g_ovw.press(slot, used, (long long)qmnow(), g_nav.sel) == hubqm::OverwriteConfirm::Result::Save)
                     send(runctl::Cmd::SaveState, slot, "Saved to slot " + std::to_string(slot + 1), true);
             }
             else send(runctl::Cmd::LoadState, slot, slot < 0 ? "Went back to the resume point" : "Loaded slot " + std::to_string(slot + 1), true);
@@ -1144,7 +1151,7 @@ void draw_quick_menu() {
     const uint32_t bits = qm_nav_bits(raw) | qm_keyboard_nav_bits(), tap_bits = qm_nav_bits(taps);
     const bool open_frame = open && !was_open;
     if (open && !was_open) {
-        g_open_ms = GetTickCount64(); g_close_why = "other"; g_focus_retry.reset();
+        g_open_ms = qmnow(); g_close_why = "other"; g_focus_retry.reset();
         g_in.open(bits | qm_keyboard_held_async());   // everything held right now (View+Y, A/B from the game, Enter...) is ignored until released
         g_nav.reset();
         g_sub_open = false;
@@ -1174,7 +1181,7 @@ void draw_quick_menu() {
         if (g_sub_open) { sub_was = true; qm_pad_take_taps(); }
         else {
             if (sub_was) { sub_was = false; g_in.open(bits); }   // the picker just closed: its closing B must not also close the menu
-            ev = g_in.update(bits, (long long)GetTickCount64(), open_frame ? 0u : tap_bits);
+            ev = g_in.update(bits, (long long)qmnow(), open_frame ? 0u : tap_bits);
         }
         if (ev.back) qm_log("menu: back");
         g_nav.begin(ev);
@@ -1613,6 +1620,8 @@ void qm_seed_gallery(const hub::GameEntry& e) {
 }
 
 /* ---------------- headless end-to-end test hooks (qm_e2e.cpp) ---------------- */
+unsigned long long qm_now_ms() { return qmnow(); }
+void qm_e2e_advance_clock(unsigned ms) { g_e2e_clock_on = true; g_e2e_clock_ms += ms; }
 void qm_e2e_enable() {
     g_e2e = true;
     A.run.key = "n64:e2e"; A.run.title = "E2E stand-in"; A.run.system_short = "n64"; A.run.online = false;

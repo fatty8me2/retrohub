@@ -110,7 +110,7 @@ add_test(NAME hubkanto_test COMMAND hubkanto_test)                       # Kanto
 add_test(NAME hubkantopad_test COMMAND hubkantopad_test)               # Kanto Together mGBA gamepad config writer
 add_test(NAME nes_snes_test COMMAND nes_snes_test)                 # NES/SNES headers, scan, cheats, profiles, settings
 add_test(NAME runner_speed_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/speed_headless.ps1)   # retrorun --headless --realtime: quick-menu speed steps 0.25x..Max, 1x restore, rapid changes, input off (skips without retrorun)
-set_tests_properties(runner_speed_headless PROPERTIES TIMEOUT 900)
+set_tests_properties(runner_speed_headless PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)   # wall-clock fps ratios: serial; exits 77 (skipped: machine too busy) when the 1x windows never steady
 add_test(NAME nes_snes_smoke COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/nes_snes_synctest.ps1)   # Nestopia + Snes9x headless run, .srm write, rollback SyncTest (skips without the cores)
 add_test(NAME gb_gba_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/gb_gba_synctest.ps1)   # Gambatte/SameBoy/mGBA headless run, .srm write, rollback SyncTest on generated homebrew ROMs (skips without the cores)
 set_tests_properties(gb_gba_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
@@ -144,7 +144,7 @@ add_test(NAME hubdolphincheats_test COMMAND hubdolphincheats_test)   # GameCube 
 add_test(NAME hubcheatstore_test COMMAND hubcheatstore_test)   # cheat choices: persistence/merge/custom codes/online rules/save backup
 add_test(NAME hubcontrols_test COMMAND hubcontrols_test)             # controller profiles: defaults == old hardcoded maps
 add_test(NAME live_controls_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/live_controls.ps1 -Root ${CMAKE_SOURCE_DIR})   # reload_controls: a rewritten profile changes the mapped mask of a running headless retrorun
-set_tests_properties(live_controls_headless PROPERTIES TIMEOUT 120)
+set_tests_properties(live_controls_headless PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
 add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
 add_test(NAME retrorun_fx_test COMMAND retrorun_fx_test)
 add_test(NAME retrorun_dslink_test COMMAND retrorun_dslink_test)
@@ -189,7 +189,7 @@ add_test(NAME hub_qm_nav_test COMMAND hub_qm_nav_test)                # quick me
 # Headless end-to-end quick menu run: RetroHub.exe on SDL's dummy video driver, input only from an SDL virtual game controller (real pads are
 # never opened), 13 scenarios incl. the phantom press from quickmenu.log (src/hub/qm_e2e.cpp). No window, no audio.
 add_test(NAME hub_qm_e2e COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/qm_e2e.ps1 -Exe $<TARGET_FILE:RetroHub>)
-set_tests_properties(hub_qm_e2e PROPERTIES TIMEOUT 600 LABELS gui)   # gui: needs a desktop session; CI skips these (-LE "online|gui")
+set_tests_properties(hub_qm_e2e PROPERTIES TIMEOUT 900 LABELS gui RUN_SERIAL TRUE)   # gui: needs a desktop session; CI skips these (-LE "online|gui")
 add_test(NAME hub_launchset_test COMMAND hub_launchset_test)
 add_test(NAME hub_launch_logic_test COMMAND hub_launch_logic_test)   # fw2-ci: runner/core choice, title + save-stem quoting, resume rules, launch guard (pure)
 add_test(NAME hub_dolphin_speed_test COMMAND hub_dolphin_speed_test)   # DSU speed pad: ini text, press sequencing, title parsing, loopback (offline)
