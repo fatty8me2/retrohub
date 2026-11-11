@@ -135,11 +135,21 @@ target_compile_features(hubconv PUBLIC cxx_std_17)
 add_executable(hub_convenience_test test_convenience.cpp)
 target_link_libraries(hub_convenience_test PRIVATE hubconv)
 
+# Hub log (rotating, scrubbed) + RetroHub's own crash report (no dbghelp / minidump: see hang_watchdog.cpp)
+add_library(hubcrashlog STATIC hub_log.cpp crash_report.cpp)
+target_include_directories(hubcrashlog PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hubcrashlog PUBLIC cxx_std_17)
+add_executable(hub_crash_helper WIN32 crash_helper.cpp)   # test helper only: crashes on purpose, windowless
+target_link_libraries(hub_crash_helper PRIVATE hubcrashlog user32 shell32)
+add_executable(hub_crashlog_test test_crashlog.cpp)
+target_link_libraries(hub_crashlog_test PRIVATE hubcrashlog hubconv user32)
+add_dependencies(hub_crashlog_test hub_crash_helper)
+
 add_library(hubversion STATIC ${HUB_VERSION_GEN}/hub_version.cpp ${HUB_VERSION_GEN}/hub_version_rc.h)
 set(RETROHUB_UI_SOURCES
     main.cpp input_gate.cpp app.cpp util.cpp lib_state.cpp save_jobs.cpp launch.cpp launch_online.cpp lobby.cpp spectate_ui.cpp dropin_ui.cpp
     ui_common.cpp username_ui.cpp kanto_ui.cpp tiles.cpp shelves.cpp page_library.cpp libview_ui.cpp shelf_draw.cpp cases_draw.cpp cases_media.cpp cases_flow.cpp states_ui.cpp match_ui.cpp page_online.cpp picker_ui.cpp friends_ui.cpp friend_pick_ui.cpp challenge_ui.cpp gamenight_ui.cpp friend_games_ui.cpp group_ui.cpp
-    page_controllers.cpp page_admin.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp welcome_ui.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp qm_pad.cpp qm_e2e.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp display.cpp osk.cpp onboarding.cpp crash_note_ui.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp gamepack.cpp cases_audit.cpp
+    page_controllers.cpp page_admin.cpp page_saves.cpp cloud_ui.cpp history_ui.cpp page_settings.cpp theme_ui.cpp account_ui.cpp settings_games_ui.cpp emu_dialogs.cpp ps1_ui.cpp libcopies_ui.cpp find_games_ui.cpp add_games_ui.cpp page_about.cpp page_changelog.cpp welcome_ui.cpp cheats_ui.cpp gameinfo_ui.cpp quickmenu.cpp qm_pad.cpp qm_e2e.cpp shot_viewer.cpp customize_ui.cpp tv_mode.cpp display.cpp osk.cpp onboarding.cpp crash_note_ui.cpp crash_report_ui.cpp frame.cpp shot.cpp autotest.cpp userflow.cpp boot_art_shot.cpp gamepack.cpp cases_audit.cpp
     attract.cpp continue_ui.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp page_discover.cpp discover_logic.cpp discover_browse.cpp
     party_ui.cpp party_view.cpp bracket_ui.cpp hack_ui.cpp hack_core.cpp qm_party.cpp   # Plan 4 Wave 1
     lockout.cpp icon_refresh.cpp discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp   # Plan 4 Wave 2 C (convenience)
@@ -147,7 +157,7 @@ set(RETROHUB_UI_SOURCES
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)
-target_link_libraries(RetroHub PRIVATE hubconv hubattach hubcheevos hubversion hubgameinfo_net hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
+target_link_libraries(RetroHub PRIVATE hubcrashlog hubconv hubattach hubcheevos hubversion hubgameinfo_net hublogic imgui hubnet hubcommon hubcontrols_sdl hubsaves SDL2::SDL2
     ole32 shell32 uuid winhttp)
 # main.cpp defines SDL_MAIN_HANDLED and provides WinMain itself, so SDL2main is not needed.
 

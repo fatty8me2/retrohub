@@ -8,6 +8,10 @@
 #include "qm_pad.h"
 #include "dolphin_speed.h"
 #include "hang_watchdog.h"
+#include "hub_log.h"
+#include "hub_version.h"
+#include "crash_report.h"
+#include "crash_report_ui.h"
 #include "idle_logic.h"
 #include "boot_anim.h"
 #include "toast.h"
@@ -155,6 +159,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");   // smooth downscaling of cover art
+    const bool log_on = !shot_path && !autotest;   // QA drivers never write to the player's logs folder
+    if (log_on) {   // hub.log + crash report (docs/ARCHITECTURE.md, "Logs and crash reports"); a crash note for the previous run is queued here
+        hublog::init(hub::data_dir() + "logs\\", HUB_VERSION_STR);
+        crashrep::install(hub::data_dir() + "logs\\", HUB_VERSION_STR, &hang_watchdog_current_phase);
+        crash_report_ui_init(hub::data_dir() + "logs\\");
+        hublog::info("startup: process began");
+    }
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {
         std::fprintf(stderr, "RetroHub: SDL_Init failed: %s\n", SDL_GetError());   // no MessageBox: it could land over a game
         return 1;
@@ -169,6 +180,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     A.settings_path = hub::data_dir() + "hub.json";
     A.st.server = hubnet::default_server();
     hubui::load_settings(A.settings_path, &A.st);
+    hublog::info("startup: settings loaded (+%llu ms)", hublog::since_start_ms());
     {   // D2: Reduce motion's first-run default follows Windows "Show animations"; after that it is the player's own choice
         bool key_saved = false;
         { std::ifstream hin(std::filesystem::path(W(A.settings_path)), std::ios::binary); std::stringstream hs; hs << hin.rdbuf(); key_saved = hs.str().find("\"reduce_motion\"") != std::string::npos; }
@@ -277,7 +289,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_Renderer* ren = A.win ? SDL_CreateRenderer(A.win, -1, shot_path ? SDL_RENDERER_SOFTWARE : (SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC)) : nullptr;
     if (!A.win || !ren) {
         std::fprintf(stderr, "RetroHub: window/renderer failed: %s\n", SDL_GetError());   // no MessageBox: it could land over a game
+        hublog::error("startup: window/renderer failed: %s", SDL_GetError());
+        hublog::shutdown();
         return 1;
+    }
+    {
+        SDL_RendererInfo ri;
+        hublog::info("startup: window + renderer ready (+%llu ms), renderer %s, %dx%d", hublog::since_start_ms(), SDL_GetRendererInfo(ren, &ri) == 0 && ri.name ? ri.name : "?", win_w, win_h);
     }
     if (!shot_path) { hubdisplay::seed_monitor(A.win); hubdisplay::apply_min_size(A.win, S); }   // clamped to the work area (L3); headless shots keep the size they ask for
     S = tvmode::init(A.win, g_headless, S, hubtv::has_tv_flag(GetCommandLineW()) || std::getenv("HUB_TV") != nullptr, A.st.tv_start, win_h);   // TV mode scale (fonts are built next)
@@ -306,6 +324,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hubart::init(ren, hub::data_dir() + "art\\");
     lib_fake_art_init(ren);
     qm_init(ren);
+    hublog::info("startup: UI ready (+%llu ms)", hublog::since_start_ms());
     hubart::set_enabled(A.st.download_art);
     hub::rom_cache_set_limit((uint64_t)A.st.rom_cache_limit_gb << 30);
 
@@ -330,7 +349,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         const char* hs = std::getenv("HUB_HANG_SECS");
         hang_watchdog_start(hub::data_dir() + "logs\\", hs ? std::max(1.0, std::atof(hs)) : 5.0);
     }
+    hublog::info("startup: services started, entering main loop (+%llu ms), %d games", hublog::since_start_ms(), (int)A.lib.size());
     bool running = true;
+    bool log_game_on = false;   // hub.log: a hub-launched game process starting / ending
+    ULONGLONG log_game_t0 = 0;
     int hang_test_frame = 0;   // HUB_HANG_TEST: main-loop iterations (ImGui frames may already be past 30 after the boot screen)
 
     /* Idle throttle (idle_logic.h): while the hub is in the background the loop keeps pumping every poller at its old cadence but draws a
@@ -375,6 +397,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         if (exit_after_s > 0.0 && (double)(iter_t0 - run_t0) / 1000.0 >= exit_after_s) running = false;   // QA measurement runs only (see above)
         hang_watchdog_tick();
+        if ((A.proc != nullptr) != log_game_on) {
+            log_game_on = A.proc != nullptr;
+            if (log_game_on) { log_game_t0 = iter_t0; hublog::info("game process started: %s (emulator kind %d)", A.run.title.c_str(), A.run.emu_kind); }
+            else hublog::info("game process ended after %llu s", (unsigned long long)((iter_t0 - log_game_t0) / 1000));   // the exit code is logged by launch.cpp's poll_process once it adopts hublog
+        }
         if (g_headless && std::getenv("HUB_HANG_TEST") && ++hang_test_frame == 30) hang_watchdog_phase("hang_test"), Sleep((DWORD)(std::atof(std::getenv("HUB_HANG_TEST")) * 1000));   // QA: simulate a hang
         hang_watchdog_phase("events");
         SDL_Event e;
@@ -640,6 +667,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         if (shot_path) bootart_shot_draw(ren);   // HUB_SHOT_BOOTART gallery
         if (!shot_path || SH.update) draw_update_popup();   // opens itself only when prompt_allowed()
         if (!shot_path || std::getenv("HUB_SHOT_CRASHNOTE")) draw_crash_note();   // opens itself only when prompt_allowed()
+        if (log_on) draw_crash_report_note();   // "RetroHub closed unexpectedly last time": only when prompt_allowed() and no other popup is up
         draw_launch_tips(shot_path && std::getenv("HUB_SHOT_LAUNCH_TIPS"));   // controller tips for a game that is still starting (never over a game window)
         osk::draw_root();
         ImGui::PopFont();
@@ -709,6 +737,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
 
     // clean shutdown
+    hublog::info("shutdown: main loop ended");
     hubdisplay::tick(A.win, true, tvmode::active());   // last window rect / monitor / maximized, before the window is hidden
     hang_watchdog_stop();   // before every shutdown join (updater startup thread, art worker): a slow join must not trip the watchdog on a normal exit
     hubupdate::shutdown();   // stop waiting for a game to close, drop the unused installer copy, join the startup pass
@@ -739,5 +768,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_DestroyWindow(A.win);
     SDL_Quit();
     CoUninitialize();
+    hublog::shutdown();
     return SH.fail ? 2 : (qm_e2e_active() ? qm_e2e_exit_code() : 0);
 }
