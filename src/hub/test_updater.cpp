@@ -727,6 +727,26 @@ int main(int argc, char** argv) {
         std::filesystem::remove_all(d, ec);
     }
 
+    // --- a normal start records its own version through the real note_boot_ok (no --boot-ok on this test's command line) ---
+    {
+        wchar_t eb[MAX_PATH + 1]; DWORD en = GetModuleFileNameW(nullptr, eb, MAX_PATH);
+        std::filesystem::path inst = std::filesystem::path(std::wstring(eb, en)).parent_path();
+        std::filesystem::path marker = inst / "updates" / "boot_ok";
+        std::error_code ec;
+        const bool had_dir = std::filesystem::exists(inst / "updates", ec);
+        std::filesystem::remove(marker, ec);
+        apply::note_boot_ok();                                       // the version is not known yet (set at startup): nothing is written, nothing is consumed
+        CHECK(!std::filesystem::exists(marker, ec));
+        apply::set_own_version("v7.7.7");
+        apply::note_boot_ok();                                       // the first presented frame of a normal run
+        CHECK(apply::boot_marker_matches(marker.wstring(), "v7.7.7") && apply::boot_marker_matches(marker.wstring(), "7.7.7"));
+        std::filesystem::remove(marker, ec);
+        apply::note_boot_ok();                                       // idempotent: once per run
+        CHECK(!std::filesystem::exists(marker, ec));
+        std::filesystem::remove(marker, ec);
+        if (!had_dir) std::filesystem::remove(inst / "updates", ec);
+    }
+
     // --- download robustness: no hard cap, stall detector, retries, resume only for the same release ---
     {
         const std::string fl = download_flags(false), flr = download_flags(true);
