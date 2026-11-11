@@ -128,10 +128,18 @@ std::string achievements_launch_args() {
     return " --ra-cfg " + quote(cfg_path()) + " --ra-cache " + quote(cache_dir());
 }
 
-/* Details modal. Draws nothing unless the player is signed in and the system is supported. */
+/* Details modal. Draws nothing unless the player is signed in; an unsupported system gets a one-line note. */
 void achievements_ui_section(const hub::GameEntry& e) {
     load_cfg();
-    if (!RA.cfg.enabled || !RA.cfg.signed_in() || !supported(e.system)) return;
+    if (!RA.cfg.enabled || !RA.cfg.signed_in()) return;
+    if (!supported(e.system)) {   // say why there is nothing here instead of showing nothing
+        ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        ImGui::PushFont(ui::F.bold);
+        ImGui::TextUnformatted("Achievements");
+        ImGui::PopFont();
+        text_wrapped_disabled(std::string("Achievements are not available for ") + hub::system_name(e.system) + " yet.");
+        return;
+    }
     const cheevos::GameCache* g = cache_for(e.key);
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     ImGui::PushFont(ui::F.bold);

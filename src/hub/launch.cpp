@@ -901,6 +901,7 @@ void play_entry(const hub::GameEntry& e_in) {
     }
     const hub::GameEntry& e = is_hack(e_in) ? hacked : e_in;
     if (A.cloud_gate.phase != CloudGate::Idle) { set_notice("Checking cloud saves...", 4.0); return; }
+    if (rom_missing(e)) { missing_rom_ask(e.key); return; }   // the file is gone: Locate / Rescan / Remove popup, asked at once (before any cloud wait)
     if (cloud_gate_begin(e, [key = e.key]() {
             if (const hub::GameEntry* g = find_entry(key)) { A.sel_game = key; hub::GameEntry copy = *g; A.cloud_gate.pass_key = key; play_entry(copy); }
         })) return;
@@ -914,7 +915,6 @@ void play_entry(const hub::GameEntry& e_in) {
     mark_dirty();
     hub::rom_cache_touch(e);   // LRU stamp for the unpacked copy (no-op for plain files)
     hub::rom_cache_pin(&e);    // and never trimmed while it runs (library-14)
-    if (rom_missing(e)) { missing_rom_ask(e.key); return; }   // the file is gone: Locate / Rescan / Remove popup
     RunInfo ri = run_info_for(e, false);
     std::string sys = sys_short(e);
     if (is_kanto(e)) { kt_play(e); return; }

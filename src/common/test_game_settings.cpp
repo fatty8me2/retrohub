@@ -153,6 +153,14 @@ int main() {
     rr.set_system(System::GBA, "fx.filter", "lcd");
     rr.set_game("gba:k", System::GBA, "fx.bezel", "true");
     CHECK(has_pair(retrorun_args(System::GBA, rr.resolve(System::GBA, "gba:k")), "--fx", "lcd") && has_pair(retrorun_args(System::GBA, rr.resolve(System::GBA, "gba:k")), "--bezel", "1"));
+    {   // play.rewind: auto (default) adds nothing; off reaches retrorun as --rewind off; bad values refused
+        CHECK(!has_pair(retrorun_args(System::GBA, defaults_for(System::GBA)), "--rewind", "off") && defaults_for(System::GBA).at("play.rewind") == "auto");
+        Store rw;
+        CHECK(rw.set_game("gba:r", System::GBA, "play.rewind", "off") && !rw.set_game("gba:r", System::GBA, "play.rewind", "on"));
+        CHECK(has_pair(retrorun_args(System::GBA, rw.resolve(System::GBA, "gba:r")), "--rewind", "off"));
+        CHECK(!has_pair(retrorun_args(System::GBA, rw.resolve(System::GBA, "gba:other")), "--rewind", "off"));
+        CHECK(!rw.set_game("n64:r", System::N64, "play.rewind", "off"));   // N64 has no rewind
+    }
     CHECK(!rr.set_game("gba:k", System::GBA, "fx.filter", "bogus"));
     CHECK(!has_pair(retrorun_args(System::GBA, rr.resolve(System::GBA, "other:k")), "--bezel", "1"));
 

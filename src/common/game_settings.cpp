@@ -82,6 +82,8 @@ std::vector<Option> build() {
     // Offline only (retrorun refuses both online). Auto run-ahead = 1 frame on NES/SNES/GB/GBC/GBA; rewind is automatic per system.
     v.push_back(mk("play.runahead", "Run-ahead (less input lag)", "Video", GB | GBA | NES | SNES | NDS | PS1, K::Choice, S::Visual, "off",
                    {{"off", "Off"}, {"1", "1 frame"}, {"2", "2 frames"}, {"auto", "Auto"}}));
+    v.push_back(mk("play.rewind", "Rewind", "Video", GB | GBA | NES | SNES | NDS | PS1, K::Choice, S::Visual, "auto",
+                   {{"auto", "Automatic"}, {"off", "Off"}}));
     v.push_back(mk("gb.color", "Color correction", "Color", GB | GBA, K::Choice, S::Visual, "auto",
                    {{"auto", "Core default"}, {"off", "Off"}, {"on", "On"}}));
     v.push_back(mk("ds.layout", "Screen layout", "Video", NDS, K::Choice, S::Visual, "top-bottom",
@@ -738,6 +740,7 @@ std::vector<std::string> retrorun_args(System s, const Values& v) {
     std::string f = get(v, "scale.filter");
     if (f != "auto") { r.push_back("--filter"); r.push_back(f); }
     if (get(v, "play.runahead") != "off" && !get(v, "play.runahead").empty()) { r.push_back("--runahead"); r.push_back(get(v, "play.runahead")); }
+    if (get(v, "play.rewind") == "off") { r.push_back("--rewind"); r.push_back("off"); }   // auto (default) = retrorun decides per system, as before
     if (s != System::NDS && s != System::PS1 && get(v, "scale.integer") == "false") { r.push_back("--integer-scale"); r.push_back("0"); }
     if (get(v, "fx.filter") != "off" && !get(v, "fx.filter").empty()) { r.push_back("--fx"); r.push_back(get(v, "fx.filter")); }
     if (get(v, "fx.bezel") == "true") { r.push_back("--bezel"); r.push_back("1"); }
