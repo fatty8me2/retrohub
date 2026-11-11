@@ -3,6 +3,8 @@
 #include "launch_guard_logic.h"
 #include "capture_hold_logic.h"
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 using namespace hub; using namespace hub::gs;
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
@@ -90,6 +92,23 @@ int main(int argc, char** argv) {
         hubui::capture_hold_step(k, "back", true, 2.0);
         CHECK(hubui::capture_hold_step(k, "", true, 2.9) == hubui::CaptureStep::Wait);
         CHECK(hubui::capture_hold_step(k, "", true, 3.0) == hubui::CaptureStep::Cancel && !k.pending);   // hold: cancel
+    }
+    {   // play.rewind reaches the retrorun command line only when it is off
+        Store rw;
+        rw.set_game("r", System::SNES, "play.rewind", "off");
+        CHECK(hubui::retro_extra_args(System::SNES, hubui::effective_values(rw, System::SNES, "r", false)).find("--rewind off") != std::string::npos);
+        CHECK(hubui::retro_extra_args(System::SNES, hubui::effective_values(rw, System::SNES, "other", false)).find("--rewind") == std::string::npos);
+    }
+    {   // a missing game file is asked about before the cloud-save gate (source order in play_entry)
+        std::ifstream in(std::string(HUB_SRC_DIR) + "/launch.cpp", std::ios::binary);
+        std::stringstream ss; ss << in.rdbuf();
+        const std::string src = ss.str();
+        const std::string ask = "if (rom_missing(e)) { missing_rom_ask(e.key); return; }";
+        const size_t fn = src.find("void play_entry(");
+        const size_t miss = src.find(ask, fn);
+        const size_t gate = src.find("cloud_gate_begin(e,", fn);
+        CHECK(fn != std::string::npos && miss != std::string::npos && gate != std::string::npos && miss < gate);
+        CHECK(src.find(ask, miss + 1) == std::string::npos);   // and it is not asked a second time after the gate
     }
     std::printf(g_fail ? "FAILED\n" : "launch settings OK\n");
     return g_fail != 0;
