@@ -40,6 +40,7 @@ struct SyncReport {
     std::vector<std::string> log;
     bool ok = true;
     std::string error;
+    std::string warning;   // sync still ok, but part of it was skipped (e.g. a game whose folder could not be read): plain words for the player
 };
 
 /* Two-way sync of the whole vault with `sync_root` (the same layout is mirrored

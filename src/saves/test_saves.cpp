@@ -108,8 +108,9 @@ static bool make_zip(const std::string& path, const std::vector<std::pair<std::s
  * first file, 3 = a file appears in the folder right after it was listed. Only folders whose path contains g_hook_match. */
 static int g_hook_mode = 0;
 static std::string g_hook_match;
+static std::string g_hook_tail = "\\battery";
 static unsigned long enum_hook(const std::string& dir, int seen) {
-    const std::string tail = "\\battery";
+    const std::string& tail = g_hook_tail;
     if (!g_hook_mode || dir.find(g_hook_match) == std::string::npos) return 0;
     if (dir.size() < tail.size() || dir.compare(dir.size() - tail.size(), tail.size(), tail) != 0) return 0;
     if (g_hook_mode == 1 && seen == 0) return ERROR_ACCESS_DENIED;
@@ -439,11 +440,13 @@ int main() {
         write_file(V / "n64/g/battery/a.sav", "a-v1", 100);
         write_file(V / "n64/g/battery/b.sav", "b-v1", 100);
         write_file(V / "n64/g/battery/c.sav", "c-v1", 100);
+        write_file(V / "n64/h/battery/h.sav", "h-v1", 100);   // a second game: it must keep syncing while game g cannot be read
         SyncReport s = sync_folder(sf.u8string(), false);
-        CHECK(s.ok && s.pushed == 3);
+        CHECK(s.ok && s.pushed == 4);
         write_file(V / "n64/g/battery/a.sav", "a-edit", 10);
         write_file(V / "n64/g/battery/b.sav", "b-edit", 10);
         write_file(V / "n64/g/battery/c.sav", "c-edit", 10);
+        write_file(V / "n64/h/battery/h.sav", "h-edit", 10);
         auto same = [&](const char* tag) {
             CHECK(read_file(V / "n64/g/battery/a.sav") == "a-edit"); CHECK(read_file(V / "n64/g/battery/b.sav") == "b-edit"); CHECK(read_file(V / "n64/g/battery/c.sav") == "c-edit");
             CHECK(read_file(sf / "n64/g/battery/a.sav") == "a-v1" && read_file(sf / "n64/g/battery/b.sav") == "b-v1" && read_file(sf / "n64/g/battery/c.sav") == "c-v1");
@@ -451,22 +454,23 @@ int main() {
             (void)tag;
         };
         /* the vault's battery folder cannot be opened (antivirus / sync-client lock) */
-        g_hook_mode = 1; g_hook_match = "s2V";
+        g_hook_mode = 1; g_hook_match = "s2V\\n64\\g";
         set_enum_error_hook(enum_hook);
         s = sync_folder(sf.u8string(), false);
         dump(s);
-        CHECK(!s.ok && !s.error.empty());
-        CHECK(s.pushed == 0 && s.pulled == 0);
+        CHECK(s.ok && s.error.empty() && s.warning.find("n64/g") != std::string::npos);   // game g is skipped and reported, by name
+        CHECK(s.pushed == 1 && s.pulled == 0);                                            // game h still synced
+        CHECK(read_file(sf / "n64/h/battery/h.sav") == "h-edit");
         same("open");
         /* the listing breaks after the first file */
         g_hook_mode = 2;
         s = sync_folder(sf.u8string(), false);
-        CHECK(!s.ok && !s.error.empty() && s.pushed == 0 && s.pulled == 0);
+        CHECK(s.ok && s.warning.find("n64/g") != std::string::npos && s.pushed == 0 && s.pulled == 0);
         same("mid");
         /* the sync folder's listing breaks */
-        g_hook_mode = 2; g_hook_match = "s2sync";
+        g_hook_mode = 2; g_hook_match = "s2sync\\n64\\g";
         s = sync_folder(sf.u8string(), false);
-        CHECK(!s.ok && s.pushed == 0 && s.pulled == 0);
+        CHECK(s.ok && s.warning.find("n64/g") != std::string::npos && s.pushed == 0 && s.pulled == 0);
         same("root");
         /* no error: the normal push of the edits works again */
         g_hook_mode = 0;
@@ -476,7 +480,7 @@ int main() {
 
         /* a file that appears in the sync folder right after it was listed is not overwritten by the "only the vault has it" push */
         write_file(V / "n64/g/battery/late.sav", "vault-late", 10);
-        g_hook_mode = 3; g_hook_match = "s2sync";
+        g_hook_mode = 3; g_hook_match = "s2sync\\n64\\g";
         s = sync_folder(sf.u8string(), false);
         dump(s);
         set_enum_error_hook(nullptr);
@@ -507,6 +511,64 @@ int main() {
         CHECK(!fs::exists(V / "n64/j/battery/Thumbs.db") || read_file(V / "n64/j/battery/Thumbs.db") == "junk-v-Thumbs.db");
         { std::ifstream t(sf / "n64/j/battery/Desktop.INI", std::ios::binary); CHECK((bool)t); }
         { bool pulled = false; for (auto& kv : tree(V)) if (kv.second == "junk-from-cloud") pulled = true; CHECK(!pulled); }
+    }
+
+    printf("[15] a listing error outside the save trees does not fail the sync; in a system folder or _conflicts it does\n");
+    {
+        fs::path V = base / "s4V", sf = base / "s4sync";
+        set_vault_dir(V.u8string());
+        write_file(V / "n64/g/battery/g.sav", "g-v1", 100);
+        write_file(sf / "foreign stuff/sub/x.dat", "foreign-cloud", 100);       // a top-level folder that is no system
+        SyncReport s = sync_folder(sf.u8string(), false);
+        CHECK(s.ok && s.pushed == 1 && s.pulled == 1);
+        write_file(V / "n64/g/battery/g.sav", "g-v2", 10);
+        set_enum_error_hook(enum_hook);
+        g_hook_mode = 1; g_hook_tail = "foreign stuff"; g_hook_match = "s4sync";
+        s = sync_folder(sf.u8string(), false);
+        dump(s);
+        CHECK(s.ok && s.error.empty() && s.pushed == 1);                         // the rest synced
+        CHECK(read_file(sf / "n64/g/battery/g.sav") == "g-v2");
+        { bool said = false; for (auto& l : s.log) if (l.find("foreign stuff") != std::string::npos && l.find("skip") != std::string::npos) said = true; CHECK(said); }
+        /* the system folder itself, or _conflicts, cannot be listed: nothing can be told apart, the whole sync stops and changes nothing */
+        write_file(V / "n64/g/battery/g.sav", "g-v3", 5);
+        g_hook_tail = "s4V\\n64"; g_hook_match = "s4V\\n64";
+        s = sync_folder(sf.u8string(), false);
+        CHECK(!s.ok && !s.error.empty() && s.pushed == 0 && read_file(sf / "n64/g/battery/g.sav") == "g-v2");
+        g_hook_tail = "s4sync\\_conflicts"; g_hook_match = "s4sync";
+        fs::create_directories(sf / "_conflicts");
+        s = sync_folder(sf.u8string(), false);
+        CHECK(!s.ok && !s.error.empty() && s.pushed == 0 && read_file(sf / "n64/g/battery/g.sav") == "g-v2");
+        g_hook_mode = 0; g_hook_tail = "\\battery";
+        set_enum_error_hook(nullptr);
+    }
+
+    printf("[16] a half-failed backup removes the vault copy it just made (no pile-up on retries)\n");
+    {
+        fs::path V = base / "s5V", sf = base / "s5sync";
+        set_vault_dir(V.u8string());
+        write_file(V / "n64/g/battery/x.sav", "newer-vault", 100);
+        SyncReport s = sync_folder(sf.u8string(), false);
+        CHECK(s.ok && s.pushed == 1);
+        write_file(sf / "n64/g/battery/x.sav", "old-restored", 5000);          // needs a backup of the vault file
+        fs::create_directories(sf / "_conflicts");
+        std::string user = getenv("USERNAME") ? getenv("USERNAME") : "";
+        std::string cmd = "icacls \"" + (sf / "_conflicts").string() + "\" /deny \"" + user + "\":(OI)(CI)(WD,AD) >nul 2>&1";
+        bool denied = !user.empty() && system(cmd.c_str()) == 0;
+        bool really = false;
+        if (denied) { std::ofstream t(sf / "_conflicts/probe.txt"); really = !t.good(); }
+        if (!really) printf("  (could not make the folder unwritable here: the failing part of this test is skipped)\n");
+        else {
+            for (int i = 0; i < 3; i++) {
+                s = sync_folder(sf.u8string(), false);
+                CHECK(s.ok && s.pulled == 0);
+                CHECK(read_file(V / "n64/g/battery/x.sav") == "newer-vault");   // left untouched
+                CHECK(count_conflicts(V) == 0);                                  // no stray vault-side copy
+            }
+        }
+        std::string reset = "icacls \"" + (sf / "_conflicts").string() + "\" /remove:d \"" + user + "\" >nul 2>&1";
+        if (denied) system(reset.c_str());
+        s = sync_folder(sf.u8string(), false);                                   // writable again: backup made, same winner as before
+        CHECK(s.ok && s.pulled == 1 && count_conflicts(V) == 1 && count_conflicts(sf) == 1 && read_file(V / "n64/g/battery/x.sav") == "old-restored");
     }
 
     { std::error_code ec; fs::remove_all(fs::path(L"\\\\?\\" + fs::absolute(base).wstring()), ec); }
