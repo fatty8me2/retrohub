@@ -281,13 +281,20 @@ bool is_identity_rel(const ws& rel) {   // rel uses '/' separators: the cloud's 
     return comp_count(rel) >= 2 && lower(comp_at(rel, 0)) == L"_conflicts" && lower(comp_at(rel, 1)) == L"_identity";
 }
 
+EnumErrorHook g_enum_hook = nullptr;   // test seam, null (inert) unless a test sets it
+
+str hook_dir(const ws& dir) { str s = U(dir); for (auto& c : s) if (c == '/') c = '\\'; return s; }
+
 void walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str>& log) {
     ws dir = rel.empty() ? root : root + L"/" + rel;
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileExW((lp(dir) + L"\\*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr,
                                 FIND_FIRST_EX_LARGE_FETCH);
+    if (g_enum_hook && g_enum_hook(hook_dir(dir), 0)) { if (h != INVALID_HANDLE_VALUE) FindClose(h); return; }
     if (h == INVALID_HANDLE_VALUE) return;
+    int seen = 0;
     do {
+        seen++;
         ws name = fd.cFileName;
         if (name == L"." || name == L"..") continue;
         ws crel = rel.empty() ? name : rel + L"/" + name;
@@ -312,8 +319,9 @@ void walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str
             e.attrs = fd.dwFileAttributes;
             out[lower(crel)] = e;
         }
-    } while (FindNextFileW(h, &fd));
+    } while (!(g_enum_hook && g_enum_hook(hook_dir(dir), seen)) && FindNextFileW(h, &fd));
     FindClose(h);
+    if (g_enum_hook) g_enum_hook(hook_dir(dir), -1);   // directory finished (the return value is ignored)
 }
 
 /* --------------------------------------------------------- JSON (shared reader, src/common/json.h) */
@@ -458,6 +466,8 @@ void touch_game(const std::string& system_short, const std::string& game_key, co
             ",\n \"device\": \"" + json::escape(device_name_utf8()) + "\"\n}\n";
     write_atomic(dir + L"meta.json", j.data(), j.size(), 0);
 }
+
+void set_enum_error_hook(EnumErrorHook h) { g_enum_hook = h; }
 
 SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
     SyncReport rep;
