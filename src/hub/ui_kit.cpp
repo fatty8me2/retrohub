@@ -8,10 +8,13 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 #include "logic.h"
 #include "ui_sound.h"
+#include "app.h"
+#include "font_size.h"
 
 namespace ui {
 
@@ -71,9 +74,10 @@ void setup_fonts(float scale) {
     const char* bold = "C:\\Windows\\Fonts\\segoeuib.ttf";
     bool have_reg = GetFileAttributesA(reg) != INVALID_FILE_ATTRIBUTES;
     bool have_bold = GetFileAttributesA(bold) != INVALID_FILE_ATTRIBUTES;
+    const bool large = A.st.large_text || (g_headless && std::getenv("HUB_LARGE_TEXT") != nullptr);   // "Larger small text"
     auto load = [&](bool b, float px) -> ImFont* {
         const char* p = b ? (have_bold ? bold : reg) : reg;
-        if (have_reg || (b && have_bold)) return io.Fonts->AddFontFromFileTTF(p, px * scale);
+        if (have_reg || (b && have_bold)) return io.Fonts->AddFontFromFileTTF(p, hubfont::font_px(px, scale, large));
         return nullptr;
     };
     F.body = load(false, 19);
@@ -89,8 +93,8 @@ void setup_fonts(float scale) {
         ImFontConfig cfg;
         cfg.OversampleH = 3;
         cfg.OversampleV = 2;
-        F.tiny = io.Fonts->AddFontFromFileTTF(reg, 11 * scale, &cfg);
-        F.tiny_bold = have_bold ? io.Fonts->AddFontFromFileTTF(bold, 11 * scale, &cfg) : F.tiny;
+        F.tiny = io.Fonts->AddFontFromFileTTF(reg, hubfont::font_px(11, scale, large), &cfg);
+        F.tiny_bold = have_bold ? io.Fonts->AddFontFromFileTTF(bold, hubfont::font_px(11, scale, large), &cfg) : F.tiny;
     }
     F.cap = load(false, 15);
     F.bold = load(true, 19);
@@ -223,7 +227,7 @@ void glow(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float rounding, ImU32 col, float
 }
 
 void focus_ring(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float rounding) {
-    float t = 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 5.f);
+    float t = reduce_motion ? 1.f : 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 5.f);   // steady under Reduce motion
     ImU32 c = mix(TEXT, ACCENT, 0.25f);
     float e = sp(0.5f);
     dl->AddRect(ImVec2(p0.x - e * 2.2f, p0.y - e * 2.2f), ImVec2(p1.x + e * 2.2f, p1.y + e * 2.2f), with_alpha(ACCENT, 0.18f + 0.18f * t),
@@ -237,6 +241,7 @@ void shimmer(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float rounding, ImU32 base) {
     float inset = std::min(rounding, w * 0.5f);
     float phase = std::fmod((float)ImGui::GetTime() * 0.55f, 1.6f) - 0.3f;   // band centre in 0..1 widths
     float cx = p0.x + w * phase, bw = std::max(sp(4), w * 0.28f);
+    if (reduce_motion) return;   // no moving band: the plain base fill stays
     dl->PushClipRect(ImVec2(p0.x + inset, p0.y), ImVec2(p1.x - inset, p1.y), true);
     ImU32 hi = veil(16/255.f), lo = veil(0.f);
     dl->AddRectFilledMultiColor(ImVec2(cx - bw, p0.y), ImVec2(cx, p1.y), lo, hi, hi, lo);

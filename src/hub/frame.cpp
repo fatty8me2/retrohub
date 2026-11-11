@@ -450,7 +450,7 @@ void draw_frame() {
         float w = ImGui::GetContentRegionAvail().x, h = sp(5.f);
         dl->AddRectFilled(p, p + ImVec2(w, h), mix(ui::PANEL, ui::ACCENT, 0.22f), sp(1.5f));
         dl->AddRect(p, p + ImVec2(w, h), with_alpha(ui::ACCENT, 0.5f), sp(1.5f), 0, 1.f);
-        float pulse = 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 4.f);
+        float pulse = ui::reduce_motion ? 1.f : 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 4.f);
         dl->AddCircleFilled(p + ImVec2(sp(2.f), h * 0.5f), sp(0.6f) + pulse * sp(0.25f), ui::ACCENT, 16);
         std::string m = A.proc_title + " is running. You can keep using RetroHub; " +
                         (A.run.controls_path.empty() ? "control changes apply the next time you start it." : "changes to controls apply right away.");

@@ -196,7 +196,7 @@ void draw_keyboard() {
         dl->PushClipRect(ImVec2(b0.x + 2, b0.y), ImVec2(b1.x - 2, b1.y), true);
         if (ss.ed.text.empty()) dl->AddText(f, fs, ImVec2(b0.x + sp1, ty), ui::TEXT3, "...");
         else dl->AddText(f, fs, ImVec2(b0.x + sp1 - off, ty), ui::TEXT, shown.c_str());
-        if (std::fmod(ImGui::GetTime(), 1.0) < 0.6)
+        if (ui::reduce_motion || std::fmod(ImGui::GetTime(), 1.0) < 0.6)   // caret steady under Reduce motion
             dl->AddRectFilled(ImVec2(b0.x + sp1 - off + cx, y + ui::sp(1.f)), ImVec2(b0.x + sp1 - off + cx + 2.f * ui::S, y + prevH - ui::sp(1.f)), ui::ACCENT);
         dl->PopClipRect();
         char cnt[32];

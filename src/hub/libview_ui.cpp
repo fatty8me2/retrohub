@@ -297,6 +297,7 @@ void draw_compact_item(int idx, ImVec2 sz, bool in_view) {
     if (!in_view && !r.focused && !r.hovered) { deliver(idx, r); apply_pending_focus(idx); return; }
     ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
     ImGuiIO& io = ImGui::GetIO();
+    bool dot_tip = false;
     float* an = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(id.c_str()), 0.f);
     ui::anim(*an, (r.hovered || r.focused) ? 1.f : 0.f, 14.f);
     float e = *an, grow = e * sp(0.375f);
@@ -326,12 +327,23 @@ void draw_compact_item(int idx, ImVec2 sz, bool in_view) {
     if (!ghost) {
         bool fav = gstate(A.lib[idx].key).favorite;
         if (fav) ui::icon(dl, ui::Icon::StarFilled, ImVec2(p1.x - sp(1.4f), p0.y + sp(1.4f)), sp(1.5f), IM_COL32(255, 214, 70, 255));
-        if (entry_online(A.lib[idx])) dl->AddCircleFilled(ImVec2(p0.x + sp(1.1f), p0.y + sp(1.1f)), sp(0.45f), ui::GOOD);
+        if (entry_online(A.lib[idx])) {
+            const ImVec2 dc(p0.x + sp(1.1f), p0.y + sp(1.1f));
+            const float dr = sp(0.45f);
+            dl->AddCircleFilled(dc, dr, ui::GOOD);
+            /* not colour alone: a small tick inside the dot says "can be played online" */
+            const float k = dr * 0.5f;
+            const ImVec2 tick[3] = {ImVec2(dc.x - k, dc.y), ImVec2(dc.x - k * 0.25f, dc.y + k * 0.7f), ImVec2(dc.x + k, dc.y - k * 0.6f)};
+            dl->AddPolyline(tick, 3, IM_COL32(10, 24, 14, 255), 0, std::max(1.f, dr * 0.28f));
+            if (r.hovered && !io.MouseDown[0] && ImGui::IsMouseHoveringRect(ImVec2(dc.x - dr * 1.6f, dc.y - dr * 1.6f), ImVec2(dc.x + dr * 1.6f, dc.y + dr * 1.6f)))
+                dot_tip = true;
+        }
     }
     dl->AddRect(p0, p1, ui::HAIRLINE, rad, 0, 1.f);
     if (r.focused) ui::focus_ring(dl, p0, p1, rad);
     else if (sel) dl->AddRect(p0, p1, IM_COL32(255, 255, 255, 120), rad, 0, sp(0.25f));
     if (r.hovered && !io.MouseDown[0] && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) && ta < 0.5f) ImGui::SetTooltip("%s", item_title(idx).c_str());
+    if (dot_tip && !ghost && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("Can be played online");
     deliver(idx, r);
     apply_pending_focus(idx);
 }

@@ -436,7 +436,7 @@ void draw_gamepack_pill() {
     float fill = f;
     if (f < 0) fill = 0.15f;
     float x0 = b0.x, x1 = b0.x + (b1.x - b0.x) * std::min(1.f, fill);
-    if (f < 0) { float t = (float)std::fmod(ImGui::GetTime() * 0.7, 1.0); x0 = b0.x + (b1.x - b0.x) * (t * 0.85f); x1 = x0 + (b1.x - b0.x) * 0.15f; }
+    if (f < 0) { float t = ui::reduce_motion ? 0.5f : (float)std::fmod(ImGui::GetTime() * 0.7, 1.0); x0 = b0.x + (b1.x - b0.x) * (t * 0.85f); x1 = x0 + (b1.x - b0.x) * 0.15f; }
     dl->AddRectFilled(ImVec2(x0, b0.y), ImVec2(x1, b1.y), ui::ACCENT, sp(0.6f));
     dl->AddText(fc, fc->FontSize, ImVec2(p0.x + sp(2.f), b1.y + sp(0.75f)), ui::TEXT2, ui::ellipsize(fc, fc->FontSize, gamepack_status_line(), w - sp(4.f)).c_str());
 }
@@ -614,7 +614,7 @@ void ghost_tile_progress(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, I
     ImVec2 b0(p0.x + sp(1.5f), p1.y - sp(0.75f) - bh), b1(p1.x - sp(1.5f), p1.y - sp(0.75f));
     dl->AddRectFilled(b0, b1, (ui::ON_WASH & 0x00FFFFFFu) | (70u << 24), bh * 0.5f);
     if (frac >= 0) { if (frac > 0) dl->AddRectFilled(b0, ImVec2(b0.x + (b1.x - b0.x) * std::min(1.f, frac), b1.y), ui::ACCENT, bh * 0.5f); }
-    else if (st == 2) { float t = (float)std::fmod(ImGui::GetTime() * 0.8, 1.0); float x0 = b0.x + (b1.x - b0.x) * t * 0.8f; dl->AddRectFilled(ImVec2(x0, b0.y), ImVec2(x0 + (b1.x - b0.x) * 0.2f, b1.y), ui::ACCENT, bh * 0.5f); }
+    else if (st == 2) { float t = ui::reduce_motion ? 0.5f : (float)std::fmod(ImGui::GetTime() * 0.8, 1.0); float x0 = b0.x + (b1.x - b0.x) * t * 0.8f; dl->AddRectFilled(ImVec2(x0, b0.y), ImVec2(x0 + (b1.x - b0.x) * 0.2f, b1.y), ui::ACCENT, bh * 0.5f); }
 }
 
 void ghost_tile_decor(ImDrawList* dl, const hubui::fg::Ghost& g, ImVec2 p0, ImVec2 p1, float e, std::string* subtitle) {

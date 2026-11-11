@@ -260,7 +260,7 @@ void attract_draw_hero(float h) {
             if (fr.mix > 0.f) text_for(SLIDES[fr.next], fr.mix);
         }
         // hint
-        const float pulse = 0.55f + 0.45f * (0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 2.2f));
+        const float pulse = ui::reduce_motion ? 1.f : 0.55f + 0.45f * (0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 2.2f));
         const char* hint = "Press any button";
         const ImVec2 ts = ui::F.bold->CalcTextSizeA(ui::F.bold->FontSize, FLT_MAX, 0.f, hint);
         const ImVec2 hp(p1.x - pad - ts.x - sp(2.f), p1.y - pad - ts.y - sp(0.5f));
