@@ -5,12 +5,14 @@
 
 #include "remix_data.h"
 #include "ps2_online.h"
+#include "invite.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -282,6 +284,10 @@ bool save_settings(const std::string& path, const Settings& s) {
 
 /* ---------------- lobby rules ---------------- */
 
+static std::string possessive(const std::string& n) {
+    return n + ((!n.empty() && (n.back() == 's' || n.back() == 'S')) ? "'" : "'s");
+}
+
 Selectability game_selectable(const std::string& game_id, int max_players,
                               const std::vector<PeerInfo>& peers, int host_slot, bool remote_play) {
     Selectability r;
@@ -297,9 +303,9 @@ Selectability game_selectable(const std::string& game_id, int max_players,
     for (auto& p : peers) if (p.slot == host_slot) host = &p;
     std::string t;
     for (auto& p : peers) {
-        if (!p.hello_complete()) { r.reason = "waiting for " + p.name; return r; }   // every hello part must have arrived
+        if (!p.hello_complete()) { r.reason = "Still checking " + possessive(p.name) + " games..."; return r; }   // every hello part must have arrived
         if (remote_play && p.slot != host_slot) continue;   // guests stream: no copy needed
-        if (!token(p, &t)) { r.reason = p.name + " doesn't have this game"; return r; }
+        if (!token(p, &t)) { r.reason = p.name + " doesn't have this game. Pick another game or ask " + p.name + " to add it."; return r; }
     }
     if (host && !remote_play) {
         std::string ref;
@@ -452,7 +458,7 @@ VersionGate version_gate(const std::string& host_app, const std::vector<PeerInfo
     if (allow_mismatch) return g;
     std::string need = app_version_label(host_app);
     for (auto& p : peers) {
-        if (!p.hello) continue;   // game_selectable reports "waiting for ..."
+        if (!p.hello) continue;   // game_selectable reports "Still checking ..."
         if (p.app.empty()) {
             g.ok = false;
             g.reason = p.name + " is on an old RetroHub (unknown version) - everyone needs " + need + ". Ask them to update.";
@@ -473,7 +479,9 @@ std::string ready_block_reason(const std::string& my_app, const std::string& hos
         case GuestVersionAction::None: return "";
         case GuestVersionAction::Waiting: return "Checking versions...";
         case GuestVersionAction::UpdateNow: return "Update RetroHub to " + app_version_label(host_app) + " to match the host";
-        case GuestVersionAction::HostNeedsUpdate: return "The host needs to update RetroHub first";
+        case GuestVersionAction::HostNeedsUpdate:
+            if (host_app.empty()) return "The host is on an older RetroHub than yours. Ask them to update RetroHub.";
+            return "The host is on " + app_version_label(host_app) + " and you are on " + app_version_label(my_app) + ". Ask them to update RetroHub.";
     }
     return "";
 }
@@ -490,8 +498,9 @@ RoomActionState room_action_state(bool host, bool have_game, const std::string& 
                                   bool my_ready, const std::vector<RoomMember>& members) {
     RoomActionState r;
     r.total = (int)members.size();
-    std::vector<std::string> waiting;
+    std::vector<std::string> waiting, busy;
     for (auto& m : members) {
+        if (m.in_game && !m.me) busy.push_back(m.name);
         if (m.host || m.ready) ++r.ready_count;
         else waiting.push_back(m.me ? "you" : m.name);
     }
@@ -504,7 +513,7 @@ RoomActionState room_action_state(bool host, bool have_game, const std::string& 
         if (!block.empty()) { r.headline = "Can't launch yet"; r.detail = block; r.tone = RoomTone::Bad; return r; }
         if (!waiting.empty()) {
             r.headline = "Waiting for " + join_names(waiting) + "...";
-            r.detail = std::string(cnt) + ". Launch unlocks when everyone is ready.";
+            r.detail = std::string(cnt) + ". " + (busy.empty() ? std::string("Launch unlocks when everyone is ready.") : still_in_game_text(busy));
             r.tone = RoomTone::Warn;
             return r;
         }
@@ -524,12 +533,101 @@ RoomActionState room_action_state(bool host, bool have_game, const std::string& 
         r.tone = RoomTone::Good;
         std::vector<std::string> others;
         for (auto& m : members) if (!m.host && !m.ready && !m.me) others.push_back(m.name);
-        r.detail = others.empty() ? "Waiting for the host to launch " + game_title + "." : "Waiting for " + join_names(others) + " (" + cnt + ").";
+        r.detail = others.empty() ? "Waiting for the host to launch " + game_title + "." : "Waiting for " + join_names(others) + " (" + cnt + ")." + (busy.empty() ? std::string() : " " + still_in_game_text(busy));
         return r;
     }
     r.headline = "Not ready";
     r.detail = "Press Ready when you're set to play " + game_title + ".";
     r.tone = RoomTone::Warn;
+    return r;
+}
+
+std::string still_in_game_text(const std::vector<std::string>& names) {
+    if (names.empty()) return "";
+    return join_names(names) + (names.size() == 1 ? " is" : " are") + " still in a game.";
+}
+
+std::string missing_game_block(const std::string& title) {
+    return "You don't have " + (title.empty() ? std::string("this game") : title) + ". Add it in Library > Add games, then press Ready.";
+}
+
+std::string online_start_block(bool game_running, bool access_ok) {
+    if (game_running) return "Close your running game first.";
+    if (!access_ok) return "Online play isn't available for this account right now. See the note above.";
+    return "";
+}
+
+ConnectPhase connect_phase(unsigned started_ms, unsigned now_ms) {
+    return (unsigned)(now_ms - started_ms) >= kConnectSlowMs ? ConnectPhase::StillTrying : ConnectPhase::Contacting;
+}
+
+std::string connect_phase_text(ConnectPhase p) {
+    return p == ConnectPhase::StillTrying ? "Still trying..." : "Contacting the server...";
+}
+
+RoomFailure room_failure_kind(const std::string& status, const std::string& code) {
+    RoomFailure f;
+    auto has = [&](const char* t) { return status.find(t) != std::string::npos; };
+    const std::string room = code.empty() ? std::string("the room") : "room " + code;
+    f.detail = status;
+    if (has("Waiting for the owner to approve") || has("can't use online rooms") || has("couldn't confirm your account")) {
+        f.kind = RoomFailureKind::Blocked; f.title = "Couldn't join " + room; f.can_rejoin = false; f.can_host_new = false;
+    } else if (has("host left")) {
+        f.kind = RoomFailureKind::Closed; f.title = "This room has closed"; f.can_rejoin = false; f.can_host_new = true;
+        f.detail = has("game over") ? "The host left, so the game is over." : "The host left the room.";
+    } else if (status == "No such room") {
+        f.kind = RoomFailureKind::CouldntJoin; f.title = "Couldn't join " + room; f.can_rejoin = false; f.can_host_new = true;
+        f.detail = "There is no room with that code. Check it with your friend.";
+    } else if (has("The room is full") || has("already in use") || has("seat is already taken") || has("maximum number of spectators")) {
+        f.kind = RoomFailureKind::CouldntJoin; f.title = "Couldn't join " + room; f.can_rejoin = false; f.can_host_new = true;
+    } else {
+        f.kind = RoomFailureKind::LostConnection; f.title = "Disconnected from the room"; f.can_rejoin = true; f.can_host_new = false;
+        if (f.detail.empty()) f.detail = "The connection to the server was lost.";
+    }
+    return f;
+}
+
+RoomCodeInput room_code_from_text(const std::string& text_in) {
+    RoomCodeInput r;
+    size_t b = 0, e = text_in.size();
+    while (b < e && std::isspace((unsigned char)text_in[b])) ++b;
+    while (e > b && std::isspace((unsigned char)text_in[e - 1])) --e;
+    const std::string text = text_in.substr(b, e - b);
+    if (text.empty()) return r;
+    std::string low = text;
+    for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+    // upper-case, drop spaces and separators, keep room-code characters (up to 6); `bad` is set when something else was dropped
+    auto clean = [&](const std::string& in, bool* bad) {
+        std::string out;
+        for (unsigned char ch : in) {
+            if (std::isspace(ch) || ch == '-' || ch == '_') continue;
+            const char u = (char)std::toupper(ch);
+            if (ch < 128 && std::strchr("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", u)) { if (out.size() < 6) out.push_back(u); }
+            else if (out.size() < 6) *bad = true;
+        }
+        return out;
+    };
+    const bool link = low.find("://") != std::string::npos || low.compare(0, 9, "retrohub:") == 0;
+    if (link) {
+        bool ascii = true;
+        for (unsigned char ch : text) if (ch >= 128) ascii = false;
+        std::wstring w(text.begin(), text.end()), c;
+        if (ascii && invite_parse_url(w, &c)) { r.code.assign(c.begin(), c.end()); return r; }
+        const size_t j = low.find("/j/");
+        if (j != std::string::npos) {   // the web invite link: .../j/CODE?h=name
+            std::string rest = text.substr(j + 3);
+            const size_t cut = rest.find_first_of("?#/ \t\"'<>");
+            if (cut != std::string::npos) rest.erase(cut);
+            bool bad = false;
+            const std::string code = clean(rest, &bad);
+            if (code.size() == 6 && !bad) { r.code = code; return r; }
+        }
+        r.hint = "That link is not a RetroHub room invite.";
+        return r;
+    }
+    bool bad = false;
+    r.code = clean(text, &bad);
+    if (bad) r.hint = "Room codes use letters and numbers, never I, O, 0 or 1.";
     return r;
 }
 
@@ -964,16 +1062,16 @@ std::string net_reason_text() {
 std::string exit_code_text(unsigned long code) {
     switch (code) {
         case 0: return "Game closed normally.";
-        case 2: return "The game couldn't start: the room's player/port setup or the ROM was rejected. Leave the room, rejoin and try again.";
-        case 3: return "Emulator files are missing (emu/ folder). Reinstall or run scripts/fetch-emu.ps1.";
+        case 2: return "RetroHub couldn't set up this game for the room. Ask the host to launch again.";
+        case 3: return "Emulator files are missing. Reinstall RetroHub.";
         case 4: return "Connection lost during the match.";
-        case 12: { std::string r = net_reason_text(); return r.empty() ? std::string("Couldn't connect to the other players.") : "Couldn't connect: " + r; }
+        case 12: { std::string r = net_reason_text(); return r.empty() ? std::string("Couldn't connect to the other players. A firewall or VPN may be blocking RetroHub.") : "Couldn't connect: " + r; }
         case 5: return "The game went out of sync and could not be repaired, so it was stopped. Start it again to keep playing together.";
         case 6: return "Couldn't share the host's save - check your connection and try again.";
         case 8: return player_left_text("");
         case 9: case 10: case 11: return hubps2::setup_mismatch_text(code);
         case 7: return "The PlayStation setups differ: everyone in the room needs the same BIOS file (or all use the built-in OpenBIOS). Check Settings > Playing.";
-        default: return "Game exited with code " + std::to_string(code) + ".";
+        default: return "The game closed unexpectedly (code " + std::to_string(code) + ").";
     }
 }
 

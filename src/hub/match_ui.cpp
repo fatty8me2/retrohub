@@ -215,6 +215,7 @@ static void member_row(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     auto put = [&](const std::string& t, ImU32 bg) { x += ui::pill_at(dl, ImVec2(x, cy - chip_h * 0.5f), t.c_str(), bg) + 6 * S; };
     if (host) put("HOST", COL_ACCENT);
     else put(rd ? "Ready" : "Not ready", rd ? COL_GOOD : IM_COL32(70, 72, 86, 255));
+    { auto ig = A.ingame.find(slot); if (ig != A.ingame.end() && ig->second && slot != room_my_slot()) put("In a game", ui::WARN); }
     std::vector<std::pair<std::string, ImU32>> chips;
     const ImU32 grey = IM_COL32(70, 72, 86, 255);
     if (!p->hello) chips.push_back({"checking games...", grey});
@@ -348,6 +349,7 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
     if (slot == room_my_slot()) rd = host || A.my_ready;
     if (host) pill("HOST", COL_ACCENT);
     else pill(rd ? "Ready" : "Not ready", rd ? COL_GOOD : IM_COL32(70, 72, 86, 255));
+    { auto ig = A.ingame.find(slot); if (ig != A.ingame.end() && ig->second && slot != room_my_slot()) pill("In a game", ui::WARN); }
     // connection quality to this member (room round trip; "relay" for relay-only peers): drawn as the first chip of the
     // games row below, so it never collides with the Ready/HOST pill or the "Local players" column
     std::string ping_lab;
