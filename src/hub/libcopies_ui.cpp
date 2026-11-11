@@ -235,7 +235,9 @@ static void draw_undo_card() {
     pin.text_input = ImGui::GetIO().WantTextInput;
     pin.y_pressed = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
     const std::string undo_label = A.pad_mode ? std::string(hubglyph::label(ui::pad_kind, "Y")) + "  Undo" : std::string("Undo");
-    if (button(undo_label.c_str(), ImVec2(ui::sp(A.pad_mode ? 14.f : 10.f), ui::sp(4.f)), true) || hubui::undo_card_pad_press(pin)) {
+    const bool pad_undo = hubui::undo_card_pad_press(pin);
+    if (pad_undo) ImGui::SetKeyOwner(ImGuiKey_GamepadFaceUp, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);   // this Y is spent: the library's own Y (Details) must not also fire (global_input runs after the overlays)
+    if (button(undo_label.c_str(), ImVec2(ui::sp(A.pad_mode ? 14.f : 10.f), ui::sp(4.f)), true) || pad_undo) {
         std::string k = UNDO.key;
         UNDO.key.clear();
         unhide_game(k);

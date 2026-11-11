@@ -41,7 +41,34 @@ class AssignAGate {
     std::map<std::string, bool> prev_;
 };
 
-/* B (or Esc) ends the mode and keeps the ports set so far. */
-inline bool assign_end_requested(bool pad_b_pressed, bool esc_pressed) { return pad_b_pressed || esc_pressed; }
+/* One frame of "Assign players", decided without any UI. `lock_a` = keep A away from ImGui navigation this frame (ImGui keeps a key
+ * owner while the key is down, so the page asks for it again every frame and never relies on it persisting). Every way out of the mode
+ * (B, Esc, Done, all ports set, timeout, hub unfocused, page not shown) reports end + release_a, and an inactive mode always reports
+ * release_a, so A can never stay dead for navigation. A B / Esc that ends the mode is swallowed so it does not also leave the page. */
+struct AssignFrameIn {
+    bool active = false;
+    bool input_blocked = false;   // hub unfocused / a game owns the pad
+    bool page_visible = true;     // the Controllers page is being drawn
+    bool b_pressed = false, esc_pressed = false, done_clicked = false;
+    bool all_ports_set = false, timed_out = false;
+    bool y_pressed = false, pad_mode = false;
+};
+struct AssignFrameOut {
+    bool end = false, lock_a = false, release_a = false, swallow_b = false, start_over = false;
+};
+inline AssignFrameOut assign_frame(const AssignFrameIn& in) {
+    AssignFrameOut o;
+    if (!in.active) { o.release_a = true; return o; }
+    const bool back = in.b_pressed || in.esc_pressed;
+    if (in.input_blocked || !in.page_visible || back || in.done_clicked || in.all_ports_set || in.timed_out) {
+        o.end = true;
+        o.release_a = true;
+        o.swallow_b = back && !in.input_blocked && in.page_visible;
+        return o;
+    }
+    o.lock_a = true;
+    o.start_over = in.pad_mode && in.y_pressed;   // Start over has a pad route: Y
+    return o;
+}
 
 }  // namespace hubui

@@ -2,6 +2,7 @@
 #include "app.h"
 #include "capture_hold_logic.h"
 #include "ctl_pad_logic.h"
+#include "glyph_logic.h"
 #include "osk.h"
 #include "controls_live.h"
 
@@ -103,6 +104,7 @@ void start_assign() {
 
 /* Ends the mode and stores the ports assigned so far (the other pads keep their order after them). */
 void finish_assign() {
+    ImGui::SetKeyOwner(ImGuiKey_GamepadFaceDown, ImGuiKeyOwner_NoOwner);   // A goes back to navigation on every way out of the mode
     if (!CTL.assign.assigned().empty()) {
         std::vector<std::string> all;
         for (const auto& p : CTL.pads) all.push_back(p.key);
@@ -118,13 +120,25 @@ void finish_assign() {
 void poll_assign(double now) {
     if (!CTL.assign.active() || (osk::hub_input_blocked() && !CTL.shot_nosave)) { finish_assign(); return; }   // unfocused: end the mode, an in-game press must not claim a port
     SDL_GameControllerUpdate();
-    ImGui::SetKeyOwner(ImGuiKey_GamepadFaceDown, ImGui::GetID("##assignA"));   // A claims ports here; it must not also press Done / Start over
-    if (hubui::assign_end_requested(ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false), ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
-        ImGui::SetKeyOwner(ImGuiKey_GamepadFaceRight, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);   // this B ends the mode, it does not also leave the page
-        ImGui::SetKeyOwner(ImGuiKey_Escape, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);
+    hubui::AssignFrameIn fin;
+    fin.active = true;
+    fin.b_pressed = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+    fin.esc_pressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    fin.y_pressed = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
+    fin.pad_mode = A.pad_mode;
+    fin.all_ports_set = CTL.assign.finished();
+    fin.timed_out = !CTL.shot_nosave && now - CTL.assign_t >= kAssignTimeoutSecs;
+    const hubui::AssignFrameOut fout = hubui::assign_frame(fin);
+    if (fout.end) {
+        if (fout.swallow_b) {
+            ImGui::SetKeyOwner(ImGuiKey_GamepadFaceRight, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);   // this B ends the mode, it does not also leave the page
+            ImGui::SetKeyOwner(ImGuiKey_Escape, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);
+        }
         finish_assign();
         return;
     }
+    if (fout.start_over) { start_assign(); return; }
+    ImGui::SetKeyOwner(ImGuiKey_GamepadFaceDown, ImGui::GetID("##assignA"));   // A claims ports here; it must not also press Done / Start over (asked for again every frame)
     if (!CTL.shot_nosave && ImGui::GetTime() - CTL.pads_at >= 0.5) {   // hot-plug: refresh the pad list during the mode
         ctl_reload_pads();
         std::vector<std::string> present;
@@ -143,15 +157,19 @@ void poll_assign(double now) {
         /* ImGui navigation never sees A in this mode (locked above), so the press cannot also activate a focused button */
         if (CTL.assign_a.a_press(p.key, down, false) && CTL.assign.press(p.key, now)) CTL.assign_t = now;
     }
-    if (CTL.assign.finished()) { finish_assign(); return; }
-    if (!CTL.shot_nosave && now - CTL.assign_t >= kAssignTimeoutSecs) finish_assign();
 }
 
 void draw_assign_panel() {
     begin_panel("assign");
     section_title("Assign players");
-    text_wrapped_disabled("Press A on the controller for each player in turn. The first controller to press A takes that port. "
-                          "B, Esc or Done keeps the ports set so far; the mode also ends after 30 seconds without a press.");
+    if (A.pad_mode) {
+        const std::string la = hubglyph::label(ui::pad_kind, "A"), lb = hubglyph::label(ui::pad_kind, "B"), ly = hubglyph::label(ui::pad_kind, "Y");
+        text_wrapped_disabled("Press " + la + " on the controller for each player in turn. The first controller to press " + la + " takes that port. "
+                              "Press " + lb + " when you are done to keep the ports set so far, or " + ly + " to start over. The mode also ends after 30 seconds without a press.");
+    } else {
+        text_wrapped_disabled("Press A on the controller for each player in turn. The first controller to press A takes that port. "
+                              "Esc or Done keeps the ports set so far; the mode also ends after 30 seconds without a press.");
+    }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     const int next = CTL.assign.next_port();
     ImGui::PushFont(ui::F.h2);
