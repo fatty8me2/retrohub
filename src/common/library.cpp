@@ -1129,6 +1129,17 @@ fs::path long_path(const fs::path& p) {
 /* Zipped cartridge ROMs (N64/GBA/GB/GBC): the first ROM inside the zip is
  * extracted once to data_dir()/rom-cache/<zip name>-<entry crc>/ and that file
  * is what gets identified and launched. Disc images are never extracted. */
+/* Waits for a child process in 100 ms slices; ends it (by its own handle) on cancel or after timeout_ms. 0 = it exited, 1 = timed out and was ended, 2 = cancelled and ended. */
+int child_wait_cancellable(void* process, unsigned timeout_ms) {
+    HANDLE proc = (HANDLE)process;
+    const ULONGLONG t0 = GetTickCount64();
+    for (;;) {
+        if (WaitForSingleObject(proc, 100) != WAIT_TIMEOUT) return 0;
+        if (g_cancel.load()) { TerminateProcess(proc, 1); WaitForSingleObject(proc, 5000); return 2; }
+        if (GetTickCount64() - t0 > timeout_ms) { TerminateProcess(proc, 1); WaitForSingleObject(proc, 5000); return 1; }
+    }
+}
+
 static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom, fs::path* inner_name) {
     if (g_cancel.load()) return false;
     std::shared_lock<std::shared_mutex> unpack_guard(g_cache_mu);   // clear / trim wait for this unpack
@@ -1378,6 +1389,7 @@ HANDLE tar_spawn(const std::wstring& args, HANDLE out, const fs::path* cwd = nul
 bool tar_capture(const std::wstring& args, size_t max_bytes, unsigned timeout_ms, std::string* out, bool* complete = nullptr) {
     out->clear();
     if (complete) *complete = false;
+    if (g_cancel.load()) return false;
     SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
     HANDLE rd = nullptr, wr = nullptr;
     if (!CreatePipe(&rd, &wr, &sa, 1 << 16)) return false;
@@ -1387,7 +1399,7 @@ bool tar_capture(const std::wstring& args, size_t max_bytes, unsigned timeout_ms
     if (!proc) { CloseHandle(rd); return false; }
     std::atomic<bool> finished{false};
     std::thread dog([&] {
-        for (unsigned t = 0; t < timeout_ms && !finished.load(); t += 50) Sleep(50);
+        for (unsigned t = 0; t < timeout_ms && !finished.load() && !g_cancel.load(); t += 50) Sleep(50);   // a closing app ends tar too
         if (!finished.load()) TerminateProcess(proc, 1);
     });
     char buf[1 << 15];
@@ -1444,7 +1456,7 @@ bool list_archive(const std::string& archive, std::vector<ArchiveEntry>* out) {
         return g_list_memo.ok;
     }
     bool ok = list_archive_raw(archive, out);
-    if (!ec) { g_list_memo.path = archive; g_list_memo.size = sz; g_list_memo.mtime = mt; g_list_memo.ok = ok; g_list_memo.list = ok ? *out : std::vector<ArchiveEntry>(); }
+    if (!ec && !g_cancel.load()) { g_list_memo.path = archive; g_list_memo.size = sz; g_list_memo.mtime = mt; g_list_memo.ok = ok; g_list_memo.list = ok ? *out : std::vector<ArchiveEntry>(); }
     return ok;
 }
 bool list_archive_raw(const std::string& archive, std::vector<ArchiveEntry>* out) {
@@ -1915,7 +1927,7 @@ static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, ui
         GetFileSizeEx(f, &sz);
         if ((uint64_t)sz.QuadPart != last_size) { last_size = (uint64_t)sz.QuadPart; last_move = GetTickCount64(); }
         else if (w == WAIT_TIMEOUT && GetTickCount64() - last_move > 180000) { stalled = true; TerminateProcess(proc, 1); WaitForSingleObject(proc, 5000); break; }
-        if (progress && !progress((uint64_t)sz.QuadPart, ent.size)) { cancelled = true; TerminateProcess(proc, 1); WaitForSingleObject(proc, 5000); break; }
+        if (g_cancel.load() || (progress && !progress((uint64_t)sz.QuadPart, ent.size))) { cancelled = true; TerminateProcess(proc, 1); WaitForSingleObject(proc, 5000); break; }
         if (w != WAIT_TIMEOUT) break;
     }
     DWORD code = 1;
@@ -2025,12 +2037,7 @@ static bool extract_archived_rom(const fs::path& arch, fs::path* out_rom, fs::pa
         HANDLE proc = tar_spawn(L"-xOf " + tar_archive_arg(ap) + L" " + tar_member_arg(ent.name), f);
         bool good = false;
         if (proc) {
-            bool stopped = false;
-            const ULONGLONG t0 = GetTickCount64();
-            for (;;) {   // waits in short slices so a closing app can stop the unpack
-                if (WaitForSingleObject(proc, 100) != WAIT_TIMEOUT) break;
-                if (g_cancel.load() || GetTickCount64() - t0 > 300000) { stopped = true; TerminateProcess(proc, 1); break; }
-            }
+            const bool stopped = child_wait_cancellable(proc, 300000) != 0;   // short slices: a closing app stops the unpack
             DWORD code = 1;
             WaitForSingleObject(proc, 5000);
             GetExitCodeProcess(proc, &code);
@@ -2257,6 +2264,7 @@ struct ExtractCtx {
 };
 size_t extract_write_cb(void* user, mz_uint64 /*ofs*/, const void* data, size_t n) {
     ExtractCtx* c = static_cast<ExtractCtx*>(user);
+    if (g_cancel.load()) { c->cancelled = true; return 0; }   // a closing app stops an unpack mid-file (3DS / PlayStation zips)
     if (std::fwrite(data, 1, n, c->f) != n) return 0;
     c->done += n;
     if (c->cb && *c->cb && !(*c->cb)(c->done, c->total)) { c->cancelled = true; return 0; }
@@ -2470,7 +2478,7 @@ static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, u
             }
             if (sz != last) { last = sz; last_move = GetTickCount64(); }
             else if (w == WAIT_TIMEOUT && GetTickCount64() - last_move > 180000) { TerminateProcess(proc, 1); *err = "extraction stalled (no data for 3 minutes); try again"; ok = false; WaitForSingleObject(proc, 5000); break; }
-            if (progress && !progress(sz, total)) { cancelled = true; TerminateProcess(proc, 1); WaitForSingleObject(proc, 5000); break; }
+            if (g_cancel.load() || (progress && !progress(sz, total))) { cancelled = true; TerminateProcess(proc, 1); WaitForSingleObject(proc, 5000); break; }
             if (w != WAIT_TIMEOUT) break;
         }
         DWORD code = 1;
@@ -3211,7 +3219,7 @@ std::atomic<uint64_t> g_cache_limit{40ull << 30};
 uint64_t dir_bytes(const fs::path& d) {
     uint64_t n = 0;
     std::error_code ec;
-    for (fs::recursive_directory_iterator it(d, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+    for (fs::recursive_directory_iterator it(d, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end && !g_cancel.load(); it.increment(ec)) {
         std::error_code e2;
         if (it->is_regular_file(e2)) n += it->file_size(e2);
     }
@@ -3227,7 +3235,7 @@ std::vector<CacheItem> cache_items() {
     std::vector<CacheItem> v;
     std::error_code ec;
     fs::path root = lib_dir() / L"rom-cache";
-    for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+    for (fs::directory_iterator it(root, ec), end; !ec && it != end && !g_cancel.load(); it.increment(ec)) {
         if (!it->is_directory(ec)) continue;
         std::wstring n = it->path().filename().wstring();
         if (n == L"_probe") continue;
@@ -3235,9 +3243,10 @@ std::vector<CacheItem> cache_items() {
         bool cart = false;
         if (n == L"3ds" || n == L"gc" || n == L"ps1" || n == L"ps2" || n == L"psp" || n == L"wiiu" || n == L"hacks") {   // hacks: one item per patched image (Plan 4 H3)
             std::error_code e2;
-            for (fs::directory_iterator j(it->path(), e2), je; !e2 && j != je; j.increment(e2)) if (j->is_directory(e2)) dirs.push_back(j->path());
+            for (fs::directory_iterator j(it->path(), e2), je; !e2 && j != je && !g_cancel.load(); j.increment(e2)) if (j->is_directory(e2)) dirs.push_back(j->path());
         } else { dirs.push_back(it->path()); cart = true; }
         for (const fs::path& d : dirs) {
+            if (g_cancel.load()) break;
             CacheItem ci;
             ci.dir = d;
             ci.cart = cart;
@@ -3307,7 +3316,8 @@ void rom_cache_pin(const GameEntry* e) {
 }
 
 void scan_request_cancel() { g_cancel = true; }
-void scan_cancel_reset() { g_cancel = false; }
+void scan_cancel_reset_for_tests() { g_cancel = false; }
+bool scan_result_applies() { return !g_cancel.load(); }
 bool scan_cancelled() { return g_cancel.load(); }
 bool rom_cache_busy() { return g_cache_excl.load() > 0; }
 

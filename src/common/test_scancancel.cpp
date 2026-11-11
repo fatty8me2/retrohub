@@ -132,7 +132,7 @@ int main() {
     }
 
     std::printf("-- scan after the cancel is complete and correct\n");
-    scan_cancel_reset();
+    scan_cancel_reset_for_tests();
     CHECK(!scan_cancelled());
     {
         auto r = scan_library({libs}, nullptr);
@@ -179,6 +179,89 @@ int main() {
             std::error_code e2;
             CHECK(fs::exists(fs::u8path(g.path), e2));
         }
+    }
+
+
+    std::printf("-- child waits, list_archive, 3DS unzip and the apply guard under a cancel\n");
+    {
+        auto spawn_ping = [](int count) -> HANDLE {   // a harmless long-running System32 command, started and ended by this test
+            wchar_t sysdir[MAX_PATH];
+            GetSystemDirectoryW(sysdir, MAX_PATH);
+            std::wstring cmd = std::wstring(L"\"") + sysdir + L"\\PING.EXE\" -n " + std::to_wstring(count) + L" 127.0.0.1";
+            STARTUPINFOW si{}; si.cb = sizeof si;
+            PROCESS_INFORMATION pi{};
+            if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return nullptr;
+            CloseHandle(pi.hThread);
+            return pi.hProcess;
+        };
+        scan_cancel_reset_for_tests();
+        CHECK(scan_result_applies());
+        {   // exits by itself
+            HANDLE h = spawn_ping(1);
+            CHECK(h && child_wait_cancellable(h, 20000) == 0);
+            if (h) CloseHandle(h);
+        }
+        {   // timeout: ended by its handle
+            HANDLE h = spawn_ping(30);
+            auto t0 = std::chrono::steady_clock::now();
+            CHECK(h && child_wait_cancellable(h, 300) == 1);
+            CHECK(secs_since(t0) < 5.0);
+            if (h) { CHECK(WaitForSingleObject(h, 0) == WAIT_OBJECT_0); CloseHandle(h); }
+        }
+        {   // cancel raised while waiting: ended promptly, long before its 30 s
+            HANDLE h = spawn_ping(30);
+            std::thread t([] { std::this_thread::sleep_for(std::chrono::milliseconds(300)); scan_request_cancel(); });
+            auto t0 = std::chrono::steady_clock::now();
+            CHECK(h && child_wait_cancellable(h, 120000) == 2);
+            t.join();
+            CHECK(secs_since(t0) < 5.0);
+            if (h) { CHECK(WaitForSingleObject(h, 0) == WAIT_OBJECT_0); CloseHandle(h); }
+            CHECK(!scan_result_applies());
+        }
+        /* list_archive through tar under a cancel: refused, and the failure is not remembered for later */
+        const fs::path arc = root / "arc" / "probe.7z";
+        fs::create_directories(arc.parent_path());
+        write_file(root / "arc" / "stage" / "a.txt", Bytes(100, 'a'));
+        {
+            wchar_t sysdir[MAX_PATH];
+            GetSystemDirectoryW(sysdir, MAX_PATH);
+            std::wstring cmd = std::wstring(L"\"") + sysdir + L"\\tar.exe\" -a -cf \"" + arc.wstring() + L"\" -C \"" + (root / "arc" / "stage").wstring() + L"\" a.txt";
+            STARTUPINFOW si{}; si.cb = sizeof si;
+            PROCESS_INFORMATION pi{};
+            if (CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+                WaitForSingleObject(pi.hProcess, 30000);
+                CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+            }
+        }
+        if (fs::exists(arc)) {
+            scan_request_cancel();
+            const std::string while_cancelled = archive_skip_reason(arc.u8string());   // the listing is refused: "could not be read"
+            scan_cancel_reset_for_tests();
+            const std::string after = archive_skip_reason(arc.u8string());             // a real listing: not remembered as a failure
+            CHECK(while_cancelled.find("could not be read") != std::string::npos);
+            CHECK(after.find("could not be read") == std::string::npos);
+        } else std::printf("   (tar cannot write .7z here: list_archive check skipped)" "\n");
+        scan_cancel_reset_for_tests();
+        /* a 3DS image in a zip: a cancel stops the unpack, leaves no work folder, and the next try works */
+        {
+            const fs::path z = root / "arc3ds" / "Game.zip";
+            CHECK(write_zip(z, "Game.3ds", noise(2 * 1024 * 1024, 77)));
+            GameEntry e;
+            e.system = System::N3DS;
+            e.key = "3ds:cancel-test";
+            e.path = z.u8string();
+            e.issue = "extract";
+            std::string out, err;
+            scan_request_cancel();
+            CHECK(!extract_3ds_zip(e, nullptr, &out, &err));
+            CHECK(err == "cancelled");
+            CHECK(count_part_files(root / "data" / "rom-cache") == 0);
+            CHECK(!fs::exists(fs::u8path(extract_3ds_dir(e)) / "Game.3ds"));
+            scan_cancel_reset_for_tests();
+            CHECK(extract_3ds_zip(e, nullptr, &out, &err));
+            CHECK(fs::exists(fs::u8path(out)));
+        }
+        CHECK(scan_result_applies());
     }
 
     library_set_data_dir("");

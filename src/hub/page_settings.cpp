@@ -95,7 +95,9 @@ void display_settings_ui() {
 /* "Unpacked games" cache section. Disk usage is measured on a background thread (on open and after clearing), never per frame. */
 struct CacheUi {
     std::atomic<uint64_t> bytes{0};
-    std::atomic<bool> measuring{false}, clearing{false}, clear_done{false}, trimming{false}, trim_again{false};
+    std::atomic<bool> measuring{false}, clearing{false}, clear_done{false}, trimming{false};   // trimming: mirrors trim_running for the UI gate
+    std::mutex trim_mu;
+    bool trim_running = false, trim_again = false;   // both under trim_mu
     std::thread measure_th, clear_th, trim_th;   // joinable (never detached): joined before the next start and at app exit
     bool measured = false, confirm = false;
     int last_frame = -10;
@@ -160,12 +162,19 @@ void cache_section() {
                 A.st.rom_cache_limit_gb = gbs[i];
                 hub::rom_cache_set_limit((uint64_t)gbs[i] << 30);
                 mark_dirty();
-                if (CU.trimming.exchange(true)) CU.trim_again = true;
+                std::lock_guard<std::mutex> lk(CU.trim_mu);
+                if (CU.trim_running) CU.trim_again = true;   // the running trim re-reads the limit before it ends
                 else {
-                    if (CU.trim_th.joinable()) CU.trim_th.join();   // the previous trim has finished (trimming was false)
+                    if (CU.trim_th.joinable()) CU.trim_th.join();   // the previous trim has finished (it cleared trim_running, then only returns)
+                    CU.trim_running = true;
+                    CU.trimming = true;
                     CU.trim_th = std::thread([] {
-                        do { CU.trim_again = false; hub::rom_cache_trim(hub::rom_cache_limit()); } while (CU.trim_again.load());
-                        CU.trimming = false;
+                        for (;;) {
+                            { std::lock_guard<std::mutex> l(CU.trim_mu); CU.trim_again = false; }
+                            hub::rom_cache_trim(hub::rom_cache_limit());
+                            std::lock_guard<std::mutex> l(CU.trim_mu);   // "again" is checked and "running" cleared in one step: a change cannot slip between them
+                            if (!CU.trim_again) { CU.trim_running = false; CU.trimming = false; return; }
+                        }
                     });
                 }
             }
