@@ -1,4 +1,5 @@
 #include "ext_media.h"
+#include "ext_media_logic.h"
 
 #include <windows.h>
 #include <audiopolicy.h>
@@ -56,13 +57,7 @@ bool write_png(const std::string& path_utf8, const uint8_t* bgra, int w, int h, 
     return ok;
 }
 
-bool all_black(const uint8_t* bgra, int w, int h, int stride) {
-    for (int y = 0; y < h; y += 7) {
-        const uint8_t* s = bgra + (size_t)y * stride;
-        for (int x = 0; x < w; x += 5) if (s[x * 4] | s[x * 4 + 1] | s[x * 4 + 2]) return false;
-    }
-    return true;
-}
+/* all_black(): ext_media_logic.h */
 
 /* Windows Graphics Capture of one window: works for D3D swap chains and for windows partly covered by others. */
 bool capture_wgc(HWND hwnd, const std::string& out, std::string* err) {
