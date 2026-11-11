@@ -24,6 +24,57 @@ int main() {
         // lower/upper/mixed spellings agree
         CHECK_EQ(normalize_serial("sLuS_209.46"), normalize_serial("SLUS-20946"));
     }
+    {   // normalize_serial: the pre-fix function is kept here as a reference. Every valid spelling must give the identical key (PS1/PS2 saves and cards are keyed by it);
+        // only inputs with a sixth digit right after the five are now rejected, and serial_from_filename agrees.
+        auto old_normalize = [](const std::string& s) -> std::string {
+            auto alpha = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); };
+            auto digit = [](char c) { return c >= '0' && c <= '9'; };
+            size_t i = 0;
+            while (i < s.size() && !alpha(s[i])) ++i;
+            std::string letters, digits;
+            for (; i < s.size() && alpha(s[i]) && letters.size() < 5; ++i) letters += (s[i] >= 'a' && s[i] <= 'z') ? char(s[i] - 32) : s[i];
+            if (letters.size() != 4) return "";
+            for (; i < s.size() && digits.size() < 5; ++i) {
+                char c = s[i];
+                if (digit(c)) digits += c;
+                else if (c == '.' || c == '_' || c == '-' || c == ' ') continue;
+                else break;
+            }
+            if (digits.size() != 5) return "";
+            return letters + "-" + digits;
+        };
+        const char* valid[] = {
+            "SLUS-00694", "SLUS_006.94", "SLUS_006.94;1", "SLUS00694", "slus-00694", "SLUS 006 94", "SCUS-94163", "SCUS_941.63", "SCUS_941.63;1",
+            "SLES-01234", "SLES_523.45", "SLPS-00700", "SLPS_007.00", "SLPM-65123", "SLPM_651.23",
+            "SCES-00984", "SCES_009.84;1", "SCED-01234", "SCPS-10001", "SCPS_100.01", "SLKA-25001", "SCAJ-20001", "PBPX-95201", "SIPS-60001", "SCKA-20001", "SLED-02345",
+            "SLUS-20946.iso", "SLUS_209.46.chd", "[SLUS-20946]", "(SCUS-94163)", "SLUS-20946 (Disc 1)", "SLUS-20946-1", "SLUS_209.46;1\r\n", "  SLUS 209 46", "12 SLUS 20946", "SLUS-2 0 9 4 6", "sLuS_209.46",
+            "SLUS-00001", "SLUS-99999", "SLUS_000.00", "SLUS-20946x", "SLUS-20946.1",
+        };
+        for (const char* v : valid) {
+            std::string a = old_normalize(v), b = normalize_serial(v);
+            CHECK(!a.empty());
+            CHECK_EQ(b, a);                                   // identical before and after
+            CHECK_EQ(normalize_serial(b), b);                 // and idempotent
+        }
+        // clearly invalid: too many digits or the wrong letter count are rejected
+        const char* invalid[] = {"SLUS-209461", "SLUS209461", "SLUS_209.461", "SLUS-2094612", "SLUS-000000", "SLUSS-20946", "SLU-20946", "SL-20946", "SLUS-2094", "SLUS-", "SLUS", "", "12345"};
+        for (const char* v : invalid) CHECK_EQ(normalize_serial(v), "");
+        // the two functions agree: whatever serial_from_filename accepts, normalize accepts identically, and the six-digit case is rejected by both
+        CHECK_EQ(normalize_serial("SLUS-209461"), serial_from_filename("SLUS-209461"));
+        CHECK_EQ(serial_from_filename("SLUS-209461.iso"), "");
+        CHECK_EQ(serial_from_filename("SLUS_209.461.iso"), "");
+        for (const char* v : valid) {
+            std::string f = serial_from_filename(v);
+            if (!f.empty()) CHECK_EQ(f, normalize_serial(v));
+        }
+        // exhaustive over digit counts: five digits is valid, four and six are not, with every separator form
+        for (const char* sep : {"-", "_", "", " "}) {
+            for (int n = 1; n <= 8; ++n) {
+                std::string in = std::string("SLUS") + sep + std::string("12345678").substr(0, n);
+                CHECK_EQ(normalize_serial(in), n == 5 ? "SLUS-12345" : "");
+            }
+        }
+    }
     {   // serial_from_filename
         struct { const char* in; const char* out; } t[] = {
             {"SLUS_012.34.iso", "SLUS-01234"}, {"SLES-01234.bin", "SLES-01234"}, {"[SCUS-94163]", "SCUS-94163"},
