@@ -22,6 +22,12 @@ hub::gs::Values gs_values_for(const hub::GameEntry& e) {
     return hubui::effective_values(GSTORE, e, A.st.fullscreen, A.st.volume);   // the game's own console layer (Switch 2 on top of Switch)
 }
 
+hubemu::Kind nx_planned_emulator(const hub::GameEntry& e, bool online_or_room) {
+    const bool installed = e.system == hub::System::Switch && !hubemu::find(hubemu::Kind::Fritchii, A.st.cemu_exe, e.path).exe.empty();
+    return hubemu::nx_emulator_for(e, gs_values_for(e), online_or_room, GSTORE.source_console(hub::console_id(e), e.key, hubemu::kRunnerKey),
+                                   hubemu::nx_fritchii_obtainable(hubemu::release_is_placeholder(hubemu::Kind::Fritchii), installed));
+}
+
 bool gs_set_game_value(const hub::GameEntry& e, const std::string& key, const std::string& value) {
     if (!GSTORE.set_game(e.key, e.system, key, value)) return false;
     if (!GSTORE.save(hub::saves::vault_dir())) set_notice("Couldn't save your game settings. Please try again.", 8.0);
@@ -91,7 +97,7 @@ void options_grouped(const std::string& console, const std::string& game_key, in
             if (o->key == "switch.oot_high_refresh" || o->key == "switch.oot_refresh_cap" || o->key == "switch.oot_aa") {   // Fritchii's Ocarina of Time options: that game, played with Fritchii, never in the per-system defaults
                 const hub::GameEntry* ge = level == 2 ? find_entry(game_key) : nullptr;
                 if (!ge || !hookshot::supports(*ge) ||
-                    hubemu::nx_emulator_for(*ge, gs_values_for(*ge), false, GSTORE.source_console(console, game_key, hubemu::kRunnerKey), true) != hubemu::Kind::Fritchii) continue;
+                    nx_planned_emulator(*ge, false) != hubemu::Kind::Fritchii) continue;
             }
             if (!any) { ImGui::Dummy(ImVec2(0, sp(0.4f))); ImGui::PushFont(ui::F.bold); ImGui::TextUnformatted(grp); ImGui::PopFont(); any = true; }
             hub::gs::Values v = level == 2 ? hubui::effective_values(GSTORE, console, game_key, A.st.fullscreen, A.st.volume)

@@ -34,6 +34,8 @@ bool nx_default_fritchii(const hub::GameEntry& e);
  * Source 0 + Ocarina of Time = Fritchii; any explicit choice (game or global, even "lichii") wins. The ONE place the default runner is decided.
  * fritchii_obtainable = Fritchii is installed, or its release is pinned so Play can download it; false only gates the DEFAULT (an explicit choice still gets
  * Fritchii and the normal install prompt). */
+/* "Fritchii can be used for the default": installed, or its release is pinned so Play can download it. The ONE definition (launch, settings rows and the game page all use it). */
+inline bool nx_fritchii_obtainable(bool release_is_placeholder, bool installed) { return installed || !release_is_placeholder; }
 Kind nx_emulator_for(const hub::GameEntry& e, const hub::gs::Values& v, bool online_or_room, int runner_source, bool fritchii_obtainable);
 
 /* ---- config / environment ---- */

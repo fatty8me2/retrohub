@@ -750,6 +750,7 @@ extern hub::gs::Store GSTORE;
 void gs_load();   // after the vault dir is known
 void gs_cloud_sync_tick();   // every frame: reloads the per-game settings and cheat choices when the cloud engine merged another PC's into the vault
 void cheats_reload_from_vault();
+hubemu::Kind nx_planned_emulator(const hub::GameEntry& e, bool online_or_room);   // the Switch program Play really starts (Lichii or Fritchii): launch, the Fritchii option rows and "Plays with" all call this
 hub::gs::Values gs_values_for(const hub::GameEntry& e);   // resolved incl. the global fullscreen default
 bool gs_set_game_value(const hub::GameEntry& e, const std::string& key, const std::string& value);   // the per-game override, saved (same path as the Settings rows)
 bool gs_set_system_value(hub::System sys, const std::string& key, const std::string& value);   // the system default (e.g. Switch "switch.runner"), saved

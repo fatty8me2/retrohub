@@ -155,6 +155,16 @@ int main() {
         CHECK(nx_emulator_for(oot, fri, true, 2, on) == Kind::Lichii);
         CHECK(nx_emulator_for(oot, lich, false, 0, false) == Kind::Lichii);                   // Fritchii neither installed nor downloadable: the default does not block Play
         CHECK(nx_emulator_for(oot, fri, false, 2, false) == Kind::Fritchii);                  // ...but an explicit choice still gets the install prompt
+        // the shared decision (launch, option rows, "Plays with"): obtainable = installed OR the release is pinned
+        CHECK(nx_fritchii_obtainable(false, false) && nx_fritchii_obtainable(true, true) && nx_fritchii_obtainable(false, true) && !nx_fritchii_obtainable(true, false));
+        const bool pinned_not_installed = nx_fritchii_obtainable(false, false), unpinned_not_installed = nx_fritchii_obtainable(true, false), installed = nx_fritchii_obtainable(true, true);
+        CHECK(nx_emulator_for(oot, lich, false, 0, installed) == Kind::Fritchii);              // default + Fritchii installed
+        CHECK(nx_emulator_for(oot, lich, false, 0, pinned_not_installed) == Kind::Fritchii);   // default + not installed but downloadable: Play offers the install, then Fritchii
+        CHECK(nx_emulator_for(oot, lich, false, 0, unpinned_not_installed) == Kind::Lichii);   // default + not installed and not downloadable
+        CHECK(nx_emulator_for(oot, lich, false, 2, unpinned_not_installed) == Kind::Lichii);   // explicit lichii
+        CHECK(nx_emulator_for(oot, fri, false, 2, unpinned_not_installed) == Kind::Fritchii);  // explicit fritchii
+        CHECK(nx_emulator_for(oot, lich, true, 0, installed) == Kind::Lichii && nx_emulator_for(oot, fri, true, 2, installed) == Kind::Lichii);   // online / room
+        CHECK(nx_emulator_for(other, lich, false, 0, installed) == Kind::Lichii);              // another Switch game
         hub::gs::Values hs;
         hs["switch.runner"] = "hookshot";
         CHECK(nx_emulator_for(oot, hs, false, 2, on) == Kind::Lichii);                        // Hookshot is decided before this (launch.cpp)
