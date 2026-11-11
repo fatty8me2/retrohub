@@ -407,6 +407,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         hang_watchdog_phase("hubart::pump");
         hubart::pump();
+        qm_textures_begin_frame(); state_textures_begin_frame(); challenge_textures_begin_frame();   // before any draw: only now are last frame's evicted textures freed
         if (!(shot_path && std::getenv("HUB_SHOT_SKELETON")) && A.scan_ready.exchange(false)) {
             if (A.scan_th.joinable()) A.scan_th.join();
             A.scanning = false;

@@ -1,5 +1,6 @@
 #include "app.h"
 #include "dolphin_speed.h"
+#include "tex_cache_logic.h"
 
 #include <SDL.h>
 #include <shellapi.h>
@@ -43,7 +44,9 @@ namespace {
 SDL_Renderer* g_ren = nullptr;
 
 struct Tex { SDL_Texture* t = nullptr; int w = 0, h = 0; std::string stamp; };
-std::map<std::string, Tex> g_tex;
+/* LRU, never evicts what was used this frame, destroys evicted textures at the start of the next frame (tex_cache_logic.h). */
+hubtex::TexCache<Tex> g_tex(80, [](Tex& t) { if (t.t) SDL_DestroyTexture(t.t); });
+hubtex::DecodeBudget g_shot_budget(2);   // gallery: at most this many new PNG decodes per frame
 
 std::string file_stamp(const std::string& p) {
     std::error_code ec;
@@ -55,15 +58,14 @@ std::string file_stamp(const std::string& p) {
 }
 
 /* PNG (or BMP, used by the headless screenshot aid) file -> texture, cached by path + stamp. */
-Tex* tex_for(const std::string& path) {
+Tex* tex_for(const std::string& path, hubtex::DecodeBudget* budget = nullptr) {
     if (!g_ren) return nullptr;
-    if (path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".mp4") == 0) return tex_for(path + ".jpg");   // instant-replay clip: its thumbnail
+    if (path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".mp4") == 0) return tex_for(path + ".jpg", budget);   // instant-replay clip: its thumbnail
     std::string st = file_stamp(path);
     if (st.empty()) return nullptr;
-    auto it = g_tex.find(path);
-    if (it != g_tex.end() && it->second.stamp == st) return it->second.t ? &it->second : nullptr;
-    if (it != g_tex.end() && it->second.t) SDL_DestroyTexture(it->second.t);
-    if (g_tex.size() > 80) { for (auto& kv : g_tex) if (kv.second.t) SDL_DestroyTexture(kv.second.t); g_tex.clear(); }
+    Tex* hit = g_tex.find(path);
+    if (hit && hit->stamp == st) return hit->t ? hit : nullptr;
+    if (budget && !budget->spend()) return nullptr;   // over this frame's decode budget: caller shows its placeholder, we try again next frame
     Tex nt;
     nt.stamp = st;
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
@@ -83,8 +85,8 @@ Tex* tex_for(const std::string& path) {
             }
         }
     }
-    g_tex[path] = nt;
-    return nt.t ? &g_tex[path] : nullptr;
+    Tex* stored = g_tex.insert(path, std::move(nt));   // a stale previous texture for this path is buried, not destroyed mid-frame
+    return stored->t ? stored : nullptr;
 }
 
 std::string trim_sep(std::string d) {
@@ -871,6 +873,7 @@ void handoff_tick() {
 void qm_send_osd(const std::string& text) { send_osd(text); }
 
 void qm_init(SDL_Renderer* ren) { g_ren = ren; }
+void qm_textures_begin_frame() { g_tex.begin_frame(); g_shot_budget.begin_frame(); }
 
 static std::string run_dir_for(const std::string& key) {
     std::string k = key;
@@ -1557,7 +1560,7 @@ void shots_gallery(const hub::GameEntry& e) {
         bool open_it = ImGui::InvisibleButton("shot", ImVec2(tw, th));
         bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        Tex* t = tex_for(path);
+        Tex* t = tex_for(path, &g_shot_budget);   // placeholder until its turn: a few decodes per frame, not 60 at once
         if (t) ui::draw_art(dl, t->t, t->w, t->h, p, ImVec2(p.x + tw, p.y + th), sp(1.f));
         else dl->AddRectFilled(p, ImVec2(p.x + tw, p.y + th), ui::PANEL2, sp(1.f));
         if (hot) dl->AddRect(p, ImVec2(p.x + tw, p.y + th), ui::ACCENT, sp(1.f), 0, 2.f);

@@ -3,6 +3,7 @@
 #include "app.h"
 #include "attach_xfer.h"
 #include "games.h"
+#include "tex_cache_logic.h"
 
 #include <SDL.h>
 #include <chrono>
@@ -84,10 +85,9 @@ void results_load() {
 
 /* ---------------- pictures ---------------- */
 struct Pic { SDL_Texture* t = nullptr; int w = 0, h = 0; };
-std::map<std::string, Pic> g_pics;
+hubtex::TexCache<Pic> g_pics(40, [](Pic& p) { if (p.t) SDL_DestroyTexture(p.t); });   // LRU; evicted textures are freed next frame (tex_cache_logic.h)
 Pic* pic_for(const std::string& path) {
-    auto it = g_pics.find(path);
-    if (it != g_pics.end()) return it->second.t ? &it->second : nullptr;
+    if (Pic* hit = g_pics.find(path)) return hit->t ? hit : nullptr;
     Pic p;
     SDL_Renderer* ren = A.win ? SDL_GetRenderer(A.win) : nullptr;
     if (ren && exists(path)) {
@@ -101,9 +101,8 @@ Pic* pic_for(const std::string& path) {
             stbi_image_free(px);
         }
     }
-    if (g_pics.size() > 40) { for (auto& kv : g_pics) if (kv.second.t) SDL_DestroyTexture(kv.second.t); g_pics.clear(); }
-    g_pics[path] = p;
-    return p.t ? &g_pics[path] : nullptr;
+    Pic* stored = g_pics.insert(path, p);
+    return stored->t ? stored : nullptr;
 }
 
 /* ---------------- sender ---------------- */
@@ -502,3 +501,5 @@ void challenge_shot_draw() {
 }
 
 } // namespace hubui
+
+void challenge_textures_begin_frame() { hubui::g_pics.begin_frame(); }

@@ -319,6 +319,7 @@ target_link_libraries(hub_invite_test PRIVATE hubinvite)
 add_executable(hub_qm_test test_qm_logic.cpp)
 target_link_libraries(hub_qm_test PRIVATE hubcommon)
 add_executable(hub_qm_nav_test test_qm_nav.cpp)
+add_executable(hub_tex_cache_test test_tex_cache.cpp)   # thumbnail texture cache: LRU, deferred destroy, decode budget (tex_cache_logic.h)
 
 # Dolphin speed over a virtual DSU pad (no keyboard injection / focus): server wrapper + title readback; pure logic test; hidden-desktop live test.
 target_sources(RetroHub PRIVATE dolphin_speed.cpp)
