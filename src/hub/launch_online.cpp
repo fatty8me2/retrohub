@@ -2,10 +2,14 @@
 #include "app.h"
 #include "remote_play.h"
 #include "online_caps.h"
+#include "launch_text.h"
+#include "launch_files.h"
+#include "hub_log.h"
 #include <filesystem>
 
 GcOnline GCO;
 void rplay_stop();
+void rplay_busy_states(bool* pending, bool* stream, bool* probe);
 static hubnp3ds::ResumeGate NP3_resume;   // guest launch waiting for the archive to finish unpacking
 
 bool gc_needs_unpack(const hub::GameEntry& e) { return e.issue == "extract" && hub::extracted_3ds_path(e).empty(); }
@@ -17,13 +21,50 @@ static std::string unpack_msg(const hub::GameEntry& e) { return "Unpacking " + e
 static void host_abort(const std::string& why) {
     if (room_connected() && !g_fake_room) A.lobby.send_msg("{\"kind\":\"np_abort\",\"reason\":\"" + json::escape(why) + "\"}");
 }
-static void launch_note(bool host, const std::string& m, double secs = 8.0) { if (host) { set_notice(m, secs); host_abort(m); } else launch_fail(m, secs); }
+/* Double-launch guard (room_launch_busy): tick of the host's last launch press, and the game's title for "Starting X...". */
+static ULONGLONG g_launch_pressed_at = 0;
+static std::string g_launch_title;
+/* `m` is what THIS player reads; `wire` (default: m, with the older wording for the texts that changed) is what other RetroHubs receive,
+ * so an older RetroHub in the same room keeps reading what it always did. */
+static void launch_note(bool host, const std::string& m, double secs = 8.0, const std::string& wire = std::string()) {
+    const std::string w = wire.empty() ? hublaunch::wire_for(m) : wire;
+    if (host) { g_launch_pressed_at = 0; set_notice(m, secs); host_abort(w); } else launch_fail_w(m, w, secs);
+}
 /* spawn(), but a host whose process could not start aborts the guests' wait too. */
 static bool spawn_room(bool host, const std::string& exe, const std::string& args, const std::string& cwd,
                        const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri) {
     bool ok = spawn(exe, args, cwd, env, ri);
-    if (!ok) { if (host) host_abort("the game did not start"); else launch_fail("The game did not start on this PC."); }
+    if (!ok) {
+        hublog::info("online: could not start the game process (%s)", ri.system_short.c_str());
+        if (host) { g_launch_pressed_at = 0; set_notice(hublaunch::start_failed_text(ri.title), 8.0); host_abort("the game did not start"); }
+        else launch_fail_w(hublaunch::start_failed_text(ri.title), hublaunch::start_failed_wire(), 8.0);
+    }
     return ok;
+}
+
+/* Is a room launch already starting on this PC? Covers every asynchronous launch state plus a 5 s window after the host's press, so a second
+ * click cannot send a second launch message (the 3DS path would answer with np_abort and cancel the guests' first launch). */
+bool room_launch_busy() {
+    hublaunch::LaunchStates st;
+    st.np3_pending = NP3_pending;
+    st.np3_active = NP3.active();
+    st.gc_active = GCO.active;
+    st.gc_guest_wait = GCO.guest_wait;
+    st.gc_forwarder = GCO.fw.active();
+    rplay_busy_states(&st.rp_pending, &st.rp_stream, &st.rp_probe);
+    return hublaunch::launch_busy(st, GetTickCount64(), g_launch_pressed_at);
+}
+/* Text for the STARTING phase only: not while a GameCube / remote play session is simply running (those flags stay true for the whole game). */
+std::string room_launch_busy_text() {
+    hublaunch::LaunchStates st;
+    st.np3_pending = NP3_pending;
+    st.np3_active = NP3.active();
+    st.gc_active = GCO.active;
+    st.gc_guest_wait = GCO.guest_wait;
+    st.gc_process_alive = gc_process_alive();
+    st.game_running = A.proc != nullptr;
+    rplay_busy_states(&st.rp_pending, &st.rp_stream, &st.rp_probe);
+    return hublaunch::starting_text_active(st, GetTickCount64(), g_launch_pressed_at) ? hublaunch::starting_text(g_launch_title) : std::string();
 }
 
 bool gc_fingerprint_ready(const std::string& path) {
@@ -32,9 +73,7 @@ bool gc_fingerprint_ready(const std::string& path) {
     GCO.fp_path = path;
     GCO.fp_done = false;
     GCO.fp_th = std::thread([path]() {
-        WIN32_FILE_ATTRIBUTE_DATA fad{};
-        GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad);
-        GCO.fp_size = ((uint64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+        GCO.fp_size = hublaunch::file_size_utf8(path);
         GCO.fp_sha = hubemu::sha256_file(path);
         GCO.fp_done = true;
     });
@@ -128,9 +167,7 @@ bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out) {
     s.port = GCO.port;
     s.game_id = !e.serial.empty() ? e.serial : (g && !g->serials.empty() ? g->serials[0] : "");
     s.title = e.title;
-    WIN32_FILE_ATTRIBUTE_DATA fad{};
-    GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad);
-    s.size = ((uint64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+    s.size = hublaunch::file_size_utf8(path);
     if (have) s.sha256 = GCO.fp_sha;
     { gcnp::DiscVer dv = gcnp::disc_version(path); if (dv.ok) { s.disc = dv.disc; s.rev = dv.rev; } }
     s.players = std::max(2, std::min(4, players));
@@ -404,6 +441,11 @@ static std::string NP3_pw;   // onlineflow-M6: this launch's room password, for 
 /* 3DS: bring up the room server (host) + UDP forwarder, then poll_np3ds() starts Azahar once everyone is reachable. */
 void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg, const hubnp3ds::Plan* resumed) {
     if (launch_blocked("launch_online_3ds")) return;
+    if (is_host && !A.proc && (NP3_pending || NP3.active())) {   // a second launch press while the first is still starting: never abort the guests' first launch
+        online_log("3ds: host launch ignored, one is already starting");
+        set_notice("Already starting " + e.title + "...", 5.0);
+        return;
+    }
     if (A.proc || NP3.active()) { launch_note(is_host, "A game is already running."); return; }
     hubemu::Install inst = hubemu::find(hubemu::Kind::Azahar, A.st.cemu_exe, e.path);
     if (inst.exe.empty()) { launch_note(is_host, "Install Azahar first (start the game offline once), then join the room again.", 10.0); return; }
@@ -542,6 +584,7 @@ struct RPlay {
 } RP;
 
 }  // namespace
+void rplay_busy_states(bool* pending, bool* stream, bool* probe) { *pending = RP.pending; *stream = RP.proc != nullptr; *probe = RP.probe != nullptr; }
 bool rplay_session_alive() { return RP.proc != nullptr || RP.pending; }   // the guest viewer runs through spawn_room() and so sets A.proc
 namespace {
 
@@ -595,10 +638,7 @@ bool start_hidden(const std::string& exe, const std::string& args, HANDLE* out) 
 }
 
 std::string read_small(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    std::stringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
+    return hublaunch::read_file_utf8(path);
 }
 
 bool qa_pattern() { const char* v = std::getenv("RETROHUB_AUTOTEST_TESTPATTERN"); return autotest_active() && v && *v == '1'; }   // QA only: hidden desktops cannot capture Cemu, stream the test pattern
@@ -639,10 +679,11 @@ bool rplay_precheck() {
     RP.probe_no++;
     std::string room = hubrp::probe_room(A.code, RP.probe_no);
     RP.probe_file = hub::data_dir() + "rplay_probe.json";
-    std::remove(RP.probe_file.c_str());
+    hublaunch::remove_file_utf8(RP.probe_file);
     int members = (int)room_members().size();
     if (!start_hidden(sr, hubrp::probe_host_args(server_url(), room, members, !autotest_active(), RP.probe_file), &RP.probe)) {
-        set_notice("Could not start the connection check (streamrun error " + std::to_string(GetLastError()) + ").", 10.0);
+        hublog::info("online: connection check helper did not start (error %lu)", (unsigned long)GetLastError());
+        set_notice(hublaunch::connection_check_failed_text(), 10.0);
         return false;
     }
     RP.probe_t0 = GetTickCount64();
@@ -666,7 +707,7 @@ void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host) {
     if (A.proc) { launch_note(is_host, "A game is already running."); return; }
     std::string sr = streamrun_path();
     if (g_headless) { shot_trace("online-route", std::string("wiiu-remote-play ") + (is_host ? "host" : "guest")); return; }
-    if (sr.empty() || !file_exists(sr)) { launch_note(is_host, "Remote play isn't installed (streamrun.exe is missing) - update RetroHub."); return; }
+    if (sr.empty() || !file_exists(sr)) { launch_note(is_host, hublaunch::remote_play_missing_text()); return; }
     std::string room = hubrp::room_name(A.code, launch_no);
     if (is_host) {
         if (is_remote_stand_in(e)) { launch_note(true, "Remote play needs your own copy of " + e.title + " on the host's PC."); return; }
@@ -680,13 +721,18 @@ void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host) {
          * Cemu once poll_rplay() writes the PID of Cemu's window owner into RP.pid_file. */
         RP.pid_file = hub::data_dir() + "rplay_cemu.pid";
         RP.status_file = hub::data_dir() + "rplay_status.json";
-        std::remove(RP.pid_file.c_str());
-        std::remove(RP.status_file.c_str());
+        hublaunch::remove_file_utf8(RP.pid_file);
+        hublaunch::remove_file_utf8(RP.status_file);
         std::string args = hubrp::host_args(0, server_url(), RP.room, RP.members, !autotest_active(), RP.status_file, 0, RP.pid_file);
         if (qa_pattern()) { size_t p = args.find("--await-pid-file "); if (p != std::string::npos) { size_t e2 = args.find(" --net", p); args.replace(p, e2 - p, "--test-pattern"); } }
         args += qa_extra();
         if (RP.proc) { CloseHandle(RP.proc); RP.proc = nullptr; }
-        if (!start_hidden(sr, args, &RP.proc)) { launch_note(true, "Could not start remote play (streamrun error " + std::to_string(GetLastError()) + ")."); return; }
+        if (!start_hidden(sr, args, &RP.proc)) {
+            const unsigned long err = (unsigned long)GetLastError();
+            hublog::info("online: remote play helper did not start (error %lu)", err);
+            launch_note(true, hublaunch::remote_play_failed_text(), 8.0, hublaunch::remote_play_failed_wire(err));
+            return;
+        }
         autotest_log("rplay: streamrun started before Cemu, args " + args);
         Sleep(400);   // let the DSU server bind before Cemu reads its controller profiles
         launch_external(e, r, no_slash(hub::saves::battery_dir(sys_short(e), e.key)));   // the host's Cemu + save sync work exactly like offline play: same vault path (saves-F4)
@@ -779,7 +825,7 @@ void poll_rplay() {
         case hubrp::Attach::Now: break;
     }
     RP.pending = false;
-    if (FILE* f = fopen(RP.pid_file.c_str(), "wb")) { std::string v = std::to_string(pid); fwrite(v.data(), 1, v.size(), f); fclose(f); }   // streamrun captures this PID's window
+    hublaunch::write_file_utf8(RP.pid_file, std::to_string(pid));   // streamrun captures this PID's window
         autotest_log("rplay: streamrun attached to Cemu pid " + std::to_string(pid));
 }
 
@@ -787,6 +833,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
                           const hubui::PortPlan* host_plan, const hubui::Json* launch_msg,
                           const hubui::MatchSpec* host_match, const std::string* launch_body) {
     if (launch_blocked("launch_online")) return;
+    if (is_host && !g_fake_room) { g_launch_pressed_at = GetTickCount64(); g_launch_title = e_in.title; }   // room_launch_busy(): debounce from this press
     hub::GameEntry hacked;   // ROM hack (Plan 4 H4): every PC plays its own patched copy; the content key makes them identical
     if (is_hack(e_in)) {
         std::string patched;
@@ -951,7 +998,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         const char* lcore = e.system == hub::System::GBA ? "mgba_link" : "sameboy_rb";
         std::string core = find_core(lcore);
         if (core.empty() && e.system != hub::System::GBA) { lcore = "sameboy"; core = find_core(lcore); }   // no rollback build: lockstep
-        if (core.empty()) { launch_note(is_host, std::string("Emulator core '") + lcore + "' not found (cores folder)."); return; }
+        if (core.empty()) { hublog::info("online: core '%s' not found", lcore); launch_note(is_host, hublaunch::core_missing_text(hub::system_name(e.system)), 8.0, hublaunch::core_missing_wire(lcore)); return; }
         std::vector<std::string> owners;
         {
             std::string tok;
@@ -990,7 +1037,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         bool gb_rb = false;
         if (e.system != hub::System::GBA && corename == "sameboy" && !find_core("sameboy_rb").empty()) { corename = "sameboy_rb"; gb_rb = true; }
         std::string core = find_core(corename);
-        if (core.empty()) { launch_note(is_host, "Emulator core '" + corename + "' not found (cores folder)."); return; }
+        if (core.empty()) { hublog::info("online: core '%s' not found", corename.c_str()); launch_note(is_host, hublaunch::core_missing_text(hub::system_name(e.system)), 8.0, hublaunch::core_missing_wire(corename)); return; }
         /* Netplay starts from an empty, identical save on every PC: use a throwaway dir. */
         std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
         remove_tree(tmp);
@@ -1019,7 +1066,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         /* DS local wireless: no lockstep. Every PC runs its own melonDS core and only the wireless frames travel through
          * the room (retrorun --ds-link), so the game's own save is used and trades/battles are real. */
         std::string core = find_core("melondsds");
-        if (core.empty()) { launch_note(is_host, "Emulator core for Nintendo DS not found (cores folder)."); return; }
+        if (core.empty()) { hublog::info("online: core 'melondsds' not found"); launch_note(is_host, hublaunch::core_missing_text(hub::system_name(e.system)), 8.0, hublaunch::core_missing_wire_nds()); return; }
         std::string mode;
         if (launch_msg && launch_msg->get("np_ds") && !hubui::parse_np_ds(*launch_msg, &mode)) {
             launch_note(is_host, "The host's DS launch is newer than this RetroHub - update to join.");
@@ -1043,7 +1090,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
          * save (docs/SAVES.md); guests' throwaway dir is never uploaded. */
         const bool nes = e.system == hub::System::NES;
         std::string core = find_core(nes ? "nestopia" : "snes9x");
-        if (core.empty()) { launch_note(is_host, std::string("Emulator core '") + (nes ? "nestopia" : "snes9x") + "' not found (cores folder)."); return; }
+        if (core.empty()) { hublog::info("online: core '%s' not found", nes ? "nestopia" : "snes9x"); launch_note(is_host, hublaunch::core_missing_text(hub::system_name(e.system)), 8.0, hublaunch::core_missing_wire(nes ? "nestopia" : "snes9x")); return; }
         std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
         remove_tree(tmp);
         make_dirs(tmp);
@@ -1099,6 +1146,6 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
         return;
     }
-    launch_note(is_host, "Online play is not available for this system yet.");
+    launch_note(is_host, hublaunch::online_unavailable_text(hub::system_name(e.system)), 8.0, hublaunch::online_unavailable_wire());
 }
 

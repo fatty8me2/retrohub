@@ -127,6 +127,7 @@ add_test(NAME hub_theme_test COMMAND hub_theme_test)   # every theme preset defi
 add_test(NAME hub_picker_test COMMAND hub_picker_test)   # room game picker: search, chips, sections, virtual layout
 add_test(NAME hub_ps2_online_test COMMAND hub_ps2_online_test)   # PS2 online: readiness reasons, retrorun args, exit texts, pinned LRPS2 download
 add_test(NAME hub_online_caps_test COMMAND hub_online_caps_test)   # supports_online <-> launch_online branches (table-driven)
+add_test(NAME hub_launch_text_test COMMAND hub_launch_text_test)   # double-launch guard, host-side wording of guest failures, UTF-8 launch files
 add_test(NAME ps1_test COMMAND ps1_test)                                 # PlayStation: serials, catalog, synthetic discs, BIOS discovery (scratch dirs)
 add_test(NAME cheats_db_test COMMAND cheats_db_test)
 add_test(NAME psarchive_test COMMAND psarchive_test)                       # PS1/PS2 disc archives: identify by name/DB, truncated, extract+confirm (scratch dirs)
