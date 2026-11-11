@@ -3,6 +3,9 @@
 #include "logic.h"
 #include "dupes_logic.h"
 #include "settings_tabs.h"
+#include "durable_write.h"
+#include <iterator>
+#include <string>
 
 #include <cmath>
 #include <cstdio>
@@ -30,8 +33,67 @@ static void test_dupes() {
     if (l3[0].path != "C:/one/a.z64") { std::printf("FAIL dupes stale preferred\n"); ++dupes_fail; }
 }
 
+
+/* ---- settings by UTF-8 path: non-ASCII round trip, legacy (ANSI-misread) location migration, ASCII unchanged, failed save ---- */
+static std::string slurp_w(const std::wstring& w) { std::ifstream f(std::filesystem::path(w), std::ios::binary); return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()); }
+static void test_settings_paths() {
+    namespace fs = std::filesystem;
+    using hubui::Settings;
+    const fs::path base = fs::temp_directory_path() / "hub_utf8paths_test";
+    std::error_code ec; fs::remove_all(base, ec);
+    auto u8 = [](const fs::path& p) { auto s = p.u8string(); return std::string(s.begin(), s.end()); };
+    Settings s; s.name = "Zo\xC3\xAB"; s.games_dest = "D:\\g\xE6\x97\xA5";
+    const char* dirs[] = { "plain_ascii", "Zo\xC3\xAB_\xD0\x96_\xE6\x97\xA5\xE6\x9C\xAC", "caf\xC3\xA9" };
+    for (const char* d : dirs) {
+        const std::string dir = u8(base) + "\\" + d, file = dir + "\\hub.json";
+        const std::wstring wdir = durable::utf8_to_wide(dir), wfile = durable::utf8_to_wide(file);
+        fs::create_directories(fs::path(wdir), ec);
+        CHECK(hubui::save_settings(file, s));
+        CHECK(fs::exists(fs::path(wfile)) && !fs::exists(fs::path(wfile + L".tmp")));
+        Settings r; CHECK(hubui::load_settings(file, &r) && r.name == s.name && r.games_dest == s.games_dest);
+        const bool ascii = durable::legacy_ansi_to_wide(file) == wfile;
+        std::printf("  settings path '%s': %s\n", d, ascii ? "legacy == correct (byte-identical behaviour)" : "legacy differs (mojibake path)");
+        /* failed save (a directory squats on the temp name) leaves the previous file byte-identical */
+        const std::string before = slurp_w(wfile);
+        fs::create_directories(fs::path(wfile + L".tmp"), ec);
+        Settings s2 = s; s2.name = "changed";
+        CHECK(!hubui::save_settings(file, s2) && slurp_w(wfile) == before);
+        fs::remove_all(fs::path(wfile + L".tmp"), ec);
+        if (ascii) {   // identical resolution: exactly one file, no migration side effects
+            int n = 0; for (auto& e : fs::directory_iterator(fs::path(wdir))) { (void)e; ++n; }
+            CHECK(n == 1);
+        }
+    }
+    /* legacy migration: the old code would have used the UTF-8 bytes as an ANSI path */
+    {
+        const std::string dir = u8(base) + "\\mig_Zo\xC3\xAB_\xD0\x96", file = dir + "\\hub.json";
+        const std::wstring good = durable::utf8_to_wide(file), old = durable::legacy_ansi_to_wide(file);
+        const fs::path olddir = fs::path(old).parent_path();
+        fs::create_directories(olddir, ec);
+        if (old == good || !fs::exists(olddir)) std::printf("  SKIP legacy migration: ANSI code page cannot misread these characters here\n");
+        else {
+            Settings o; o.name = "legacy_player"; o.games_dest = "E:\\old";
+            { std::ofstream f(fs::path(old), std::ios::binary); f << hubui::settings_to_json(o); }
+            const std::string legacy_bytes = slurp_w(old);
+            fs::create_directories(fs::path(good).parent_path(), ec);
+            Settings r; CHECK(hubui::load_settings(file, &r) && r.name == "legacy_player" && r.games_dest == "E:\\old");
+            CHECK(fs::exists(fs::path(good)));                 // re-saved at the correct path
+            Settings r2; CHECK(hubui::load_settings(file, &r2) && r2.name == "legacy_player");
+            CHECK(slurp_w(old) == legacy_bytes);               // legacy file left intact
+            /* both exist: the correct path wins (as main.cpp's wide read) */
+            Settings n; n.name = "new_player"; CHECK(hubui::save_settings(file, n));
+            Settings r3; CHECK(hubui::load_settings(file, &r3) && r3.name == "new_player" && slurp_w(old) == legacy_bytes);
+            std::printf("  settings legacy migration: ok\n");
+        }
+        fs::remove_all(olddir, ec);
+    }
+    { Settings r; CHECK(!hubui::load_settings(u8(base) + "\\nope_\xC3\xA9\\hub.json", &r)); }
+    fs::remove_all(base, ec);
+}
+
 int main() {
     test_dupes();
+    test_settings_paths();
     using namespace hubui;
     Settings s;
     s.name = "Zed \"the\" \\ \xC3\xA9";
