@@ -346,7 +346,7 @@ std::string report_summary(const hub::saves::SyncReport& r, const char* sent_wor
         if (r.pushed) s += files(r.pushed, sent_word);
         if (r.pulled) s += (s.empty() ? "" : ", ") + files(r.pulled, got_word);
     }
-    if (r.conflicts) s += (s.empty() ? "" : ", ") + std::to_string(r.conflicts) + (r.conflicts == 1 ? " conflict" : " conflicts") + " (the older copy was kept as a backup copy)";
+    if (r.conflicts) s += (s.empty() ? "" : ", ") + std::to_string(r.conflicts) + (r.conflicts == 1 ? " conflict" : " conflicts") + " (the older copy was kept as a backup)";
     return s + ".";
 }
 

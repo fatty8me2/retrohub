@@ -123,7 +123,7 @@ void draw_emulator_dialogs() {
                 { std::lock_guard<std::mutex> lk(EMU.mu); err = EMU.error; }
                 ImGui::TextWrapped("%s could not be %s.", nm.c_str(), EMU.updating ? "updated" : "installed");
                 ImGui::Dummy(ImVec2(0, 2 * S));
-                ImGui::TextWrapped("%s", hubemu::plain_install_failure(err, nm).c_str());
+                ImGui::TextWrapped("%s", hubemu::plain_install_failure(err, nm, EMU.updating).c_str());
                 if (!err.empty()) text_wrapped_disabled("Details: " + err);
                 ImGui::Dummy(ImVec2(0, 8 * S));
                 if (button("Try again", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());   // the same install job, only when the player asks

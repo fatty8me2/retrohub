@@ -109,20 +109,20 @@ int main() {
         ConflictItem c1; c1.cls = FileClass::Battery; c1.path = "battery/mk64.eep";
         CHECK(conflict_what(c1) == "save data" && cap_first(conflict_what(c1)) == "Save data");
         ConflictItem c2; c2.cls = FileClass::State; c2.path = "states/slot3.state";
-        CHECK(conflict_what(c2) == "save state 3");
-        c2.path = "states/auto.state"; CHECK(conflict_what(c2) == "automatic save state");
+        CHECK(conflict_what(c2) == "save state 4");
+        c2.path = "states/auto.state"; CHECK(conflict_what(c2) == "resume point");
         c2.path = "states/other.bin"; CHECK(conflict_what(c2) == "save state");
         ConflictItem c3; c3.cls = FileClass::Shot; c3.path = "states/slot3.png"; CHECK(conflict_what(c3) == "screenshot");
         std::tm lt{}; lt.tm_year = 125; lt.tm_mon = 5; lt.tm_mday = 15; lt.tm_hour = 21; lt.tm_min = 14; lt.tm_isdst = -1;
         const int64_t t = (int64_t)std::mktime(&lt);
-        CHECK(friendly_when(t + 600, t) == "today at 9:14 pm");
-        CHECK(friendly_when(t + 86400, t) == "yesterday at 9:14 pm");
-        CHECK(friendly_when(t + 5 * 86400, t) == "15 Jun at 9:14 pm");
-        CHECK(friendly_when(t + 400LL * 86400, t) == "15 Jun 2025 at 9:14 pm");
-        CHECK(conflict_side_line(FileSide{true, "a", 1, t, ""}, false, t + 60) == "On this PC: saved today at 9:14 pm");
-        CHECK(conflict_side_line(FileSide{true, "a", 1, t, "PC-LIVING"}, true, t + 86400) == "In the cloud: saved yesterday at 9:14 pm, from PC-LIVING");
+        CHECK(friendly_when(t + 600, t) == "today at 21:14");
+        CHECK(friendly_when(t + 86400, t) == "yesterday at 21:14");
+        CHECK(friendly_when(t + 5 * 86400, t) == "15 Jun 21:14");
+        CHECK(friendly_when(t + 400LL * 86400, t) == "15 Jun 2025 21:14");
+        CHECK(conflict_side_line(FileSide{true, "a", 1, t, ""}, false, t + 60) == "On this PC: saved today at 21:14");
+        CHECK(conflict_side_line(FileSide{true, "a", 1, t, "PC-LIVING"}, true, t + 86400) == "In the cloud: saved yesterday at 21:14, from PC-LIVING");
         CHECK(conflict_side_line(FileSide(), true, t) == "In the cloud: no copy yet");
-        CHECK(conflict_intro().find("backup") != std::string::npos && conflict_intro().find("both changed") != std::string::npos);
+        CHECK(conflict_intro().find("backup") != std::string::npos && conflict_intro().find("decide later") != std::string::npos);
     }
 
     PrelaunchResult pr;
