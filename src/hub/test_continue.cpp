@@ -75,10 +75,10 @@ int main() {
         CHECK(relative_time(now, now - 45 * D) == "6 weeks ago");
         CHECK(relative_time(now, now - 61 * D) == "2 months ago");
         CHECK(total_time(30) == "");
-        CHECK(total_time(40 * 60) == "40 min total");
-        CHECK(total_time(2 * H + 1800) == "2.5 h total");
-        CHECK(total_time(14 * H + 100) == "14 h total");
-        CHECK(last_played_line(now, now - 2 * H, 14 * H, " | ") == "Last played 2 hours ago | 14 h total");
+        CHECK(total_time(40 * 60) == "40 minutes played");
+        CHECK(total_time(2 * H + 1800) == "2.5 hours played");
+        CHECK(total_time(14 * H + 100) == "14 hours played");
+        CHECK(last_played_line(now, now - 2 * H, 14 * H, " | ") == "Last played 2 hours ago | 14 hours played");
         CHECK(last_played_line(now, now - 2 * H, 0, " | ") == "Last played 2 hours ago");
         CHECK(last_played_line(now, 0, 0, " | ") == "Not played yet");
     }
