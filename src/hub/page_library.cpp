@@ -335,7 +335,7 @@ void empty_library_state() {
     {
         const float nw = std::min(w - sp(6.f), sp(62.f));
         const std::string last = scan_last_line();
-        if (!last.empty()) for (auto& ln : ui::wrap_lines(ui::F.cap, ui::F.cap->FontSize, "Last scan: " + last, nw, 2)) note_lines.push_back(ln);
+        if (!last.empty()) for (auto& ln : ui::wrap_lines(ui::F.cap, ui::F.cap->FontSize, last, nw, 2)) note_lines.push_back(ln);
         for (auto& ln : ui::wrap_lines(ui::F.cap, ui::F.cap->FontSize, hubhelp::file_types_line(hub::addgames::supported_exts()), nw, 4)) note_lines.push_back(ln);
     }
     const float note_h = note_lines.empty() ? 0.f : (float)note_lines.size() * ui::F.cap->FontSize * 1.3f + sp(1.5f);
@@ -579,7 +579,7 @@ void library_top_bar() {
             float ph = std::fmod((float)ImGui::GetTime() * 0.8f, 1.f);
             dl->AddRectFilled(ImVec2(o.x + w * ph * 0.8f, o.y + sp(0.5f)), ImVec2(o.x + w * (ph * 0.8f + 0.2f), o.y + sp(0.5f) + lh), ui::ACCENT, lh);
         }
-        /* "Scanning your games...  12 / 340  -  ~\Documents\Roms" (the folder is shortened in the middle to fit), and after 10 seconds a hint at the right */
+        /* "Scanning your games...  12 / 340. Looking in ~\Documents\Roms" (the folder is shortened in the middle to fit), and after 10 seconds a hint at the right */
         const std::string base = hubhelp::scan_caption_base(d, t2);
         const std::string hint = hubhelp::scan_browse_hint(scan_elapsed_s());
         const std::string folder = hubhelp::short_path(hub::scan_current_folder(), scan_home_dir());
@@ -591,12 +591,20 @@ void library_top_bar() {
         bool show_hint = !hint.empty() && text_w(base) + gap + text_w(hint) <= room;
         const float left_room = show_hint ? room - text_w(hint) - gap : room;
         if (!folder.empty()) {
-            const std::string pre = base + "  -  ";
-            for (size_t mx = hubhelp::utf8_len(folder);; mx = mx > 6 ? mx - 2 : 0) {
-                if (mx < 10) break;   // no useful room left: the folder is left out
-                const std::string cand = pre + hubhelp::middle_trunc(folder, mx);
-                if (text_w(cand) <= left_room) { left = cand; break; }
+            /* the fitted text is remembered per (count text, folder, width): nothing is re-measured while those stay the same */
+            static std::string c_base, c_folder, c_left;
+            static int c_room = -1;
+            const int room_i = (int)left_room;
+            if (c_base != base || c_folder != folder || c_room != room_i) {
+                c_base = base; c_folder = folder; c_room = room_i; c_left = base;
+                const std::string pre = base + ". Looking in ";
+                for (size_t mx = hubhelp::utf8_len(folder);; mx = mx > 6 ? mx - 2 : 0) {
+                    if (mx < 10) break;   // no useful room left: the folder is left out
+                    const std::string cand = pre + hubhelp::middle_trunc(folder, mx);
+                    if (text_w(cand) <= left_room) { c_left = cand; break; }
+                }
             }
+            left = c_left;
         }
         dl->AddText(cf, cf->FontSize, ImVec2(o.x + sp(0.25f), o.y + sp(1.25f)), ui::TEXT3, left.c_str());
         if (show_hint) dl->AddText(cf, cf->FontSize, ImVec2(o.x + w - text_w(hint) - sp(0.25f), o.y + sp(1.25f)), ui::TEXT3, hint.c_str());
@@ -1479,7 +1487,7 @@ void page_library() {
         ImGui::TextUnformatted("Add your game folders");
         ImGui::PopFont();
         text_wrapped_disabled("Only the bundled game is here. Point RetroHub at the folder(s) with your N64, GBA, GB, DS, 3DS and Wii U games and they all show up.");
-        if (!scan_last_line().empty()) text_wrapped_disabled("Last scan: " + scan_last_line());
+        if (!scan_last_line().empty()) text_wrapped_disabled(scan_last_line());
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         add_rom_folder(button("Add ROM folder", ImVec2(0, 0), true, true, ui::Icon::Folder));
         static const std::vector<std::string> sugg2 = hub::suggest_rom_folders(2);
