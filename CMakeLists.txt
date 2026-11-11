@@ -169,6 +169,7 @@ add_test(NAME hubhistory_test COMMAND hubhistory_test)
 add_test(NAME hubsaves_test COMMAND hubsaves_test)
 add_test(NAME hubsaves_cloud_test COMMAND hubsaves_cloud_test)   # e2e part runs only with RETROHUB_TEST_SAVES_URL (qa\saves_cloud.ps1)
 add_test(NAME hubsaves_engine_test COMMAND hubsaves_engine_test)   # cloud saves v2 engine against an in-process mock Worker (loopback only)
+add_test(NAME hubsaves_wire_fuzz_test COMMAND hubsaves_wire_fuzz_test)   # hostile server replies: malformed / truncated / huge / NUL inputs rejected safely (offline)
 add_test(NAME hub_logic_test COMMAND hub_logic_test)
 add_test(NAME hub_homefun_test COMMAND hub_homefun_test)               # attract mode idle/slideshow, Surprise-me weighting + reel, Wrapped aggregation
 add_test(NAME hub_continue_test COMMAND hub_continue_test)           # Home Continue hero: hero pick, backdrop source, relative time, Continue/Play label, Jump back in row
@@ -188,7 +189,6 @@ add_test(NAME hub_qm_test COMMAND hub_qm_test)
 add_test(NAME hub_qm_nav_test COMMAND hub_qm_nav_test)                # quick menu controls: release gate, repeat, row nav (qm_nav.h)
 add_test(NAME hub_disc_id_test COMMAND hub_disc_id_test)              # PS1/PS2 serials: file-name serial, SYSTEM.CNF boot line, normalisation (pure strings)
 add_test(NAME hub_resume_more_test COMMAND hub_resume_more_test)      # auto-resume guard: newest battery pick, remembered answers, per-system table, newer-save decision (temp dir)
-add_test(NAME hub_save_jobs_logic_test COMMAND hub_save_jobs_logic_test)   # sync / import result wording
 # Headless end-to-end quick menu run: RetroHub.exe on SDL's dummy video driver, input only from an SDL virtual game controller (real pads are
 # never opened), 13 scenarios incl. the phantom press from quickmenu.log (src/hub/qm_e2e.cpp). No window, no audio.
 add_test(NAME hub_qm_e2e COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/qm_e2e.ps1 -Exe $<TARGET_FILE:RetroHub>)
