@@ -899,7 +899,15 @@ void play_entry(const hub::GameEntry& e_in) {
         hacked.path = patched;
     }
     const hub::GameEntry& e = is_hack(e_in) ? hacked : e_in;
-    if (A.cloud_gate.phase != CloudGate::Idle) { set_notice("Checking cloud saves...", 4.0); return; }
+    {   // first step: a busy cloud gate, a file that is gone (asked at once, before any cloud wait), or carry on (launch_guard_logic.h)
+        const hubui::PlayFirstDecision first = hubui::play_first_step(A.cloud_gate.phase != CloudGate::Idle, rom_missing(e), A.cloud_gate.pass_key == e.key);
+        if (first.step == hubui::PlayFirst::GateBusy) { set_notice("Checking cloud saves...", 4.0); return; }
+        if (first.step == hubui::PlayFirst::AskMissing) {   // Locate / Rescan / Remove popup
+            if (first.clear_pass) A.cloud_gate.pass_key.clear();   // the gate already ran for this Play: the next Play after Locate must run it again
+            missing_rom_ask(e.key);
+            return;
+        }
+    }
     if (cloud_gate_begin(e, [key = e.key]() {
             if (const hub::GameEntry* g = find_entry(key)) { A.sel_game = key; hub::GameEntry copy = *g; A.cloud_gate.pass_key = key; play_entry(copy); }
         })) return;
@@ -913,7 +921,6 @@ void play_entry(const hub::GameEntry& e_in) {
     mark_dirty();
     hub::rom_cache_touch(e);   // LRU stamp for the unpacked copy (no-op for plain files)
     hub::rom_cache_pin(&e);    // and never trimmed while it runs (library-14)
-    if (rom_missing(e)) { missing_rom_ask(e.key); return; }   // the file is gone: Locate / Rescan / Remove popup
     RunInfo ri = run_info_for(e, false);
     std::string sys = sys_short(e);
     if (is_kanto(e)) { kt_play(e); return; }
