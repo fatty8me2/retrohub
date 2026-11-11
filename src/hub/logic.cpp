@@ -263,24 +263,20 @@ bool settings_from_json(const std::string& text, Settings* out) {
     return true;
 }
 
+/* hub.json by UTF-8 path (wide APIs). A player with a non-ASCII path may have a file only at the legacy location (older builds read and
+ * wrote the UTF-8 bytes as the ANSI code page): the correct path wins when it exists (main.cpp reads that one too); otherwise the legacy
+ * file is loaded and re-saved at the correct path. The legacy file is left alone. */
 bool load_settings(const std::string& path, Settings* out) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return false;
-    std::stringstream ss;
-    ss << f.rdbuf();
-    return settings_from_json(ss.str(), out);
+    std::string text;
+    const durable::ReadResult r = durable::read_file_utf8_migrating(path, &text);
+    if (r == durable::ReadResult::NotFound) return false;
+    if (!settings_from_json(text, out)) return false;
+    if (r == durable::ReadResult::Legacy) save_settings(path, *out);
+    return true;
 }
 
 bool save_settings(const std::string& path, const Settings& s) {
-    std::string tmp = path + ".tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) return false;
-        f << settings_to_json(s);
-        if (!f.good()) return false;
-    }
-    if (!durable::commit_replace_ansi(tmp, path)) { std::remove(tmp.c_str()); return false; }   // flushed, then one atomic replace: the old file is never removed first
-    return true;
+    return durable::write_file_atomic_utf8(path, settings_to_json(s));   // temp flushed, then one atomic replace: the old file is never removed first
 }
 
 /* ---------------- lobby rules ---------------- */
