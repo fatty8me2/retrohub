@@ -108,9 +108,9 @@ void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
  * Provenance: built LOCALLY on the owner's PC on 2026-11-10 (Visual Studio 2026, MSVC 14.50, Qt 6.8.3 msvc2022_64, the same configure line as the release-binaries
  * workflow's Windows job), because GitHub paused Actions on the fork ("Workflows are not currently being run on this fork due to the scale of GitHub Actions usage");
  * the owner chose a local build, so no workflow run exists for it. Source: fatty8me2/Fritchii branch retrohub/msvc (the one long-lived build branch from now on),
- * commit f411b88 (the r2 build) = Frizti's fritchii-v5.7 (52317bf) + 75ab24c (the MSVC warning flags, Windows only) + f411b88 (see r2 below) + 6b21f52 (the Windows configure passes no -DLICHII_BUILD_TAG, so the
+ * commit f411b88 (the r2 build) = Frizti's fritchii-v5.7 (52317bf) + 75ab24c (the MSVC warning flags, Windows only) + 6b21f52 (the Windows configure passes no -DLICHII_BUILD_TAG, so the
  * binary is named and versioned like Frizti's own release; the generated scm_rev says name "Fritchii", version "v5.7", and FritchiiUi::Enabled() is true: Fritchii's own
- * UI, Preparing shaders screen included). v5.6 was skipped (never pinned). The "Convert to NX" tool is NOT in this build: the prebuilt nxformat-1.0.2-windows-x64.zip no
+ * UI, Preparing shaders screen included) + f411b88 (see r2 below). v5.6 was skipped (never pinned). The "Convert to NX" tool is NOT in this build: the prebuilt nxformat-1.0.2-windows-x64.zip no
  * longer matched the SHA-256 pinned in Fritchii's CMakeModules/NxFormat.cmake (upstream re-published the asset), so configure skipped it; loading .nx games is unaffected.
  * The zip (50 entries, at the ROOT) holds lichii.exe, eden-cli.exe, the Qt DLLs and plugin folders, d3dcompiler_47.dll, dxcompiler.dll, dxil.dll, opengl32sw.dll, qt.conf,
  * Frizti's nx2_switches.txt (his default tuning, part of the vetted build: it is kept as shipped, RetroHub never writes to it or adds its own), the shader-preparation
@@ -123,7 +123,7 @@ void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
  * v5.7 facts: shader cache still v54, recipe format unchanged, "Preparing shaders" runs once after the update (the prepared stamp holds the build version); the tuned-settings
  * revision is 7 (RetroHub's 999 pin still holds it off); new built-in switches EDEN_NX2_JIT_WARM=1, EDEN_NX2_TC_CEILING_MIB=7680, EDEN_NX2_READ_THROTTLE=0 and experiment 49
  * (async GPU read-back) on do not conflict with what RetroHub sets.
- * r2 (2026-11-10, RetroHub 1.40.11): the first v5.7 build (commit 6b21f52, 66,270,008 bytes, SHA-256 43ad6f48...139a) crashed with an access violation in
+ * r2 (2026-11-10, RetroHub 1.40.11; f411b88, the last commit above): the first v5.7 build (commit 6b21f52, 66,270,008 bytes, SHA-256 43ad6f48...139a) crashed with an access violation in
  * Shader::Optimization::BlitConstantsPass while preparing shaders (three dumps on the owner's PC, same instruction). Cause: an MSVC 14.50 code generation fault, not
  * Fritchii's code: the inlined IR::Value::U32() became one 64-bit load of the union, and the switch jump table was indexed with the whole register, whose upper half a
  * u32 immediate never wrote. f411b88 stores the narrow immediates (bool, u8, u16, u32, f32) through the 64-bit member, so that half is always zero; only value.cpp
@@ -186,7 +186,7 @@ const Release& release(Kind k) {
     static const Release li = {
         "build 130", L"github.com", L"/zortos293/Lichii/releases/download/build-130/lichii-windows-x86_64.zip",
         89253414ull, "f09893b3041596662d762959a103ae4af40d479631309fff9990bcc288078eed", L"lichii.exe", "GPL-3.0"};
-    /* Fritchii (GPL-3.0): Frizti's Ocarina-of-Time fork of Lichii, built by us on GitHub Actions (github.com/fatty8me2/Fritchii). Same exe name (lichii.exe at the ROOT
+    /* Fritchii (GPL-3.0): Frizti's Ocarina-of-Time fork of Lichii, built by us (v5.7 r2 locally, earlier pins on GitHub Actions; github.com/fatty8me2/Fritchii). Same exe name (lichii.exe at the ROOT
      * of the zip, plus eden-cli.exe), same portable `user` folder, same qt-config.ini and save layout as Lichii. It lives in its OWN folder (userdata\emulators\fritchii)
      * with its OWN user\, never linked to Lichii's. The values come from the one block fritchii_pin below. */
     static const Release fr = {fritchii_pin::kVersion, L"github.com", fritchii_pin::kPath, fritchii_pin::kSize, fritchii_pin::kSha256, L"lichii.exe", "GPL-3.0"};
@@ -762,7 +762,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     const bool swapped = ok && upgrading;   // from here a failure must put the old build back
     if (ok && k == Kind::Pcsx2) ok = write_text(join(dir, "portable.ini"), "");   // portable mode: all data beside the exe, a user's own PCSX2 is never touched
     if (ok && k == Kind::Ppsspp) { std::error_code ec2; fs::remove(P(join(dir, "installed.txt")), ec2); make_dirs(join(dir, "memstick")); }   // no installed.txt = portable: PPSSPP keeps everything in <dir>\memstick
-    if (ok && is_nx(k)) {   // (Lichii and Fritchii) a `user` folder beside lichii.exe = portable (a player's own %APPDATA%\eden is never touched); the bundled VC++ installer is not needed to play (older zips also had ~116 MB of .pdb files; build 125+ has none, and a missing file is fine). nxformat.dll (build 130+) is kept
+    if (ok && is_nx(k)) {   // (Lichii and Fritchii) a `user` folder beside lichii.exe = portable (a player's own %APPDATA%\eden is never touched); the bundled VC++ installer is not needed to play. The delete below is kept for older zips (~116 MB of .pdb files, vc_redist); current zips contain none of them, so it is a no-op. nxformat.dll (build 130+) is kept
         make_dirs(join(dir, "user"));
         std::error_code ec2;
         for (const char* f : {"lichii.pdb", "eden-cli.pdb", "vc_redist.x64.exe", "lichii-updater.exe"}) fs::remove(P(join(dir, f)), ec2);   // lichii-updater.exe (build 125+) is Lichii's own self-updater: RetroHub is the only updater
