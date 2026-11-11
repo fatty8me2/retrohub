@@ -730,8 +730,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (A.proc) CloseHandle(A.proc);
     for (auto* p : A.pads) SDL_GameControllerClose(p);
     g_io_shutdown = true;
+    hang_watchdog_stop();   // before the art worker join: a slow join must not trip the watchdog during a normal exit
     hubart::shutdown();
-    hang_watchdog_stop();
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

@@ -7,7 +7,9 @@ namespace ui_sound {
 enum class Sfx { Move, Select, Back, Error, Popup, Notify };
 
 /* Pure policy (unit-tested): should a sound play right now? */
-bool allowed(bool sounds_on, int volume_pct, bool game_running, bool focused, bool env_muted);
+inline bool allowed(bool sounds_on, int volume_pct, bool game_running, bool focused, bool muted) {
+    return sounds_on && volume_pct > 0 && !game_running && focused && !muted;
+}
 bool env_muted();
 
 /* Settings, pushed whenever they change (cheap; call every frame if easiest). */

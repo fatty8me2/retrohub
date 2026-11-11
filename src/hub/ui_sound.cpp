@@ -73,10 +73,6 @@ bool env_muted() {
     return false;
 }
 
-bool allowed(bool sounds_on, int volume_pct, bool game_running, bool focused, bool muted) {
-    return sounds_on && volume_pct > 0 && !game_running && focused && !muted;
-}
-
 void configure(bool sounds_on, int volume_pct, bool music_on, bool notif_chime_on) {
     g_on = sounds_on; g_pct = volume_pct < 0 ? 0 : volume_pct > 100 ? 100 : volume_pct; g_music_on = music_on; g_chime_on = notif_chime_on;
     g_vol.store(g_pct / 100.f * 0.8f);
