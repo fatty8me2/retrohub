@@ -108,7 +108,7 @@ void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
  * Provenance: built LOCALLY on the owner's PC on 2026-11-10 (Visual Studio 2026, MSVC 14.50, Qt 6.8.3 msvc2022_64, the same configure line as the release-binaries
  * workflow's Windows job), because GitHub paused Actions on the fork ("Workflows are not currently being run on this fork due to the scale of GitHub Actions usage");
  * the owner chose a local build, so no workflow run exists for it. Source: fatty8me2/Fritchii branch retrohub/msvc (the one long-lived build branch from now on),
- * commit 6b21f52 = Frizti's fritchii-v5.7 (52317bf) + 75ab24c (the MSVC warning flags, Windows only) + 6b21f52 (the Windows configure passes no -DLICHII_BUILD_TAG, so the
+ * commit f411b88 (the r2 build) = Frizti's fritchii-v5.7 (52317bf) + 75ab24c (the MSVC warning flags, Windows only) + f411b88 (see r2 below) + 6b21f52 (the Windows configure passes no -DLICHII_BUILD_TAG, so the
  * binary is named and versioned like Frizti's own release; the generated scm_rev says name "Fritchii", version "v5.7", and FritchiiUi::Enabled() is true: Fritchii's own
  * UI, Preparing shaders screen included). v5.6 was skipped (never pinned). The "Convert to NX" tool is NOT in this build: the prebuilt nxformat-1.0.2-windows-x64.zip no
  * longer matched the SHA-256 pinned in Fritchii's CMakeModules/NxFormat.cmake (upstream re-published the asset), so configure skipped it; loading .nx games is unaffected.
@@ -118,11 +118,17 @@ void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
  * source tree), and NEW the Visual C++ 14.50 runtime DLLs app-local (concrt140, msvcp140, msvcp140_1, msvcp140_2, msvcp140_atomic_wait, msvcp140_codecvt_ids, vccorlib140,
  * vcruntime140, vcruntime140_1, vcruntime140_threads), because MSVC 14.50 is newer than the runtime many PCs have installed. The install keeps every one of them (and the
  * recipes folder); the zip no longer has lichii.pdb, eden-cli.pdb or vc_redist.x64.exe, and the install's delete of those is a no-op when they are absent.
- * Release asset 66,270,008 bytes, SHA-256 43ad6f48d2a83f8a882ec5465daca4001dec9c6301e0fe4b90722dea62fa139a. Defender clean. Vetted 2026-11-10
+ * Release asset 66,270,333 bytes, SHA-256 1afa2247a5f4a5528db1ab97bc41b796a8773dfd9fc740ff59fc2296e7b61264. Defender clean. Vetted 2026-11-10
  * (source audits fritchii-v5.5..v5.6 and v5.6..v5.7: clean with notes; Fritchii-UI audit: kFritchiiWhatsNewSeen "v5.7" and the EDS2 pins in fritchii_ini_pin).
  * v5.7 facts: shader cache still v54, recipe format unchanged, "Preparing shaders" runs once after the update (the prepared stamp holds the build version); the tuned-settings
  * revision is 7 (RetroHub's 999 pin still holds it off); new built-in switches EDEN_NX2_JIT_WARM=1, EDEN_NX2_TC_CEILING_MIB=7680, EDEN_NX2_READ_THROTTLE=0 and experiment 49
  * (async GPU read-back) on do not conflict with what RetroHub sets.
+ * r2 (2026-11-10, RetroHub 1.40.11): the first v5.7 build (commit 6b21f52, 66,270,008 bytes, SHA-256 43ad6f48...139a) crashed with an access violation in
+ * Shader::Optimization::BlitConstantsPass while preparing shaders (three dumps on the owner's PC, same instruction). Cause: an MSVC 14.50 code generation fault, not
+ * Fritchii's code: the inlined IR::Value::U32() became one 64-bit load of the union, and the switch jump table was indexed with the whole register, whose upper half a
+ * u32 immediate never wrote. f411b88 stores the narrow immediates (bool, u8, u16, u32, f32) through the 64-bit member, so that half is always zero; only value.cpp
+ * changed, lichii.exe and eden-cli.exe are the only zip entries that differ, translated shaders are identical. kVersion says "v5.7 r2" so the dialogs show a change;
+ * the binary still reports "v5.7" (kFritchiiWhatsNewSeen stays "v5.7"), so Preparing shaders resumes instead of starting over.
  * (Earlier pins: v5.5 = GitHub Actions run 42635153252 on retrohub/v5.5-msvc, Frizti's fritchii-v5.5 4012e52 + 5d3389f + 64f21c0, 120,118,919 bytes,
  * SHA-256 960ff5c4e1dd5119ff1cf526100f2e0fe263f22e5e12d0de0a07d6caed4ea831 (its zip also had lichii.pdb, eden-cli.pdb and vc_redist.x64.exe);
  * v5 = run 42557579406 on retrohub/v5-msvc, 62194f3 + 843ab8e, 119,936,811 bytes, SHA-256 30ad7db5ee8141647d388f741c7d64afefbb75009aaa647a3409b88797810d24;
@@ -130,10 +136,10 @@ void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
  * SHA-256 068fb4c66b2e32447ac7690393039043854de4b189aa7e95b34c4bf0d2a4080e.)
  * ====================================================================================================================================================== */
 namespace fritchii_pin {
-static const char* const kVersion = "v5.7";
-static const wchar_t* const kPath = L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5.7/Fritchii-v5.7-RetroHub-windows-x64.zip";
-static const uint64_t kSize = 66270008ull;
-static const char* const kSha256 = "43ad6f48d2a83f8a882ec5465daca4001dec9c6301e0fe4b90722dea62fa139a";
+static const char* const kVersion = "v5.7 r2";
+static const wchar_t* const kPath = L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5.7-r2/Fritchii-v5.7-RetroHub-r2-windows-x64.zip";
+static const uint64_t kSize = 66270333ull;
+static const char* const kSha256 = "1afa2247a5f4a5528db1ab97bc41b796a8773dfd9fc740ff59fc2296e7b61264";
 }   // namespace fritchii_pin
 
 const Release& release(Kind k) {
