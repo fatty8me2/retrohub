@@ -448,7 +448,7 @@ void draw_mapping_panel() {
             ImGui::TableSetupColumn("c", ImGuiTableColumnFlags_WidthFixed, sp(11.f));
             if (turbo_ui) ImGui::TableSetupColumn("t", ImGuiTableColumnFlags_WidthFixed, sp(11.f));
         }
-        const float row_h = sp(5.5f);
+        const float row_h = std::max(sp(5.5f), ImGui::GetFrameHeight() + sp(1.f));   // follows the UI size: a checkbox is never clipped
         float row_top = 0.f;
         /* Every cell is placed from the row's top edge, so a label, a pill, a button and a checkbox of the same row share one centre line. */
         auto put = [&](int col, float item_h) {
