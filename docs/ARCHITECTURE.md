@@ -495,7 +495,7 @@ External emulator like PCSX2: `System::PSP`, `hubemu::Kind::Ppsspp` (pinned 1.20
 ## Switch runners (`nx_runner.*`, `lichii.*`, `hookshot*.*`)
 Three programs can play a Switch game. The per-game setting `switch.runner` picks one (`lichii` | `fritchii` | `hookshot`; anything else, including the old `auto`, reads as Lichii).
 - **Lichii** is the default. RetroHub installs, upgrades and configures it (`lichii.cpp`, `emulators.cpp`).
-- **Fritchii** is opt-in. It is Frizti's Ocarina of Time fork of Lichii, built from source (a local build for v5.7, GitHub Actions before) in `fatty8me2/Fritchii` and pinned by size and hash in `emulators.cpp`.
+- **Fritchii** is opt-in. It is Frizti's Ocarina of Time fork of Lichii, built from source (v5.7 r2, commit f411b88, is a local build because GitHub Actions is paused on the fork; earlier pins were GitHub Actions builds; the first v5.7 build, 6b21f52, crashed) in `fatty8me2/Fritchii` and pinned by size and hash in `emulators.cpp`.
   - It runs through all of Lichii's code, but has its own install folder (`<data>\emulators\fritchii`) and its own `user\` folder.
   - Nothing is linked between the two folders. Anything shared is copied, and anything that could replace data is backed up first.
   - Offline only: an online or room launch always gets Lichii (`nx_emulator_for`).

@@ -343,7 +343,7 @@ into `<data>\emulators\fritchii`, with its own `user\` folder, and runs it throu
 
 - **Version.** The pin is **v5.7 r2** (`retrohub-fritchii-v5.7-r2` on `fatty8me2/Fritchii`): RetroHub's own build of Frizti's tagged source plus build-only commits
   (MSVC warning flags; Windows only; no `-DLICHII_BUILD_TAG`), so the binary is named and versioned like Frizti's release, "Fritchii v5.7". v5.7 was built LOCALLY on the owner's PC
-  (2026-11-10, VS 2026 / MSVC 14.50, Qt 6.8.3; branch `retrohub/msvc`, commit f411b88) because GitHub paused Actions on the fork; there is no workflow run for it. v5.6 was skipped.
+  (2026-11-10, VS 2026 / MSVC 14.50, Qt 6.8.3; branch `retrohub/msvc`, r2 commit f411b88; the first v5.7 build, 6b21f52, crashed) because GitHub paused Actions on the fork; there is no workflow run for it. v5.6 was skipped.
   r2 replaces the first v5.7 build, which crashed in `BlitConstantsPass` while preparing shaders: MSVC 14.50 indexed a jump table with a 64-bit load of a 32-bit
   `IR::Value` immediate. Commit f411b88 stores narrow immediates through the 64-bit union member; the binary still reports "v5.7", so preparation resumes.
   The "Convert to NX" tool is not in this build (the prebuilt nxformat zip no longer matched the SHA-256 pinned in Fritchii's `CMakeModules/NxFormat.cmake`, so configure skipped it);
@@ -352,7 +352,7 @@ into `<data>\emulators\fritchii`, with its own `user\` folder, and runs it throu
   the Preparing shaders screen included: v5's preparation then ran on idle threads beside the game, which cost about 15 fps in Ocarina of Time until it finished.
   A pin whose size and SHA-256 are zero (`release_is_placeholder()`) downloads nothing; Ocarina of Time then keeps playing with Lichii unless Fritchii is already installed.
 - **Upgrading (from v4.1, v5 or v5.5).** Like Lichii's in-place upgrade: `install_core` replaces the program files and keeps `user\` (keys, saves, settings, shader cache).
-  The first start after a version change shows the full Preparing shaders screen once (Fritchii's "prepared" stamp includes its build version). v5.7 keeps shader cache v54 and the
+  The first start after an update to a build that reports a new version (v4.1, v5 or v5.5 to v5.7) shows the full Preparing shaders screen once (Fritchii's "prepared" stamp includes the version the build reports). r2 still reports "v5.7", so going from the first v5.7 build to r2 resumes preparation instead. v5.7 keeps shader cache v54 and the
   recipe format; its tuned-settings revision is 7 (RetroHub's revision pin 999 still holds it off); its new built-in switches (`EDEN_NX2_JIT_WARM`, `EDEN_NX2_TC_CEILING_MIB`,
   `EDEN_NX2_READ_THROTTLE`, async GPU read-back) do not conflict with what RetroHub sets.
 - **What's new.** Fritchii opens a one-time What's new window (after the game stops) while `[UI] fritchii_whats_new_seen` differs from its build version; RetroHub writes
