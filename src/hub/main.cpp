@@ -503,7 +503,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             std::string jc;
             if (link_join.take(name_set, &jc)) {
                 fr_join_lobby(jc, "", "", "");
-                hub_surface();   // no-op while a game runs: the join is queued and starts after the game; nothing is shown or flashed
+                hub_surface();   // no-op while a game runs: the invite waits in the bell; nothing is shown or flashed
             }
             while (invite_srv.take_night(&w)) { if (!launch_blocked("game night link")) pending_night = U(w); }
             if (app_locked()) pending_night.clear();

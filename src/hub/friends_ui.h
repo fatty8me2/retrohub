@@ -58,7 +58,6 @@ struct FriendsUi {
     int next_id = 1;
     hubnet::Status last_status;
     bool status_sent = false;
-    struct PendingJoin { std::string code, game_id, title, name; } pending_join;   // queued while our own game runs
     std::set<std::string> hist_asked;
     std::string confirm_kind, confirm_uid, confirm_name;
     bool confirm_open = false;
@@ -132,7 +131,7 @@ bool fr_in_my_room();
 bool fr_send_dm(const std::string& uid, const std::string& text);   // quick menu chat: message a friend
 bool fr_send_attach_dm(const std::string& uid, const std::string& text, const hubnet::Attach& a);   // DM carrying an uploaded file (friend_pick_ui.cpp)
 void fr_invite_uids(const std::vector<std::string>& uids);
-void fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who = "");
+bool fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who = "");   // true only when the join went ahead
 void fr_open_chat(const std::string& uid);
 void fr_view_profile(const std::string& uid);   // friend profile view (empty uid = my own)
 std::vector<hubnet::LibGame> fg_shared_with(const std::string& uid);   // games both of us own (friend_games_ui.cpp)
@@ -146,7 +145,6 @@ std::string fr_error_text(const std::string& r, const std::string& detail = std:
 hubnet::Status fr_desired_status();
 void fr_update_presence();
 void fr_start();
-void fr_run_pending_join();
 void fr_adopt_identity_after_vault_change();
 void fr_tick();
 void fr_fake_init();

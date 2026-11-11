@@ -15,6 +15,16 @@ static RecentGroup grp(std::vector<Member> m, const char* gid, const char* title
 }
 
 int main() {
+    CHECK(!join_needs_confirm(false, 0, false) && !join_needs_confirm(true, 1, true) && !join_needs_confirm(false, 3, true));
+    CHECK(join_needs_confirm(true, 2, true) && join_needs_confirm(true, 3, false));
+    CHECK(join_confirm_text("Kai", false) == "Leave your room and join Kai's?");
+    CHECK(join_confirm_text("Kai", true) == "Leave your room and join Kai's? Your guests will stay behind.");
+    CHECK(join_confirm_text("", false) == "Leave your room and join that room?");
+    CHECK(missing_game_notice("Mario Kart 64") == "You can join and chat, but you can't ready up until you add Mario Kart 64 (Library > Add games).");
+    CHECK(missing_game_notice("") .find("this game") != std::string::npos);
+    CHECK(join_route(true, false) == JoinRoute::SilentBell);    // game in front: silent
+    CHECK(join_route(true, true) == JoinRoute::QuietToast);     // hub in front, session in the background
+    CHECK(join_route(false, true) == JoinRoute::JoinNow && join_route(false, false) == JoinRoute::JoinNow);
     const int64_t H = 3600000LL, D = kDayMs, now = 100 * D;
     CHECK(ago_text(now - 10000, now) == "just now" && ago_text(now - 5 * 60000, now) == "5 min ago");
     CHECK(ago_text(now - H, now) == "1 hour ago" && ago_text(now - 3 * H, now) == "3 hours ago");
