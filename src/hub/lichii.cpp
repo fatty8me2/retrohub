@@ -362,7 +362,7 @@ std::string lichii_save_rel(const std::string& uuid, uint64_t tid) {
 /* ------------------------------------------------------------------ qt-config.ini */
 
 /* Sets [section] key=value and its "key\default=false" twin; other keys and sections are kept. SimpleIni / Qt syntax (no spaces around "="). */
-static std::string ini_put(const std::string& text, const std::string& section, const std::string& key, const std::string& value) {
+static std::string ini_put(const std::string& text, const std::string& section, const std::string& key, const std::string& value, bool back_to_default = false) {
     std::vector<std::string> lines;
     {
         size_t p = 0;
@@ -398,6 +398,21 @@ static std::string ini_put(const std::string& text, const std::string& section, 
         }
     }
     std::vector<std::string> pair = {key + "\\default=false", key + "=" + value};
+    if (back_to_default) {
+        /* Fritchii reads "key\default=true" as "use my own default" and then ignores the "key=" line (config.cpp ReadXxxSetting), so only the
+         * flag is flipped and the old value line is kept. A key that is not in the ini is left alone: the text comes back byte for byte. */
+        if (start < 0) return text;
+        std::string val_line;
+        bool found = false;
+        for (int i = start + 1; i < end; ++i) {
+            if (!is_key(lines[i])) continue;
+            found = true;
+            if (lines[i].compare(0, key.size() + 1, key + "=") == 0) val_line = lines[i];
+        }
+        if (!found) return text;
+        pair = {key + "\\default=true"};
+        if (!val_line.empty()) pair.push_back(val_line);
+    }
     if (start < 0) {
         while (!lines.empty() && lines.back().empty()) lines.pop_back();
         if (!lines.empty()) lines.push_back("");
@@ -455,6 +470,20 @@ std::vector<std::pair<std::string, std::string>> fritchii_oot_keys(const hub::gs
     return out;
 }
 
+std::vector<std::string> fritchii_oot_default_keys(const hub::gs::Values& v) {
+    std::vector<std::string> out;
+    auto is_def = [&](const char* k, std::initializer_list<const char*> chosen) {
+        auto i = v.find(k);
+        if (i == v.end()) return true;
+        for (const char* c : chosen) if (i->second == c) return false;
+        return true;   // "default", empty or an unknown value: Fritchii's own
+    };
+    if (is_def("switch.oot_high_refresh", {"on", "off"})) out.push_back("oot_high_refresh");
+    if (is_def("switch.oot_refresh_cap", {"display", "90", "120", "144", "165"})) out.push_back("oot_high_refresh_cap");
+    if (is_def("switch.oot_aa", {"game", "nosharp", "fsr3", "fsr4"})) out.push_back("oot_anti_aliasing");
+    return out;
+}
+
 std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, bool fullscreen, const std::vector<std::string>* skip_keys) {
     auto skipped = [&](const char* sec, const char* key) { if (!skip_keys) return false; const std::string id = std::string(sec) + "." + key; for (const auto& k : *skip_keys) if (k == id) return true; return false; };
     auto put = [&](std::string& t, const char* sec, const char* key, const std::string& val) { if (!skipped(sec, key)) t = ini_put(t, sec, key, val); };
@@ -486,7 +515,10 @@ std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, b
     const std::string ga = get("switch.gpu_accuracy", "low");   // Lichii GpuAccuracy {Low 0, High 1}
     if (ga == "low" || ga == "high") put(t, "Renderer", "gpu_accuracy", ga == "low" ? "0" : "1");   // "lichii": untouched
     if (skip_keys)   // Fritchii only (its launch passes nx_skip_keys, Lichii passes nothing): the Ocarina of Time keys, present only for a value the player chose
+    {   // a setting back on "Fritchii's setting": if an earlier launch wrote the key, tell Fritchii to use its own default again (nothing is written for a key that is not there)
         for (const auto& kv : fritchii_oot_keys(v)) put(t, "Renderer", kv.first.c_str(), kv.second);
+        for (const auto& k : fritchii_oot_default_keys(v)) if (!skipped("Renderer", k.c_str())) t = ini_put(t, "Renderer", k, "", true);
+    }
     put(t, "UI", "fullscreen", fullscreen ? "true" : "false");
     put(t, "System", "current_user", "0");
     t = ini_put(t, "UI", "check_for_updates", "false");   // last (after fullscreen, so [UI] keeps its order), on every launch and never skipped: Lichii's own update check must never run (RetroHub is the only updater), even if the player switched it back on

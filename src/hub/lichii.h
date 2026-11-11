@@ -88,6 +88,8 @@ std::string fritchii_ini_pin(const std::string& ini);
  * display|90|120|144|165 -> oot_high_refresh_cap 0-4; switch.oot_aa game|nosharp|fsr3|fsr4 -> oot_anti_aliasing 0-3). Missing, "default" or anything else = no entry, so the
  * ini is left exactly as it was. lichii_ini_launch writes them for Fritchii only (skip_keys given). None is in Fritchii's tuned list (frizti_settings.cpp), so its migration never resets them. */
 std::vector<std::pair<std::string, std::string>> fritchii_oot_keys(const hub::gs::Values& v);
+/* The [Renderer] keys of the three options that are on "Fritchii's setting": lichii_ini_launch flips "key\default=true" for those already in the ini. */
+std::vector<std::string> fritchii_oot_default_keys(const hub::gs::Values& v);
 /* [Controls] player 1 (player_0_*) from the RetroHub "switch" profile on one SDL pad (guid + port among same-guid pads); player_0_connected=true,
  * player_0_type=0 (Pro Controller), players 2-8 disconnected. Value format (Lichii sdl_driver.cpp):
  *   button  engine:sdl,port:<n>,guid:<guid>,button:<sdl button>

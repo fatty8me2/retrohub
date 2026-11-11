@@ -310,6 +310,26 @@ int main() {
         CHECK(fritchii_ini_pin(all) == fritchii_ini_pin(fritchii_ini_pin(all)));
         CHECK(fritchii_ini_pin(all).find("oot_high_refresh_cap=3") != std::string::npos);   // the pin leaves them alone
         CHECK(lichii_ini_launch("", v, false).find("oot_") == std::string::npos);      // Lichii (no skip list) never gets them
+        // back on "Fritchii's setting": a key an earlier launch wrote is flipped to default=true (Fritchii then ignores the value line); a key that is not there stays absent
+        {
+            const std::string back = lichii_ini_launch(all, d, false, &none);
+            CHECK(back.find("oot_high_refresh\\default=true\n") != std::string::npos && back.find("oot_high_refresh\\default=false") == std::string::npos);
+            CHECK(back.find("oot_high_refresh_cap\\default=true\n") != std::string::npos && back.find("oot_anti_aliasing\\default=true\n") != std::string::npos);
+            CHECK(back.find("oot_anti_aliasing\\default=false") == std::string::npos);
+            CHECK(lichii_ini_launch(back, d, false, &none) == back);                       // idempotent
+            CHECK(lichii_ini_launch(back, hub::gs::Values{}, false, &none) == back);       // an absent setting reads as default too
+            hub::gs::Values part = v;
+            part["switch.oot_aa"] = "default";                                             // one option back to default, the others stay chosen
+            const std::string mix = lichii_ini_launch(all, part, false, &none);
+            CHECK(mix.find("oot_anti_aliasing\\default=true\n") != std::string::npos);
+            CHECK(mix.find("oot_high_refresh_cap\\default=false\noot_high_refresh_cap=3\n") != std::string::npos);
+            CHECK(lichii_ini_launch(back, v, false, &none).find("oot_anti_aliasing\\default=false\noot_anti_aliasing=2\n") != std::string::npos);   // choosing a value again
+            CHECK(lichii_ini_launch(base, d, false, &none) == base);                       // an ini that never had the keys stays byte for byte
+            const std::string other = "[Renderer]\nfoo\\default=false\nfoo=1\n";
+            CHECK(lichii_ini_launch(other, d, false, &none).find("oot_") == std::string::npos);
+            std::vector<std::string> sk = {"Renderer.oot_anti_aliasing"};                  // a skipped key is not touched
+            CHECK(lichii_ini_launch(all, d, false, &sk).find("oot_anti_aliasing\\default=false\noot_anti_aliasing=2\n") != std::string::npos);
+        }
         std::vector<std::string> skip = {"Renderer.oot_anti_aliasing"};
         CHECK(lichii_ini_launch("", v, false, &skip).find("oot_anti_aliasing") == std::string::npos);
     }
