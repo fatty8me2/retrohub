@@ -8,14 +8,6 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-#include <thread>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#include <shellapi.h>
-#endif
 
 #include "json.h"
 #include "winutil.h"
@@ -201,20 +193,14 @@ bool write_text_atomic(const std::string& path, const std::string& text) {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) return false;
         f << text;
-        if (!f) return false;
+        if (!f) { f.close(); std::error_code ec2; fs::remove(tmp, ec2); return false; }
     }
-    /* Windows: renaming over a file another process has open (the hub reading control_ack.json) fails while it is held. The hold is
-     * short, so retry with a small backoff (10+20+40+80+160 ms, about 300 ms at most). Never fall back to remove + write: the target
-     * must always be either the old complete file or the new complete one. */
-    static const int kRenameDelaysMs[] = {0, 10, 20, 40, 80, 160};
-    for (int d : kRenameDelaysMs) {
-        if (d) std::this_thread::sleep_for(std::chrono::milliseconds(d));
-        ec.clear();
-        fs::rename(tmp, p, ec);
-        if (!ec) return true;
-    }
-    fs::remove(tmp, ec);
-    return false;
+    /* One atomic replace (MoveFileExW REPLACE_EXISTING under the hood), no sleeping: callers include the emulation loop and the UI.
+     * If a reader holds the target open the rename can fail; the caller decides about a retry (Poller::ack retries on its next poll tick).
+     * Never fall back to remove + write: the target is always either the old complete file or the new complete one. */
+    fs::rename(tmp, p, ec);
+    if (ec) { std::error_code ec2; fs::remove(tmp, ec2); return false; }
+    return true;
 }
 
 bool read_text(const std::string& path, std::string* out) {
@@ -224,40 +210,6 @@ bool read_text(const std::string& path, std::string* out) {
     ss << f.rdbuf();
     *out = ss.str();
     return true;
-}
-
-std::wstring shfile_path_buffer(const std::wstring& path) {
-    std::wstring w = path;
-    w.push_back(L'\0');
-    w.push_back(L'\0');
-    return w;
-}
-
-bool move_to_recycle_bin(const std::string& utf8_path) {
-#ifdef _WIN32
-    std::error_code ec;
-    fs::path abs = fs::absolute(fs::u8path(utf8_path), ec);   // undo (the bin) needs a full path
-    if (ec) return false;
-    std::wstring from = shfile_path_buffer(abs.make_preferred().wstring());
-    SHFILEOPSTRUCTW op{};
-    op.wFunc = FO_DELETE;
-    op.pFrom = from.c_str();
-    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
-    int rc = SHFileOperationW(&op);
-    return rc == 0 && !op.fAnyOperationsAborted && !fs::exists(abs, ec);
-#else
-    (void)utf8_path;
-    return false;
-#endif
-}
-
-bool delete_user_file(const std::string& utf8_path, const DeleteFn& recycle) {
-    fs::path p = fs::u8path(utf8_path);
-    std::error_code ec;
-    if (!fs::exists(p, ec)) return true;
-    if ((recycle ? recycle : DeleteFn(move_to_recycle_bin))(utf8_path)) return true;
-    fs::remove(p, ec);   // the bin refused (disabled, network drive, ...): the old permanent delete
-    return !ec && !fs::exists(p, ec);
 }
 
 long long send_command(const std::string& ctl, Cmd cmd, int slot) {
@@ -314,6 +266,10 @@ std::string Poller::stamp() const {
 bool Poller::poll(uint64_t now_ms, Command* out, uint64_t interval_ms) {
     if (path_.empty() || now_ms < next_) return false;
     next_ = now_ms + interval_ms;
+    if (retry_left_ > 0) {   // a held ack file blocked the last write: try again now (one attempt per tick, no sleeping)
+        if (write_text_atomic(ack_path_for(path_), retry_text_)) retry_left_ = 0;
+        else if (--retry_left_ == 0) retry_text_.clear();
+    }
     std::string s = stamp();
     if (s == stamp_) return false;
     stamp_ = s;
@@ -330,7 +286,9 @@ void Poller::ack(bool ok, const std::string& msg) const {
     if (path_.empty() || pending_ <= 0) return;
     Ack a;
     a.seq = pending_; a.ok = ok; a.msg = msg;
-    write_text_atomic(ack_path_for(path_), make_ack(a));
+    std::string text = make_ack(a);
+    if (write_text_atomic(ack_path_for(path_), text)) { retry_left_ = 0; retry_text_.clear(); }
+    else { retry_text_ = text; retry_left_ = kAckRetryTicks; }   // newest ack wins: a later ack replaces a pending one
 }
 
 }  // namespace runctl

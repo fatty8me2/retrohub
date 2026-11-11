@@ -98,7 +98,7 @@ Fast forward (Tab, offline) discards audio, skips pacing and presents every 8th 
 - Battery: `<save-dir>\<rom basename>.srm` via `retro_get_memory_data(SAVE_RAM)`. Loaded at start (copied up to the smaller of file and core sizes),
   written on exit and every 30 s **only if changed**, always temp-file + rename (`MoveFileEx` replace + write-through) so a crash never tears the file.
   Cores that write their own saves (via the save dir) also land in `--save-dir`.
-- States: `<state-dir>\slotN.state` (F5/F7), plus `auto.state` written on exit and loaded at start only with `--resume` (ignored online).
+- States: `<state-dir>\slotN.state` (F5/F7), plus `auto.state` written on exit and loaded at start only with `--resume` (ignored online). In RetroAchievements hardcore the resume state is not written (hardcore forbids save states), so a later non-hardcore session resumes from the older point.
   Loading states is disabled in netplay.
 
 ## Netplay (lockstep)
