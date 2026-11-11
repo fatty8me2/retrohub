@@ -25,6 +25,9 @@ target_link_libraries(hubreconnect_test PRIVATE hubnet)
 add_executable(hubws_close_test test_ws_close.cpp)
 target_link_libraries(hubws_close_test PRIVATE hubnet)
 
+add_executable(hubws_error_text_test test_ws_error_text.cpp)
+target_link_libraries(hubws_error_text_test PRIVATE hubnet)
+
 add_executable(hubfriends_test test_friends.cpp)
 target_link_libraries(hubfriends_test PRIVATE hubnet)
 
