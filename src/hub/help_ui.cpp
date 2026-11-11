@@ -13,6 +13,11 @@ const Faq kFaq[] = {
     {"My game is missing from the library",
      "RetroHub looks in the folders listed under Settings > General. Add the folder, then press Rescan (or press Ctrl+K and type rescan). Zipped and 7z games are unpacked automatically. "
      "Find my games can search your PC for game files."},
+    {"Where are my saves?",
+     "Your saves live in one folder on this PC, the save vault. Open the Saves page and choose Open vault folder to see it. "
+     "With your RetroHub account, your saves are also backed up to the cloud after you play, and they follow you to any PC where you sign in "
+     "(Settings > Account > Add this account to another PC). If two PCs changed the same save, the newer one is used. "
+     "On the Saves page you can also export all your saves to a zip file, or copy them to a folder you choose."},
     {"A game says it needs a BIOS",
      "PlayStation and PlayStation 2 games need a console BIOS file that you supply. Put it next to your games, or choose its folder under Settings > Video & Games. "
      "PlayStation can also use the built-in open BIOS (less compatible)."},
@@ -56,6 +61,37 @@ void help_tab_ui() {
     end_panel();
 }
 
+/* ---- scan result: one quiet toast when a scan ends, and the line the empty Home card keeps ---- */
+
+namespace {
+std::string g_scan_last_line;     // "Found 12 games in 2 folders." / "Looked in ...: no game files found." ("" until a scan with folders ended)
+double g_scan_started = 0.0;
+std::string home_dir() { const char* h = std::getenv("USERPROFILE"); return h ? h : ""; }
+}  // namespace
+
+/* Called every frame from the library top bar (the only place a scan is shown). */
+void scan_result_tick() {
+    static bool inited = false, prev = false;
+    static int completed = 0;
+    if (!inited) { inited = true; prev = A.scanning; if (prev) g_scan_started = ImGui::GetTime(); }
+    const bool now_scanning = A.scanning;
+    if (now_scanning && !prev) g_scan_started = ImGui::GetTime();
+    if (!now_scanning && prev) {
+        ++completed;
+        std::vector<std::string> paths;
+        for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey && !e.path.empty()) paths.push_back(e.path);
+        const hubhelp::ScanSummary s = hubhelp::scan_summary(paths, A.st.rom_folders, home_dir());
+        g_scan_last_line = s.text;
+        /* the start-up scan of a library that has games stays quiet; every later scan, and an empty one, says what it found. Never while a game runs. */
+        const bool quiet = completed == 1 && !s.none;
+        if (!s.text.empty() && !quiet && !game_active()) push_toast(s.text, s.none ? ui::ACCENT : ui::GOOD, 6.0);
+    }
+    prev = now_scanning;
+}
+const std::string& scan_last_line() { return g_scan_last_line; }
+double scan_elapsed_s() { return A.scanning ? std::max(0.0, ImGui::GetTime() - g_scan_started) : 0.0; }
+std::string scan_home_dir() { return home_dir(); }
+
 void finish_setup_card() {
     static bool dismissed = false;   // this run only: it returns next time while steps stay open
     if (dismissed || wizard_state() != -1) return;
@@ -65,8 +101,31 @@ void finish_setup_card() {
     in.username_claimed = A.st.username_claimed;
     in.net_probe_done = A.st.net_probe_done;
     in.have_pad = !A.pads.empty();
+    {   // Home's "Add your game folders" card is showing: it already asks for games, so this card does not
+        bool own_empty = true;
+        for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey) { own_empty = false; break; }
+        in.empty_card_showing = own_empty && !A.scanning;
+    }
     std::vector<std::string> steps = hubhelp::open_steps(in);
     if (steps.empty()) return;
+    if (hubhelp::finish_card_compact(ImGui::GetIO().DisplaySize.y, ui::sp(1.f) / 8.f)) {   // a short window: one line, never cut off by the bottom bar
+        begin_panel("finish_setup", ImVec2(0, 0));
+        const float bw1 = ui::sp(18.f), bw2 = ui::sp(10.f), gap = ui::sp(1.f);
+        const float text_w = std::max(ui::sp(10.f), ImGui::GetContentRegionAvail().x - bw1 - bw2 - gap * 2);
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushFont(ui::F.bold);
+        const std::string line = ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, "Finish setup:  " + hubhelp::join_steps(steps), text_w);
+        ImGui::TextUnformatted(line.c_str());
+        ImGui::PopFont();
+        ImGui::SameLine(0, 0);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ImGui::GetContentRegionAvail().x - bw1 - bw2 - gap));
+        if (button("Continue setup", ImVec2(bw1, 0), true, true, ui::Icon::ChevronR)) wizard_open();
+        ImGui::SameLine(0, gap);
+        if (button("Not now", ImVec2(bw2, 0))) dismissed = true;
+        end_panel();
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        return;
+    }
     begin_panel("finish_setup", ImVec2(0, 0));
     ImGui::PushFont(ui::F.bold);
     ImGui::TextUnformatted("Finish setup");
