@@ -545,6 +545,43 @@ int main(int argc, char** argv) {
         std::filesystem::remove_all(dir, ec);
     }
 
+    // --- worker threads are owned and joined; shutdown() ends a running child by its handle ---
+    {
+        OwnedThread ot;
+        std::atomic<bool> go{false};
+        CHECK(!ot.running() && ot.join_for(0));                       // never started: nothing to join
+        CHECK(ot.start([&] { while (!go.load()) Sleep(5); }));
+        CHECK(ot.running() && !ot.join_for(50));                      // still going: a bounded wait gives up
+        CHECK(!ot.start([] {}, 50) && ot.running());                  // a second run is refused while one is going
+        go = true;
+        CHECK(ot.join_for(3000) && !ot.running());
+        int ran = 0;
+        CHECK(ot.start([&] { ran++; }) && ot.join_for(3000) && ran == 1);   // restartable after a join
+        CHECK(ot.start([] { throw 1; }) && ot.join_for(3000));       // an exception never escapes the thread
+        CHECK(ot.start([&] { ran++; }));                              // start() joins the finished previous run itself
+        CHECK(ot.join_for(3000) && ran == 2);
+
+        const std::string sd = system_dir();
+        std::atomic<int> code{12345};
+        std::thread th([&] { code = run_command("\"" + sd + "\\ping.exe\" -n 60 127.0.0.1", [](const std::string&) {}); });   // harmless, long-running, loopback only
+        for (int i = 0; i < 100 && live_child_count() == 0; i++) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        CHECK(live_child_count() == 1);
+        auto t0 = std::chrono::steady_clock::now();
+        shutdown();                                                   // ends the child by its handle
+        th.join();
+        long long ms = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        CHECK(code.load() != 0 && code.load() != 12345);              // it did not run its 60 s
+        CHECK(ms < 8000);
+        CHECK(live_child_count() == 0);
+        // after shutdown() began, no new child is allowed to run
+        t0 = std::chrono::steady_clock::now();
+        CHECK(run_command("\"" + sd + "\\ping.exe\" -n 60 127.0.0.1", [](const std::string&) {}) != 0);
+        CHECK(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count() < 8000);
+        reset_quit_for_test();
+        CHECK(run_command("\"" + sd + "\\cmd.exe\" /c exit 0", [](const std::string&) {}) == 0);   // and works again once reset
+        CHECK(live_child_count() == 0);
+    }
+
     std::printf("current_version=%s launch_check_disabled=%d\n", current_version().c_str(), (int)launch_check_disabled());
     std::printf("unit checks: %s\n", g_fail ? "FAILED" : "all passed");
 
