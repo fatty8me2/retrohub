@@ -426,6 +426,9 @@ struct ShotDriver {
     struct Click { float x, y; int btn; };
     std::vector<Click> clicks;            // HUB_SHOT_CLICK=x,y;rx,y;... (r prefix = right click), window pixels, injected as real mouse events
     size_t click_i = 0; int click_stage = 0; double click_t = 0;
+    bool hover = false;                   // HUB_SHOT_HOVER=x,y: park the virtual mouse there (window pixels) and wait for the tooltip delay
+    float hx = 0, hy = 0;
+    double hover_t = 0;                   // when the pointer was first placed (0 = not yet)
     size_t key_i = 0;
     bool key_down = false;
     /* HUB_SHOT_PAD=down,down,right,a,shot:name,... gamepad injection (d-pad up/down/left/right, a b x y, lb rb lt rt, start, back, wait,

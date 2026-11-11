@@ -86,6 +86,7 @@ void cloud_set_sync_states(bool on);                      // Saves > "Back up sa
 void cloud_set_paused(bool paused);                        // Advanced > Pause cloud sync
 
 /* ---- state for the UI (all thread-safe, cheap, no I/O) ---- */
+bool cloud_shot_fake(const std::string& state);            // screenshots only (hub headless mode): ok|mixed|offline|over|attention|paused|fresh fake the account + games; false = unknown name
 CloudAccountInfo cloud_account();
 std::vector<GameCloudInfo> cloud_games();                  // known games, any order
 bool cloud_game(const GameId& g, GameCloudInfo* out);

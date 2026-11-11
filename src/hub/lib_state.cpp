@@ -97,11 +97,15 @@ void apply_scan() {
         hubdupes::collapse(&A.lib, pref, &A.dupes);
         apply_located_paths(&A.lib, pref);
     }
-    if (const char* fl = std::getenv("HUB_SHOT_FAKE_LIB"); fl && g_headless) {   // screenshot/pad-nav aid: n made-up games, no scan result, no art, no finder
+    const char* shot_hs_env = g_headless ? std::getenv("HUB_SHOT_HOOKSHOT") : nullptr;   // unset, empty or "0" = off (same rule as hookshot_ui.cpp)
+    const bool shot_hs_on = shot_hs_env && *shot_hs_env && !(shot_hs_env[0] == '0' && !shot_hs_env[1]);
+    if (const char* fl = g_headless ? (std::getenv("HUB_SHOT_FAKE_LIB") ? std::getenv("HUB_SHOT_FAKE_LIB") : shot_hs_on ? "1" : nullptr) : nullptr; fl) {   // screenshot/pad-nav aid: n made-up games, no scan result, no art, no finder (HUB_SHOT_HOOKSHOT alone implies 1)
         static const hub::System sy[] = {hub::System::N64, hub::System::GBA, hub::System::GC, hub::System::N64, hub::System::GB};
         A.lib.clear();
+        /* HUB_SHOT_FAKE_LIB values: 0 or "empty" = a truly EMPTY library (first-run state, not even the bundled game); "native" = only the bundled Smash 64 entry;
+         * n >= 1 = n made-up games (+ Crash Bash, Super Mario 3D World); "all" / "tpak" = the fixed sets below. */
         int n = std::max(1, std::atoi(fl));
-        const bool only_empty = std::string(fl) == "empty";   // QA: a truly empty own library (no bundled game either)
+        const bool only_empty = std::string(fl) == "empty" || !fl[0] || (std::isdigit((unsigned char)fl[0]) && std::atoi(fl) == 0);   // "" is empty too   // QA: a truly empty own library (no bundled game either)
         const bool only_native = std::string(fl) == "native" || only_empty;   // QA: just the bundled Smash 64 entry (a fresh install with no ROM folders)
         if (only_empty) n = 0;
         else if (only_native) { hub::GameEntry g; g.system = hub::System::N64; g.key = kNativeKey; g.title = "Super Smash Bros. 64"; g.catalog_id = "smash64"; g.path = "C:/fake/BattleShip.exe"; A.lib.push_back(g); n = 0; }
@@ -206,7 +210,7 @@ void apply_scan() {
                 g.path = std::string("C:/fake/") + ids[i] + ".nsp";
                 A.lib.push_back(g);
             }
-            if (std::string(std::getenv("HUB_SHOT_SWITCH")) == "2") {   // HUB_SHOT_SWITCH=2 also seeds Ocarina of Time (a Switch 2 game): the Home hero / console chips / Switch 2 page shots (qa\switch2_shots.ps1)
+            if (std::string(std::getenv("HUB_SHOT_SWITCH")) == "2" && !shot_hs_on) {   // HUB_SHOT_SWITCH=2 also seeds Ocarina of Time (a Switch 2 game): the Home hero / console chips / Switch 2 page shots (qa\switch2_shots.ps1); HUB_SHOT_HOOKSHOT adds it below (never twice)
                 hub::GameEntry g;
                 g.system = hub::System::Switch;
                 g.key = "switch:0400486024dec000";
@@ -217,9 +221,7 @@ void apply_scan() {
                 A.lib.push_back(g);
             }
         }
-        const char* hs_env = std::getenv("HUB_SHOT_HOOKSHOT");   // unset, empty or "0" = off (same rule as hookshot_ui.cpp)
-        const bool shot_hookshot_on_ = hs_env && *hs_env && !(hs_env[0] == '0' && !hs_env[1]);
-        if (!only_native && g_headless && shot_hookshot_on_) {   // Hookshot card screenshots (hookshot_ui.h): Ocarina of Time (Switch 2)
+        if (shot_hs_on) {   // Hookshot / Fritchii card screenshots (hookshot_ui.h): Ocarina of Time (Switch 2) is always in the fake library, whatever HUB_SHOT_FAKE_LIB says
             hub::GameEntry g;
             g.system = hub::System::Switch;
             g.key = "switch:0400486024dec000";
