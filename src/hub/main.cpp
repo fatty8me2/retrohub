@@ -639,6 +639,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         hang_watchdog_phase("draw_popups");
         if (shot_path) bootart_shot_draw(ren);   // HUB_SHOT_BOOTART gallery
         if (!shot_path || SH.update) draw_update_popup();   // opens itself only when prompt_allowed()
+        if (!shot_path) draw_crash_note();   // opens itself only when prompt_allowed()
         draw_launch_tips(shot_path && std::getenv("HUB_SHOT_LAUNCH_TIPS"));   // controller tips for a game that is still starting (never over a game window)
         osk::draw_root();
         ImGui::PopFont();

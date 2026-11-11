@@ -465,6 +465,7 @@ void poll_process() {
     }
     DWORD code = 0;
     GetExitCodeProcess(A.proc, &code);
+    const DWORD proc_id = GetProcessId(A.proc);
     CloseHandle(A.proc);
     A.proc = nullptr;
     hub::rom_cache_pin(nullptr);   // its unpacked copy may be trimmed again
@@ -490,6 +491,7 @@ void poll_process() {
         if (secs >= 1) fr_playtime_session_ended();
         refresh_state(A.run.key);
     }
+    crash_note_session_ended(A.run.emu_kind, A.run.emu_exe, A.run.emu_dir, A.run.title, proc_id, code);   // a crash (not a hub-ended or normal exit) -> a note for the next time the hub is in front
     A.vault_dirty = true;
     A.info_at = -100;
     if (!A.run.result_file.empty()) { rivals_ingest(A.run.result_file); A.run.result_file.clear(); }   // before the room state is reset
@@ -813,6 +815,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         set_notice(why.empty() ? std::string("Disc images (.wud/.wux) need your disc key in Cemu's keys.txt. A .wua needs no keys.") : why, 20.0);
     }
     RunInfo r = ri;
+    r.emu_kind = (int)kind; r.emu_exe = inst.exe; r.emu_dir = inst.dir;   // for the crash note
     const bool cemu_managed = inst.managed;
     r.after_exit = [sess, kind, cemu_user, wiiu_tid, cemu_managed]() {   // emulator save folder -> vault, before the sync runs
         if (kind == hubemu::Kind::Cemu) {   // put back everything RetroHub changed in the user's Cemu for this session
