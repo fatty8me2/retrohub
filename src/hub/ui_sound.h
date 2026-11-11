@@ -7,6 +7,8 @@ namespace ui_sound {
 enum class Sfx { Move, Select, Back, Error, Popup, Notify };
 
 /* Pure policy (unit-tested): should a sound play right now? */
+/* What the hub tells the sound policy about games: any session (game_active(): includes games with no A.proc) or an owned process. */
+inline bool game_running(bool game_active, bool has_proc) { return game_active || has_proc; }
 inline bool allowed(bool sounds_on, int volume_pct, bool game_running, bool focused, bool muted) {
     return sounds_on && volume_pct > 0 && !game_running && focused && !muted;
 }

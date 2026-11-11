@@ -285,8 +285,13 @@ void draw_frame() {
     const bool immersive = lib_cases_active();   // Cases is a full-window console browser: no sidebar, toolbar, chips or footer (its menu overlay has them)
     if (!immersive) lib_cases_closed();
     { const hubui::MenuSoundCfg ms = hubui::effective_menu_sound(A.st); ui_sound::configure(ms.sounds, ms.volume, ms.music, ms.notif); }   // feature_off.h
-    ui_sound::tick(game_active(), g_headless ? false : (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0);
+    ui_sound::tick(ui_sound::game_running(game_active(), A.proc != nullptr), g_headless ? false : (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0);
     A.focused = g_headless || (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    {   // the one natural retry trigger for a failed launch-time update check: the hub window regained focus (e.g. back from a game). check_async(false) only runs when hubupdate::detail::check_retry_due says so.
+        static bool was_focused = true;
+        if (A.focused && !was_focused && !g_headless && !game_active()) hubupdate::check_async(false);
+        was_focused = A.focused;
+    }
     if (app_locked()) {   // pending / banned / not yet confirmed: the lock screen replaces every page, panel and overlay (a running game keeps its own quick menu)
         draw_lock_screen();
         draw_quick_menu();

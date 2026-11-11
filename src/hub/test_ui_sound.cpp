@@ -2,9 +2,6 @@
  */
 #include "boot_synth.h"
 #include "ui_sound.h"
-#include <fstream>
-#include <sstream>
-#include <string>
 #include <cmath>
 #include <cstdio>
 
@@ -38,19 +35,9 @@ int main() {
     CHECK(!ui_sound::allowed(true, 50, true, true, false), "must be silent while a game runs");
     CHECK(!ui_sound::allowed(true, 50, false, false, false), "must be silent unfocused");
     CHECK(!ui_sound::allowed(false, 50, false, true, false) && !ui_sound::allowed(true, 0, false, true, false) && !ui_sound::allowed(true, 50, false, true, true), "off / zero volume / muted");
-    // the frame feeds the policy from game_active() (any session or a busy full-screen app), not from A.proc alone
-    {
-        std::ifstream in(std::string(HUB_SRC_DIR) + "/frame.cpp", std::ios::binary);
-        std::stringstream ss; ss << in.rdbuf();
-        const std::string src = ss.str();
-        const size_t at = src.find("ui_sound::tick(");
-        CHECK(in && at != std::string::npos, "frame.cpp must call ui_sound::tick");
-        if (at != std::string::npos) {
-            const std::string call = src.substr(at, src.find(';', at) - at);
-            CHECK(call.find("game_active()") != std::string::npos, "ui_sound::tick must take game_active(): %s", call.c_str());
-            CHECK(call.find("A.proc") == std::string::npos, "ui_sound::tick must not rely on A.proc alone: %s", call.c_str());
-        }
-    }
+    // the frame feeds the policy through game_running(): a game with no owned process (game_active alone) silences it too
+    CHECK(ui_sound::game_running(true, false) && ui_sound::game_running(false, true) && ui_sound::game_running(true, true) && !ui_sound::game_running(false, false), "game_running");
+    CHECK(!ui_sound::allowed(true, 50, ui_sound::game_running(true, false), true, false), "no sound for a game that has no A.proc");
     std::printf(fails ? "hub_uisound_test: %d FAILED\n" : "hub_uisound_test: all passed\n", fails);
     return fails ? 1 : 0;
 }
