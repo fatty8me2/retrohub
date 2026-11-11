@@ -105,6 +105,21 @@ std::string wiiu_save_rel(uint64_t t) {
     return "usr/save/" + hex8(uint32_t(t >> 32)) + "/" + hex8(uint32_t(t & 0xFFFFFFFFu));
 }
 
+std::string xml_decode_entities(const std::string& in) {
+    static const struct { const char* ent; size_t len; char ch; } kEnt[] = {
+        {"&amp;", 5, '&'}, {"&lt;", 4, '<'}, {"&gt;", 4, '>'}, {"&quot;", 6, '"'}, {"&apos;", 6, '\''}};
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size();) {
+        bool hit = false;
+        if (in[i] == '&')
+            for (const auto& e : kEnt)
+                if (in.compare(i, e.len, e.ent) == 0) { out.push_back(e.ch); i += e.len; hit = true; break; }   // one pass: "&amp;lt;" is "&lt;", not "<"
+        if (!hit) out.push_back(in[i++]);
+    }
+    return out;
+}
+
 std::string cemu_settings_mlc_path(const std::string& xml) {
     size_t a = xml.find("<mlc_path>");
     if (a == std::string::npos) return "";
@@ -115,7 +130,7 @@ std::string cemu_settings_mlc_path(const std::string& xml) {
     while (!v.empty() && (v.back() == ' ' || v.back() == '\r' || v.back() == '\n')) v.pop_back();
     size_t s = 0;
     while (s < v.size() && (v[s] == ' ' || v[s] == '\r' || v[s] == '\n')) ++s;
-    return v.substr(s);
+    return xml_decode_entities(v.substr(s));
 }
 
 CemuDirs cemu_dirs_for(const std::string& exe_dir, const std::string& appdata, const FsProbe& p) {

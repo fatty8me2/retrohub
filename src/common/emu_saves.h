@@ -41,7 +41,9 @@ struct FsProbe {
     std::function<std::string(const std::string&)> read_text;
 };
 CemuDirs cemu_dirs_for(const std::string& cemu_exe_dir, const std::string& appdata_roaming, const FsProbe& fs);
-/* <mlc_path>...</mlc_path> from a settings.xml body ("" when absent/empty). */
+/* The five predefined XML entities (&amp; &lt; &gt; &quot; &apos;) decoded in one left-to-right pass; anything else is kept as written. */
+std::string xml_decode_entities(const std::string& s);
+/* <mlc_path>...</mlc_path> from a settings.xml body ("" when absent/empty), entities decoded (Cemu writes "&" as "&amp;"). */
 std::string cemu_settings_mlc_path(const std::string& settings_xml);
 
 /* ---- newest-wins tree copy ---- */
