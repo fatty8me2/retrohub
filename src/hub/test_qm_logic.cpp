@@ -214,6 +214,49 @@ int main() {
         p.ack(5); CHECK(p.may_send(1100));
         p.sent(6, 2000); CHECK(!p.may_send(2500) && p.may_send(2700));   // a runner that never acks: go on after kMaxWaitMs
     }
+    {   // extra rows: Rewind / Screen filter / Save a clip visibility
+        const QmFeature R = QmFeature::Rewind, F = QmFeature::Filter, C = QmFeature::Clip;
+        // (feature, has_ctl, online, is_n64, unsupported)
+        CHECK(feature_row_visible(R, true, false, false, false) && feature_row_visible(F, true, false, false, false) && feature_row_visible(C, true, false, false, false));
+        CHECK(!feature_row_visible(R, true, true, false, false) && !feature_row_visible(F, true, true, false, false));   // offline only
+        CHECK(feature_row_visible(C, true, true, false, false) && feature_row_visible(C, true, true, true, false));      // clips are fine online, and on n64run
+        CHECK(!feature_row_visible(R, true, false, true, false) && !feature_row_visible(F, true, false, true, false));    // n64run: unsupported
+        CHECK(!feature_row_visible(R, false, false, false, false) && !feature_row_visible(F, false, false, false, false) && !feature_row_visible(C, false, false, false, false));   // external emulators
+        CHECK(!feature_row_visible(R, true, false, false, true) && !feature_row_visible(C, true, false, false, true));   // runner said unsupported
+        CHECK(feature_cmd(R) == runctl::Cmd::Rewind && feature_cmd(F) == runctl::Cmd::Shader && feature_cmd(C) == runctl::Cmd::Clip);
+        CHECK(ack_means_unsupported("unsupported") && ack_means_unsupported("Unsupported") && ack_means_unsupported("unknown command") && ack_means_unsupported("Rewind is not available for this game"));
+        CHECK(!ack_means_unsupported("") && !ack_means_unsupported("Hardcore: rewind is off") && !ack_means_unsupported("Instant replay is off. Turn it on in RetroHub Settings.") && !ack_means_unsupported("Not available in online sessions"));
+        FeatureHide h;
+        CHECK(!h.is(R) && !h.is(F) && !h.is(C));
+        CHECK(!h.on_fail(runctl::Cmd::Rewind, "Hardcore: rewind is off") && !h.is(R));
+        CHECK(h.on_fail(runctl::Cmd::Rewind, "Rewind is not available for this game") && h.is(R) && !h.is(F) && !h.is(C));
+        CHECK(!h.on_fail(runctl::Cmd::Speed, "unsupported"));   // not a row of ours
+        CHECK(h.on_fail(runctl::Cmd::Clip, "unsupported") && h.is(C));
+        h.reset();
+        CHECK(!h.is(R) && !h.is(C));
+        // the commands survive the control file round trip with the arguments the rows send
+        runctl::Command q;
+        CHECK(runctl::parse_control(runctl::make_control([] { runctl::Command x; x.seq = 1; x.cmd = runctl::Cmd::Shader; x.text = "next"; return x; }()), &q) && q.cmd == runctl::Cmd::Shader && q.text == "next");
+        CHECK(runctl::parse_control(runctl::make_control([] { runctl::Command x; x.seq = 2; x.cmd = runctl::Cmd::Rewind; x.value = 1; return x; }()), &q) && q.cmd == runctl::Cmd::Rewind && q.value == 1);
+        CHECK(runctl::parse_control(runctl::make_control([] { runctl::Command x; x.seq = 3; x.cmd = runctl::Cmd::Clip; return x; }()), &q) && q.cmd == runctl::Cmd::Clip);
+    }
+    {   // save page: replacing a used slot takes two presses
+        using Res = OverwriteConfirm::Result;
+        OverwriteConfirm o;
+        CHECK(o.press(3, false, 1000, "slot3") == Res::Save && !o.is_armed(3));            // empty: one press
+        CHECK(o.press(3, true, 1000, "slot3") == Res::Armed && o.is_armed(3));             // used: first press arms
+        CHECK(o.press(3, true, 1500, "slot3") == Res::Save && !o.is_armed(3));             // second press saves
+        CHECK(o.press(3, true, 2000, "slot3") == Res::Armed);                              // and it is armed again afterwards
+        o.tick("slot3", 2100); CHECK(o.is_armed(3));                                       // same selection: stays
+        o.tick("slot4", 2200); CHECK(!o.is_armed(3));                                      // navigation cancels
+        CHECK(o.press(3, true, 3000, "slot3") == Res::Armed && o.press(3, true, 3000 + OverwriteConfirm::kExpiryMs + 1, "slot3") == Res::Armed);   // too slow: arms again, does not save
+        o.cancel(); CHECK(!o.is_armed(3));
+        CHECK(o.press(3, true, 9000, "slot3") == Res::Armed && o.press(4, true, 9100, "slot3") == Res::Armed && !o.is_armed(3) && o.is_armed(4));   // another slot: arms that one instead
+        CHECK(o.press(3, true, 9200, "slot3") == Res::Armed);                              // and 3 is not confirmed by the old arm
+        CHECK(o.press(5, false, 9300, "slot5") == Res::Save && !o.is_armed(3));            // an empty slot saves at once and clears the arm
+        CHECK(o.press(-1, true, 9400, "slot10") == Res::Armed && o.is_armed(-1));          // the resume point is a slot too (never -2)
+        o.tick("slot10", 9400 + OverwriteConfirm::kExpiryMs + 1); CHECK(!o.is_armed(-1));  // expiry on its own
+    }
     std::printf(g_fail ? "FAILED\n" : "ok\n");
     return g_fail ? 1 : 0;
 }

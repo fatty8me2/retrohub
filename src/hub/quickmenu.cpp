@@ -225,6 +225,10 @@ void dolphin_send_acts(std::vector<hubqm::DolphinAct> acts) {
 static const char* g_close_why = "other";
 bool g_pending_close = true;                   // close the menu and return to the game when the ack arrives
 int g_pending_slot = -2;
+runctl::Cmd g_pending_cmd = runctl::Cmd::None;  // the command the pending ack belongs to (a failed rewind / filter / clip ack can hide its row)
+hubqm::FeatureHide g_hide;                      // rows the runner answered "unsupported" for (this game session)
+bool g_rewind_on = false, g_rewind_prev = false; // the Rewind row (latched on / off in the runner)
+hubqm::OverwriteConfirm g_ovw;                  // save page: replacing a used slot takes two presses
 double g_pending_at = 0;
 std::string g_sys, g_key, g_title;
 /* Plan 4: pause while the menu is open (offline), pass the controller, emotes. */
@@ -244,7 +248,22 @@ void send(runctl::Cmd c, int slot, const std::string& done_text, bool close) {
     resume_for_action();   // a paused runner (n64run) refuses state / screenshot commands: resume first
     runctl::Command cm; cm.cmd = c; cm.slot = slot;
     g_pending = -1;   // waiting for the queue to write it, then for the ack
-    g_pending_what = done_text; g_pending_close = close; g_pending_slot = slot; g_pending_at = ImGui::GetTime();
+    g_pending_what = done_text; g_pending_close = close; g_pending_slot = slot; g_pending_at = ImGui::GetTime(); g_pending_cmd = c;
+    enqueue_cmd(cm, 2);
+}
+
+/* Rewind / screen filter / clip rows: the menu stays open; the toast is `done_text`, or the runner's own answer when that is empty. */
+void send_feature(runctl::Command cm, const std::string& done_text, bool resume_first) {
+    if (g_e2e) {
+        if (resume_first) resume_for_action();
+        g_e2e_cmds.push_back(std::string(runctl::cmd_name(cm.cmd)) + " " + (cm.cmd == runctl::Cmd::Shader ? cm.text : std::to_string(cm.value)));
+        push_toast(done_text.empty() ? std::string("Done") : done_text, COL_GOOD, 3.0);
+        return;
+    }
+    if (g_shot_fake || !ctl_ready()) return;
+    if (resume_first) resume_for_action();   // n64run refuses a clip while paused
+    g_pending = -1;
+    g_pending_what = done_text; g_pending_close = false; g_pending_slot = -2; g_pending_at = ImGui::GetTime(); g_pending_cmd = cm.cmd;
     enqueue_cmd(cm, 2);
 }
 
@@ -270,7 +289,7 @@ bool menu_button(const char* label, bool enabled, ui::Icon ic, bool primary = fa
     return en && (pressed || a.activate);
 }
 
-void draw_slot_card(const std::string& dir, int slot, bool saving, bool* chosen, int nx, int ny) {
+void draw_slot_card(const std::string& dir, int slot, bool saving, bool* chosen, int nx, int ny, bool armed = false) {
     SlotInfo si = read_slot(dir, slot);
     const std::string nid = "slot" + std::to_string(slot);
     float cw = ImGui::GetContentRegionAvail().x;
@@ -300,7 +319,8 @@ void draw_slot_card(const std::string& dir, int slot, bool saving, bool* chosen,
     std::string name = slot < 0 ? "Resume point" : "Slot " + std::to_string(slot + 1);
     dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(p.x + sp(1.f), p.y + th + sp(0.25f)), enabled ? ui::TEXT : ui::TEXT3, name.c_str());
     std::string sub = si.exists ? time_text(si.time) : (saving ? "Save here" : "-");
-    dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x + sp(1.f), p.y + th + sp(0.25f) + ui::F.bold->FontSize * 1.25f), ui::TEXT2, sub.c_str());
+    if (armed) sub = "Press again to replace";
+    dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(p.x + sp(1.f), p.y + th + sp(0.25f) + ui::F.bold->FontSize * 1.25f), armed ? ui::WARN : ui::TEXT2, sub.c_str());
     if (hot) dl->AddRect(p, q1, ui::ACCENT, sp(1.25f), 0, 2.f);
     ImGui::PopID();
     if (clicked) *chosen = true;
@@ -313,6 +333,7 @@ void slot_page(bool saving) {
     ImGui::TextDisabled(saving ? "Pick a slot. A used slot is replaced." : "Pick a slot to go back to.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     std::string dir = states_dir_of(g_key, g_sys);
+    if (saving) g_ovw.tick(g_nav.sel, (long long)GetTickCount64()); else g_ovw.cancel();   // any navigation (or a wait) cancels "press again to replace"
     const int cols = 5;
     int total = saving ? runctl::kSlots : runctl::kSlots + 1;   // load: + the resume point
     float gap = sp(1.f);
@@ -325,13 +346,17 @@ void slot_page(bool saving) {
         ImGui::PushID(i);
         ImGui::BeginChild("##c", ImVec2(cw, cw * 0.625f + sp(5.5f) + sp(0.5f)), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
         bool chosen = false;
-        draw_slot_card(dir, slot, saving, &chosen, i % cols, i / cols);
+        draw_slot_card(dir, slot, saving, &chosen, i % cols, i / cols, saving && g_ovw.is_armed(slot));
         ImGui::EndChild();
         ImGui::PopID();
         ImGui::PopItemWidth();
         ImGui::EndGroup();
         if (chosen) {
-            if (saving) send(runctl::Cmd::SaveState, slot, "Saved to slot " + std::to_string(slot + 1), true);
+            if (saving) {
+                const bool used = read_slot(dir, slot).exists;
+                if (g_ovw.press(slot, used, (long long)GetTickCount64(), g_nav.sel) == hubqm::OverwriteConfirm::Result::Save)
+                    send(runctl::Cmd::SaveState, slot, "Saved to slot " + std::to_string(slot + 1), true);
+            }
             else send(runctl::Cmd::LoadState, slot, slot < 0 ? "Went back to the resume point" : "Loaded slot " + std::to_string(slot + 1), true);
         }
     }
@@ -374,7 +399,7 @@ hubqm::EmoteLimiter g_emote_lim;
 double g_emote_note_at = -100;
 
 void send_quiet(runctl::Command c) {
-    if (g_e2e) { g_e2e_cmds.push_back(std::string(runctl::cmd_name(c.cmd)) + " " + (c.cmd == runctl::Cmd::Speed ? [&] { char b[24]; std::snprintf(b, sizeof b, "%g", c.speed); return std::string(b); }() : std::to_string(c.value))); return; }
+    if (g_e2e) { g_e2e_cmds.push_back(std::string(runctl::cmd_name(c.cmd)) + " " + (c.cmd == runctl::Cmd::Shader ? c.text : c.cmd == runctl::Cmd::Speed ? [&] { char b[24]; std::snprintf(b, sizeof b, "%g", c.speed); return std::string(b); }() : std::to_string(c.value))); return; }
     if (g_shot_fake || !ctl_ready()) return;
     enqueue_cmd(c);
 }
@@ -802,9 +827,14 @@ void check_ack() {
     if (runctl::read_text(runctl::ack_path_for(A.run.ctl_path), &txt) && runctl::parse_ack(txt, &a) && a.seq == g_pending) {
         g_pending = 0;
         if (a.ok) {
-            push_toast(g_pending_what, COL_GOOD, 3.0);
+            push_toast(g_pending_what.empty() ? a.msg : g_pending_what, COL_GOOD, 3.0);
             if (g_pending_close) { g_page = QPage::Main; g_close_why = "slot action"; ImGui::CloseCurrentPopup(); qm_focus_game(); }
-        } else push_toast(a.msg.empty() ? std::string("That did not work.") : a.msg, COL_WARN, 5.0);
+        } else {
+            if (g_pending_cmd == runctl::Cmd::Rewind) g_rewind_on = g_rewind_prev;   // the runner did not change it
+            if (g_hide.on_fail(g_pending_cmd, a.msg)) { qm_log("row hidden: the runner answered \"" + a.msg + "\""); push_toast("That is not available for this game.", COL_WARN, 4.0); }
+            else push_toast(a.msg.empty() ? std::string("That did not work.") : a.msg, COL_WARN, 5.0);
+        }
+        g_pending_cmd = runctl::Cmd::None;
     } else if (ImGui::GetTime() - g_pending_at > 20.0) {
         g_pending = 0;
         push_toast("The game did not answer.", COL_WARN, 5.0);
@@ -955,6 +985,7 @@ static void qm_session_tick(const hub::GameEntry* e) {
         g_ext_dirty = true;
         g_dm_uid.clear(); g_dm_name.clear(); g_chat_buf[0] = 0; g_chat_to_dm = false;
         g_perf_sent = 0; g_perf_t0 = GetTickCount64();
+        g_hide.reset(); g_rewind_on = g_rewind_prev = false; g_ovw.cancel(); g_pending_cmd = runctl::Cmd::None;
         g_cmdq.clear(); g_pacer = hubqm::CmdPacer(); g_pause_manual = false; g_pause_sent = false; g_ho_wait = false; g_ho_seq = 0; g_cd_name.clear();
     }
     if (g_perf_sent < 2 && e && A.st.perf_overlay && ctl_ready() && runner_supports_overlay(e)) {   // the runner ignores commands written before it started polling: send at +4 s and again at +12 s
@@ -1371,10 +1402,33 @@ static void qm_body() {
         if (menu_button("Load state", !online, ui::Icon::Refresh)) { ImGui::CloseCurrentPopup(); qm_focus_game(); ppsspp_send_state(false); }
     }
     if (ctl) {
-        if (menu_button("Save state", !online, ui::Icon::Check)) { g_page = QPage::Save; g_nav.sel.clear(); }
+        if (menu_button("Save state", !online, ui::Icon::Check)) { g_page = QPage::Save; g_nav.sel.clear(); g_ovw.cancel(); }
         if (menu_button("Load state", !online, ui::Icon::Refresh)) { g_page = QPage::Load; g_nav.sel.clear(); }
         if (online) text_wrapped_disabled("Save states are off in online games: everyone has to stay in step.");
         if (menu_button("Take a screenshot", true, ui::Icon::Search)) send(runctl::Cmd::Screenshot, 0, "Screenshot saved", true);
+        {   // Rewind, screen filter, instant-replay clip: only where the runner can do them (qm_logic.h feature_row_visible)
+            const bool runner = g_shot_fake || g_e2e || (e && runner_has_ctl(*e));
+            const bool n64 = e && e->system == hub::System::N64;
+            const bool e2e_off = g_e2e && !std::getenv("HUB_QM_E2E_FEATURES");   // the e2e scenarios count rows: the stand-in shows none unless asked
+            auto vis = [&](hubqm::QmFeature f) { return !e2e_off && hubqm::feature_row_visible(f, runner, online, n64, g_hide.is(f)); };
+            const float fw2 = ImGui::GetContentRegionAvail().x;
+            if (vis(hubqm::QmFeature::Rewind)) {
+                if (stepper_row("rewind", "Rewind", g_rewind_on ? "Rewinding" : "Off", -1.f, g_pending == 0, fw2)) {
+                    g_rewind_prev = g_rewind_on; g_rewind_on = !g_rewind_on;
+                    runctl::Command c; c.cmd = runctl::Cmd::Rewind; c.value = g_rewind_on ? 1 : 0;
+                    send_feature(c, g_rewind_on ? "Rewinding. Turn it off to play on." : "Rewind off", false);
+                }
+                if (g_rewind_on) text_wrapped_disabled("The game runs backwards until you turn this off.");
+            }
+            if (vis(hubqm::QmFeature::Filter) && menu_button("Next screen filter", true, ui::Icon::Refresh)) {
+                runctl::Command c; c.cmd = runctl::Cmd::Shader; c.text = "next";
+                send_feature(c, "", false);   // the toast is the runner's answer, e.g. "Filter: CRT"
+            }
+            if (vis(hubqm::QmFeature::Clip) && menu_button("Save a clip of the last 30 seconds", true, ui::Icon::Check)) {
+                runctl::Command c; c.cmd = runctl::Cmd::Clip;
+                send_feature(c, "Saving the clip. It will appear in your screenshots.", true);
+            }
+        }
         if (hubqm::pause_available(true, online)) {   // Plan 4: the game stands still while the menu is open (offline only)
             const float pw = ImGui::GetContentRegionAvail().x;
             if (stepper_row("pause", "Pause game", g_pause_manual ? "Paused" : "Running", -1.f, g_pending == 0, pw)) g_pause_manual = !g_pause_manual;   // qm_tick sends pause 1 / 0
