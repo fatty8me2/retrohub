@@ -441,6 +441,20 @@ std::string lichii_ini_defaults(const std::string& in) {
 
 static bool all_digits(const std::string& s) { return !s.empty() && s.size() < 4 && s.find_first_not_of("0123456789") == std::string::npos; }
 
+std::vector<std::pair<std::string, std::string>> fritchii_oot_keys(const hub::gs::Values& v) {
+    std::vector<std::pair<std::string, std::string>> out;
+    auto get = [&](const char* k) { auto i = v.find(k); return i == v.end() ? std::string() : i->second; };
+    const std::string hr = get("switch.oot_high_refresh");
+    if (hr == "on" || hr == "off") out.push_back({"oot_high_refresh", hr == "on" ? "true" : "false"});
+    const std::string cap = get("switch.oot_refresh_cap");   // Fritchii OotRefreshCap {Display 0, Hz90 1, Hz120 2, Hz144 3, Hz165 4}
+    static const char* const kCaps[] = {"display", "90", "120", "144", "165"};
+    for (int i = 0; i < 5; ++i) if (cap == kCaps[i]) out.push_back({"oot_high_refresh_cap", std::to_string(i)});
+    const std::string aa = get("switch.oot_aa");   // Fritchii OotAntiAliasing {Game 0, NoSharpening 1, Fsr3 2, Fsr4 3}
+    static const char* const kAa[] = {"game", "nosharp", "fsr3", "fsr4"};
+    for (int i = 0; i < 4; ++i) if (aa == kAa[i]) out.push_back({"oot_anti_aliasing", std::to_string(i)});
+    return out;
+}
+
 std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, bool fullscreen, const std::vector<std::string>* skip_keys) {
     auto skipped = [&](const char* sec, const char* key) { if (!skip_keys) return false; const std::string id = std::string(sec) + "." + key; for (const auto& k : *skip_keys) if (k == id) return true; return false; };
     auto put = [&](std::string& t, const char* sec, const char* key, const std::string& val) { if (!skipped(sec, key)) t = ini_put(t, sec, key, val); };
@@ -471,6 +485,8 @@ std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, b
     if (as == "on" || as == "off") put(t, "Renderer", "use_asynchronous_shaders", as == "on" ? "true" : "false");   // "lichii": untouched
     const std::string ga = get("switch.gpu_accuracy", "low");   // Lichii GpuAccuracy {Low 0, High 1}
     if (ga == "low" || ga == "high") put(t, "Renderer", "gpu_accuracy", ga == "low" ? "0" : "1");   // "lichii": untouched
+    if (skip_keys)   // Fritchii only (its launch passes nx_skip_keys, Lichii passes nothing): the Ocarina of Time keys, present only for a value the player chose
+        for (const auto& kv : fritchii_oot_keys(v)) put(t, "Renderer", kv.first.c_str(), kv.second);
     put(t, "UI", "fullscreen", fullscreen ? "true" : "false");
     put(t, "System", "current_user", "0");
     t = ini_put(t, "UI", "check_for_updates", "false");   // last (after fullscreen, so [UI] keeps its order), on every launch and never skipped: Lichii's own update check must never run (RetroHub is the only updater), even if the player switched it back on

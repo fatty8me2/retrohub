@@ -84,6 +84,10 @@ constexpr int kFriztiPinRevision = 999;
  * every FritchiiUi::Enabled() path was off, the Preparing shaders screen included.) Change it with every Fritchii pin. */
 constexpr const char* kFritchiiWhatsNewSeen = "v5.7";
 std::string fritchii_ini_pin(const std::string& ini);
+/* Fritchii's Ocarina of Time [Renderer] keys for the values set (switch.oot_high_refresh on|off -> oot_high_refresh true|false; switch.oot_refresh_cap
+ * display|90|120|144|165 -> oot_high_refresh_cap 0-4; switch.oot_aa game|nosharp|fsr3|fsr4 -> oot_anti_aliasing 0-3). Missing, "default" or anything else = no entry, so the
+ * ini is left exactly as it was. lichii_ini_launch writes them for Fritchii only (skip_keys given). None is in Fritchii's tuned list (frizti_settings.cpp), so its migration never resets them. */
+std::vector<std::pair<std::string, std::string>> fritchii_oot_keys(const hub::gs::Values& v);
 /* [Controls] player 1 (player_0_*) from the RetroHub "switch" profile on one SDL pad (guid + port among same-guid pads); player_0_connected=true,
  * player_0_type=0 (Pro Controller), players 2-8 disconnected. Value format (Lichii sdl_driver.cpp):
  *   button  engine:sdl,port:<n>,guid:<guid>,button:<sdl button>
