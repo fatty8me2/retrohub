@@ -1,6 +1,7 @@
 #include "gameinfo.h"
 #include "json.h"
 #include "gametdb.h"
+#include "u8file.h"
 
 #include <algorithm>
 #include <cctype>
@@ -225,14 +226,8 @@ const Db& shared_db(const std::string& dir) {
     static std::once_flag once;
     std::call_once(once, [&] {
         std::string path = dir + "gameinfo.tsv";
-        if (FILE* f = std::fopen(path.c_str(), "rb")) {
-            std::string t;
-            char buf[65536];
-            size_t n;
-            while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) t.append(buf, n);
-            std::fclose(f);
-            db.load(t);
-        }
+        std::string t;
+        if (u8file::slurp(path, &t)) db.load(t);
     });
     return db;
 }

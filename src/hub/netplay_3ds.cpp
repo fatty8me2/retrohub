@@ -1,5 +1,6 @@
 #include "netplay_3ds.h"
 #include "../net/username.h"
+#include "u8file.h"
 #include <fstream>
 #include <iterator>
 #include <random>
@@ -209,12 +210,12 @@ bool set_console_username_file(const std::string& install_dir, const std::string
     std::string p = console_config_path(install_dir);
     std::vector<uint8_t> b;
     {
-        std::ifstream f(p, std::ios::binary);
+        std::ifstream f = u8file::open_in(p, std::ios::binary);
         if (!f) return false;
         b.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
     }
     if (!set_console_username(&b, name)) return false;
-    std::ofstream o(p, std::ios::binary | std::ios::trunc);
+    std::ofstream o = u8file::open_out(p, std::ios::binary | std::ios::trunc);
     o.write((const char*)b.data(), (std::streamsize)b.size());
     return (bool)o;
 }
