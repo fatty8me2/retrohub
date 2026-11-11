@@ -655,6 +655,23 @@ int main(int argc, char** argv) {
         CHECK(!bad_version_read((d / L"RetroHub").wstring(), &w) && !has(bad_version_path((d / L"RetroHub").wstring())));
         bad_version_clear((d / L"RetroHub").wstring());   // none: no harm
     }
+    // ---- a rollback that waited for a game, then the NEW version starts after all: trusted, no longer recorded as bad ----
+    {
+        make_scene(root / L"rb_due", &staged, &install);
+        fs::path tmp = root / L"rb_due" / L"tmp";
+        put(tmp / L"RetroHub-update-31" / L"backup" / L"a.txt", "a-old");
+        put_manifest(tmp / L"RetroHub-update-31", install, "v1.0.0", "v2.0.0", 0, 1);
+        { std::string mt = get(tmp / L"RetroHub-update-31" / L"manifest.json"); size_t at = mt.rfind('}'); mt.insert(at, ",\"rollback_due\":true,\"exit_code\":70"); put(tmp / L"RetroHub-update-31" / L"manifest.json", mt); }
+        { BadVersion bv; bv.version = "v2.0.0"; bad_version_write(install.wstring(), bv); }
+        put(install / L"a.txt", "a-new");
+        RecoverReport rep = recover_interrupted(install.wstring(), "v2.0.0", tmp.wstring());   // new version running, unproven: untrusted, nothing restored
+        CHECK(rep.pending == 1 && has(tmp / L"RetroHub-update-31") && get(install / L"a.txt") == "a-new");
+        CHECK(write_boot_marker(install.wstring(), "v2.0.0"));                                  // a later start confirms itself
+        rep = recover_interrupted(install.wstring(), "v2.0.0", tmp.wstring());
+        CHECK(rep.healthy == 1 && rep.repaired == 0 && !has(tmp / L"RetroHub-update-31") && get(install / L"a.txt") == "a-new");
+        { BadVersion bv; CHECK(!bad_version_read(install.wstring(), &bv)); }
+        CHECK(!write_boot_marker(install.wstring(), "") && !write_boot_marker(install.wstring(), "v"));
+    }
     // ---- boot check: startup recovery of the states the new applier leaves (hand-built, no processes) ----
     {
         // A) the applier watching the boot died; the NEW version is the one running: healthy, backup dropped, NEVER restored, no note
@@ -954,10 +971,15 @@ int main(int argc, char** argv) {
                 check_boot_new(install);                                    // untouched while the game ran
                 CHECK(count_entries(tmpr) == 1);
                 Status gs;
-                CHECK(read_status(default_status_path(install.wstring()), &gs) && gs.result == "rollback_failed");
+                CHECK(read_status(default_status_path(install.wstring()), &gs) && gs.result == "rollback_waiting");
+                CHECK(status_line(gs) == "Update could not start; going back" && status_line(gs).size() <= 40 && status_line(gs).find("not restored") == std::string::npos);
+                CHECK(gs.detail.find("once the game is closed") != std::string::npos);   // nothing was changed on disk: the note must not say files were not restored
+                { BadVersion bv; CHECK(bad_version_read(install.wstring(), &bv) && bv.version == "v9.9.9" && bv.reason == "did not start"); }   // recorded at once, before the wait ended
                 Sleep(7500);                                                // the game ends by itself
-                RecoverReport rr = recover_interrupted(install.wstring(), "v1.0.0", tmpr.wstring());   // the next start of the OLD launcher
-                CHECK(rr.found == 1 && rr.repaired == 1);
+                bad_version_clear(install.wstring());                       // ... even if the record is lost, recovery writes it again
+                RecoverReport rr = recover_interrupted(install.wstring(), "v1.0.0", tmpr.wstring());   // the next start of the OLD launcher completes the rollback
+                CHECK(rr.found == 1 && rr.repaired == 1 && rr.notes.size() == 1 && rr.notes[0] == "Update could not start; rolled back");
+                { BadVersion bv; CHECK(bad_version_read(install.wstring(), &bv) && bv.version == "v9.9.9" && bv.from == "v1.0.0"); }
                 check_boot_old(install);
             }
             // 7) a state created by the OLD applier format (no booting key) still recovers under the new code
@@ -989,7 +1011,10 @@ int main(int argc, char** argv) {
                     // the next start (new version, no marker yet) leaves the backup alone; once the marker exists it is cleaned
                     RecoverReport rr = recover_interrupted(install.wstring(), "v9.9.9", tmpr.wstring());
                     CHECK(rr.pending == 1 && rr.repaired == 0 && count_entries(tmpr) == 1);
-                    put(install / L"updates" / L"boot_ok", "v9.9.9\n");
+                    // a NORMAL start of the same version (no --boot-ok arguments) confirms itself: the marker is written, and recovery drops the backup
+                    CHECK(!has(install / L"updates" / L"boot_ok"));
+                    CHECK(write_boot_marker(install.wstring(), "v9.9.9") && boot_marker_matches(boot_ok_path(install.wstring()), "v9.9.9"));
+                    CHECK(write_boot_marker(install.wstring(), "v9.9.9"));                      // already says so: nothing to do
                     rr = recover_interrupted(install.wstring(), "v9.9.9", tmpr.wstring());
                     CHECK(rr.healthy == 1 && count_entries(tmpr) == 0);
                     check_boot_new(install);
