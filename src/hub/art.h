@@ -98,6 +98,13 @@ bool fetch_ghost(const std::string& system_short, const std::string& key, const 
  * (a 404 is recorded in misses.json). png_path gets the cache file path. */
 bool fetch_decode(const std::string& system_short, const std::string& nointro_name, Kind kind,
                   int* w, int* h, std::string* err, std::string* png_path);
+/* UI-thread variants: "no network" mode. They use only what is already on disk / in memory (names.json, cached DATs, cached images) and return
+ * false at once otherwise; they never download, never wait for the worker's DAT download, and record no miss. */
+bool resolve_name_cached(const hub::GameEntry& game, std::string* name, std::string* how);
+bool fetch_decode_cached(const std::string& system_short, const std::string& nointro_name, Kind kind,
+                         int* w, int* h, std::string* err, std::string* png_path);
+/* How many fetches the no-network mode has refused so far (a test asserts "would have downloaded"). */
+int offline_refused_count();
 } // namespace detail
 
 } // namespace hubart

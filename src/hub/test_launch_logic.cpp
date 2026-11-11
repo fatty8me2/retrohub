@@ -109,6 +109,17 @@ int main() {
         } else CHECK(false);
     }
 
+    // ---- Wii U pad combo: only while RetroHub or this session's own game is in front ----
+    {
+        const std::vector<unsigned long> game = {4100, 4200};
+        CHECK(pad_combo_may_act(100, 100, game));    // RetroHub in front
+        CHECK(pad_combo_may_act(4200, 100, game));   // the session's game (or its child) in front
+        CHECK(!pad_combo_may_act(7777, 100, game));  // another game / app in front: never yank Cemu over it
+        CHECK(!pad_combo_may_act(0, 100, game));     // no foreground window
+        CHECK(!pad_combo_may_act(0, 0, {}));         // fake zero pids never match
+        CHECK(!pad_combo_may_act(7777, 100, {}));
+    }
+
     // ---- command-line quoting used by every runner ----
     CHECK(cmd_quote("") == "\"\"");
     CHECK(join_cmd({"--a", "b c", ""}) == " --a \"b c\" \"\"");
