@@ -326,7 +326,9 @@ void tab_online() {
     gap();
     if (ImGui::Checkbox("Automatically add people I play with as friends", &A.st.auto_friend)) { mark_dirty(); fr_set_auto_friend(A.st.auto_friend); }
     text_wrapped_disabled("Joining a room, or playing a game together, makes you friends. Both people need this on.");
-    if (ImGui::Checkbox("Share my play time with friends", &A.st.share_playtime)) { mark_dirty(); fr_set_share_playtime(A.st.share_playtime); }
+    if (ImGui::Checkbox("Tell me when a friend I am watching comes online", &A.st.notify_online)) mark_dirty();
+    text_wrapped_disabled("Turn this off to stop all came-online alerts. You pick which friends to watch in their menu in the friends panel.");
+    if (ImGui::Checkbox("Share my play time with friends",&A.st.share_playtime)) { mark_dirty(); fr_set_share_playtime(A.st.share_playtime); }
     text_wrapped_disabled("Friends see roughly how long you have played each game (whole hours). Turn it off to stop sharing and remove it from the server.");
     if (ImGui::Checkbox("Show my games to friends", &A.st.share_games)) mark_dirty();
     text_wrapped_disabled("Friends see the names of your games greyed out in their library, so they can ask you to host. Only titles are shared, never game files. Turn off to hide your list.");
