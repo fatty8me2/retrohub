@@ -2,6 +2,7 @@
 /* hubnet internals: UDP socket, WebSocket client, STUN, tiny JSON. Not public API. */
 
 #include "json.h"
+#include "ws_error_text.h"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -74,6 +75,7 @@ class WsClient {
     void drop_abruptly();   // QA: kill the connection without a close frame (what a Wi-Fi blip looks like to the server)
     WsState state() const { return state_; }
     std::string error() const;
+    WsErrorKind error_kind() const { return classify_ws_error(error()); }   // kind of the raw error; player text via ws_error_player_text()
     int close_code() const { return close_code_; }   // server close code (0 = none)
     bool send_text(const std::string& text);
     bool send_binary(const void* data, int size);
