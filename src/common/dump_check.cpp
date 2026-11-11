@@ -90,7 +90,7 @@ Result check_file(const std::string& path, uint64_t title_id) {
     const fs::path p = fs::u8path(path);
     const uint64_t fsz = fs::file_size(p, ec);
     if (ec) return {};
-    const std::string ext = lower(p.extension().string());
+    const std::string ext = lower(p.extension().u8string());
     std::ifstream f(p, std::ios::binary);
     if (!f) return {};
     ReadFn rd = [&](uint64_t off, size_t len, std::vector<uint8_t>* out) {

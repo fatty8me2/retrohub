@@ -280,7 +280,7 @@ void load_state(const fs::path& mirror, State& st) {
     }
 }
 void save_state(const fs::path& mirror, const State& st) {
-    fs::path tmp = state_path(mirror).string() + ".hubtmp";
+    fs::path tmp = state_path(mirror); tmp += ".hubtmp";   // stays a wide path (a narrow round trip would mangle non-ANSI names)
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         for (auto& kv : st) f << kv.first << '\t' << kv.second.etag << '\t' << kv.second.sha << '\n';
@@ -369,7 +369,7 @@ bool download(Http& http, const fs::path& mirror, const RemoteFile& rf, str* err
     if (!cloud_key_safe(rf.key)) { *err = "unsafe key from server"; return false; }
     if (!cloud_sha_ok(rf.sha)) { *err = "server gave no valid checksum for " + rf.key; return false; }
     fs::path dst = rel_path(mirror, rf.key);
-    fs::path tmp = dst.string() + ".hubtmp";
+    fs::path tmp = dst; tmp += ".hubtmp";
     std::error_code ec;
     fs::create_directories(dst.parent_path(), ec);
     for (int attempt = 0; attempt < 3; attempt++) {
@@ -384,7 +384,7 @@ bool download(Http& http, const fs::path& mirror, const RemoteFile& rf, str* err
             have = keep;
             return (bool)out;
         };
-        if (!reopen(have)) { *err = "cannot write " + tmp.string(); return false; }
+        if (!reopen(have)) { *err = "cannot write " + tmp.u8string(); return false; }
         if (have == (uint64_t)rf.size) {
             // already complete from a previous run: fall through to verification
         } else {
@@ -408,7 +408,7 @@ bool download(Http& http, const fs::path& mirror, const RemoteFile& rf, str* err
         out.close();
         str got = sha_file(tmp);
         if (got == rf.sha) {
-            if (!durable::commit_replace(tmp.wstring(), dst.wstring())) { *err = "cannot place " + dst.string(); return false; }
+            if (!durable::commit_replace(tmp.wstring(), dst.wstring())) { *err = "cannot place " + dst.u8string(); return false; }
             set_mtime(dst, rf.mtime);
             return true;
         }

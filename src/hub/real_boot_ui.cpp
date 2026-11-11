@@ -1,4 +1,5 @@
 #include "console_names.h"
+#include "winutil.h"
 #include "app.h"
 #include "real_boot.h"
 #include "pcsx2.h"
@@ -39,7 +40,7 @@ std::vector<std::string> search_dirs() {
         std::string par = P(f).parent_path().u8string();
         if (!par.empty() && par != f) { add((P(par) / "GamesBios").u8string()); add((P(par) / "BIOS").u8string()); }
     }
-    if (const char* up = std::getenv("USERPROFILE")) { add((P(up) / "Desktop" / "Everything" / "GamesBios").u8string()); add((P(up) / "Desktop" / "GamesBios").u8string()); }
+    if (const std::string up_s = winutil::getenv_utf8("USERPROFILE"); !up_s.empty()) { const char* up = up_s.c_str(); add((P(up) / "Desktop" / "Everything" / "GamesBios").u8string()); add((P(up) / "Desktop" / "GamesBios").u8string()); }
     add(hub::data_dir() + "system");
     add(hub::exe_dir() + "system");
     hubemu::Install dol = hubemu::find(hubemu::Kind::Dolphin, "", "");

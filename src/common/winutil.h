@@ -13,6 +13,11 @@ std::wstring to_wide(const std::string& utf8);
 std::string to_utf8(const std::wstring& w);
 std::string to_utf8(const wchar_t* w);   // nullptr -> ""
 
+/* ---- environment: std::getenv returns ANSI bytes (a non-ANSI character becomes '?', an accented one is invalid UTF-8
+ * and makes std::filesystem::u8path throw). Always read path-like variables through these: UTF-8, "" when unset. ---- */
+bool getenv_utf8(const char* name, std::string* out);   // false when unset
+std::string getenv_utf8(const char* name);
+
 /* ---- this executable (GetModuleFileNameW with a growing buffer: long and non-ASCII paths are never truncated) ---- */
 std::wstring exe_path_w();               // full path, "" on failure
 std::string exe_path();                  // UTF-8

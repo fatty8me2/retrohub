@@ -177,7 +177,7 @@ bool identify_buffer(std::shared_ptr<std::string> data, Ident* out) {
 
 bool identify_file(const std::string& path, Ident* out) {
     *out = Ident();
-    std::string ext = lower(fs::u8path(path).extension().string());
+    std::string ext = lower(fs::u8path(path).extension().u8string());
     if (ext == ".pbp") return pbp_file(path, out);
     if (ext != ".iso" && ext != ".cso" && ext != ".ciso" && ext != ".chd") return false;
     disc::Disc d;
