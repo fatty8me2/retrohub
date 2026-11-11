@@ -53,6 +53,30 @@ Other top-level entries: `.sync\` (manifests, never synced), `_conflicts\` (sync
 - Conflict: newer mtime wins (tie: higher hash, so both PCs agree). The loser is first copied to
   `_conflicts/<rel>.<device>.<yyyymmdd-hhmmss>` on **both** sides, then overwritten. `meta.json` conflicts
   just take the newer one with no conflict copy. A conflict also counts as one push or pull.
+- **Older or empty incoming file (extra backup, same winner).** When only one side changed, it still wins on its hash alone.
+  But if the file about to be overwritten is newer by mtime than the incoming one by more than 2 s (FAT granularity: a cloud
+  client restored an old version, a stale USB stick) or the incoming file is empty while the existing one is not (half-written),
+  the file being overwritten is first copied to `_conflicts/` on both sides (same naming as a conflict; logged as `backup ...`
+  and counted in `conflicts`). A normal newer incoming save gets no extra copy. `meta.json` is exempt. If the copy cannot be
+  made, the file is left untouched.
+- **Incomplete scans refuse to sync, as narrowly as the layout allows.** Both trees are listed completely before anything is copied. Only
+  "folder gone / empty" (`ERROR_NO_MORE_FILES`, `ERROR_FILE_NOT_FOUND`, `ERROR_PATH_NOT_FOUND`) counts as normal. Any other listing
+  error (antivirus, sync-client lock, access denied) inside a game's tree (`<system>/<game>/...`; a "system" is any name in the canonical
+  table `system_short()`/`console_id()` in `library.h`, so new systems are covered automatically, or any top-level folder the vault
+  itself already has) leaves out just that game on both sides this run: it is logged (`skip game ...` with the Windows
+  error code), reported in `SyncReport::warning` in plain words, and the rest syncs (`ok` stays true). An unreadable top-level folder
+  that is not a system is left out with a `skip folder ...` log line. An error listing the root, a system folder itself, `_conflicts`
+  or `_account` fails the whole sync (`ok=false`, plain-words `error`) and changes nothing.
+  Also, if the `_conflicts` backup copy succeeds in the vault but fails in the sync folder, the vault-side copy this attempt just made
+  is removed again (nothing older is ever touched), so retries do not pile up copies. In the "only one
+  side has it" branches the destination is probed first: if it exists after all, the pair is compared and handled as a normal
+  two-sided file (conflict copy if needed), never overwritten blindly. A USB stick root's `System Volume Information` and
+  `$RECYCLE.BIN` are skipped. (`export_zip` does not use this refusal.) Test seam: `set_enum_error_hook()` (inert unless set).
+- **Junk is ignored on both sides**: `desktop.ini`, `Thumbs.db`, `.DS_Store`, names starting `~$`, `.~lock.`, `.dropbox`,
+  `.syncthing.`, the file `.sync`, and names ending `.crdownload` or `.!sync` (case-insensitive). Such files already in a vault
+  or sync folder are left where they are, never deleted, and simply not synced. `*.tmp`, `*.partial` and `~`-suffixed names are
+  deliberately NOT ignored: Wii U / 3DS / Switch games pick their own save file names inside the battery folder. Zip export
+  still includes everything.
 - Copies are atomic (`*.hubtmp` + `MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)`) and keep the mtime.
   Stale `*.hubtmp` files are ignored by scans.
 - Robustness: `\\?\` long paths, UTF-8 API / UTF-16 internally, junctions and symlinks are skipped
