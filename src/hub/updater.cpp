@@ -608,6 +608,30 @@ static std::string curl_cmd(std::string* err) {
     return "\"" + p + "\"";
 }
 
+std::string download_flags(bool resume) {
+    return " -fL -# --connect-timeout 30 --speed-limit " + std::to_string(kStallBytesPerSec) + " --speed-time " + std::to_string(kStallSeconds) +
+           " --retry " + std::to_string(kRetryCount) + " --retry-delay " + std::to_string(kRetryDelaySec) + (resume ? " -C -" : "");
+}
+
+std::string resume_record_json(const ResumeKey& k) {
+    JV o = json::make_object();
+    o.o.push_back({"v", json::make_int(1)});
+    o.o.push_back({"tag", json::make_string(k.tag)});
+    o.o.push_back({"asset", json::make_string(k.asset)});
+    o.o.push_back({"size", json::make_int(k.size)});
+    o.o.push_back({"sha256", json::make_string(k.sha256)});
+    return json::stringify(o) + "\n";
+}
+
+bool resume_eligible(const std::string& text, const ResumeKey& want, long long partial) {
+    if (want.tag.empty() || want.asset.empty() || want.size <= 0 || !is_hex64(want.sha256)) return false;   // no signed hash to bind it to: start fresh
+    if (partial <= 0 || partial >= want.size) return false;
+    JV v;
+    if (!json_parse(text, &v)) return false;
+    return v.i64("v") == 1 && v.str("tag") == want.tag && v.str("asset") == want.asset && v.i64("size") == want.size &&
+           lower(v.str("sha256")) == lower(want.sha256);
+}
+
 bool fetch_sums(const std::string& sumsUrl, const std::string& scratch, std::string* text, std::string* err) {
     std::string sp = scratch + ".sums";
     rm_file(sp);
@@ -663,18 +687,45 @@ bool download_verified(const FetchSpec& f, const std::string& zipPath, std::stri
         if (!sums_are_trusted(f.tag, sums, sig, &why)) return bad(why);   // preset sums are re-checked: a caller cannot skip the signature
     }
     const bool haveSums = true;
-    rm_file(zipPath);
     std::string curlErr;
     std::string curl = curl_cmd(&curlErr);
     if (curl.empty()) return bad(curlErr);
-    if (run_capture(curl + " -fL -# -m 600 -o \"" + zipPath + "\" \"" + f.zip_url + "\"", onLine) != 0) return bad("download failed.");
-    std::ifstream in(P(zipPath), std::ios::binary | std::ios::ate);
-    long long actual = in ? (long long)in.tellg() : -1;
-    in.close();
-    if (actual != f.size) return bad("download was incomplete.");
+    auto size_of = [&]() -> long long {
+        std::ifstream sz(P(zipPath), std::ios::binary | std::ios::ate);
+        return sz ? (long long)sz.tellg() : -1;
+    };
+    /* A partial file is continued only when its record says it is THIS release's asset (tag, name, exact size, listed SHA-256). */
+    ResumeKey key;
+    key.tag = f.tag; key.size = f.size;
+    key.asset = f.asset_name.empty() ? std::string(kPlatformAssetName) : f.asset_name;
+    { auto m = parse_sha256sums(sums); auto it = m.find(key.asset); if (it != m.end()) key.sha256 = it->second; }
+    const std::string recPath = zipPath + ".resume";
+    auto bad_all = [&](const std::string& m) { rm_file(recPath); return bad(m); };   // a file that failed is deleted with its record: never resumed
+    bool resume = false;
+    {
+        std::ifstream rin(P(recPath), std::ios::binary);
+        std::stringstream rs; rs << rin.rdbuf();
+        resume = rin && resume_eligible(rs.str(), key, size_of());
+    }
+    if (!resume) { rm_file(zipPath); winutil::write_file_atomic(recPath, resume_record_json(key)); }
+    int code = run_capture(curl + download_flags(resume) + " -o \"" + zipPath + "\" \"" + f.zip_url + "\"", onLine);
+    if (code != 0 && resume && (code == 33 || code == 36)) {   // the server cannot continue a download (curl 33/36): start over once
+        rm_file(zipPath);
+        resume = false;
+        code = run_capture(curl + download_flags(false) + " -o \"" + zipPath + "\" \"" + f.zip_url + "\"", onLine);
+    }
+    if (code != 0) {
+        /* The transfer failed (network, stall): the partial file and its record stay for the next try, unless it is already too big. */
+        if (size_of() >= f.size) return bad_all("download failed.");
+        if (err) *err = "download failed.";
+        return false;
+    }
+    long long actual = size_of();
+    if (actual != f.size) return bad_all("download was incomplete.");
     Verdict v = verify_hashes(f.tag, sha256_file(zipPath), haveSums ? &sums : nullptr, f.digest, f.asset_name);
-    if (v != Verdict::Ok && v != Verdict::OkLegacy) return bad(verdict_message(v));
+    if (v != Verdict::Ok && v != Verdict::OkLegacy) return bad_all(verdict_message(v));
     if (v == Verdict::OkLegacy) ulog("release %s predates SHA256SUMS.txt; accepted on TLS + size (+ API digest if present)", f.tag.c_str());
+    rm_file(recPath);   // complete and verified: nothing left to resume
     return true;
 }
 
@@ -916,7 +967,8 @@ void start_update() {
             set_status("Preparing...");
             s_progress.store(1.0f);
         } else {
-            rm_file(zipPath);
+            /* A partial update.zip from an earlier try is NOT deleted here: download_verified continues it when it is the same release
+             * (and deletes it otherwise). */
             /* Which payload: needs SHA256SUMS.txt (the hub-only marker lives there), so fetch it first. Without one the full zip is the
              * only choice (and download_verified then refuses a release that must have sums). */
             std::string sumsText, sigBytes;
@@ -958,7 +1010,7 @@ void start_update() {
             std::filesystem::create_directories(P(staged), fec);
             std::string tarCmd = "\"" + tarExe + "\" -xf \"" + zipPath + "\" -C \"" + staged + "\"";
             int tarCode = run_capture(tarCmd, [](const std::string&) {}, detail::kTarTimeoutMs);   // a stuck tar is ended by its handle; the install is untouched either way
-            rm_file(zipPath);
+            rm_file(zipPath); rm_file(zipPath + ".resume");
             if (tarCode != 0) {
                 std::filesystem::remove_all(P(staged), fec);
                 if (tarCode == kRunTimedOut) ulog("unpacking the update timed out after %lu s", detail::kTarTimeoutMs / 1000);

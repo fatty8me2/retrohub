@@ -82,6 +82,8 @@ struct FakeServer {
     int port = 0;
     std::map<std::string, std::string> routes;
     std::atomic<bool> stop{false};
+    std::atomic<long long> last_range{-1};   // start offset of the last request's Range header (-1: none)
+    std::atomic<bool> ignore_range{false};   // answer a ranged request with the whole file (a server that cannot resume)
     std::thread th;
     bool start() {
         WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
@@ -107,7 +109,15 @@ struct FakeServer {
                 if (sp != std::string::npos && e != std::string::npos) path = req.substr(sp + 1, e - sp - 1);
                 auto it = routes.find(path);
                 std::string out;
+                long long rangeFrom = -1;   // "Range: bytes=N-" (what curl -C - sends)
+                { std::string low = req; for (char& ch : low) ch = (char)tolower((unsigned char)ch);
+                  size_t rp = low.find("range: bytes="); if (rp != std::string::npos) rangeFrom = std::atoll(low.c_str() + rp + 13); }
+                last_range.store(rangeFrom);
                 if (it == routes.end()) out = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                else if (rangeFrom >= 0 && !ignore_range && (size_t)rangeFrom < it->second.size())
+                    out = "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + std::to_string(rangeFrom) + "-" + std::to_string(it->second.size() - 1) + "/" +
+                          std::to_string(it->second.size()) + "\r\nContent-Length: " + std::to_string(it->second.size() - (size_t)rangeFrom) +
+                          "\r\nConnection: close\r\n\r\n" + it->second.substr((size_t)rangeFrom);
                 else out = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(it->second.size()) + "\r\nConnection: close\r\n\r\n" + it->second;
                 for (size_t off = 0; off < out.size();) { int n = send(c, out.data() + off, (int)(out.size() - off), 0); if (n <= 0) break; off += n; }
                 shutdown(c, SD_SEND); closesocket(c);
@@ -470,6 +480,29 @@ int main(int argc, char** argv) {
         std::filesystem::remove_all(d, ec);
     }
 
+    // --- download robustness: no hard cap, stall detector, retries, resume only for the same release ---
+    {
+        const std::string fl = download_flags(false), flr = download_flags(true);
+        CHECK(fl.find(" -m ") == std::string::npos && fl.find("--max-time") == std::string::npos);   // a slow link must be able to finish
+        CHECK(fl.find("--speed-limit 1024") != std::string::npos && fl.find("--speed-time 60") != std::string::npos);
+        CHECK(fl.find("--retry 3") != std::string::npos && fl.find("--retry-delay") != std::string::npos);
+        CHECK(fl.find("-C -") == std::string::npos && flr.find(" -C -") != std::string::npos && flr.find("--speed-limit") != std::string::npos);
+        ResumeKey k; k.tag = "v1.40.0"; k.asset = "BattleShip-windows.zip"; k.sha256 = std::string(64, 'a'); k.size = 1000;
+        const std::string rec = resume_record_json(k);
+        CHECK(resume_eligible(rec, k, 1) && resume_eligible(rec, k, 999));
+        CHECK(!resume_eligible(rec, k, 0) && !resume_eligible(rec, k, -1));                     // nothing there
+        CHECK(!resume_eligible(rec, k, 1000) && !resume_eligible(rec, k, 5000));                // full size or bigger: a failed file, never resumed
+        { ResumeKey w = k; w.tag = "v1.40.1"; CHECK(!resume_eligible(rec, w, 500)); }
+        { ResumeKey w = k; w.asset = "RetroHub-windows.zip"; CHECK(!resume_eligible(rec, w, 500)); }
+        { ResumeKey w = k; w.size = 1001; CHECK(!resume_eligible(rec, w, 500)); }
+        { ResumeKey w = k; w.sha256 = std::string(64, 'b'); CHECK(!resume_eligible(rec, w, 500)); }
+        { ResumeKey w = k; w.sha256 = std::string(64, 'A'); CHECK(resume_eligible(rec, w, 500)); }   // hex case does not matter
+        { ResumeKey w = k; w.sha256.clear(); ResumeKey r2 = w; CHECK(!resume_eligible(resume_record_json(r2), w, 500)); }   // no listed hash to bind to
+        { ResumeKey w = k; w.tag.clear(); CHECK(!resume_eligible(resume_record_json(w), w, 500)); }
+        CHECK(!resume_eligible("", k, 500) && !resume_eligible("not json", k, 500) && !resume_eligible("{}", k, 500));
+        CHECK(!resume_eligible("{\"v\":2,\"tag\":\"v1.40.0\",\"asset\":\"BattleShip-windows.zip\",\"size\":1000,\"sha256\":\"" + std::string(64, 'a') + "\"}", k, 500));   // unknown record version
+    }
+
     // --- integration dry run: download_verified against a local server (127.0.0.1) ---
     {
         std::string zipBody(5000, '\0');
@@ -539,7 +572,50 @@ int main(int argc, char** argv) {
         f.sig_bytes.clear();                                                           // preset sums without any signature: refused too
         f.sums_text = std::string(64, '2') + "  BattleShip-windows.zip\n" + real + "  RetroHub-windows.zip\n";
         CHECK(!run("v1.40.0", "", "", N) && !exists(zipPath));
-        f.sums_text.clear(); f.asset_name.clear(); f.zip_url = base + "BattleShip-windows.zip";
+        // --- resume: a partial file of the SAME release is continued; anything else starts over; a file that fails verification is never resumed ---
+        {
+            f.asset_name = kHubAssetName; f.zip_url = base + "RetroHub-windows.zip";
+            f.sums_text = std::string(64, '2') + "  BattleShip-windows.zip\n" + real + "  RetroHub-windows.zip\n";
+            f.sig_bytes = sign_sums(tk, f.sums_text);
+            ResumeKey key; key.tag = "v1.40.0"; key.asset = kHubAssetName; key.sha256 = real; key.size = N;
+            const std::string rec = zipPath + ".resume";
+            const size_t half = zipBody.size() / 2;
+            auto put_partial = [&](size_t n, const ResumeKey& k, bool corrupt) {
+                std::string part = zipBody.substr(0, n);
+                if (corrupt && !part.empty()) part[10] ^= 1;
+                { std::ofstream o(std::filesystem::u8path(zipPath), std::ios::binary | std::ios::trunc); o.write(part.data(), (std::streamsize)part.size()); }
+                { std::ofstream o(std::filesystem::u8path(rec), std::ios::binary | std::ios::trunc); o << resume_record_json(k); }
+            };
+            // A: same release: the request continues at the partial's size, and the verified result is the whole file
+            put_partial(half, key, false); srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == (long long)half && exists(zipPath) && !exists(rec));
+            // B: a record naming another tag, size or hash: not continued, downloaded afresh
+            ResumeKey other = key; other.tag = "v1.39.0";
+            put_partial(half, other, false); srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == -1 && !exists(rec));
+            other = key; other.sha256 = std::string(64, '3');
+            put_partial(half, other, false); srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == -1);
+            // C: a partial file with no record at all (an older RetroHub left it): started afresh
+            put_partial(half, key, false); std::filesystem::remove(std::filesystem::u8path(rec), ec); srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == -1);
+            // D: a corrupt partial passes the record but fails the SHA-256: deleted with its record, and the next try starts from zero
+            put_partial(half, key, true); srv.last_range = -1;
+            CHECK(!run("v1.40.0", "", "", N) && srv.last_range.load() == (long long)half && !exists(zipPath) && !exists(rec) && err.find("checksum") != std::string::npos);
+            srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == -1);
+            // E: the server cannot continue: curl says so, the update starts over once and still succeeds
+            put_partial(half, key, false); srv.ignore_range = true;
+            CHECK(run("v1.40.0", "", "", N) && exists(zipPath));
+            srv.ignore_range = false;
+            // F: a failed transfer keeps the partial file and its record for the next try (which then continues)
+            put_partial(half, key, false);
+            f.zip_url = base + "nothere.zip";
+            CHECK(!run("v1.40.0", "", "", N) && err == "download failed." && exists(zipPath) && exists(rec) && std::filesystem::file_size(std::filesystem::u8path(zipPath)) == half);
+            f.zip_url = base + "RetroHub-windows.zip"; srv.last_range = -1;
+            CHECK(run("v1.40.0", "", "", N) && srv.last_range.load() == (long long)half && !exists(rec));
+        }
+        f.sums_text.clear(); f.sig_bytes.clear(); f.asset_name.clear(); f.zip_url = base + "BattleShip-windows.zip";
         set_pubkey_for_test(nullptr);
         CHECK(!run("v1.18.0", "good.txt", "", N) && !exists(zipPath) && err == kUnsignedMessage);   // the real (built-in) key does not accept the test key's lists
         std::filesystem::remove_all(dir, ec);

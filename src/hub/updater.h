@@ -137,8 +137,23 @@ struct FetchSpec {
 bool fetch_sums(const std::string& sums_url, const std::string& scratch_path, std::string* text, std::string* err);
 /* The signature file (tiny, size-capped). false + *err = kUnsignedMessage when it cannot be had. */
 bool fetch_sig(const std::string& sig_url, const std::string& scratch_path, std::string* bytes, std::string* err);
-/* Downloads (curl) + verifies the zip into zip_path. Caller must have vetted the URLs. On failure the file
- * is deleted and *err says why. Used by start_update(); tests drive it against a 127.0.0.1 server. */
+/* ---- a slow connection must be able to finish: no hard time cap, a stall detector, retries, and resume ---- */
+constexpr int kStallBytesPerSec = 1024;   // curl gives up when the speed stays below this ...
+constexpr int kStallSeconds = 60;         // ... for this long (a stalled link), however slow the rest of the download is
+constexpr int kRetryCount = 3, kRetryDelaySec = 2;
+/* curl's switches for the zip download (everything except the output file and the url). resume => "-C -" (continue the partial file). */
+std::string download_flags(bool resume);
+/* What a partial download is recorded as, in "<zip>.resume" beside it. Two releases never share a record: tag + asset name + exact size +
+ * the SHA-256 the signed SHA256SUMS.txt lists for that asset must all match. */
+struct ResumeKey { std::string tag, asset, sha256; long long size = 0; };
+std::string resume_record_json(const ResumeKey& k);
+/* May the partial file (partial_size bytes) be continued? Only when its record names exactly `want`, and the file is smaller than the
+ * expected size (a full-size file that is still here failed verification once: never resumed again). */
+bool resume_eligible(const std::string& record_text, const ResumeKey& want, long long partial_size);
+
+/* Downloads (curl) + verifies the zip into zip_path. Caller must have vetted the URLs. A partial file of the SAME release (see ResumeKey)
+ * is continued; one that fails the size or SHA-256 check is deleted for good (with its record). A failed transfer keeps its partial file
+ * for the next try. *err says why. Used by start_update(); tests drive it against a 127.0.0.1 server. */
 bool download_verified(const FetchSpec& f, const std::string& zip_path, std::string* err,
                        const std::function<void(const std::string&)>& on_progress_line);
 
