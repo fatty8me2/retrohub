@@ -119,6 +119,7 @@ void down_to(std::vector<Step>& v, const std::string& id, int presses) {
 
 void build() {
     // rows on the stand-in (built-in runner, offline): Resume, Speed, Volume, Sound, Save state, Load state, Take a screenshot, Quit to RetroHub
+    // (with HUB_QM_E2E_FEATURES set: Rewind, Next screen filter and Save a clip of the last 30 seconds follow Take a screenshot; unset, they are hidden)
     {   // 1. the phantom press from quickmenu.log (v1.28.6): the opening View+Y and an A held from the game stay down across the open
         Scenario s{"phantom press held across open (log case)"};
         s.steps.push_back(hold(A_, 200, "A held in the game"));

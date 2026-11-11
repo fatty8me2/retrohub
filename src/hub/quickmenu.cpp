@@ -253,18 +253,20 @@ void send(runctl::Cmd c, int slot, const std::string& done_text, bool close) {
 }
 
 /* Rewind / screen filter / clip rows: the menu stays open; the toast is `done_text`, or the runner's own answer when that is empty. */
-void send_feature(runctl::Command cm, const std::string& done_text, bool resume_first) {
+bool send_feature(runctl::Command cm, const std::string& done_text, bool resume_first, bool close = false) {   // false: not queued
     if (g_e2e) {
         if (resume_first) resume_for_action();
         g_e2e_cmds.push_back(std::string(runctl::cmd_name(cm.cmd)) + " " + (cm.cmd == runctl::Cmd::Shader ? cm.text : std::to_string(cm.value)));
         push_toast(done_text.empty() ? std::string("Done") : done_text, COL_GOOD, 3.0);
-        return;
+        return true;
     }
-    if (g_shot_fake || !ctl_ready()) return;
+    if (g_shot_fake) return true;
+    if (!ctl_ready()) return false;
     if (resume_first) resume_for_action();   // n64run refuses a clip while paused
     g_pending = -1;
-    g_pending_what = done_text; g_pending_close = false; g_pending_slot = -2; g_pending_at = ImGui::GetTime(); g_pending_cmd = cm.cmd;
+    g_pending_what = done_text; g_pending_close = close; g_pending_slot = -2; g_pending_at = ImGui::GetTime(); g_pending_cmd = cm.cmd;
     enqueue_cmd(cm, 2);
+    return true;
 }
 
 void nav_ring(ImVec2 p0, ImVec2 p1) {
@@ -837,6 +839,8 @@ void check_ack() {
         g_pending_cmd = runctl::Cmd::None;
     } else if (ImGui::GetTime() - g_pending_at > 20.0) {
         g_pending = 0;
+        if (g_pending_cmd == runctl::Cmd::Rewind) g_rewind_on = g_rewind_prev;   // never show "Rewinding" when the runner may not be
+        g_pending_cmd = runctl::Cmd::None;
         push_toast("The game did not answer.", COL_WARN, 5.0);
     }
 }
@@ -1414,9 +1418,12 @@ static void qm_body() {
             const float fw2 = ImGui::GetContentRegionAvail().x;
             if (vis(hubqm::QmFeature::Rewind)) {
                 if (stepper_row("rewind", "Rewind", g_rewind_on ? "Rewinding" : "Off", -1.f, g_pending == 0, fw2)) {
-                    g_rewind_prev = g_rewind_on; g_rewind_on = !g_rewind_on;
-                    runctl::Command c; c.cmd = runctl::Cmd::Rewind; c.value = g_rewind_on ? 1 : 0;
-                    send_feature(c, g_rewind_on ? "Rewinding. Turn it off to play on." : "Rewind off", false);
+                    // Rewind runs on the live game, so turning it on resumes the game and closes the menu (like the other action rows); the
+                    // runner stops by itself at the start of its history. Open the menu again and pick this row to stop it sooner.
+                    const bool want = !g_rewind_on;
+                    runctl::Command c; c.cmd = runctl::Cmd::Rewind; c.value = want ? 1 : 0;
+                    const bool queued = send_feature(c, want ? "Rewinding. Open this menu and pick Rewind again to stop." : "Rewind off", want, want);
+                    if (queued) { g_rewind_prev = g_rewind_on; g_rewind_on = want; }   // only when the command really went out
                 }
                 if (g_rewind_on) text_wrapped_disabled("The game runs backwards until you turn this off.");
             }
