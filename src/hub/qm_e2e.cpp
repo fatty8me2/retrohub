@@ -28,7 +28,7 @@ const uint32_t VIEW = bit(SDL_CONTROLLER_BUTTON_BACK), Y = bit(SDL_CONTROLLER_BU
 struct Step {
     std::string name;
     uint32_t hold = 0;          // buttons held during this step
-    int ms = 0;                 // how long (real time)
+    int ms = 0;                 // how long (virtual time: frames * 50 ms, see g_vt)
     bool tap = false;           // press+release `hold` inside ONE frame (shorter than a frame), then wait ms
     bool allow_close = false;   // the menu may close during this step
     bool keep = false;          // a pure check: leave the buttons as the previous step set them
@@ -41,6 +41,10 @@ SDL_Joystick* g_joy = nullptr;
 std::vector<Scenario> g_sc;
 size_t g_si = 0, g_step = 0;
 Uint32 g_step_t0 = 0;
+/* Virtual time: every hub frame advances it by kFrameMs, and the hub's input timing (key repeat, cooldowns) reads the same clock through
+ * qm_now_ms(), so a scenario's "hold 1.6 s" is always the same number of frames however slow the PC is (a loaded machine used to run ~0.4 s per frame). */
+constexpr Uint32 kFrameMs = 50;
+Uint32 g_vt = 0;
 bool g_step_started = false, g_was_open = false, g_sc_failed = false, g_done = false, g_started = false;
 int g_pass = 0, g_fail = 0, g_checks = 0, g_frames = 0;
 size_t g_cmd_base = 0;
@@ -464,6 +468,7 @@ void qm_e2e_start() {
     SDL_JoystickUpdate();
     qm_pad_take_taps();
     qm_e2e_enable();
+    qm_e2e_advance_clock(1000000);   // virtual clock from here on (clear of every cooldown's initial value)
     build();
     out("qm e2e: SDL " + std::to_string(SDL_MAJOR_VERSION) + "." + std::to_string(SDL_MINOR_VERSION) + "." + std::to_string(SDL_PATCHLEVEL) + ", virtual pad ok, " + std::to_string(g_sc.size()) + " scenarios");
     g_started = true;
@@ -473,6 +478,8 @@ bool qm_e2e_frame() {
     if (g_done) return false;
     if (!g_started) return true;
     ++g_frames;
+    g_vt += kFrameMs;
+    qm_e2e_advance_clock(kFrameMs);
     const QmE2EState st = qm_e2e_state();
     Scenario& sc = g_sc[g_si];
     const bool have_step = g_step < sc.steps.size();
@@ -485,12 +492,12 @@ bool qm_e2e_frame() {
         Step& s = sc.steps[g_step];
         if (!g_step_started) {
             g_step_started = true;
-            g_step_t0 = SDL_GetTicks();
+            g_step_t0 = g_vt;
             if (s.keep) {}
             else if (s.tap) { set_buttons(s.hold); SDL_JoystickUpdate(); set_buttons(0); }   // down and up before the next frame reads the state
             else set_buttons(s.hold);
         }
-        if (SDL_GetTicks() - g_step_t0 < (Uint32)s.ms) return true;
+        if (g_vt - g_step_t0 < (Uint32)s.ms) return true;
         if (s.check) {
             std::string why;
             ++g_checks;

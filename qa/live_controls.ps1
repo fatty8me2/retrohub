@@ -38,8 +38,11 @@ $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden -ArgumentList @(
     '--save-dir', "$work\sv", '--state-dir', "$work\st", '--headless', '--realtime', '--frames', '2000000', '--control', $ctl,
     '--game-key', 'qa-live', '--controls', $pf, '--log', "$work\rr.log")
 Remove-Item Env:RETRORUN_PAD_SCRIPT, Env:RETRORUN_PAD_LOG
-Start-Sleep -Seconds 3
 function Masks { @(Select-String -Path "$work\rr.log" -Pattern 'padscript: frame (\d+) mask 0x([0-9a-f]+)' | ForEach-Object { [pscustomobject]@{ frame = [long]$_.Matches[0].Groups[1].Value; mask = [Convert]::ToInt32($_.Matches[0].Groups[2].Value, 16) } }) }
+# wait for the runner to log its first scripted-pad mask (generous: a busy PC can take far longer than a fixed 3 s to start the core)
+$until = (Get-Date).AddSeconds(90)
+while ((Get-Date) -lt $until -and @(Masks).Count -lt 1 -and -not $p.HasExited) { Start-Sleep -Milliseconds 200 }
+Start-Sleep -Milliseconds 500
 $m = @(Masks)
 if ($m.Count -ne 1 -or $m[0].mask -ne 0x1) { Write-Host "FAIL: before the reload expected one mask 0x1 (B), got: $($m | ConvertTo-Json -Compress)"; $fail++ } else { Write-Host "ok: before reload, pad a -> RetroPad B (0x1) from frame $($m[0].frame)" }
 # 1. a foreign-system profile is refused and changes nothing
@@ -50,7 +53,9 @@ if (-not $a -or $a.ok) { Write-Host "FAIL: foreign profile should be refused: $(
 Set-Content $pf (Prof 'b' 'y' 'a') -Encoding ascii         # retro x = pad a, retro b = pad b
 $s = Send $ctl @('reload_controls'); $a = WaitAck "$work\run" $s 10
 if (-not $a -or -not $a.ok) { Write-Host "FAIL: reload not acked ok: $($a | ConvertTo-Json -Compress)"; $fail++ } else { Write-Host "ok: reload_controls acked -> $($a.msg)" }
-Start-Sleep -Seconds 1
+$until = (Get-Date).AddSeconds(30)
+while ((Get-Date) -lt $until -and @(Masks).Count -lt 2) { Start-Sleep -Milliseconds 200 }
+Start-Sleep -Milliseconds 300
 $m = @(Masks)
 $ap = Select-String -Path "$work\rr.log" -Pattern 'controls: applied profile .* at frame (\d+)' | Select-Object -Last 1
 if ($m.Count -lt 2 -or $m[-1].mask -ne 0x200 -or -not $ap) { Write-Host "FAIL: after the reload expected mask 0x200 (X) and an 'applied' line, got: $($m | ConvertTo-Json -Compress) / $($ap.Line)"; $fail++ }
