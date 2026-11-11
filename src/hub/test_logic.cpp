@@ -3,6 +3,7 @@
 #include "logic.h"
 #include "dupes_logic.h"
 #include "settings_tabs.h"
+#include <windows.h>
 #include "durable_write.h"
 #include <iterator>
 #include <string>
@@ -91,9 +92,50 @@ static void test_settings_paths() {
     fs::remove_all(base, ec);
 }
 
+
+/* ---- exact bytes, CRLF input, and an exclusively held (unreadable) hub.json that must never be replaced by defaults ---- */
+static void test_settings_robust() {
+    namespace fs = std::filesystem;
+    using hubui::Settings;
+    const fs::path base = fs::temp_directory_path() / "hub_utf8paths_test2";
+    std::error_code ec; fs::remove_all(base, ec); fs::create_directories(base, ec);
+    const std::string file = (base / "hub.json").string();   // ASCII path
+    const std::wstring wfile = durable::utf8_to_wide(file);
+    Settings s; s.name = "exact"; s.games_dest = "D:\\g";
+    CHECK(hubui::save_settings(file, s));
+    CHECK(slurp_w(wfile) == hubui::settings_to_json(s));   // bytes written == serializer output, nothing added or translated
+    /* CRLF line endings in a pre-written file: loads, and a save does not corrupt it */
+    {
+        std::string j = hubui::settings_to_json(s), crlf;
+        for (char c : j) { if (c == '\n') crlf += "\r\n"; else crlf += c; }
+        if (crlf == j) crlf = "{\r\n\"name\": \"exact\",\r\n\"games_dest\": \"D:\\\\g\"\r\n}\r\n";
+        { std::ofstream f(fs::path(wfile), std::ios::binary | std::ios::trunc); f << crlf; }
+        Settings r; CHECK(hubui::load_settings(file, &r) && r.name == "exact" && r.games_dest == "D:\\g");
+        CHECK(hubui::save_settings(file, r));
+        Settings r2; CHECK(hubui::load_settings(file, &r2) && r2.name == "exact" && r2.games_dest == "D:\\g");
+    }
+    /* an existing file that is held open exclusively: no legacy fallback, load fails, and saves are refused so defaults never replace it */
+    {
+        const std::string before = slurp_w(wfile);
+        HANDLE h = CreateFileW(wfile.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(h != INVALID_HANDLE_VALUE);
+        std::string bytes;
+        CHECK(durable::read_file_utf8_migrating(file, &bytes) == durable::ReadResult::Unreadable);
+        Settings d; CHECK(!hubui::load_settings(file, &d));
+        CHECK(!hubui::save_settings(file, d));            // refused while (and after) the file was unreadable at load
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        CHECK(!hubui::save_settings(file, d));            // still refused after the lock is gone: the in-memory state is defaults
+        CHECK(slurp_w(wfile) == before);
+        Settings again; CHECK(hubui::load_settings(file, &again) && again.name == "exact");   // a fresh successful load lifts the guard
+        CHECK(hubui::save_settings(file, again));
+    }
+    fs::remove_all(base, ec);
+}
+
 int main() {
     test_dupes();
     test_settings_paths();
+    test_settings_robust();
     using namespace hubui;
     Settings s;
     s.name = "Zed \"the\" \\ \xC3\xA9";
