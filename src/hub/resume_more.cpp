@@ -32,17 +32,7 @@ std::string no_sep(std::string s) {
 }
 
 long long newest_battery(const std::string& dir) {
-    long long best = 0;
-    std::error_code ec;
-    for (fs::directory_iterator it(fs::u8path(dir), ec), end; !ec && it != end; it.increment(ec)) {
-        std::error_code e2;
-        if (!it->is_regular_file(e2)) continue;
-        std::string ext = it->path().extension().u8string();
-        for (char& c : ext) c = (char)std::tolower((unsigned char)c);
-        if (ext == ".bak" || ext == ".tmp") continue;   // kept copies, half writes: not the live save
-        best = std::max(best, file_time(it->path().u8string()));
-    }
-    return best;
+    return newest_battery_in(dir, file_time);   // resume_logic.h
 }
 
 bool read_all_text(const std::string& p, std::string* out) {
@@ -80,9 +70,7 @@ std::string pc_id() {
 }
 
 /* ---------- which systems, what the sidecar says ---------- */
-bool resumes(const std::string& sys) {
-    return sys == "n64" || sys == "gb" || sys == "gbc" || sys == "gba" || sys == "nes" || sys == "snes";
-}
+/* resumes(sys): resume_logic.h */
 
 std::string sidecar_path(const std::string& states) { return states + "\\auto.resume.json"; }
 
@@ -107,7 +95,6 @@ Facts facts_for(const hub::GameEntry& e) {
 }
 
 /* ---------- the player's answer, remembered for as long as the newest save stays the same ---------- */
-struct Answer { ResumeChoice c = ResumeChoice::Ask; long long battery_time = 0; };
 std::map<std::string, Answer> g_answers;
 bool g_answers_loaded = false;
 std::string answers_path() { return hub::data_dir() + "resume_choice.txt"; }
@@ -117,34 +104,18 @@ void load_answers() {
     g_answers_loaded = true;
     std::string t;
     if (!read_all_text(answers_path(), &t)) return;
-    size_t p = 0;
-    while (p < t.size()) {
-        size_t e = t.find('\n', p);
-        if (e == std::string::npos) e = t.size();
-        std::string line = t.substr(p, e - p);
-        p = e + 1;
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        size_t a = line.find('\t'), b = a == std::string::npos ? a : line.find('\t', a + 1);
-        if (b == std::string::npos) continue;
-        Answer an;
-        an.c = line.substr(a + 1, b - a - 1) == "this" ? ResumeChoice::ThisPc : ResumeChoice::Newest;
-        an.battery_time = std::atoll(line.c_str() + b + 1);
-        g_answers[line.substr(0, a)] = an;
-    }
+    parse_answers(t, g_answers);
 }
 
 void save_answers() {
-    std::string t;
-    for (auto& kv : g_answers) t += kv.first + "\t" + (kv.second.c == ResumeChoice::ThisPc ? "this" : "newest") + "\t" + std::to_string(kv.second.battery_time) + "\n";
+    std::string t = serialize_answers(g_answers);
     std::ofstream f(fs::u8path(answers_path()), std::ios::binary | std::ios::trunc);
     if (f) f << t;
 }
 
 ResumeChoice answer_for(const std::string& key, long long battery_time) {
     load_answers();
-    auto it = g_answers.find(key);
-    if (it == g_answers.end() || it->second.battery_time != battery_time) return ResumeChoice::Ask;   // a newer save since: ask again
-    return it->second.c;
+    return answer_lookup(g_answers, key, battery_time);
 }
 
 void set_answer(const std::string& key, long long battery_time, ResumeChoice c) {
