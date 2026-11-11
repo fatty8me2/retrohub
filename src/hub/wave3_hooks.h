@@ -37,6 +37,6 @@ void progress_details_section(const hub::GameEntry& e);                         
 void verify_details_section(const hub::GameEntry& e);                                    // details modal, Info tab
 void dumpwarn_details_section(const hub::GameEntry& e);                                  // details modal, top of the About tab: an incomplete Switch dump
 void nuprepair_details_section(const hub::GameEntry& e);                                  // details modal, About tab under the dump warning: a .nup copy RetroHub repairs at launch
-void verify_library_card();                                                              // All Games page, above the grid
+bool verify_library_card(bool compact = false);   // All Games page, above the grid; false when it drew nothing; compact = only the chip + popup (the caller places it)
 
 void save_import_section();                                                              // Saves page
