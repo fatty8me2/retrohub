@@ -108,20 +108,32 @@ bool read_all(const fs::path& p, str* out) {
     *out = s.str();
     return true;
 }
+/* Why the last write_atomic on this thread failed (a Win32 error), so a pull can say "file in use" or "disk full" instead of a vague failure. */
+thread_local DWORD g_write_err = 0;
+/* Crash-safe replace: the bytes go to a temp file that is flushed to disk, then ONE MoveFileExW swaps it in (write-through). On any failure the
+ * old file is left exactly as it was and the temp file is removed. */
 bool write_atomic(const fs::path& dst, const str& data) {
+    g_write_err = 0;
     std::error_code ec;
     fs::create_directories(dst.parent_path(), ec);
     fs::path tmp = dst;
     tmp += ".hubtmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) return false;
-        f.write(data.data(), (std::streamsize)data.size());
-        if (!f) return false;
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) { g_write_err = GetLastError(); return false; }
+    bool ok = true;
+    size_t off = 0;
+    while (ok && off < data.size()) {
+        DWORD n = 0;
+        DWORD chunk = (DWORD)std::min<size_t>(data.size() - off, 1u << 20);
+        if (!WriteFile(h, data.data() + off, chunk, &n, nullptr) || n == 0) ok = false;
+        else off += n;
     }
-    fs::rename(tmp, dst, ec);
-    if (ec) { fs::remove(dst, ec); fs::rename(tmp, dst, ec); }
-    return !ec;
+    if (ok && !FlushFileBuffers(h)) ok = false;
+    if (!ok) g_write_err = GetLastError();
+    CloseHandle(h);
+    if (ok && !MoveFileExW(tmp.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) { g_write_err = GetLastError(); ok = false; }
+    if (!ok) { std::error_code e2; fs::remove(tmp, e2); }
+    return ok;
 }
 str stamp() {
     SYSTEMTIME t; GetLocalTime(&t);
@@ -667,7 +679,13 @@ PullResult pull_file(Api& api, const GameId& g, const str& gkey, const str& path
             if (!inflate_raw(partial, &plain, (size_t)kMaxPlain)) { fs::remove(dl, ec); pr.err = "bad compressed data"; continue; }
         } else plain = partial;
         if ((int64_t)plain.size() != v.size || sha256_hex_of(plain) != v.sha) { fs::remove(dl, ec); pr.err = "checksum mismatch"; continue; }
-        if (!write_atomic(dst, plain)) { pr.err = "cannot write " + path; pr.oc.k = Outcome::Other; return pr; }
+        if (!write_atomic(dst, plain)) {
+            pr.err = "cannot write " + path; pr.oc.k = Outcome::Other;
+            const DWORD we = g_write_err;
+            if (we == ERROR_SHARING_VIOLATION || we == ERROR_LOCK_VIOLATION || we == ERROR_ACCESS_DENIED) pr.oc.code = "file-locked";
+            else if (we == ERROR_DISK_FULL || we == ERROR_HANDLE_DISK_FULL) pr.oc.code = "disk-full";
+            return pr;
+        }
         fs::remove(dl, ec);
         fs::remove(tmp, ec);
         set_file_mtime_unix(dst.u8string(), v.mtime);
@@ -793,7 +811,7 @@ bool merge_prefs_conflict(Api& api, const GameId& g, const str& gkey, const str&
     } else {
         hub::prefs::Prefs incoming;
         hub::prefs::parse(theirs, &incoming);
-        backup_local(g, path, "pc");
+        if (!backup_local(g, path, "pc")) { log_line("could not back up " + path + " before merging; kept this PC's file"); return false; }
         hub::prefs::merge_into_file(vault_dir(), incoming);   // merges with the CURRENT local file under the prefs lock (no race with favorite toggles)
         if (!read_all(local, &merged)) return false;
         ++*pulled;
@@ -906,8 +924,13 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                     }
                     if (it.cls == FileClass::Battery || it.cls == FileClass::Card || !a.has_current) out.conflicts.push_back(conflict_item(it));
                     else if (a.current.mtime > p.lf.mtime) {    // newest wins: cloud
+                        if (!backup_local(g, p.path, "pc")) {   // the copy comes FIRST: nothing is replaced without it
+                            out.pending_bytes += a.current.size;
+                            log_line("could not back up " + gkey + "/" + p.path + " before replacing it; kept the local file");
+                            continue;
+                        }
                         PullResult r = pull_file(api, g, gkey, p.path, a.current, opts.deadline_ms);
-                        if (r.ok) { backup_local(g, p.path, "pc"); base_set(gkey, p.path, a.current.ver, a.current.sha, a.current.size, a.current.mtime); out.pulled++; }
+                        if (r.ok) { base_set(gkey, p.path, a.current.ver, a.current.sha, a.current.size, a.current.mtime); out.pulled++; }
                         else if (!r.oc.ok()) { out.oc = r.oc; return; }
                     } else {                                     // newest wins: this PC, retry against the new base
                         base_set(gkey, p.path, a.current.ver, a.current.sha, a.current.size, a.current.mtime);
@@ -954,8 +977,13 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                     }
                     if ((it.cls == FileClass::Battery || it.cls == FileClass::Card) || !r.has_current) out.conflicts.push_back(conflict_item(it));
                     else if (r.current.mtime > pp->lf.mtime) {
+                        if (!backup_local(g, r.path, "pc")) {   // the copy comes FIRST: nothing is replaced without it
+                            out.pending_bytes += r.current.size;
+                            log_line("could not back up " + gkey + "/" + r.path + " before replacing it; kept the local file");
+                            continue;
+                        }
                         PullResult pr2 = pull_file(api, g, gkey, r.path, r.current, opts.deadline_ms);
-                        if (pr2.ok) { backup_local(g, r.path, "pc"); base_set(gkey, r.path, r.current.ver, r.current.sha, r.current.size, r.current.mtime); out.pulled++; }
+                        if (pr2.ok) { base_set(gkey, r.path, r.current.ver, r.current.sha, r.current.size, r.current.mtime); out.pulled++; }
                     } else {
                         base_set(gkey, r.path, r.current.ver, r.current.sha, r.current.size, r.current.mtime);
                         Item re = it; re.base_ver = r.current.ver; re.act = Act::Push; next.push_back(re);
@@ -1168,7 +1196,7 @@ void update_info(const GameId& g, const WGame* cg, const SyncOut& out, bool pend
                 gi.state = out.oc.code.find("paused") != str::npos || out.oc.code.find("busy") != str::npos || out.oc.code.find("unavailable") != str::npos ? CloudState::Paused : CloudState::Waiting;
                 gi.message = gi.state == CloudState::Paused ? "Cloud saves are paused for now." : "Will try again soon.";
                 break;
-            default: gi.state = CloudState::Waiting; gi.message = "Offline: will sync when you are back."; break;
+            default: gi.state = CloudState::Waiting; gi.message = sync_failure_text(out.oc.status, out.oc.code); break;
         }
         return;
     }
@@ -1740,6 +1768,20 @@ void stop_beat_if_idle() {
 }
 
 } // namespace
+
+/* Calm, short text for a failed pass; specific only where the cause is known (see the tests). */
+std::string sync_failure_text(int status, const std::string& code) {
+    if (code == "file-locked") return "A save file is in use by another program. Will try again soon.";
+    if (code == "disk-full") return "This PC is out of disk space. Will try again soon.";
+    if (status == 0 && code == "deadline") return "Still syncing. Will finish next time.";
+    if (status == 0) return "Offline: will sync when you are back.";
+    if (status == 401 || status == 403) return "Cloud saves need your account to be checked.";
+    if (status == 507) return "Cloud is full: this game stays on this PC.";
+    if (status == 429 || status >= 500) return "The cloud is busy. Will try again soon.";
+    if (status >= 400) return "The cloud could not take this save. Will try again.";
+    return "Will try again soon.";
+}
+bool cloud_write_atomic(const std::string& path_utf8, const std::string& data) { return write_atomic(fs::u8path(path_utf8), data); }
 
 /* ================================================================== public API */
 void cloud_engine_configure(const EngineConfig& cfg) {
