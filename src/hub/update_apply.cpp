@@ -5,6 +5,7 @@
 #include "popup_guard.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <cwchar>
 #include <cwctype>
@@ -364,6 +365,7 @@ std::string status_line(const Status& s) {
     if (s.result == "postponed") return "Update postponed: a game was running";
     if (s.result == "rollback_failed") return "Update failed; some files not restored";
     if (s.result == "interrupted") return "Earlier update interrupted; run Setup";
+    if (s.result == "rolled_back") return "Update could not start; rolled back";
     if (s.result == "failed") return "Update failed: " + (s.reason.empty() ? std::string("a file was not replaced") : short_reason(s.reason));
     return "The last update didn't finish";
 }
@@ -383,6 +385,7 @@ struct Manifest {
     unsigned long pid = 0;
     long long started = 0;
     bool reported = false;
+    bool booting = false;   // the files are all copied and the applier is watching the new RetroHub start (absent in manifests of older appliers)
 };
 
 bool write_manifest(const fs::path& file, const Manifest& m) {
@@ -394,6 +397,7 @@ bool write_manifest(const fs::path& file, const Manifest& m) {
     o.o.push_back({"pid", json::make_int((int64_t)m.pid)});
     o.o.push_back({"started", json::make_int(m.started)});
     o.o.push_back({"reported", json::make_bool(m.reported)});
+    o.o.push_back({"booting", json::make_bool(m.booting)});
     std::error_code ec;
     fs::create_directories(file.parent_path(), ec);
     return winutil::write_file_atomic(u8(file.wstring()), json::stringify(o) + "\n");
@@ -406,6 +410,7 @@ bool read_manifest(const fs::path& file, Manifest* m) {
     if (!json::parse(text, &v) || !v.is_object() || v.str("install").empty()) return false;
     m->install = v.str("install"); m->from = v.str("from"); m->to = v.str("to");
     m->pid = (unsigned long)v.i64("pid"); m->started = v.i64("started"); m->reported = v.boolean("reported");
+    m->booting = v.boolean("booting");
     return true;
 }
 
@@ -423,7 +428,117 @@ bool applier_alive(unsigned long pid) {
     return alive;
 }
 
+/* The list of files an apply created (they did not exist before): one relative path per line, UTF-8. */
+bool write_added(const fs::path& file, const std::vector<std::wstring>& added) {
+    std::string text;
+    for (const std::wstring& a : added) text += u8(a) + "\n";
+    std::error_code ec;
+    fs::create_directories(file.parent_path(), ec);
+    return winutil::write_file_atomic(u8(file.wstring()), text);
+}
+
+void remove_added_files(const std::wstring& install, const fs::path& file) {
+    std::string text;
+    if (!winutil::read_file_w(file.wstring(), &text)) return;
+    size_t p = 0;
+    while (p < text.size()) {
+        size_t e = text.find('\n', p);
+        if (e == std::string::npos) e = text.size();
+        std::string line = text.substr(p, e - p);
+        p = e + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty()) continue;
+        const std::wstring rel = w16(line);
+        if (!is_safe_rel(rel) || is_excluded(rel)) continue;   // never a user file, whatever the list says
+        const std::wstring dest = install + L"\\" + rel;
+        SetFileAttributesW(dest.c_str(), FILE_ATTRIBUTE_NORMAL);
+        if (DeleteFileW(dest.c_str())) alog(L"removed " + rel + L" (it only belonged to the new version)");
+    }
+}
+
+/* Puts every file of the backup back (RetroHub.exe first: if this is cut short the old launcher is already in place and the next
+ * start's recovery finishes the rest). Returns the relative paths that could not be restored. */
+std::vector<std::wstring> restore_backup(const std::wstring& install, const fs::path& backup, int retries, int retry_ms) {
+    std::vector<std::wstring> rels, failed;
+    std::error_code ec;
+    const std::wstring broot = norm(backup.wstring());
+    for (fs::recursive_directory_iterator bi(backup, fs::directory_options::skip_permission_denied, ec), bend; !ec && bi != bend; bi.increment(ec)) {
+        std::error_code e2;
+        if (!bi->is_regular_file(e2)) continue;
+        std::wstring full = bi->path().wstring();
+        if (full.size() <= broot.size() + 1) continue;
+        std::wstring rel = full.substr(broot.size() + 1);
+        if (!is_safe_rel(rel) || is_excluded(rel)) continue;
+        rels.push_back(rel);
+    }
+    std::sort(rels.begin(), rels.end(), [](const std::wstring& a, const std::wstring& b) {
+        const bool ae = lower(a) == L"retrohub.exe", be = lower(b) == L"retrohub.exe";
+        return ae != be ? ae : a < b;
+    });
+    for (const std::wstring& rel : rels) {
+        const std::wstring from = broot + L"\\" + rel, dest = install + L"\\" + rel;
+        if (file_exists(dest) && identical_files(from, dest)) continue;
+        make_parent(dest);
+        if (copy_retry(from, dest, retries, retry_ms)) alog(L"boot rollback: restored " + rel);
+        else { alog(L"boot rollback: could not restore " + rel); failed.push_back(rel); }
+    }
+    return failed;
+}
+
 } // namespace
+
+std::wstring boot_ok_path(const std::wstring& install) { return norm(install) + L"\\updates\\boot_ok"; }
+std::wstring bad_version_path(const std::wstring& install) { return norm(install) + L"\\updates\\bad_version.json"; }
+
+bool boot_marker_matches(const std::wstring& marker, const std::string& expect) {
+    std::string text;
+    if (strip_v(expect).empty() || !winutil::read_file_w(marker, &text)) return false;
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ')) text.pop_back();
+    return strip_v(text) == strip_v(expect);
+}
+
+bool bad_version_write(const std::wstring& install, const BadVersion& b) {
+    json::Value o = json::make_object();
+    o.o.push_back({"v", json::make_int(1)});
+    o.o.push_back({"version", json::make_string(b.version)});
+    o.o.push_back({"from", json::make_string(b.from)});
+    o.o.push_back({"at", json::make_int(b.at ? b.at : unix_now())});
+    o.o.push_back({"reason", json::make_string(b.reason)});
+    o.o.push_back({"exit_code", json::make_int((int64_t)b.exit_code)});
+    const std::wstring path = bad_version_path(install);
+    std::error_code ec;
+    fs::create_directories(fs::path(path).parent_path(), ec);
+    return winutil::write_file_atomic(u8(path), json::stringify(o) + "\n");
+}
+
+bool bad_version_read(const std::wstring& install, BadVersion* out) {
+    std::string text;
+    if (!winutil::read_file_w(bad_version_path(install), &text)) return false;
+    json::Value v;
+    if (!json::parse(text, &v) || !v.is_object() || v.str("version").empty()) return false;
+    BadVersion b;
+    b.version = v.str("version"); b.from = v.str("from"); b.reason = v.str("reason"); b.at = v.i64("at"); b.exit_code = (long)v.i64("exit_code");
+    if (out) *out = b;
+    return true;
+}
+
+void note_boot_ok() {
+    static std::atomic<bool> done{false};
+    if (done.exchange(true)) return;
+    try {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (!argv) return;
+        std::wstring marker, version;
+        for (int i = 1; i + 2 < argc; i++)
+            if (wcscmp(argv[i], L"--boot-ok") == 0) { marker = argv[i + 1]; version = argv[i + 2]; break; }
+        LocalFree(argv);
+        if (marker.empty() || version.empty()) return;
+        std::error_code ec;
+        fs::create_directories(fs::path(marker).parent_path(), ec);
+        winutil::write_file_atomic(u8(marker), u8(version) + "\n");
+    } catch (...) {}
+}
 
 Result apply_files(const Options& o) {
     Result r;
@@ -509,7 +624,9 @@ Result apply_files(const Options& o) {
         }
         return r;
     }
-    fs::remove_all(fs::path(backup), ec);
+    for (const std::wstring& rel : installed) if (!backed.count(rel)) r.added.push_back(rel);
+    r.backup_dir = backup;
+    if (!o.keep_backup) fs::remove_all(fs::path(backup), ec);
     r.ok = true;
     return r;
 }
@@ -538,6 +655,14 @@ RecoverReport recover_interrupted(const std::wstring& installIn, const std::stri
         const fs::path backup = dir / L"backup";
         if (!fs::exists(backup, ec)) { fs::remove_all(dir, ec); ++rep.cleaned; continue; }
         const std::string cur = strip_v(current_version), from = strip_v(m.from), to = strip_v(m.to);
+        if (m.booting && !to.empty() && (cur == to || boot_marker_matches(boot_ok_path(install), to))) {
+            /* The applier that was watching the new RetroHub start is gone, and the new version is the one running (or it wrote its boot
+             * marker): it is healthy. The backup is only clutter now. NEVER restore it: that would put an old version over a newer one. */
+            ++rep.healthy;
+            alog(L"recovery: leftover " + dir.wstring() + L" belongs to a started " + w16(m.to) + L"; backup dropped, nothing restored");
+            fs::remove_all(dir, ec);
+            continue;
+        }
         if (from.empty() || cur.empty() || from != cur) {
             /* The install is no longer on the version this backup came from (an update or reinstall landed since, or the new RetroHub.exe
              * was already in place when the apply stopped): putting old files back would downgrade or mix versions. Never restore. */
@@ -565,6 +690,7 @@ RecoverReport recover_interrupted(const std::wstring& installIn, const std::stri
             if (copy_retry(full, dest, 3, 300)) { ++restored; alog(L"recovery: restored " + rel); }
             else { ++failed; alog(L"recovery: could not restore " + rel); }
         }
+        if (failed == 0 && m.booting) remove_added_files(install, dir / L"added.txt");   // files only the new version brought
         if (failed == 0) {
             fs::remove_all(dir, ec);
             if (restored > 0) {
@@ -603,7 +729,8 @@ void update_display_version(const Options& o) {
     RegCloseKey(k);
 }
 
-void relaunch(const Options& o, bool force_quiet) {
+/* Starts <install>\RetroHub.exe. Returns its process handle (the caller closes it) or nullptr when it could not be started. */
+HANDLE relaunch(const Options& o, bool force_quiet, const std::wstring& extra_args = std::wstring()) {
     std::wstring exe = norm(o.install) + L"\\RetroHub.exe";
     std::wstring cmd = L"\"" + exe + L"\"", dir = norm(o.install);
     {   /* Only when a game is actually active: the hub told us (--game-active: any session it knew of when the update started), we just
@@ -614,14 +741,48 @@ void relaunch(const Options& o, bool force_quiet) {
                              (qs == QUNS_BUSY || qs == QUNS_RUNNING_D3D_FULL_SCREEN || qs == QUNS_PRESENTATION_MODE);
         if (hubguard::start_quiet(force_quiet, hubguard::game_active(o.game_active, os_busy))) cmd += L" --background";
     }
+    cmd += extra_args;
+    const DWORD base = o.relaunch_no_window ? CREATE_NO_WINDOW : 0;
     STARTUPINFOW si{}; si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
     std::wstring c1 = cmd, c2 = cmd;
-    if (CreateProcessW(nullptr, c1.data(), nullptr, nullptr, FALSE, CREATE_BREAKAWAY_FROM_JOB, nullptr, dir.c_str(), &si, &pi) ||
-        CreateProcessW(nullptr, c2.data(), nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
-        CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+    if (CreateProcessW(nullptr, c1.data(), nullptr, nullptr, FALSE, base | CREATE_BREAKAWAY_FROM_JOB, nullptr, dir.c_str(), &si, &pi) ||
+        CreateProcessW(nullptr, c2.data(), nullptr, nullptr, FALSE, base, nullptr, dir.c_str(), &si, &pi)) {
+        CloseHandle(pi.hThread);
         alog(L"relaunched RetroHub");
-    } else alog(L"could not relaunch RetroHub");
+        return pi.hProcess;
+    }
+    alog(L"could not relaunch RetroHub");
+    return nullptr;
+}
+
+void relaunch_and_forget(const Options& o, bool force_quiet) {
+    if (HANDLE h = relaunch(o, force_quiet)) CloseHandle(h);
+}
+
+enum class BootOutcome { Started, ExitedClean, Crashed, Unconfirmed };
+
+/* Waits for the new RetroHub's boot marker. Never ends any process. `proc` is the new RetroHub's handle (nullptr = it could not even be
+ * started). *exit_code gets its exit code when it ended. */
+BootOutcome watch_boot(const Options& o, HANDLE proc, const std::wstring& marker, const std::string& version, DWORD* exit_code) {
+    if (!proc) { *exit_code = 0xFFFFFFFFu; return BootOutcome::Crashed; }
+    const ULONGLONG t0 = GetTickCount64();
+    bool slow_logged = false;
+    for (;;) {
+        if (boot_marker_matches(marker, version)) return BootOutcome::Started;
+        const DWORD w = WaitForSingleObject(proc, 250);
+        if (w == WAIT_OBJECT_0) {
+            GetExitCodeProcess(proc, exit_code);
+            if (boot_marker_matches(marker, version)) return BootOutcome::Started;   // it wrote the marker and then ended
+            return *exit_code == 0 ? BootOutcome::ExitedClean : BootOutcome::Crashed;
+        }
+        const ULONGLONG el = GetTickCount64() - t0;
+        if (!slow_logged && el >= (ULONGLONG)o.boot_wait_secs * 1000ull) {
+            slow_logged = true;
+            alog(L"the new RetroHub has not confirmed its start after " + std::to_wstring(o.boot_wait_secs) + L" s but is still running; waiting (it is not touched)");
+        }
+        if (el >= (ULONGLONG)o.boot_cap_secs * 1000ull) return BootOutcome::Unconfirmed;
+    }
 }
 
 } // namespace
@@ -645,20 +806,24 @@ int run(const Options& o) {
         alog(L"POSTPONED: " + blocker + L" is still running after " + std::to_wstring(o.wait_games_secs) + L" s; nothing was changed and it was not touched");
         Status st; st.result = "postponed"; st.version = u8(o.version); st.reason = "a game was still running"; st.detail = u8(blocker); st.at = unix_now();
         write_status(status_path, st);
-        if (o.relaunch) relaunch(o, /*force_quiet=*/true);
+        if (o.relaunch) relaunch_and_forget(o, /*force_quiet=*/true);
         return 3;
     }
 
     Options opt = o;
     const bool gen_backup = opt.backup.empty();
+    /* Watch the new RetroHub start (and roll back if it cannot) only when there is a new RetroHub to watch: it is relaunched, the release is
+     * named (the marker carries the version), and the backup is ours (gen_backup). Anything else keeps the old behaviour. */
+    const bool watch = gen_backup && o.relaunch && !strip_v(u8(o.version)).empty() && o.boot_cap_secs > 0;
+    opt.keep_backup = watch;
     fs::path bk_parent;
+    Manifest man;
     if (gen_backup) {
         const std::wstring base = o.tmp_root.empty() ? (temp_dir().empty() ? install + L"\\updates" : temp_dir()) : norm(o.tmp_root);
         bk_parent = fs::path(base) / (L"RetroHub-update-" + std::to_wstring(GetCurrentProcessId()));
         opt.backup = (bk_parent / L"backup").wstring();
-        Manifest m;
-        m.install = u8(install); m.from = u8(o.from_version); m.to = u8(o.version); m.pid = GetCurrentProcessId(); m.started = unix_now();
-        write_manifest(bk_parent / L"manifest.json", m);
+        man.install = u8(install); man.from = u8(o.from_version); man.to = u8(o.version); man.pid = GetCurrentProcessId(); man.started = unix_now();
+        write_manifest(bk_parent / L"manifest.json", man);
     }
     Result r = apply_files(opt);
     /* The staged files stay unless the apply worked: a retry reuses them (updater.cpp checks updates\staged.json) and needs no download. */
@@ -668,7 +833,7 @@ int run(const Options& o) {
         update_display_version(o);
         DeleteFileW(status_path.c_str());   // an older failure note no longer applies
         DeleteFileW((install + L"\\updates\\staged.json").c_str());
-        if (gen_backup) fs::remove_all(bk_parent, ec);
+        if (gen_backup && !watch) fs::remove_all(bk_parent, ec);
     } else {
         alog(L"update failed: " + r.error);
         Status st; st.version = u8(o.version); st.detail = u8(r.error); st.at = unix_now();
@@ -689,8 +854,70 @@ int run(const Options& o) {
         /* No MessageBox here: this runs with the user possibly in a game, and a modal box would land on top of it. The note above is shown
          * once in the bell on the next start; the previous version is reopened (quietly, see relaunch). */
     }
-    if (o.relaunch) relaunch(o, /*force_quiet=*/false);
-    return r.ok ? 0 : 1;
+    if (!r.ok) {
+        if (o.relaunch) relaunch_and_forget(o, /*force_quiet=*/false);
+        return 1;
+    }
+    if (!o.relaunch) return 0;
+    if (!watch) { relaunch_and_forget(o, /*force_quiet=*/false); return 0; }
+
+    /* ---- boot check ---- */
+    const std::wstring marker = boot_ok_path(install);
+    const std::string want = strip_v(u8(o.version));
+    write_added(bk_parent / L"added.txt", r.added);
+    man.booting = true;                       // from here the backup is the way back; recovery reads this
+    write_manifest(bk_parent / L"manifest.json", man);
+    DeleteFileW(marker.c_str());              // a marker from an earlier boot must not count
+    HANDLE proc = relaunch(o, /*force_quiet=*/false, L" --boot-ok \"" + marker + L"\" \"" + w16(want) + L"\"");
+    DWORD code = 0;
+    const BootOutcome bo = watch_boot(o, proc, marker, want, &code);
+    if (proc) CloseHandle(proc);
+    if (bo == BootOutcome::Started) {
+        alog(L"the new RetroHub started; the backup is deleted");
+        fs::remove_all(bk_parent, ec);
+        return 0;
+    }
+    if (bo == BootOutcome::ExitedClean) {
+        alog(L"the new RetroHub exited normally before confirming (a second instance handing over, or it was closed); the update is kept");
+        fs::remove_all(bk_parent, ec);
+        return 0;
+    }
+    if (bo == BootOutcome::Unconfirmed) {
+        alog(L"the new RetroHub is still running without a boot marker after " + std::to_wstring(o.boot_cap_secs) + L" s; not watching any longer, nothing is changed (backup kept; the next start cleans it up)");
+        return 4;
+    }
+
+    /* The new RetroHub is gone and never confirmed: it did not start. Roll back, but never while something runs from the install folder
+     * (a game): wait for it, like the apply itself did. */
+    alog(L"the new RetroHub did not start (exit code " + std::to_wstring(code) + L"); rolling back to " + o.from_version);
+    {
+        std::wstring why; Options nopid = o; nopid.pid = 0;
+        if (wait_for_old_processes(nopid, &why) == WaitOutcome::TimedOut) {
+            alog(L"ROLLBACK POSTPONED: " + why + L" is running; nothing was touched. The backup is kept in " + bk_parent.wstring());
+            Status st; st.result = "rollback_failed"; st.version = u8(o.version); st.reason = "a game was still running"; st.detail = u8(why); st.at = unix_now();
+            st.backup = u8(bk_parent.wstring());
+            write_status(status_path, st);
+            return 6;
+        }
+    }
+    const std::vector<std::wstring> failed = restore_backup(install, bk_parent / L"backup", o.restore_retries, o.restore_retry_ms);
+    BadVersion bad; bad.version = u8(o.version); bad.from = u8(o.from_version); bad.reason = "did not start"; bad.exit_code = (long)code; bad.at = unix_now();
+    bad_version_write(install, bad);   // before anything else can fail: the updater must not offer this release again
+    Status st; st.version = u8(o.version); st.at = unix_now();
+    if (!failed.empty()) {
+        st.result = "rollback_failed"; st.reason = "some files could not be put back"; st.detail = u8(failed[0]); st.backup = u8(bk_parent.wstring());
+        write_status(status_path, st);
+        alog(L"BACKUP KEPT in " + bk_parent.wstring() + L": " + std::to_wstring(failed.size()) + L" file(s) could not be put back");
+        relaunch_and_forget(o, /*force_quiet=*/false);
+        return 6;
+    }
+    remove_added_files(install, bk_parent / L"added.txt");
+    { Options back = o; back.version = o.from_version; update_display_version(back); }
+    st.result = "rolled_back"; st.reason = "the new version could not start"; st.detail = "exit code " + std::to_string((unsigned long)code);
+    write_status(status_path, st);
+    fs::remove_all(bk_parent, ec);
+    relaunch_and_forget(o, /*force_quiet=*/false);
+    return 5;
 }
 
 bool try_apply_mode(int* exit_code) {
@@ -716,6 +943,9 @@ bool try_apply_mode(int* exit_code) {
             else if (a == L"--retry-ms" && more) o.retry_ms = std::max(0, _wtoi(argv[++i]));
             else if (a == L"--wait-secs" && more) o.wait_games_secs = (unsigned)std::max(0, _wtoi(argv[++i]));
             else if (a == L"--hub-wait-secs" && more) o.hub_wait_secs = (unsigned)std::max(0, _wtoi(argv[++i]));
+            else if (a == L"--boot-wait-secs" && more) o.boot_wait_secs = (unsigned)std::max(0, _wtoi(argv[++i]));
+            else if (a == L"--boot-cap-secs" && more) o.boot_cap_secs = (unsigned)std::max(0, _wtoi(argv[++i]));
+            else if (a == L"--relaunch-no-window") o.relaunch_no_window = true;
             else if (a == L"--started-marker" && more) o.started_marker = argv[++i];
             else if (a == L"--backup-dir" && more) o.backup = argv[++i];
             else if (a == L"--tmp-root" && more) o.tmp_root = argv[++i];
