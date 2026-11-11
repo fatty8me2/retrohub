@@ -392,3 +392,11 @@ itself is `docs/HOOKSHOT.md`). Hookshot is made on the player's PC from their ow
   this time, or cancel. Nothing is started until the decoder is there.
 - **Offline only.** Online, room and netplay launches always use Lichii. Hookshot has no runner control channel, so the quick menu offers only the generic
   items (named "Hookshot"); the Lichii exit-hang watch does not apply to it. Hookshot takes `HOS_FULLSCREEN=1` from the Fullscreen setting.
+
+# When an emulator crashes
+
+Every external emulator RetroHub starts (Azahar, Cemu, Dolphin, PCSX2, PPSSPP, Lichii, Fritchii) is watched for its exit code (`launch.cpp` `focus_game`). If the main process ends with a Windows fault code, RetroHub records it and shows a calm card the next time the hub window is in front (it never opens over a running game; same rule as the update prompt, `prompt_allowed()`): "<Emulator> stopped unexpectedly while running <game>."
+
+- **What counts as a crash** (`src/hub/crash_note.cpp`, tested by `hub_crashnote_test`): any NTSTATUS error code `0xC0000000-0xCFFFFFFF` (access violation `0xC0000005`, fail-fast `0xC0000409`, stack overflow `0xC00000FD`, illegal instruction `0xC000001D`, heap corruption `0xC0000374` ...), plus `0x80000001-4` (breakpoint / abort), `0xE06D7363` and `0xE0434352`. Not a crash: exit code 0 and ordinary small codes, `0xC000013A` (Ctrl+C / console closed) and `0x40010004`. Exit code 0 is also what the Lichii exit-hang watch gives when RetroHub ends the emulator's job itself, so that case is never reported.
+- **Buttons:** "Open crash file folder" (only when Windows wrote `%LOCALAPPDATA%\CrashDumps\<exe>.<pid>.dmp`, which needs Windows' LocalDumps setting; RetroHub creates nothing), "Open emulator log" (Lichii / Fritchii only: `<emulator folder>\user\log`), "Copy details" (emulator and pinned version, exit code, time, dump path) and "Dismiss". Folders open only when the button is clicked.
+- **Limits:** the exit code is the one of the process RetroHub started (a crash in a child the emulator hands the game to is not seen). Hookshot, the built-in runners (retrorun / n64run) and the native Smash port are not covered. The note is kept in memory for the current RetroHub run only.
