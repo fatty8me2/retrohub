@@ -210,6 +210,7 @@ void apply_game_settings(Kind k, const std::string& install_dir, const hub::gs::
 struct CemuOwnState {
     bool fs_touched = false;  std::string fs_orig, fs_written;   // fs_orig "" = the tag was absent
     bool gp_stripped = false; std::string gp_block;               // the user's <GraphicPack>...</GraphicPack> text
+    std::string gp_displaced;                                    // managed Cemu: a parked block a newer list replaced (the caller keeps it in a dated file)
 };
 std::string cemu_fullscreen_apply(const std::string& settings_xml, bool fullscreen);     // sets <fullscreen> (adds it when missing)
 std::string cemu_fullscreen_value(const std::string& settings_xml);                      // "true" / "false" / ""
@@ -221,6 +222,7 @@ bool prepare_cemu_own_settings(const std::string& user_data, const hub::gs::Valu
 bool revert_cemu_own_settings(const std::string& user_data);                              // false when there was nothing to revert
 /* Managed Cemu graphic packs off/on without losing the selection (see emulators.cpp). `in` is the settings.xml text, `st` the parked block. */
 std::string cemu_managed_gp_apply(const std::string& settings_xml, bool packs_on, CemuOwnState* st);
+bool cemu_gp_state_parse(const std::string& text, CemuOwnState* st);   // false for an incomplete / truncated state file
 bool apply_cemu_managed_settings(const std::string& portable_dir, const hub::gs::Values& v);   // settings.xml + retrohub-cemu-gp-state.txt beside it
 /* Per-game Cemu profile (gameProfiles\<title id>.ini in the user data dir; Cemu layers it over its shipped gameProfiles\default\).
  * Only keys the game's RetroHub settings set are written (wiiu.cpu_mode); the previous file is kept as <file>.retrohub-orig

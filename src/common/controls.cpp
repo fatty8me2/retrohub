@@ -733,8 +733,6 @@ bool from_json(const std::string& json, Store* out) {
 /* ------------------------------------------------------------------ files */
 
 AnalogOut clamp_analog(AnalogTarget target, double deadzone, double sensitivity) {
-    if (deadzone != deadzone) deadzone = 0.08;
-    if (sensitivity != sensitivity) sensitivity = 1.0;
     AnalogOut o;
     o.deadzone = std::min(0.95, std::max(0.0, deadzone));
     switch (target) {
