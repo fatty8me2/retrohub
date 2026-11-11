@@ -225,11 +225,11 @@ int main() {
         CHECK(!feature_row_visible(R, true, false, false, true) && !feature_row_visible(C, true, false, false, true));   // runner said unsupported
         CHECK(feature_cmd(R) == runctl::Cmd::Rewind && feature_cmd(F) == runctl::Cmd::Shader && feature_cmd(C) == runctl::Cmd::Clip);
         CHECK(ack_means_unsupported("unsupported") && ack_means_unsupported("Unsupported") && ack_means_unsupported("unknown command") && ack_means_unsupported("Rewind is not available for this game"));
-        CHECK(!ack_means_unsupported("") && ack_means_unsupported("Hardcore: rewind is off") && !ack_means_unsupported("Instant replay is off. Turn it on in RetroHub Settings.") && !ack_means_unsupported("Not available in online sessions"));
+        CHECK(!ack_means_unsupported("") && !ack_means_unsupported("Hardcore: rewind is off") && !ack_means_unsupported("Instant replay is off. Turn it on in RetroHub Settings.") && !ack_means_unsupported("Not available in online sessions"));
         FeatureHide h;
         CHECK(!h.is(R) && !h.is(F) && !h.is(C));
-        CHECK(!h.on_fail(runctl::Cmd::Rewind, "Not available in online sessions") && !h.is(R));
-        CHECK(h.on_fail(runctl::Cmd::Rewind, "Hardcore: rewind is off") && h.is(R)); h.reset();
+        CHECK(!h.on_fail(runctl::Cmd::Clip, "Not available in online sessions") && !h.is(C));
+        CHECK(std::string(kRewindHint).find("LT + View") != std::string::npos);   // the hint names the real retrorun hold (no Rewind row)
         CHECK(h.on_fail(runctl::Cmd::Rewind, "Rewind is not available for this game") && h.is(R) && !h.is(F) && !h.is(C));
         CHECK(!h.on_fail(runctl::Cmd::Speed, "unsupported"));   // not a row of ours
         CHECK(h.on_fail(runctl::Cmd::Clip, "unsupported") && h.is(C));

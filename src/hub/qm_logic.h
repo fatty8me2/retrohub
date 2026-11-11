@@ -304,6 +304,8 @@ struct CmdPacer {
  * A row is HIDDEN (not just disabled) when it cannot work; a row the runner answered "unsupported" for stays hidden for the session. */
 enum class QmFeature { Rewind = 0, Filter = 1, Clip = 2 };
 constexpr int kQmFeatures = 3;
+/* Rewind has no row: retrorun rewinds while LT + View is HELD (fixed binding), so the menu only says so. Not offered in RetroAchievements hardcore. */
+constexpr const char* kRewindHint = "To rewind, hold LT + View while you play. Not available in RetroAchievements hardcore.";
 inline runctl::Cmd feature_cmd(QmFeature f) { return f == QmFeature::Rewind ? runctl::Cmd::Rewind : f == QmFeature::Filter ? runctl::Cmd::Shader : runctl::Cmd::Clip; }
 inline bool feature_row_visible(QmFeature f, bool has_ctl, bool online, bool is_n64, bool runner_unsupported) {
     if (!has_ctl || runner_unsupported) return false;
@@ -315,8 +317,7 @@ inline bool feature_row_visible(QmFeature f, bool has_ctl, bool online, bool is_
 inline bool ack_means_unsupported(const std::string& msg) {
     std::string m;
     for (char c : msg) m += (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
-    return m == "unsupported" || m == "unknown command" || m == "not supported for this system" || m.find("is not available for this game") != std::string::npos ||
-           m.find("hardcore") != std::string::npos;   // RetroAchievements hardcore turns rewind off for the whole session
+    return m == "unsupported" || m == "unknown command" || m == "not supported for this system" || m.find("is not available for this game") != std::string::npos;
 }
 struct FeatureHide {
     bool hidden[kQmFeatures] = {false, false, false};

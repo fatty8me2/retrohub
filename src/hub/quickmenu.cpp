@@ -227,7 +227,6 @@ bool g_pending_close = true;                   // close the menu and return to t
 int g_pending_slot = -2;
 runctl::Cmd g_pending_cmd = runctl::Cmd::None;  // the command the pending ack belongs to (a failed rewind / filter / clip ack can hide its row)
 hubqm::FeatureHide g_hide;                      // rows the runner answered "unsupported" for (this game session)
-bool g_rewind_on = false, g_rewind_prev = false; // the Rewind row (latched on / off in the runner)
 hubqm::OverwriteConfirm g_ovw;                  // save page: replacing a used slot takes two presses
 double g_pending_at = 0;
 std::string g_sys, g_key, g_title;
@@ -252,7 +251,7 @@ void send(runctl::Cmd c, int slot, const std::string& done_text, bool close) {
     enqueue_cmd(cm, 2);
 }
 
-/* Rewind / screen filter / clip rows: the menu stays open; the toast is `done_text`, or the runner's own answer when that is empty. */
+/* Screen filter / clip rows: the menu stays open; the toast is `done_text`, or the runner's own answer when that is empty. */
 bool send_feature(runctl::Command cm, const std::string& done_text, bool resume_first, bool close = false) {   // false: not queued
     if (g_e2e) {
         if (resume_first) resume_for_action();
@@ -832,14 +831,12 @@ void check_ack() {
             push_toast(g_pending_what.empty() ? a.msg : g_pending_what, COL_GOOD, 3.0);
             if (g_pending_close) { g_page = QPage::Main; g_close_why = "slot action"; ImGui::CloseCurrentPopup(); qm_focus_game(); }
         } else {
-            if (g_pending_cmd == runctl::Cmd::Rewind) g_rewind_on = g_rewind_prev;   // the runner did not change it
             if (g_hide.on_fail(g_pending_cmd, a.msg)) { qm_log("row hidden: the runner answered \"" + a.msg + "\""); push_toast("That is not available for this game.", COL_WARN, 4.0); }
             else push_toast(a.msg.empty() ? std::string("That did not work.") : a.msg, COL_WARN, 5.0);
         }
         g_pending_cmd = runctl::Cmd::None;
     } else if (ImGui::GetTime() - g_pending_at > 20.0) {
         g_pending = 0;
-        if (g_pending_cmd == runctl::Cmd::Rewind) g_rewind_on = g_rewind_prev;   // never show "Rewinding" when the runner may not be
         g_pending_cmd = runctl::Cmd::None;
         push_toast("The game did not answer.", COL_WARN, 5.0);
     }
@@ -989,7 +986,7 @@ static void qm_session_tick(const hub::GameEntry* e) {
         g_ext_dirty = true;
         g_dm_uid.clear(); g_dm_name.clear(); g_chat_buf[0] = 0; g_chat_to_dm = false;
         g_perf_sent = 0; g_perf_t0 = GetTickCount64();
-        g_hide.reset(); g_rewind_on = g_rewind_prev = false; g_ovw.cancel(); g_pending_cmd = runctl::Cmd::None;
+        g_hide.reset(); g_ovw.cancel(); g_pending_cmd = runctl::Cmd::None;
         g_cmdq.clear(); g_pacer = hubqm::CmdPacer(); g_pause_manual = false; g_pause_sent = false; g_ho_wait = false; g_ho_seq = 0; g_cd_name.clear();
     }
     if (g_perf_sent < 2 && e && A.st.perf_overlay && ctl_ready() && runner_supports_overlay(e)) {   // the runner ignores commands written before it started polling: send at +4 s and again at +12 s
@@ -1410,23 +1407,13 @@ static void qm_body() {
         if (menu_button("Load state", !online, ui::Icon::Refresh)) { g_page = QPage::Load; g_nav.sel.clear(); }
         if (online) text_wrapped_disabled("Save states are off in online games: everyone has to stay in step.");
         if (menu_button("Take a screenshot", true, ui::Icon::Search)) send(runctl::Cmd::Screenshot, 0, "Screenshot saved", true);
-        {   // Rewind, screen filter, instant-replay clip: only where the runner can do them (qm_logic.h feature_row_visible)
+        {   // Rewind hint (no row), screen filter, instant-replay clip: only where the runner can do them (qm_logic.h feature_row_visible)
             const bool runner = g_shot_fake || g_e2e || (e && runner_has_ctl(*e));
             const bool n64 = e && e->system == hub::System::N64;
             const bool e2e_off = g_e2e && !std::getenv("HUB_QM_E2E_FEATURES");   // the e2e scenarios count rows: the stand-in shows none unless asked
             auto vis = [&](hubqm::QmFeature f) { return !e2e_off && hubqm::feature_row_visible(f, runner, online, n64, g_hide.is(f)); };
-            const float fw2 = ImGui::GetContentRegionAvail().x;
-            if (vis(hubqm::QmFeature::Rewind)) {
-                if (stepper_row("rewind", "Rewind", g_rewind_on ? "Rewinding" : "Off", -1.f, g_pending == 0, fw2)) {
-                    // Rewind runs on the live game, so turning it on resumes the game and closes the menu (like the other action rows); the
-                    // runner stops by itself at the start of its history. Open the menu again and pick this row to stop it sooner.
-                    const bool want = !g_rewind_on;
-                    runctl::Command c; c.cmd = runctl::Cmd::Rewind; c.value = want ? 1 : 0;
-                    const bool queued = send_feature(c, want ? "Rewinding. Open this menu and pick Rewind again to stop." : "Rewind off", want, want);
-                    if (queued) { g_rewind_prev = g_rewind_on; g_rewind_on = want; }   // only when the command really went out
-                }
-                if (g_rewind_on) text_wrapped_disabled("The game runs backwards until you turn this off.");
-            }
+            // No latching Rewind row: rewind is a hold in retrorun (LT + View, main.cpp "hold LT + View ... to rewind"; fixed, not configurable).
+            if (vis(hubqm::QmFeature::Rewind)) text_wrapped_disabled(hubqm::kRewindHint);
             if (vis(hubqm::QmFeature::Filter) && menu_button("Next screen filter", true, ui::Icon::Refresh)) {
                 runctl::Command c; c.cmd = runctl::Cmd::Shader; c.text = "next";
                 send_feature(c, "", false);   // the toast is the runner's answer, e.g. "Filter: CRT"
