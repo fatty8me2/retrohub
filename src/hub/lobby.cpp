@@ -280,7 +280,7 @@ void lobby_tick() {
                 std::string c = A.prev_code, why = A.lobby.status();
                 bool h = A.prev_host;
                 A.prev_code.clear();
-                set_notice(why + " - going back to your previous room.");
+                set_notice(hublaunch::back_to_previous_room_text(why));
                 enter_room(h, c);
                 return;
             }
@@ -407,8 +407,8 @@ void lobby_tick() {
         } else if (kind == "np_fail") {
             if (is_host()) {   // the guest's text is written for the guest: show the host a third-person version
                 const std::string line = hublaunch::host_view_of_guest_fail(member_name(from), j.str("reason"));
-                set_notice(line, 12.0);
-                gc_host_guest_failed(line);
+                set_notice(line, 12.0);   // the third-person line is for THIS player only
+                gc_host_guest_failed(member_name(from) + " can't start: " + j.str("reason"));   // goes to the guests as np_abort: byte-identical to v1.42.0
             }
         } else if (kind == "np_gc_ready") {
             autotest_log("np_gc_ready from " + std::to_string(from) + " guest_wait=" + std::to_string((int)GCO.guest_wait));

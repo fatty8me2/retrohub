@@ -74,6 +74,49 @@ static void wording() {
     CHECK(contains(host_view_of_guest_fail("Mia", online_unavailable_wire()), "isn't available"));
 }
 
+static void sent_strings_pinned() {   // what goes to other players must stay byte-identical to v1.42.0
+    using namespace hublaunch;
+    CHECK(core_missing_wire("sameboy") == "Emulator core 'sameboy' not found (cores folder).");
+    CHECK(std::string(core_missing_wire_nds()) == "Emulator core for Nintendo DS not found (cores folder).");
+    CHECK(std::string(start_failed_wire()) == "The game did not start on this PC.");
+    CHECK(std::string(online_unavailable_wire()) == "Online play is not available for this system yet.");
+    CHECK(remote_play_failed_wire(1225) == "Could not start remote play (streamrun error 1225).");
+    CHECK(std::string(remote_play_missing_wire()) == "Remote play isn't installed (streamrun.exe is missing) - update RetroHub.");
+    CHECK(std::string(ps1_core_missing_wire()) == "The PlayStation emulator core (beetle_psx_libretro.dll) was not found in the cores folder.");
+    CHECK(std::string(ps1_bios_missing_wire()) == "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Playing.");
+    // the shown PS1 BIOS text goes out as the old one; unchanged texts go out unchanged
+    CHECK(wire_for(std::string("PlayStation online needs a BIOS file (scph5501.bin) on every PC, or OpenBIOS on every PC. Set it up in Settings > Playing. ") + ps1_bios_own_text()) == ps1_bios_missing_wire());
+    CHECK(wire_for("RetroHub can't find the game file for X. Open it in your Library to point RetroHub at it again.") == "RetroHub can't find the game file for X. Open it in your Library to point RetroHub at it again.");
+    CHECK(wire_for("The host started a game you don't have.") == "The host started a game you don't have.");
+}
+
+static void starting_text_phase() {
+    using namespace hublaunch;
+    LaunchStates run;   // a GameCube session whose Dolphin is up and a remote-play stream: busy (no second launch) but NOT "Starting..."
+    run.gc_active = true; run.gc_forwarder = true; run.gc_process_alive = true; run.game_running = true; run.rp_stream = true;
+    CHECK(launch_busy(run, 100000, 0));
+    CHECK(!starting_phase(run));
+    CHECK(!starting_text_active(run, 100000, 0));
+    CHECK(!starting_text_active(run, 100000, 99000));      // debounce does not apply once the game process exists
+    LaunchStates gc; gc.gc_active = true;                   // Dolphin not up yet
+    CHECK(starting_text_active(gc, 100000, 0));
+    LaunchStates n3; n3.np3_pending = true;
+    CHECK(starting_text_active(n3, 100000, 0));
+    LaunchStates rp; rp.rp_pending = true; rp.rp_stream = true; rp.game_running = true;   // Cemu started, stream not attached yet
+    CHECK(starting_text_active(rp, 100000, 0));
+    LaunchStates idle;
+    CHECK(starting_text_active(idle, 100000, 98000));      // 5 s window, no process yet
+    CHECK(!starting_text_active(idle, 100000, 0));
+}
+
+static void previous_room() {
+    using namespace hublaunch;
+    CHECK(back_to_previous_room_text("The room is full") == "The room is full. Going back to your previous room.");
+    CHECK(back_to_previous_room_text("The room is full.") == "The room is full. Going back to your previous room.");
+    CHECK(back_to_previous_room_text("No such room!  ") == "No such room! Going back to your previous room.");
+    CHECK(back_to_previous_room_text("") == "Going back to your previous room.");
+}
+
 static void files() {
     namespace fs = std::filesystem;
     using namespace hublaunch;
@@ -100,6 +143,9 @@ int main() {
     busy();
     host_view();
     wording();
+    sent_strings_pinned();
+    starting_text_phase();
+    previous_room();
     files();
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("ok\n");
