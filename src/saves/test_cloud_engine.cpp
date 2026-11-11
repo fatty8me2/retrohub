@@ -279,6 +279,42 @@ static void test_queue_and_base() {
 
 /* F3: how a base entry is read. The refused local content is remembered next to the last agreement, never written into it; the shapes older
  * builds wrote (refused sha stored as the agreement) are recognised so the first pass after an update cannot pull over a newer local save. */
+/* The status text for a failed pass names the cause where it is known, and stays calm and short. */
+static void test_failure_text() {
+    printf(" failure text per cause\n");
+    CHECK(sync_failure_text(0, "") == "Offline: will sync when you are back.");
+    CHECK(sync_failure_text(0, "deadline").find("Offline") == str::npos);
+    CHECK(sync_failure_text(401, "").find("account") != str::npos);
+    CHECK(sync_failure_text(507, "").find("full") != str::npos);
+    CHECK(sync_failure_text(500, "").find("busy") != str::npos);
+    CHECK(sync_failure_text(400, "bad-plan").find("could not take") != str::npos);
+    CHECK(sync_failure_text(0, "file-locked").find("in use by another program") != str::npos);
+    CHECK(sync_failure_text(0, "disk-full").find("disk space") != str::npos);
+    const char* codes[] = {"", "deadline", "file-locked", "disk-full"};
+    for (int st : {0, 400, 401, 500, 507}) for (const char* c : codes) { str m = sync_failure_text(st, c); CHECK(!m.empty() && m.size() < 80); }
+}
+
+/* The state file is replaced crash-safely: a failed swap leaves the old file readable and no temp file behind. */
+static void test_write_atomic_safe() {
+    printf(" crash-safe state file write\n");
+    fs::path d = scratch_root() / "atomic";
+    std::error_code ec;
+    fs::remove_all(d, ec);
+    fs::create_directories(d);
+    str f = (d / "state.json").u8string();
+    CHECK(cloud_write_atomic(f, "old contents") && get(fs::u8path(f)) == "old contents");
+    CHECK(cloud_write_atomic(f, "new contents") && get(fs::u8path(f)) == "new contents");
+    CHECK(!fs::exists(d / "state.json.hubtmp"));
+    HANDLE h = CreateFileW(fs::u8path(f).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);   // another program holds it: it cannot be swapped
+    CHECK(h != INVALID_HANDLE_VALUE);
+    CHECK(!cloud_write_atomic(f, "third"));
+    CHECK(get(fs::u8path(f)) == "new contents");
+    CHECK(!fs::exists(d / "state.json.hubtmp"));
+    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    CHECK(cloud_write_atomic(f, "third") && get(fs::u8path(f)) == "third");
+    fs::remove_all(d, ec);
+}
+
 static void test_read_base() {
     BFile agreed{3, 100, 55, "S1", ""};                                          // a normal agreement at cloud version 3
     BaseRead r1 = read_base(agreed, true, 3, "S1");
@@ -1577,6 +1613,8 @@ int main(int argc, char** argv) {
     test_wire();
     test_queue_and_base();
     test_read_base();
+    test_failure_text();
+    test_write_atomic_safe();
 
     printf("engine against the mock Worker%s%s\n", only ? " (only: " : "", only ? only : "");
     MockServer srv;
