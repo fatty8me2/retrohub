@@ -188,6 +188,34 @@ int main()
         CHECK(s2.end_at == past32 + 1000 + 15000);
     }
 
+    // per-window rule: a minimised window counts as present, helper windows do not
+    CHECK(window_counts_as_present(true, false, 1280, 720, false));    // normal window
+    CHECK(window_counts_as_present(true, true, 0, 0, false));          // minimised: 0x0 client rect, still alive
+    CHECK(!window_counts_as_present(true, false, 0, 0, false));        // zero-size helper window
+    CHECK(!window_counts_as_present(true, false, 640, 0, false));
+    CHECK(!window_counts_as_present(true, false, 640, 480, true));     // tool window
+    CHECK(!window_counts_as_present(true, true, 0, 0, true));          // minimised tool window
+    CHECK(!window_counts_as_present(false, false, 1280, 720, false));  // hidden
+    CHECK(!window_counts_as_present(false, true, 0, 0, false));
+    {   // no windows at all after the game had one = gone: still ends
+        Sim s;
+        s.step(T0, window_counts_as_present(true, false, 1280, 720, false));
+        for (uint64_t t = T0 + 1000; t < T0 + 60000; t += 1000) s.step(t, false);
+        CHECK(s.end_at == T0 + 1000 + 15000);
+    }
+    {   // minimised for 10 minutes, with steady CPU, then restored: never ends
+        Sim s;
+        s.step(T0, true);
+        for (uint64_t t = T0 + 1000; t < T0 + 601000; t += 1000) { s.cpu += 3000000; s.step(t, window_counts_as_present(true, true, 0, 0, false)); }
+        for (uint64_t t = T0 + 601000; t < T0 + 700000; t += 1000) s.step(t, window_counts_as_present(true, false, 1280, 720, false));
+        CHECK(s.end_at == 0);
+    }
+    {   // minimise / restore cycles over 10 minutes, quiet process: never ends
+        Sim s;
+        for (uint64_t t = T0; t < T0 + 600000; t += 1000) s.step(t, ((t - T0) / 200000) % 2 ? window_counts_as_present(true, true, 0, 0, false) : window_counts_as_present(true, false, 1280, 720, false));
+        CHECK(s.end_at == 0);
+    }
+
     printf(g_fail ? "FAILED (%d)\n" : "all ok\n", g_fail);
     return g_fail ? 1 : 0;
 }
