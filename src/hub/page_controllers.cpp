@@ -5,6 +5,7 @@
 #include "controls_live.h"
 
 #include "controls_sdl.h"
+#include "pad_name_logic.h"
 
 /* ---------- Controllers ---------- */
 
@@ -82,7 +83,7 @@ SDL_GameController* open_handle_for(const hubctl::PadInfo& p) {
 }
 
 std::string pad_name_for_key(const std::string& key) {
-    for (const auto& p : CTL.pads) if (p.key == key) return p.name;
+    for (const auto& p : CTL.pads) if (p.key == key) return hubpadname::label(p.name, p.xinput);
     return key;
 }
 
@@ -330,9 +331,8 @@ void draw_pads_panel() {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(o, o + ImVec2(rw, rh), sel ? ui::PANEL2 : ui::scale_alpha(ui::PANEL2, 0.45f), sp(1.5f));
         ui::icon(dl, ui::Icon::Gamepad, o + ImVec2(sp(2.5f), rh * 0.5f), sp(1.75f), sel ? ui::ACCENT : ui::TEXT2);
-        char nm[300];
-        std::snprintf(nm, sizeof nm, "%s%s", p.name.c_str(), p.xinput ? "  (Xbox)" : "");
-        dl->AddText(ui::F.bold, ui::F.bold->FontSize, o + ImVec2(sp(5.f), (rh - ui::F.bold->FontSize) * 0.5f), ui::TEXT, nm);
+        const std::string nm = hubpadname::label(p.name, p.xinput);
+        dl->AddText(ui::F.bold, ui::F.bold->FontSize, o + ImVec2(sp(5.f), (rh - ui::F.bold->FontSize) * 0.5f), ui::TEXT, nm.c_str());
         // click on the row to pick it for the test input
         ImGui::SetCursorScreenPos(o);
         if (ImGui::InvisibleButton("row", ImVec2(std::max(1.f, rw * 0.35f), rh), ImGuiButtonFlags_EnableNav)) A.pad_sel = (int)i;
@@ -438,36 +438,48 @@ void draw_mapping_panel() {
     std::vector<const hubctl::ControlInfo*> analogs;
     const bool turbo_ui = !keys && hubctl::turbo_supported(sys);
     const int tc = turbo_ui ? 4 : 3;
-    if (ImGui::BeginTable("mapgrid", cols * tc, ImGuiTableFlags_SizingStretchProp)) {
+    float label_w = sp(10.f);   // the label column fits the longest label
+    for (const auto& ci : keys ? hubctl::key_controls_for(sys) : hubctl::controls_for(sys))
+        if (!ci.analog) label_w = std::max(label_w, ImGui::CalcTextSize(ci.label.c_str()).x + sp(2.f));
+    if (ImGui::BeginTable("mapgrid", cols * tc, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoClip)) {
         for (int c = 0; c < cols; ++c) {
-            ImGui::TableSetupColumn("l", ImGuiTableColumnFlags_WidthStretch, 1.f);
-            ImGui::TableSetupColumn("b", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+            ImGui::TableSetupColumn("l", ImGuiTableColumnFlags_WidthFixed, label_w);
+            ImGui::TableSetupColumn("b", ImGuiTableColumnFlags_WidthStretch, 1.f);
             ImGui::TableSetupColumn("c", ImGuiTableColumnFlags_WidthFixed, sp(11.f));
             if (turbo_ui) ImGui::TableSetupColumn("t", ImGuiTableColumnFlags_WidthFixed, sp(11.f));
         }
+        const float row_h = std::max(sp(5.5f), ImGui::GetFrameHeight() + sp(1.f));   // follows the UI size: a checkbox is never clipped
+        float row_top = 0.f;
+        /* Every cell is placed from the row's top edge, so a label, a pill, a button and a checkbox of the same row share one centre line. */
+        auto put = [&](int col, float item_h) {
+            ImGui::TableSetColumnIndex(col);
+            ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, row_top + (row_h - item_h) * 0.5f));
+        };
         int n = 0;
         for (const auto& ci : keys ? hubctl::key_controls_for(sys) : hubctl::controls_for(sys)) {
             if (ci.analog) { analogs.push_back(&ci); continue; }
-            if (n % cols == 0) ImGui::TableNextRow(0, sp(5.5f));
+            if (n % cols == 0) {
+                ImGui::TableNextRow(0, row_h);
+                ImGui::TableSetColumnIndex(0);
+                row_top = ImGui::GetCursorScreenPos().y;
+            }
             int c0 = (n % cols) * tc;
             ImGui::PushID(ci.name.c_str());
-            ImGui::TableSetColumnIndex(c0);
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + sp(1.1f));
-            ImGui::TextUnformatted(ci.label.c_str());
-            ImGui::TableSetColumnIndex(c0 + 1);
+            put(c0, ImGui::GetTextLineHeight());
+            ImGui::GetWindowDrawList()->AddText(ImGui::GetCursorScreenPos(), ImGui::GetColorU32(ImGuiCol_Text), ci.label.c_str());   // drawn straight: a text cell after a checkbox cell would inherit its baseline shift
+            ImGui::Dummy(ImVec2(label_w, ImGui::GetTextLineHeight()));
             const auto& cm = keys ? cur.keys : cur.buttons;
             const auto& dm = keys ? def.keys : def.buttons;
             auto it = cm.find(ci.name);
             std::string ex = it == cm.end() ? "" : it->second;
             auto dit = dm.find(ci.name);
             bool changed = dit == dm.end() || dit->second != ex;
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + sp(1.1f));
+            put(c0 + 1, ui::F.cap->FontSize + sp(1.f));
             pill((keys ? hubctl::describe_keys(ex) : hubctl::describe_expr(ex)).c_str(), changed ? COL_ACCENT : ui::PANEL3);
-            ImGui::TableSetColumnIndex(c0 + 2);
+            put(c0 + 2, sp(4.5f));
             if (button("Change", ImVec2(sp(10.f), sp(4.5f)))) ctl_begin_capture(ci.name, ci.label);
             if (turbo_ui) {
-                ImGui::TableSetColumnIndex(c0 + 3);
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + sp(0.3f));
+                put(c0 + 3, ImGui::GetFrameHeight());
                 bool tb = hubctl::is_turbo(cur, ci.name);
                 if (ImGui::Checkbox("Turbo", &tb)) { hubctl::set_turbo(CTL.st, sys, CTL.game, ci.name, tb); ctl_save(); }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-fire: hold the button to press it over and over (15 times a second).");
@@ -858,7 +870,7 @@ bool draw_players_strip(int players) {
     for (int i = 0; i < players && i < hubctl::PortAssign::kPorts; ++i) {
         ImGui::SameLine(0, sp(1.f));
         bool has = i < (int)pads.size();
-        std::string t = std::to_string(i + 1) + "  " + (has ? pads[i].name : std::string("no controller"));
+        std::string t = std::to_string(i + 1) + "  " + (has ? hubpadname::label(pads[i].name, pads[i].xinput) : std::string("no controller"));
         pill(t.c_str(), has ? COL_ACCENT : COL_PANEL2);
     }
     ImGui::SameLine(0, sp(1.5f));

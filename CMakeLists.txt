@@ -224,6 +224,8 @@ add_test(NAME hub_rivals_test COMMAND hub_rivals_test)         # rivalry result 
 add_test(NAME hub_results_test COMMAND hub_results_test)       # Plan 4: match results (ranks, mid-run watcher) + auto-resume guard (saves-F1)
 add_test(NAME hub_party_test COMMAND hub_party_test)           # Plan 4: party mode reducer, points, shuffle, votes
 add_test(NAME hub_bracket_test COMMAND hub_bracket_test)       # Plan 4: brackets (single/double elimination) + Elo
+add_test(NAME hub_cheat_view_test COMMAND hub_cheat_view_test)   # cheats list display: de-duplication, version suffix
+add_test(NAME hub_pad_name_test COMMAND hub_pad_name_test)         # Controllers page: device label without a repeated brand
 add_test(NAME hubchallenge_test COMMAND hubchallenge_test)   # Plan 4 p4-social: challenge cards, leaderboard, rules, attach helpers (pure)
 add_test(NAME hub_tpak_test COMMAND hub_tpak_test)             # Plan 4 W3 X1: Transfer Pak matching, save file, backups, args
 add_test(NAME hub_hack_test COMMAND hub_hack_test)             # Plan 4: ROM hack keys, base finder, hack.json
