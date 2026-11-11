@@ -285,7 +285,7 @@ void draw_frame() {
     const bool immersive = lib_cases_active();   // Cases is a full-window console browser: no sidebar, toolbar, chips or footer (its menu overlay has them)
     if (!immersive) lib_cases_closed();
     { const hubui::MenuSoundCfg ms = hubui::effective_menu_sound(A.st); ui_sound::configure(ms.sounds, ms.volume, ms.music, ms.notif); }   // feature_off.h
-    ui_sound::tick(A.proc != nullptr, g_headless ? false : (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0);
+    ui_sound::tick(game_active(), g_headless ? false : (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0);
     A.focused = g_headless || (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
     if (app_locked()) {   // pending / banned / not yet confirmed: the lock screen replaces every page, panel and overlay (a running game keeps its own quick menu)
         draw_lock_screen();

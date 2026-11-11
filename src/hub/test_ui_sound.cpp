@@ -1,6 +1,10 @@
 /* Menu sounds: every UI sfx and the ambient loop render to non-silent, finite, bounded buffers (never played).
  */
 #include "boot_synth.h"
+#include "ui_sound.h"
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <cmath>
 #include <cstdio>
 
@@ -29,6 +33,24 @@ int main() {
         CHECK(a == b, "%s not deterministic", names[i]);
     }
     check("ambient", bootsynth::render_ambient(), bootsynth::kAmbientSeconds + 0.01, bootsynth::kAmbientSeconds - 0.01);
+    // mute policy: no sound while a game runs, while unfocused, when off, at 0 volume or under a mute env
+    CHECK(ui_sound::allowed(true, 50, false, true, false), "plain menu sound must play");
+    CHECK(!ui_sound::allowed(true, 50, true, true, false), "must be silent while a game runs");
+    CHECK(!ui_sound::allowed(true, 50, false, false, false), "must be silent unfocused");
+    CHECK(!ui_sound::allowed(false, 50, false, true, false) && !ui_sound::allowed(true, 0, false, true, false) && !ui_sound::allowed(true, 50, false, true, true), "off / zero volume / muted");
+    // the frame feeds the policy from game_active() (any session or a busy full-screen app), not from A.proc alone
+    {
+        std::ifstream in(std::string(HUB_SRC_DIR) + "/frame.cpp", std::ios::binary);
+        std::stringstream ss; ss << in.rdbuf();
+        const std::string src = ss.str();
+        const size_t at = src.find("ui_sound::tick(");
+        CHECK(in && at != std::string::npos, "frame.cpp must call ui_sound::tick");
+        if (at != std::string::npos) {
+            const std::string call = src.substr(at, src.find(';', at) - at);
+            CHECK(call.find("game_active()") != std::string::npos, "ui_sound::tick must take game_active(): %s", call.c_str());
+            CHECK(call.find("A.proc") == std::string::npos, "ui_sound::tick must not rely on A.proc alone: %s", call.c_str());
+        }
+    }
     std::printf(fails ? "hub_uisound_test: %d FAILED\n" : "hub_uisound_test: all passed\n", fails);
     return fails ? 1 : 0;
 }
