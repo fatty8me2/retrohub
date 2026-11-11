@@ -77,6 +77,7 @@ detail::Gate s_gate;          // UI thread only (tick)
 bool (*s_session_probe)() = nullptr;
 
 /* Startup pass (interrupted-update repair + the failure note of the last installer), run once on a background thread. */
+detail::OwnedThread s_check_th, s_download_th, s_handoff_th;   // joined by shutdown(): no worker outlives it
 std::thread s_startup_th;
 std::atomic<bool> s_startup_started{false};
 std::atomic<bool> s_startup_done{false};
@@ -140,6 +141,27 @@ std::vector<int> parse_version(const std::string& v) {
     return parts;
 }
 
+/* Every child process a worker waits on (curl, tar) is registered here, so shutdown() can end it by its handle. */
+std::mutex s_child_mu;
+std::vector<HANDLE> s_children;   // guarded by s_child_mu
+
+/* false when the app is already leaving: the caller must end the child at once. */
+bool register_child(HANDLE h) {
+    std::lock_guard<std::mutex> l(s_child_mu);
+    if (s_quit.load()) return false;
+    s_children.push_back(h);
+    return true;
+}
+void unregister_child(HANDLE h) {
+    std::lock_guard<std::mutex> l(s_child_mu);
+    for (size_t i = 0; i < s_children.size(); i++)
+        if (s_children[i] == h) { s_children.erase(s_children.begin() + (long)i); break; }
+}
+void kill_children() {   // by handle only; under the lock, so a handle is never closed while it is used here
+    std::lock_guard<std::mutex> l(s_child_mu);
+    for (HANDLE h : s_children) TerminateProcess(h, 1);
+}
+
 constexpr int kRunTimedOut = -2;
 /* timeout_ms: when the process runs longer it is ended by its own handle (never by name) and kRunTimedOut is returned. */
 int run_capture(std::string cmd, const std::function<void(const std::string&)>& onLine, DWORD timeout_ms = INFINITE) {
@@ -154,6 +176,7 @@ int run_capture(std::string cmd, const std::function<void(const std::string&)>& 
     BOOL ok = CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
     CloseHandle(wr);
     if (!ok) { CloseHandle(rd); return -1; }
+    if (!register_child(pi.hProcess)) TerminateProcess(pi.hProcess, 1);   // the app is leaving: do not let it run
     std::atomic<bool> timedOut{false};
     std::thread watcher;
     if (timeout_ms != INFINITE) {   // ending the process closes its end of the pipe, which also frees the read loop below
@@ -178,6 +201,7 @@ int run_capture(std::string cmd, const std::function<void(const std::string&)>& 
     WaitForSingleObject(pi.hProcess, INFINITE);
     if (watcher.joinable()) watcher.join();
     DWORD code = 0; GetExitCodeProcess(pi.hProcess, &code);
+    unregister_child(pi.hProcess);   // before the handle is closed
     CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
     return timedOut.load() ? kRunTimedOut : (int)code;
 }
@@ -517,6 +541,42 @@ const char* verdict_message(Verdict v) {
 
 std::string sha256_file_hex(const std::string& path) { return sha256_file(path); }
 
+OwnedThread::~OwnedThread() { if (th_.joinable()) th_.detach(); }
+
+bool OwnedThread::join_locked(unsigned ms) {
+    if (!th_.joinable()) return true;
+    const unsigned long long t0 = GetTickCount64();
+    while (!done_->load() && GetTickCount64() - t0 < ms) Sleep(5);
+    if (!done_->load()) return false;
+    th_.join();
+    return true;
+}
+bool OwnedThread::start(std::function<void()> fn, unsigned wait_prev_ms) {
+    std::lock_guard<std::mutex> l(mu_);
+    if (!join_locked(wait_prev_ms)) return false;
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    done_ = done;
+    th_ = std::thread([fn = std::move(fn), done]() {
+        try { fn(); } catch (...) {}
+        done->store(true);
+    });
+    return true;
+}
+bool OwnedThread::running() const {
+    std::lock_guard<std::mutex> l(mu_);
+    return th_.joinable() && done_ && !done_->load();
+}
+bool OwnedThread::join_for(unsigned ms) { std::lock_guard<std::mutex> l(mu_); return join_locked(ms); }
+void OwnedThread::detach() { std::lock_guard<std::mutex> l(mu_); if (th_.joinable()) th_.detach(); }
+
+int run_command(const std::string& cmd, const std::function<void(const std::string&)>& onLine, unsigned long timeout_ms) {
+    return run_capture(cmd, onLine, (DWORD)timeout_ms);
+}
+int live_child_count() { std::lock_guard<std::mutex> l(s_child_mu); return (int)s_children.size(); }
+#ifdef RETROHUB_UPDATER_TESTING
+void reset_quit_for_test() { s_quit.store(false); }
+#endif
+
 std::string system_dir() {
     wchar_t buf[MAX_PATH + 1];
     UINT n = GetSystemDirectoryW(buf, MAX_PATH);
@@ -726,7 +786,8 @@ void check_async(bool force) {
     s_available.store(false);
     set_status("");
 
-    std::thread([]() {
+    if (s_quit.load()) { s_checking.store(false); return; }   // the app is leaving
+    if (!s_check_th.start([]() {
         std::string response;
         std::string cpath, curlErr;
         const bool haveCurl = detail::find_system_tool("curl.exe", &cpath, &curlErr);
@@ -782,7 +843,7 @@ void check_async(bool force) {
             ulog("latest %s has no usable %s asset", rel.tag.c_str(), kPlatformAssetName);
         }
         s_checking.store(false);
-    }).detach();
+    })) s_checking.store(false);   // the previous check thread would not end (cannot happen in practice): try again later
 }
 
 static bool (*s_game_probe)() = nullptr;
@@ -814,7 +875,8 @@ void start_update() {
     const bool gaming = s_session_probe && s_session_probe();   // read here, on the UI thread
     set_status(gaming ? "Starting download (it installs when you finish playing)..." : "Starting download...");
 
-    std::thread([url, digest, sumsUrl, sigUrl, version, size, hubUrl, hubDigest, hubSize]() {
+    if (s_quit.load()) { s_downloading.store(false); return; }   // the app is leaving
+    auto work = [url, digest, sumsUrl, sigUrl, version, size, hubUrl, hubDigest, hubSize]() {
         auto fail = [](const std::string& m) {
             ulog("update failed: %s", m.c_str());
             set_status("Error: " + m);
@@ -890,6 +952,7 @@ void start_update() {
             set_status("Preparing...");
             std::string tarExe, tarErr;
             if (!detail::find_system_tool("tar.exe", &tarExe, &tarErr)) { rm_file(zipPath); fail(tarErr); return; }
+            if (s_quit.load()) { rm_file(zipPath); fail("RetroHub is closing, so the update was stopped."); return; }
             rm_file(updatesDir + "\\staged.json");
             std::filesystem::remove_all(P(staged), fec);
             std::filesystem::create_directories(P(staged), fec);
@@ -913,6 +976,8 @@ void start_update() {
             detail::write_staged_manifest(updatesDir, version, hubOnly, smashHash);   // the unpacked files are kept for a retry until an install succeeds
         }
 
+        if (s_quit.load()) { fail("RetroHub is closing, so the update was stopped."); return; }   // the unpacked files stay for the next run
+
         /* TEMP copy of this exe (+ its DLLs) so the install's RetroHub.exe is not locked. */
         wchar_t tmpBuf[MAX_PATH + 1]; DWORD tn = GetTempPathW(MAX_PATH, tmpBuf);
         std::filesystem::path tmpRoot = tn ? std::filesystem::path(std::wstring(tmpBuf, tn)) : P(updatesDir);
@@ -934,6 +999,7 @@ void start_update() {
 
         /* Everything is downloaded, verified and unpacked. From here tick() (UI thread) decides WHEN the installer starts: never while a
          * game runs. Nothing is shown or raised by waiting; the bell tells the player (update_deferred()). */
+        if (s_quit.load()) { std::error_code qe; std::filesystem::remove_all(applyDir, qe); fail("RetroHub is closing, so the update was stopped."); return; }
         {
             std::lock_guard<std::mutex> l(s_mu);
             s_pending.apply_exe = applyExe.wstring(); s_pending.apply_dir = applyDir.wstring();
@@ -947,7 +1013,11 @@ void start_update() {
         set_status("Update ready.");
         ulog("update %s is unpacked; the installer starts once no game is running", version.c_str());
         s_ready.store(true);
-    }).detach();
+    };
+    if (!s_download_th.start(work)) {   // the previous download thread would not end (cannot happen in practice)
+        set_status("Error: the previous update step is still running. Try again in a moment.");
+        s_downloading.store(false);
+    }
 }
 
 /* Launches the TEMP installer and waits for its "started" marker, then asks the app to quit (installer_started()). The installer waits
@@ -955,7 +1025,15 @@ void start_update() {
 static void begin_handoff(const Pending& p, bool game_active) {
     s_handing.store(true);
     set_status("Installing " + p.version + " - RetroHub will restart...");
-    std::thread([p, game_active]() {
+    auto fail0 = [](const std::string& m) {
+        ulog("update failed: %s", m.c_str());
+        set_status("Error: " + m);
+        s_ready.store(false);
+        s_deferred.store(false);
+        s_handing.store(false);
+        s_downloading.store(false);
+    };
+    if (!s_handoff_th.start([p, game_active]() {
         auto fail = [](const std::string& m) {
             ulog("update failed: %s", m.c_str());
             set_status("Error: " + m);
@@ -965,6 +1043,7 @@ static void begin_handoff(const Pending& p, bool game_active) {
             s_downloading.store(false);
         };
         const std::wstring& marker = p.marker;
+        if (s_quit.load()) { fail("RetroHub is closing, so the installer was not started."); return; }
         DeleteFileW(marker.c_str());
         std::wstring wcmd = L"\"" + p.apply_exe + L"\" --apply-update \"" + p.staged + L"\" \"" + p.exe_dir + L"\" " +
                             std::to_wstring(GetCurrentProcessId()) + L" --version \"" + W(p.version) + L"\" --from \"" + W(current_version()) +
@@ -994,7 +1073,7 @@ static void begin_handoff(const Pending& p, bool game_active) {
         s_progress.store(1.0f);
         s_started.store(true);
         s_downloading.store(false);
-    }).detach();
+    })) fail0("the previous installer step is still running.");
 }
 
 void tick() {
@@ -1039,6 +1118,12 @@ bool update_deferred() { return s_deferred.load(); }
 
 void shutdown() {
     s_quit.store(true);
+    kill_children();   // a running curl or tar is ended by its handle (never the installer: it is not registered); its worker then returns at once
+    /* No worker may outlive this call: it joins the check, download and hand-off threads (bounded; each wakes within moments because its
+     * child is gone and it checks s_quit between steps). One that still does not end is detached and logged: a last resort. */
+    for (detail::OwnedThread* t : {&s_check_th, &s_download_th, &s_handoff_th}) {
+        if (!t->join_for(5000)) { ulog("shutdown: an updater thread did not end in time; detaching it"); t->detach(); }
+    }
     if (s_ready.load() && !s_handing.load()) {   // downloaded but never handed over: the unpacked files stay for next time, the unused installer copy goes
         std::wstring dir;
         { std::lock_guard<std::mutex> l(s_mu); dir = s_pending.apply_dir; }

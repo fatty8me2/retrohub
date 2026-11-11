@@ -16,9 +16,13 @@
  * UI contract: call tick() every frame (UI thread) and poll the getters; when installer_started() turns
  * true, quit the app (the installer is waiting for the exit). */
 
+#include <atomic>
 #include <functional>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace hubupdate {
@@ -145,6 +149,34 @@ std::string system_dir();   // GetSystemDirectoryW as UTF-8, no trailing slash (
 /* dir + "\\" + exe_name when that file exists; otherwise false and *err says (in plain words) which file is missing. */
 bool resolve_system_tool(const std::string& dir, const char* exe_name, std::string* path, std::string* err);
 bool find_system_tool(const char* exe_name, std::string* path, std::string* err);   // resolve_system_tool(system_dir(), ...)
+
+/* ---- worker threads are owned, never detached ----
+ * The check, the download and the hand-off each run on an OwnedThread that shutdown() joins (with a bounded wait), so nothing touches
+ * this file's statics after the app has started to exit. */
+class OwnedThread {
+public:
+    OwnedThread() = default;
+    OwnedThread(const OwnedThread&) = delete;
+    OwnedThread& operator=(const OwnedThread&) = delete;
+    ~OwnedThread();                                       // a thread still running here is detached (shutdown() should have ended it)
+    /* Runs fn on a new thread. A previous run is joined first (it is waited for up to wait_prev_ms); false when that one is still going. */
+    bool start(std::function<void()> fn, unsigned wait_prev_ms = 3000);
+    bool running() const;                                 // started and fn has not returned yet
+    bool join_for(unsigned ms);                           // true when no thread is left (joined, or never started); false when still running after ms
+    void detach();                                        // last resort after a failed join_for
+private:
+    bool join_locked(unsigned ms);
+    mutable std::mutex mu_;
+    std::thread th_;
+    std::shared_ptr<std::atomic<bool>> done_;
+};
+/* The one place a child process (curl, tar) is run: output lines go to onLine, timeout_ms ends it by its HANDLE. Every child is registered,
+ * so shutdown() can end a running one at once (its exit code is then non-zero); no child is started once shutdown() began. */
+int run_command(const std::string& cmd, const std::function<void(const std::string&)>& onLine, unsigned long timeout_ms = 0xFFFFFFFFul);
+int live_child_count();   // children currently registered (tests)
+#ifdef RETROHUB_UPDATER_TESTING
+void reset_quit_for_test();   // tests only: undo shutdown()'s "leaving" state
+#endif
 
 /* ---- the deferred hand-off (pure state machine; time is injected) ---- */
 constexpr unsigned long long kSettleMs = 2500;   // nothing running for this long before the installer starts (a game's exit is followed by save work)
