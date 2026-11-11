@@ -362,49 +362,241 @@ struct Progress {
     const std::atomic<bool>* pause = nullptr;    // emu_http.h callers only: wait while true
 };
 
-static bool http_download(const std::wstring& host, const std::wstring& path, const std::string& out_file, Progress pr, std::string* err) {
-    HINTERNET ses = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
-    if (!ses) { *err = "network unavailable"; return false; }
-    bool ok = false;
-    HINTERNET con = WinHttpConnect(ses, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
-    HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                             WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
-    if (req && WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) && WinHttpReceiveResponse(req, nullptr)) {
+/* ---- install log + plain-English messages ----
+ * The player sees a short sentence; the Windows error code goes to <managed root>\install-log.txt (and the debugger), never into the sentence. */
+static std::mutex g_log_mu;
+static std::string g_log_path;
+static void set_log_path(const std::string& p) { std::lock_guard<std::mutex> lk(g_log_mu); g_log_path = p; }
+static void emu_log(const std::string& line) {
+    OutputDebugStringA(("RetroHub emulator install: " + line + "\n").c_str());
+    std::lock_guard<std::mutex> lk(g_log_mu);
+    if (g_log_path.empty()) return;
+    std::error_code ec;
+    if (fs::exists(P(g_log_path), ec) && fs::file_size(P(g_log_path), ec) > 256 * 1024) fs::remove(P(g_log_path), ec);   // never grows without bound
+    std::ofstream f(P(g_log_path), std::ios::binary | std::ios::app);
+    if (!f) return;
+    char stamp[32] = "";
+    std::time_t t = std::time(nullptr);
+    std::tm tmv{};
+    if (localtime_s(&tmv, &t) == 0) std::strftime(stamp, sizeof stamp, "%Y-%m-%d %H:%M:%S ", &tmv);
+    f << stamp << line << "\n";
+}
+
+/* What a failed disk operation means to a player (empty = nothing specific to say). */
+static std::string disk_problem_plain(DWORD e) {
+    switch (e) {
+    case ERROR_DISK_FULL:
+    case ERROR_HANDLE_DISK_FULL: return "the disk is full. Free some space on that drive, then try again";
+    case ERROR_SHARING_VIOLATION:
+    case ERROR_LOCK_VIOLATION: return "another program (often antivirus or a file indexer) is using the file. Wait a moment, then try again";
+    case ERROR_ACCESS_DENIED: return "Windows would not let RetroHub write there. Check that antivirus or a folder protection setting is not blocking it, then try again";
+    default: return "";
+    }
+}
+static std::string disk_fail_text(DWORD e, const char* doing) {
+    emu_log(std::string(doing) + " failed with Windows error " + std::to_string((unsigned long)e));
+    const std::string plain = disk_problem_plain(e);
+    return plain.empty() ? std::string("could not save the download (the disk reported a problem)") : "could not save the download: " + plain;
+}
+static std::string reason_text(const std::error_code& ec) {
+    std::string m = ec.message();
+    while (!m.empty() && (m.back() == '\r' || m.back() == '\n' || m.back() == ' ' || m.back() == '.')) m.pop_back();
+    for (char& c : m) if ((unsigned char)c < 32) c = ' ';
+    return m;
+}
+
+/* Only one install job (or leftover pass) touches the managed folders at a time. */
+static std::mutex g_job_mu;
+
+/* ---- download: one GET at a time over a small transport, so the resume logic runs the same against WinHTTP and against the test hook ---- */
+struct NetReply {
+    int status = 0;
+    uint64_t content_length = 0;
+    bool has_range = false;                  // a Content-Range header came with a 206
+    uint64_t range_start = 0, range_total = 0;
+};
+struct Transport {
+    virtual ~Transport() {}
+    virtual bool request(uint64_t offset, NetReply* r, std::string* err) = 0;   // GET (Range: bytes=offset- when offset > 0); false = server not reached
+    virtual bool read(void* buf, DWORD cap, DWORD* n) = 0;                       // false = the connection broke
+};
+
+struct WinHttpTransport : Transport {
+    std::wstring host, path;
+    HINTERNET ses = nullptr, con = nullptr, req = nullptr;
+    std::string open_err;
+    WinHttpTransport(const std::wstring& h, const std::wstring& p) : host(h), path(p) {
+        ses = WinHttpOpen(L"RetroHub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
+        if (!ses) { open_err = "network unavailable"; return; }
+        WinHttpSetTimeouts(ses, 15000, 20000, 30000, 60000);   // resolve, connect, send, receive (ms): a stalled network ends in a clear message, not a hang
+        con = WinHttpConnect(ses, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+    }
+    ~WinHttpTransport() {
+        if (req) WinHttpCloseHandle(req);
+        if (con) WinHttpCloseHandle(con);
+        if (ses) WinHttpCloseHandle(ses);
+    }
+    bool request(uint64_t offset, NetReply* r, std::string* err) override {
+        if (req) { WinHttpCloseHandle(req); req = nullptr; }
+        if (!ses) { *err = open_err; return false; }
+        if (!con) { *err = "could not reach " + U(host); return false; }
+        req = WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+        const std::wstring hdr = offset ? L"Range: bytes=" + std::to_wstring(offset) + L"-" : std::wstring();
+        if (!req || !WinHttpSendRequest(req, hdr.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : hdr.c_str(), hdr.empty() ? 0 : (DWORD)-1L, nullptr, 0, 0, 0) ||
+            !WinHttpReceiveResponse(req, nullptr)) {
+            const DWORD e = GetLastError();
+            emu_log("request to " + U(host) + " failed with Windows/WinHTTP error " + std::to_string((unsigned long)e));
+            *err = e == ERROR_WINHTTP_TIMEOUT ? "the connection to " + U(host) + " timed out" : "could not reach " + U(host);
+            return false;
+        }
         DWORD status = 0, sz = sizeof status;
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status, &sz, nullptr);
-        wchar_t lenb[32] = {0};
+        r->status = (int)status;
+        wchar_t lenb[64] = {0};
         sz = sizeof lenb;
-        if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_LENGTH, nullptr, lenb, &sz, nullptr) && pr.total) *pr.total = (uint64_t)_wtoi64(lenb);
-        if (status != 200) *err = "server answered " + std::to_string(status);
-        else {
-            HANDLE f = CreateFileW(W(out_file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (f == INVALID_HANDLE_VALUE) *err = "cannot write " + out_file;
-            else {
-                std::vector<char> buf(64 * 1024);
-                ok = true;
-                for (;;) {
-                    while (pr.pause && pr.pause->load() && !(pr.cancel && pr.cancel->load())) Sleep(250);
-                    if (pr.cancel && pr.cancel->load()) { ok = false; *err = "cancelled"; break; }
-                    DWORD n = 0;
-                    if (!WinHttpReadData(req, buf.data(), (DWORD)buf.size(), &n)) { ok = false; *err = "download interrupted"; break; }
-                    if (n == 0) break;
-                    DWORD w = 0;
-                    if (!WriteFile(f, buf.data(), n, &w, nullptr) || w != n) { ok = false; *err = "disk write failed"; break; }
-                    if (pr.got) *pr.got += n;
-                }
-                CloseHandle(f);
-            }
+        if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_LENGTH, nullptr, lenb, &sz, nullptr)) r->content_length = (uint64_t)_wtoi64(lenb);
+        wchar_t cr[128] = {0};
+        sz = sizeof cr;
+        if (status == 206 && WinHttpQueryHeaders(req, WINHTTP_QUERY_CUSTOM, L"Content-Range", cr, &sz, WINHTTP_NO_HEADER_INDEX)) {
+            unsigned long long a = 0, b = 0, t = 0;
+            const int got = swscanf_s(cr, L"bytes %llu-%llu/%llu", &a, &b, &t);
+            if (got >= 2) { r->has_range = true; r->range_start = a; r->range_total = got == 3 ? t : 0; }
         }
-    } else *err = "could not reach " + U(host);
-    if (req) WinHttpCloseHandle(req);
-    if (con) WinHttpCloseHandle(con);
-    WinHttpCloseHandle(ses);
-    return ok;
+        return true;
+    }
+    bool read(void* buf, DWORD cap, DWORD* n) override {
+        if (WinHttpReadData(req, buf, cap, n)) return true;
+        emu_log("download read failed with Windows/WinHTTP error " + std::to_string((unsigned long)GetLastError()));
+        return false;
+    }
+};
+
+struct TestTransport : Transport {
+    const Release& rel;
+    std::string body;
+    size_t pos = 0;
+    bool drop = false;
+    explicit TestTransport(const Release& r) : rel(r) {}
+    bool request(uint64_t offset, NetReply* r, std::string* err) override {
+        InstallTestHooks::HttpReply tr;
+        if (!g_test_hooks->serve(rel, offset, &tr)) { *err = "could not reach the test server"; return false; }
+        body = std::move(tr.body);
+        pos = 0;
+        drop = tr.drop_after_body;
+        r->status = tr.status;
+        r->content_length = body.size();
+        r->has_range = tr.status == 206;
+        r->range_start = tr.range_start;
+        r->range_total = tr.range_total;
+        return true;
+    }
+    bool read(void* buf, DWORD cap, DWORD* n) override {
+        if (pos < body.size()) {
+            *n = (DWORD)std::min<size_t>(cap, body.size() - pos);
+            std::memcpy(buf, body.data() + pos, *n);
+            pos += *n;
+            return true;
+        }
+        *n = 0;
+        return !drop;
+    }
+};
+
+/* Writes the download to out_file. With `expected` (the pinned size) a partial file already there is RESUMED with a Range request when the server honours it
+ * (206 with the right Content-Range); a server that ignores Range (200), answers 416 or sends the wrong range makes the download restart cleanly from zero. A
+ * dropped connection is resumed up to three times. The partial file is kept when the download ends early, so the next try continues it; the caller's size +
+ * SHA-256 check still decides whether the result is good (and deletes a file that fails it). expected == 0 (other callers): always a fresh file, no resume. */
+static bool download_core(Transport& tp, const std::string& out_file, uint64_t expected, Progress pr, bool pace, std::string* err) {
+    static const int kMaxResumes = 3;
+    auto cancelled = [&] { return pr.cancel && pr.cancel->load(); };
+    auto file_len = [&]() -> uint64_t {
+        std::error_code ec;
+        if (!fs::is_regular_file(P(out_file), ec)) return 0;
+        const uint64_t n = (uint64_t)fs::file_size(P(out_file), ec);
+        return ec ? 0 : n;
+    };
+    auto wipe = [&] { std::error_code ec; fs::remove(P(out_file), ec); };
+    uint64_t have = 0;
+    if (expected) {
+        have = file_len();
+        if (have > expected) { wipe(); have = 0; }   // not a prefix of the pinned file
+    }
+    int resumes = 0, restarts = 0;
+    for (;;) {
+        if (cancelled()) { *err = "cancelled"; return false; }
+        if (expected && have == expected) {   // the whole file is already here: verification decides
+            if (pr.got) *pr.got = have;
+            if (pr.total) *pr.total = expected;
+            return true;
+        }
+        NetReply r;
+        if (!tp.request(have, &r, err)) {
+            if ((have > 0 || resumes > 0) && resumes < kMaxResumes) { ++resumes; if (pace) Sleep(1000u * resumes); continue; }   // a network blip while resuming
+            return false;
+        }
+        bool append = false;
+        if (have > 0) {
+            if (r.status == 206) {
+                if (r.has_range && r.range_start == have && (!expected || r.range_total == 0 || r.range_total == expected)) append = true;
+                else { emu_log("the server sent a range that does not match what was asked: starting over"); wipe(); have = 0; if (++restarts > 2) { *err = "the server's answer to a resume request made no sense"; return false; } continue; }
+            } else if (r.status == 416) {
+                emu_log("the server refused the range request (416): starting over");
+                wipe(); have = 0;
+                if (++restarts > 2) { *err = "the server refused to resume the download"; return false; }
+                continue;
+            } else if (r.status == 200) {
+                emu_log("the server ignored the range request: starting over");   // it sends the whole file again: the file is rewritten from the start below
+                have = 0;
+            } else { *err = "server answered " + std::to_string(r.status); return false; }
+        } else if (r.status != 200) { *err = "server answered " + std::to_string(r.status); return false; }
+
+        if (pr.total) *pr.total = expected ? expected : r.content_length;
+        HANDLE f = append ? CreateFileW(W(out_file).c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)
+                          : CreateFileW(W(out_file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (f == INVALID_HANDLE_VALUE) { *err = disk_fail_text(GetLastError(), "opening the download file"); return false; }
+        if (append) {
+            LARGE_INTEGER z{};
+            if (!SetFilePointerEx(f, z, nullptr, FILE_END)) { const DWORD e = GetLastError(); CloseHandle(f); *err = disk_fail_text(e, "seeking in the download file"); return false; }
+        }
+        uint64_t pos = append ? have : 0;
+        if (pr.got) *pr.got = pos;
+        std::vector<char> buf(64 * 1024);
+        bool dropped = false, stopped = false;
+        for (;;) {
+            while (pr.pause && pr.pause->load() && !cancelled()) Sleep(250);
+            if (cancelled()) { stopped = true; break; }
+            DWORD n = 0;
+            if (!tp.read(buf.data(), (DWORD)buf.size(), &n)) { dropped = true; break; }
+            if (n == 0) break;
+            DWORD e = 0, w = 0;
+            if (g_test_hooks && g_test_hooks->write_fault) e = (DWORD)g_test_hooks->write_fault(pos);
+            if (!e) {
+                if (!WriteFile(f, buf.data(), n, &w, nullptr)) e = GetLastError();
+                else if (w != n) e = ERROR_DISK_FULL;
+            }
+            if (e) { CloseHandle(f); *err = disk_fail_text(e, "writing the download"); return false; }
+            pos += n;
+            if (pr.got) *pr.got = pos;
+        }
+        CloseHandle(f);
+        if (stopped) { *err = "cancelled"; return false; }
+        have = pos;
+        if (!dropped && (!expected || have >= expected)) return true;
+        if (!expected || resumes >= kMaxResumes) { *err = "download interrupted: the connection dropped. Try again and it will continue where it stopped"; return false; }
+        ++resumes;
+        emu_log("connection dropped after " + std::to_string((unsigned long long)have) + " bytes: resuming");
+        if (pace) Sleep(1000u * resumes);
+    }
+}
+
+static bool http_download(const std::wstring& host, const std::wstring& path, const std::string& out_file, uint64_t expected, Progress pr, std::string* err) {
+    WinHttpTransport tp(host, path);
+    return download_core(tp, out_file, expected, pr, true, err);
 }
 
 bool http_get_file(const std::string& host, const std::string& path, const std::string& out_file, std::atomic<uint64_t>* got,
                    std::atomic<uint64_t>* total, const std::atomic<bool>* cancel, const std::atomic<bool>* pause, std::string* err) {
-    return http_download(W(host), W(path), out_file, Progress{got, total, cancel, pause}, err);
+    return http_download(W(host), W(path), out_file, 0, Progress{got, total, cancel, pause}, err);   // (no pinned size: always a fresh file)
 }
 
 /* Directory (searched to `depth` levels) that contains a file called `name`. */
@@ -468,43 +660,65 @@ static bool unzip_to(const std::string& archive, const std::string& dest, std::s
 }
 
 /* Dolphin ships as a .7z only. Windows' own tar.exe (bsdtar) reads it; the entry list is checked first (same path rules as
- * the zip reader) so nothing can land outside the staging folder, and any tar failure fails the install. */
-static bool run_tar(const std::wstring& args, const std::string& stdout_file, std::string* err) {
+ * the zip reader) so nothing can land outside the staging folder, and any tar failure fails the install. tar runs by its absolute System32 path (never the search
+ * path), with no window, and its error output goes to a temp file so the failure message can say what tar complained about. */
+static std::string last_line_of(const std::string& text) {
+    std::string line, best;
+    std::istringstream ls(text);
+    while (std::getline(ls, line)) {
+        std::string clean;
+        for (unsigned char c : line) if (c >= 32 && c < 127) clean += (char)c;
+        while (!clean.empty() && clean.back() == ' ') clean.pop_back();
+        size_t b = clean.find_first_not_of(' ');
+        if (b != std::string::npos) best = clean.substr(b);
+    }
+    if (best.size() > 100) best = best.substr(0, 100);
+    return best;
+}
+
+static bool run_tar(const std::wstring& args, const std::string& stdout_file, const std::string& stderr_file, std::string* err) {
     wchar_t sysdir[MAX_PATH];
-    GetSystemDirectoryW(sysdir, MAX_PATH);
-    std::wstring tar = std::wstring(sysdir) + L"\\tar.exe";
+    UINT sl = GetSystemDirectoryW(sysdir, MAX_PATH);
+    std::wstring tar = (sl > 0 && sl < MAX_PATH ? std::wstring(sysdir) : std::wstring(L"C:\\Windows\\System32")) + L"\\tar.exe";
     std::wstring cmd = L"\"" + tar + L"\" " + args;
     std::vector<wchar_t> cb(cmd.begin(), cmd.end());
     cb.push_back(0);
     SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
-    HANDLE out = INVALID_HANDLE_VALUE;
+    HANDLE out = INVALID_HANDLE_VALUE, errh = INVALID_HANDLE_VALUE, in = INVALID_HANDLE_VALUE;
     STARTUPINFOW si{};
     si.cb = sizeof si;
-    if (!stdout_file.empty()) {
-        out = CreateFileW(W(stdout_file).c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        si.dwFlags = STARTF_USESTDHANDLES;
-        si.hStdOutput = out;
-        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    }
+    in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    out = CreateFileW(stdout_file.empty() ? L"NUL" : W(stdout_file).c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, stdout_file.empty() ? OPEN_EXISTING : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    errh = CreateFileW(stderr_file.empty() ? L"NUL" : W(stderr_file).c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, stderr_file.empty() ? OPEN_EXISTING : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = in;
+    si.hStdOutput = out;
+    si.hStdError = errh;
     PROCESS_INFORMATION pi{};
-    BOOL ok = CreateProcessW(tar.c_str(), cb.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
-    if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
+    BOOL ok = (in != INVALID_HANDLE_VALUE && out != INVALID_HANDLE_VALUE && errh != INVALID_HANDLE_VALUE)
+                  ? CreateProcessW(tar.c_str(), cb.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi) : FALSE;
+    for (HANDLE h : {in, out, errh}) if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
     if (!ok) { *err = "tar.exe not found (needs Windows 10 or later)"; return false; }
     DWORD w = WaitForSingleObject(pi.hProcess, 10 * 60 * 1000);
     DWORD code = 1;
     if (w == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code); else TerminateProcess(pi.hProcess, 1);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
-    if (code != 0) { *err = "unpacking failed (tar exit " + std::to_string(code) + ")"; return false; }
+    if (code != 0) {
+        const std::string why = stderr_file.empty() ? std::string() : last_line_of(read_text(stderr_file));
+        emu_log("tar exit " + std::to_string((unsigned long)code) + (why.empty() ? "" : ": " + why));
+        *err = "unpacking failed (tar exit " + std::to_string(code) + (why.empty() ? "" : ": " + why) + ")";
+        return false;
+    }
     return true;
 }
 
 static bool untar_to(const std::string& archive, const std::string& dest, const std::string& list_tmp, std::string* err) {
-    struct Cleanup { std::string f; ~Cleanup() { std::error_code ec; fs::remove(P(f), ec); } } cleanup{list_tmp};
+    const std::string err_tmp = list_tmp + ".err";
+    struct Cleanup { std::string f, g; ~Cleanup() { std::error_code ec; fs::remove(P(f), ec); fs::remove(P(g), ec); } } cleanup{list_tmp, err_tmp};
     /* names (-tf): every path checked. types (-tvf): the first column is the entry type; only plain files and folders pass,
      * so no symlink or hardlink can point out of the staging folder. */
-    if (!run_tar(L"-tf \"" + W(archive) + L"\"", list_tmp, err)) return false;
+    if (!run_tar(L"-tf \"" + W(archive) + L"\"", list_tmp, err_tmp, err)) return false;
     std::istringstream ls(read_text(list_tmp));
     std::string line;
     int n = 0;
@@ -515,7 +729,7 @@ static bool untar_to(const std::string& archive, const std::string& dest, const 
         ++n;
     }
     if (n == 0) { *err = "the download is empty"; return false; }
-    if (!run_tar(L"-tvf \"" + W(archive) + L"\"", list_tmp, err)) return false;
+    if (!run_tar(L"-tvf \"" + W(archive) + L"\"", list_tmp, err_tmp, err)) return false;
     std::istringstream vs(read_text(list_tmp));
     int m = 0;
     while (std::getline(vs, line)) {
@@ -524,7 +738,7 @@ static bool untar_to(const std::string& archive, const std::string& dest, const 
         ++m;
     }
     if (m != n) { *err = "the download listing is inconsistent"; return false; }
-    return run_tar(L"-xf \"" + W(archive) + L"\" -C \"" + W(dest) + L"\"", "", err);
+    return run_tar(L"-xf \"" + W(archive) + L"\" -C \"" + W(dest) + L"\"", "", err_tmp, err);
 }
 
 static bool running_from(const std::string& exe);   // (below)
@@ -656,6 +870,21 @@ void recover_interrupted(Kind k, const std::string& root) {
     fs::remove(P(join(dir, kJournalTmp)), ec);
 }
 
+/* A rename that an antivirus scanner or a file indexer is holding up usually works a moment later: three tries, about 300 ms apart (like copy_retry in
+ * update_apply.cpp). `why` gets the operating system's reason when it still fails. */
+static bool rename_retry(const fs::path& from, const fs::path& to, std::string* why) {
+    std::error_code ec;
+    for (int t = 1;; ++t) {
+        fs::rename(from, to, ec);
+        if (!ec) return true;
+        if (t >= 3 || ec == std::errc::no_such_file_or_directory) break;
+        Sleep(300);
+    }
+    emu_log("could not rename " + S(from) + " (" + std::to_string(ec.value()) + "): " + ec.message());
+    if (why) *why = reason_text(ec);
+    return false;
+}
+
 /* The swap of an upgrade: `inner` (the unpacked new build, a folder under dir\_extract) replaces the program files in `dir`. See recover_interrupted for the
  * crash story. On any failure the old build is moved back and false is returned. */
 static bool swap_in_new_build(Kind k, const std::string& dir, const std::string& inner, const Release& rel, std::string* err) {
@@ -674,18 +903,16 @@ static bool swap_in_new_build(Kind k, const std::string& dir, const std::string&
     for (const fs::path& c : children(dir)) {   // 1. the old program files (and the old marker) go aside
         const std::string n = S(c.filename());
         if (name_in(keep, n) || is_scratch(n)) continue;
-        std::error_code ec;
-        fs::rename(c, P(old) / c.filename(), ec);
-        if (ec) return fail("could not move " + n + " aside (is something using it?)");
+        std::string why;
+        if (!rename_retry(c, P(old) / c.filename(), &why)) return fail("could not move " + n + " aside (is something using it?): " + why);
     }
     if (!write_journal(dir, jtext + "phase 2\n")) return fail("cannot write the upgrade journal");
     phase2 = true;
     for (const fs::path& c : children(inner)) {   // 2. the new ones come in; a `user` folder in the archive is ignored
         const std::string n = S(c.filename());
         if (name_in(keep, n) || is_scratch(n)) continue;
-        std::error_code ec;
-        fs::rename(c, P(dir) / c.filename(), ec);
-        if (ec) return fail("could not install " + n);
+        std::string why;
+        if (!rename_retry(c, P(dir) / c.filename(), &why)) return fail("could not install " + n + ": " + why);
     }
     if (!file_exists(join(dir, U(rel.exe)))) return fail(U(rel.exe) + " missing after the update");
     return true;
@@ -693,6 +920,8 @@ static bool swap_in_new_build(Kind k, const std::string& dir, const std::string&
 
 static bool install_core(Kind k, const std::string& root, std::string* err, std::atomic<int>* phase, Progress pr) {
     const Release& rel = release(k);
+    std::lock_guard<std::mutex> job_lock(g_job_mu);   // one job at a time; the leftover pass stays out while this runs
+    set_log_path(join(root, "install-log.txt"));
     std::string dir = managed_dir(k, root);
     std::string exe = join(dir, U(rel.exe));
     const std::vector<std::string> keep = preserved_names(k);
@@ -716,8 +945,32 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     auto setp = [&](int p) { if (phase) *phase = p; };
 
     setp(0);
-    if (g_test_hooks && g_test_hooks->fetch) ok = g_test_hooks->fetch(rel, archive + ".part", err);
-    else ok = http_download(rel.host, rel.path, archive + ".part", pr, err);
+    /* Room for the zip, its unpacked copy and some slack (about 2.5 x the pinned size + 100 MB), less what a resumable partial file already holds. Checked before
+     * anything is downloaded so a nearly full drive says so at once instead of failing at the end. */
+    {
+        std::error_code ec;
+        const uint64_t have_part = fs::is_regular_file(P(archive + ".part"), ec) ? (uint64_t)fs::file_size(P(archive + ".part"), ec) : 0;
+        const uint64_t need = rel.size / 2 * 5 + (100ull << 20) - std::min<uint64_t>(have_part, rel.size);
+        uint64_t avail = 0;
+        bool known = false;
+        const std::string dl_dir = S(P(archive).parent_path());
+        if (g_test_hooks && g_test_hooks->free_space) known = g_test_hooks->free_space(dl_dir, &avail);
+        else {
+            ULARGE_INTEGER fb{};
+            if (GetDiskFreeSpaceExW(W(dl_dir).c_str(), &fb, nullptr, nullptr)) { avail = fb.QuadPart; known = true; }
+        }
+        if (known && avail < need) {
+            ok = false;
+            *err = "not enough free disk space: " + std::string(name(k)) + " needs about " + std::to_string((need + (1u << 20) - 1) >> 20) + " MB free on the drive that holds RetroHub's data, and only " +
+                   std::to_string(avail >> 20) + " MB is free. Free some space, then try again";
+            emu_log(*err);
+        }
+    }
+    bool download_cut_short = false;   // a real download that ended early keeps its partial file, so the next try resumes it
+    if (!ok) { /* no room: nothing is downloaded */ }
+    else if (g_test_hooks && g_test_hooks->fetch) ok = g_test_hooks->fetch(rel, archive + ".part", err);
+    else if (g_test_hooks && g_test_hooks->serve) { TestTransport tt(rel); ok = download_core(tt, archive + ".part", rel.size, pr, false, err); download_cut_short = !ok; }
+    else { ok = http_download(rel.host, rel.path, archive + ".part", rel.size, pr, err); download_cut_short = !ok; }
     if (ok) {
         std::error_code ec;
         uint64_t sz = fs::file_size(P(archive + ".part"), ec);
@@ -731,8 +984,8 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     if (ok) {
         std::error_code ec;
         fs::remove(P(archive), ec);
-        fs::rename(P(archive + ".part"), P(archive), ec);
-        if (ec) { ok = false; *err = "cannot move the download into place"; }
+        std::string why;
+        if (!rename_retry(P(archive + ".part"), P(archive), &why)) { ok = false; *err = "cannot move the download into place: " + why; }
     }
     if (ok) {
         setp(2);
@@ -753,8 +1006,8 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
                 std::error_code e2;
                 fs::path to = P(dir) / it->path().filename();
                 fs::remove_all(to, e2);
-                fs::rename(it->path(), to, e2);
-                if (e2) { ok = false; *err = "could not install " + S(it->path().filename()); break; }
+                std::string why;
+                if (!rename_retry(it->path(), to, &why)) { ok = false; *err = "could not install " + S(it->path().filename()) + ": " + why; break; }
             }
             if (ok && !file_exists(exe)) { ok = false; *err = U(rel.exe) + " missing after install"; }
         }
@@ -774,6 +1027,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
         else if (!upgrading) clear_dir_keeping(dir, keep);   // never leave a half install behind (the player's data folder stays)
     } else if (upgrading) {   // done: the scratch goes, the journal last
         remove_tree(join(dir, kOldDir));
+        if (dir_exists(join(dir, kOldDir))) emu_log("the parked old build in _old could not be removed yet (in use?): the next start's leftover pass retries");
         remove_tree(stage);
         std::error_code ec3;
         fs::remove(P(join(dir, kJournal)), ec3);
@@ -781,8 +1035,76 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     remove_tree(stage);
     std::error_code ec;
     fs::remove(P(archive), ec);
-    fs::remove(P(archive + ".part"), ec);
+    if (!download_cut_short) fs::remove(P(archive + ".part"), ec);   // a failed check deletes the file for good: it is never resumed
+    else if (fs::is_regular_file(P(archive + ".part"), ec) && fs::file_size(P(archive + ".part"), ec) == 0) fs::remove(P(archive + ".part"), ec);
     return ok;
+}
+
+/* ---- one conservative leftover pass (see emulators.h) ---- */
+static bool is_reparse_point(const fs::path& p) {
+    const DWORD a = GetFileAttributesW(p.c_str());
+    return a == INVALID_FILE_ATTRIBUTES || (a & FILE_ATTRIBUTE_REPARSE_POINT) != 0;   // (unreadable counts as "do not touch")
+}
+/* true when `d` and everything below it is plain files and folders: no reparse point anywhere and no folder or file called `user`. Never descends into a link. */
+static bool plain_tree(const fs::path& d, int depth = 0) {
+    if (depth > 40) return false;
+    std::error_code ec;
+    for (fs::directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec)) {
+        const fs::path c = it->path();
+        if (is_reparse_point(c)) return false;
+        if (_stricmp(S(c.filename()).c_str(), "user") == 0) return false;
+        std::error_code e2;
+        if (fs::is_directory(c, e2) && !plain_tree(c, depth + 1)) return false;
+    }
+    return !ec;
+}
+
+int cleanup_leftovers(const std::string& root) {
+    std::unique_lock<std::mutex> job(g_job_mu, std::try_to_lock);
+    if (!job.owns_lock()) return 0;   // an install job is running: it owns these folders
+    set_log_path(join(root, "install-log.txt"));
+    int removed = 0;
+    std::error_code ec;
+    const fs::path rootp = P(root);
+    if (root.empty() || !fs::is_directory(rootp, ec) || is_reparse_point(rootp)) return 0;
+    const auto now = fs::file_time_type::clock::now();
+    // 1. downloads (and their listing / partial files) older than a day: plain files directly inside _downloads only
+    const fs::path dl = rootp / "_downloads";
+    if (fs::is_directory(dl, ec) && !is_reparse_point(dl)) {
+        std::vector<fs::path> old_files;
+        for (fs::directory_iterator it(dl, ec), end; !ec && it != end; it.increment(ec)) {
+            std::error_code e2;
+            if (!it->is_regular_file(e2) || is_reparse_point(it->path())) continue;
+            const auto t = fs::last_write_time(it->path(), e2);
+            if (!e2 && now - t > std::chrono::hours(24)) old_files.push_back(it->path());
+        }
+        for (const fs::path& f : old_files) {
+            std::error_code e2;
+            if (fs::remove(f, e2) && !e2) { ++removed; emu_log("removed a stale download: " + S(f.filename())); }
+        }
+    }
+    // 2. an `_old` / `_extract` folder with no upgrade journal beside it, in each emulator's own folder
+    for (Kind k : {Kind::Azahar, Kind::Cemu, Kind::Dolphin, Kind::Pcsx2, Kind::Lrps2, Kind::Ppsspp, Kind::Lichii, Kind::Fritchii}) {
+        const fs::path dir = P(managed_dir(k, root));
+        if (!fs::is_directory(dir, ec) || is_reparse_point(dir)) continue;
+        if (fs::exists(dir / kJournal, ec) || fs::exists(dir / kJournalTmp, ec)) continue;   // recover_interrupted owns those
+        for (const char* n : {kOldDir, kStageDir}) {
+            const fs::path s = dir / n;
+            std::error_code e2;
+            if (!fs::is_directory(s, e2) || is_reparse_point(s)) continue;
+            const auto t = fs::last_write_time(s, e2);
+            if (e2 || now - t < std::chrono::minutes(10)) continue;   // too fresh to be sure it is abandoned
+            if (!plain_tree(s)) { emu_log(std::string("left alone (a link or a user folder inside): ") + S(s)); continue; }
+            remove_tree(S(s));
+            if (!fs::exists(s, e2)) { ++removed; emu_log("removed a leftover folder: " + S(s)); }
+            else emu_log("could not remove a leftover folder (in use?): " + S(s));
+        }
+    }
+    return removed;
+}
+
+void cleanup_leftovers_async(const std::string& root) {
+    std::thread([root] { cleanup_leftovers(root); }).detach();
 }
 
 bool install_blocking(Kind k, const std::string& root, std::string* err,
