@@ -536,7 +536,7 @@ std::string n64run_path();
 bool is_native(const hub::GameEntry& e);
 std::string sys_short(const hub::GameEntry& e);
 std::string no_slash(std::string p);
-void start_scan();
+void start_scan(bool user_requested = false);   // user_requested: the player asked for it (Rescan, folder added / removed): its result is announced; automatic scans stay silent
 const hub::GameState& gstate(const std::string& key);
 void refresh_state(const std::string& key);
 const hub::GameEntry* find_entry(const std::string& key);

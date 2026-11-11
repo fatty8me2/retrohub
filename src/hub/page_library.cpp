@@ -19,7 +19,6 @@
 #include "addgames.h"
 
 /* help_ui.cpp: the scan result toast, the last result line and the scan caption's clock */
-void scan_result_tick();
 const std::string& scan_last_line();
 double scan_elapsed_s();
 std::string scan_home_dir();
@@ -539,7 +538,7 @@ void library_top_bar() {
     auto draw_utility = [&]() {
         if (dice) { surprise_ui_button(bh); ImGui::SameLine(0, sp(1.f)); }
         ImGui::BeginDisabled(A.scanning);
-        if (ui::icon_button("rescan", ui::Icon::Refresh, bh, false, nullptr)) start_scan();
+        if (ui::icon_button("rescan", ui::Icon::Refresh, bh, false, nullptr)) start_scan(true);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible))
             ImGui::SetTooltip("%s", A.scanning ? "Scanning..." : "Rescan library");
         ImGui::EndDisabled();
@@ -571,7 +570,6 @@ void library_top_bar() {
     float w = ImGui::GetContentRegionAvail().x;
     ImVec2 o = ImGui::GetCursorScreenPos();
     float lh = sp(0.25f);
-    scan_result_tick();   // one toast when a scan ends (help_ui.cpp)
     if (A.scanning) {
         int d = A.scan_done, t2 = A.scan_total;
         ImDrawList* dl = ImGui::GetWindowDrawList();
