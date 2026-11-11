@@ -178,7 +178,7 @@ static void draw_entry(Entry& e, int idx, float cw, const World& w) {
         ImGui::SetCursorScreenPos(ImVec2(p1.x - pad - bw - sp(0.75f) - dw, by));
         if (ui::button(act.c_str(), ImVec2(bw, sp(3.5f)), true)) {
             switch (e.kind) {
-                case Kind::Invite: fr_join_lobby(e.code, e.game_id, e.title, e.name); e.done = true; ImGui::CloseCurrentPopup(); break;
+                case Kind::Invite: if (fr_join_lobby(e.code, e.game_id, e.title, e.name, e.expires_at)) e.done = true; ImGui::CloseCurrentPopup(); break;
                 case Kind::AskJoin: fr_invite_uids({e.uid}); e.done = true; break;
                 case Kind::FriendRequest: fr_accept(e.uid, e.name); e.done = true; break;
                 case Kind::JoinWaiting: admin_ui_act("approve", e.uid); e.done = true; break;

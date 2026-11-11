@@ -131,7 +131,7 @@ bool fr_in_my_room();
 bool fr_send_dm(const std::string& uid, const std::string& text);   // quick menu chat: message a friend
 bool fr_send_attach_dm(const std::string& uid, const std::string& text, const hubnet::Attach& a);   // DM carrying an uploaded file (friend_pick_ui.cpp)
 void fr_invite_uids(const std::vector<std::string>& uids);
-bool fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who = "");   // true only when the join went ahead
+bool fr_join_lobby(const std::string& code, const std::string& game_id, const std::string& title, const std::string& who = "", long long expires_at = 0);   // true only when the join went ahead
 void fr_open_chat(const std::string& uid);
 void fr_view_profile(const std::string& uid);   // friend profile view (empty uid = my own)
 std::vector<hubnet::LibGame> fg_shared_with(const std::string& uid);   // games both of us own (friend_games_ui.cpp)
