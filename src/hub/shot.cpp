@@ -69,7 +69,7 @@ void shot_init_ui() {
         if (sl != std::string::npos) { history_ui_open(h.substr(0, sl), h.substr(sl + 1)); A.page = Page::Saves; }
     }
     if (const char* po = std::getenv("HUB_SHOT_PLAYED_ONLINE")) A.st.played_online = std::string(po) != "0";   // screenshot aid: Play Online help collapsed (1) / open (0)
-    if (const char* dk = std::getenv("HUB_SHOT_DETAILS")) { A.sel_game = dk; A.show_details = true; }   // screenshot aid: open the details modal of this game key
+    if (const char* dk = std::getenv("HUB_SHOT_DETAILS")) { A.env_select = dk; A.show_details = true; SH.details_key = dk; }   // screenshot aid: open the details modal of this game key (kept pending in env_select: ensure_selection() clears sel_game while the library is still empty)
     if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly ("saves")
         if (std::string(pg) == "saves") A.page = Page::Saves;
         else if (std::string(pg).rfind("settings", 0) == 0) {   // "settings" or "settings:<tab 0-5>"
@@ -286,10 +286,16 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
             } else ++pad_i;
         }
     }
-    if (path && !keys.empty()) {   // scripted keyboard navigation, starting once the library has loaded
+    ++frames;
+    if (path && !details_key.empty() && A.scanned_once && !A.scanning && !fail && !find_entry(details_key) && !find_entry(A.env_select)) {
+        std::fprintf(stderr, "HUB_SHOT_DETAILS: game key '%s' is not in the library (%d games); no screenshot taken\n", details_key.c_str(), (int)A.lib.size());
+        shot_trace("details-missing", details_key);
+        fail = true;
+    }
+    if (path && !keys.empty()) {   // scripted keyboard navigation: one key per frame at most, only after the library has loaded and the UI has laid out a few frames
         double start = std::max(1.5, secs - 0.35 * (keys.size() + 1));
-        if (key_down) { io.AddKeyEvent(keys[key_i - 1], false); key_down = false; }
-        else if (key_i < keys.size() && el > start && el - last_key > 0.3 && A.scanned_once) {
+        if (key_down) { io.AddKeyEvent(keys[key_i - 1], false); key_down = false; last_key = el; }
+        else if (key_i < keys.size() && el > start && el - last_key > 0.3 && A.scanned_once && !A.scanning && frames >= 20) {
             io.AddKeyEvent(keys[key_i++], true);
             key_down = true;
             last_key = el;
@@ -335,6 +341,7 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
 }
 
 bool ShotDriver::ready() const {
-    return el >= secs && (pad_seq.empty() || pad_i > pad_seq.size()) && pad_key == ImGuiKey_None && (A.scanned_once || el > secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && key_i >= keys.size() && !key_down && click_i >= clicks.size() && (clicks.empty() || el - click_t > 0.8) &&
+    return el >= secs && (keys.empty() || (key_i >= keys.size() && el - last_key > 0.8)) &&   // the last key needs time to take effect (modal open + fade) before the frame is saved
+ (pad_seq.empty() || pad_i > pad_seq.size()) && pad_key == ImGuiKey_None && (A.scanned_once || el > secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && key_i >= keys.size() && !key_down && click_i >= clicks.size() && (clicks.empty() || el - click_t > 0.8) &&
            (!wheel || (wheel_stage == 2 && el - wheel_t > 1.5)) && (!userflow_active() || userflow_done());
 }

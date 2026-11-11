@@ -669,7 +669,17 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 save_screenshot(ren, (sp_.substr(0, dot == std::string::npos ? sp_.size() : dot) + "-" + uf + ".bmp").c_str());
             }
             if (qm_e2e_active()) { if (!qm_e2e_frame()) running = false; }
-            else if (SH.ready()) { save_screenshot(ren, shot_path); running = false; }
+            else if (SH.fail) { running = false; }
+            else if (SH.ready()) {
+                save_screenshot(ren, shot_path);
+                const char* pn[] = {"library", "discover", "online", "saves", "controllers", "settings", "about"};
+                char line[512];
+                std::snprintf(line, sizeof line, "SHOT_CAPTURED page=%s details=%s game=%s sel=%s", (int)A.page >= 0 && (int)A.page < 7 ? pn[(int)A.page] : "?",
+                              g_details_shown.empty() ? "no" : "yes", g_details_shown.empty() ? "-" : g_details_shown.c_str(), A.sel_game.empty() ? "-" : A.sel_game.c_str());
+                std::fprintf(stderr, "%s\n", line);
+                shot_trace("captured", line + 14);
+                running = false;
+            }
             SDL_Delay(8);
         }
         hang_watchdog_phase("present");
@@ -728,5 +738,5 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SDL_DestroyWindow(A.win);
     SDL_Quit();
     CoUninitialize();
-    return qm_e2e_active() ? qm_e2e_exit_code() : 0;
+    return SH.fail ? 2 : (qm_e2e_active() ? qm_e2e_exit_code() : 0);
 }
