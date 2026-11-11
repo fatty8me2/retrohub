@@ -21,12 +21,12 @@ static void put(const fs::path& p, const std::string& t) { fs::create_directorie
 static std::string get(const fs::path& p) { std::ifstream f(p, std::ios::binary); std::stringstream s; s << f.rdbuf(); return s.str(); }
 /* The UI Automation driver is a shipped file (data/helpers), not text inside the exe. */
 static std::string driver_script() { return get(fs::path(GCNP_DRIVER_PS1)); }
-/* Dolphin 2509 Config::GetGCIFolderPath(configured, slot, region) (Core/Config/MainSettings.cpp): a trailing /USA, /JPN or /EUR is
+/* Dolphin 2509 Config::GetGCIFolderPath(configured, slot, region) (Core/Config/MainSettings.cpp): a trailing /USA, /JAP or /EUR is
  * dropped and the folder of the disc's region is appended. This is the folder NetPlayServer::SyncSaveData sends to the guests. */
 static fs::path dolphin_gci_folder(std::string configured, const char* region_dir) {
     for (auto& c : configured) if (c == '\\') c = '/';
     while (!configured.empty() && configured.back() == '/') configured.pop_back();
-    for (const char* r : {"/USA", "/JPN", "/EUR"}) {
+    for (const char* r : {"/USA", "/JAP", "/EUR"}) {
         const size_t n = strlen(r);
         if (configured.size() > n && configured.compare(configured.size() - n, n, r) == 0) { configured.resize(configured.size() - n); break; }
     }
@@ -47,7 +47,7 @@ static void test_host_card_sync() {
     std::string err;
     const std::string a = host_card_sync_args(card8, root8, &err);
     CHECK(a == " -C \"Dolphin.Core.GCIFolderAPath=" + root8 + "\"");
-    for (const char* r : {"USA", "EUR", "JPN"}) {
+    for (const char* r : {"USA", "EUR", "JAP"}) {
         const fs::path d = dolphin_gci_folder(root8, r);         // what Dolphin's NetPlay server reads for a disc of that region
         CHECK(get(d / "01-G4QE-MarioSoccer.gci") == std::string("STRIKERS\0save", 13));
         CHECK(get(d / "01-GYQE-MarioBaseball.GCI") == "MSB");
