@@ -38,6 +38,7 @@ void start_scan() {
     std::vector<std::string> folders = A.st.rom_folders;
     A.scan_th = std::thread([folders]() {
         A.scan_result = hub::scan_library(folders, [](int d, int t) { A.scan_done = d; A.scan_total = t; });
+        if (!hub::scan_result_applies()) { A.scan_ready = true; return; }   // the app is closing: nothing more to add, nothing saved
         kt_scan_append(&A.scan_result, folders);   // Kanto Together package (zip / folder), if the user has it
         hack_scan_append(&A.scan_result, folders); // ROM hacks / translations whose base game is in the scan (Plan 4 H2)
         {   // library-1: the other copies of each game come last, so the listed (preferred) copy stays first and hubdupes::collapse sees every path

@@ -744,6 +744,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     // clean shutdown
     hublog::info("shutdown: main loop ended");
+    hub::scan_request_cancel();   // the library scan (and a ROM-cache clear / trim) stops at its next check point, so the joins below return promptly
     hubdisplay::tick(A.win, true, tvmode::active());   // last window rect / monitor / maximized, before the window is hidden
     hang_watchdog_stop();   // before every shutdown join (updater startup thread, art worker): a slow join must not trip the watchdog on a normal exit
     hubupdate::shutdown();   // stop waiting for a game to close, drop the unused installer copy, join the startup pass
@@ -759,6 +760,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     FR.cli.stop();
     cloud_gate_cancel();   // the gate thread may be waiting on a background cloud job: stop it before the joins
     if (A.scan_th.joinable()) A.scan_th.join();
+    settings_cache_shutdown();
     if (A.job.th.joinable()) A.job.th.join();
     if (A.cloud_gate.th.joinable()) A.cloud_gate.th.join();
     cloud_shutdown();
