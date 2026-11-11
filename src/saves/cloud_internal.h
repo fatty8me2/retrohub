@@ -152,4 +152,9 @@ bool cloud_adopt_account(const std::string& uid, const std::string& secret, std:
 void cloud_wake_queue();                                          // manual trigger: parked retries run again
 void cloud_set_identity(const std::string& uid, const std::string& secret);   // tests / after an identity change; resets restore mode
 
+/* Text for a failed sync pass: status = the HTTP status (0 = no network), code = the server's error code or a local one ("file-locked", "disk-full", "deadline"). */
+std::string sync_failure_text(int status, const std::string& code);
+/* Crash-safe file replace used for the engine's state files (flush + one write-through MoveFileExW; a failure leaves the old file intact). */
+bool cloud_write_atomic(const std::string& path_utf8, const std::string& data);
+
 } // namespace hub::saves

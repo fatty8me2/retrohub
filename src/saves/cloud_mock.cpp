@@ -538,6 +538,7 @@ struct MockServer::Impl {
             rq.body.append(tmp, (size_t)n);
         }
         Res rs;
+        if (rq.path == "/saves/v2/plan") { auto hk = self->get_before_plan(); if (hk) hk(); }   // test hook: runs outside the server lock
         if (rq.path != "/__ctl" && self->delay_ms > 0) Sleep((DWORD)self->delay_ms.load());
         {
             std::lock_guard<std::mutex> lk(mu);
