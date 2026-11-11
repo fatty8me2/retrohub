@@ -14,10 +14,11 @@ const Faq kFaq[] = {
      "RetroHub looks in the folders listed under Settings > General. Add the folder, then press Rescan (or press Ctrl+K and type rescan). Zipped and 7z games are unpacked automatically. "
      "Find my games can search your PC for game files."},
     {"Where are my saves?",
-     "Your saves live in one folder on this PC, the save vault. Open the Saves page and choose Open vault folder to see it. "
-     "With your RetroHub account, your saves are also backed up to the cloud after you play, and they follow you to any PC where you sign in "
-     "(Settings > Account > Add this account to another PC). If two PCs changed the same save, the newer one is used. "
-     "On the Saves page you can also export all your saves to a zip file, or copy them to a folder you choose."},
+     "Your saves live in the save vault on this PC. Open the Saves page and choose Open vault folder to see it. "
+     "With a RetroHub account, your saves are also backed up to the cloud after you play. "
+     "To get them on a new PC, sign in there with your account code (Settings > Account > Add this account to another PC). "
+     "A sync folder is optional. It copies your saves to a folder you choose, such as a USB stick. "
+     "If two PCs changed the same save, the newer one is used and the other one is kept as a backup copy."},
     {"A game says it needs a BIOS",
      "PlayStation and PlayStation 2 games need a console BIOS file that you supply. Put it next to your games, or choose its folder under Settings > Video & Games. "
      "PlayStation can also use the built-in open BIOS (less compatible)."},
@@ -65,6 +66,7 @@ void help_tab_ui() {
 
 namespace {
 std::string g_scan_last_line;     // "Found 12 games in 2 folders." / "Looked in ...: no game files found." ("" until a scan with folders ended)
+std::string g_scan_toast_text;    // the text of the last scan toast (so it can be dropped when a game starts)
 double g_scan_started = 0.0;
 std::string home_dir() { const char* h = std::getenv("USERPROFILE"); return h ? h : ""; }
 }  // namespace
@@ -75,8 +77,17 @@ void scan_finished(bool user_requested) {
     std::vector<std::string> paths;
     for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey && !e.path.empty()) paths.push_back(e.path);
     const hubhelp::ScanSummary s = hubhelp::scan_summary(paths, A.st.rom_folders, home_dir());
-    g_scan_last_line = s.text;   // the empty Home card keeps the last result, however the scan began
-    if (hubhelp::scan_toast_wanted(user_requested, game_active(), s)) push_toast(s.text, s.none ? ui::ACCENT : ui::GOOD, 6.0);   // automatic scans stay silent
+    g_scan_last_line = s.last;   // the empty Home card keeps the last result, however the scan began
+    if (hubhelp::scan_toast_wanted(user_requested, game_active(), s)) {   // automatic scans stay silent
+        g_scan_toast_text = s.text;
+        push_toast(s.text, s.none ? ui::ACCENT : ui::GOOD, 5.0);
+    }
+}
+/* frame.cpp calls this while drawing toasts: once a game is running the scan toast is dropped, never drawn over it */
+void scan_toast_prune() {
+    if (g_scan_toast_text.empty() || !game_active()) return;
+    const std::string t = g_scan_toast_text;
+    A.toasts.erase(std::remove_if(A.toasts.begin(), A.toasts.end(), [&](const Toast& x) { return x.text == t; }), A.toasts.end());
 }
 const std::string& scan_last_line() { return g_scan_last_line; }
 double scan_elapsed_s() { return A.scanning ? std::max(0.0, ImGui::GetTime() - g_scan_started) : 0.0; }
@@ -94,7 +105,7 @@ void finish_setup_card() {
     {   // Home's "Add your game folders" card is showing: it already asks for games, so this card does not
         bool own_empty = true;
         for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey) { own_empty = false; break; }
-        in.empty_card_showing = own_empty && !A.scanning;
+        in.empty_card_showing = own_empty && !A.scanning && A.view != LibView::All;   // exactly when page_library draws the add-folders card
     }
     std::vector<std::string> steps = hubhelp::open_steps(in);
     if (steps.empty()) return;

@@ -183,7 +183,7 @@ static void test_help() {
     // compact one-line card below about 700 px (at 100% UI size)
     CHECK(finish_card_compact(600.f, 1.f) && finish_card_compact(699.f, 1.f) && !finish_card_compact(700.f, 1.f) && !finish_card_compact(720.f, 1.f));
     CHECK(!finish_card_compact(1050.f, 1.5f) && finish_card_compact(1049.f, 1.5f));
-    CHECK(join_steps({"Pick a username", "Allow online play"}) == "Pick a username  -  Allow online play" && join_steps({}).empty());
+    CHECK(join_steps({"Pick a username", "Allow online play"}) == "Pick a username, Allow online play" && join_steps({}).empty());
 }
 
 static void test_scan_summary() {
@@ -208,6 +208,11 @@ static void test_scan_summary() {
     // a folder name that only starts the same is not a parent
     r = scan_summary({"D:\\Roms2\\a.z64"}, {"D:\\Roms"}, home);
     CHECK(r.text == "Found 1 game.");   // games found, but none under a listed folder (e.g. a pack): no folder count
+    // the sentence the Home cards keep
+    CHECK(scan_summary({}, {"D:\\Roms"}, home).last == "Your last scan looked in D:\\Roms and found no game files.");
+    CHECK(scan_summary({}, {"D:\\Roms", "E:\\X"}, home).last == "Your last scan looked in 2 folders and found no game files.");
+    CHECK(scan_summary({"D:\\Roms\\a.z64"}, {"D:\\Roms"}, home).last == "Your last scan found 1 game in 1 folder.");
+    CHECK(scan_summary({"D:\\Roms2\\a.z64"}, {"D:\\Roms"}, home).last == "Your last scan found 1 game.");
     // who gets a toast: only a scan the player started, never while a game runs
     {
         const ScanSummary some = scan_summary({"D:\\Roms\\a.z64"}, {"D:\\Roms"}), none = scan_summary({}, {"D:\\Roms"}), nofolders = scan_summary({}, {});

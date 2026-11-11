@@ -68,6 +68,7 @@ void draw_update_popup() {
 float draw_toasts(float bottom, float right, float top) {
     double now = ImGui::GetTime();
     A.toasts.erase(std::remove_if(A.toasts.begin(), A.toasts.end(), [&](const Toast& t) { return t.until < now; }), A.toasts.end());
+    { void scan_toast_prune(); scan_toast_prune(); }   // help_ui.cpp: a scan-result toast never survives into a running game
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImFont* f = ui::F.body;

@@ -27,7 +27,7 @@ inline bool finish_card_compact(float display_h_px, float ui_scale) {
 }
 inline std::string join_steps(const std::vector<std::string>& steps) {
     std::string s;
-    for (size_t i = 0; i < steps.size(); ++i) { if (i) s += "  -  "; s += steps[i]; }
+    for (size_t i = 0; i < steps.size(); ++i) { if (i) s += ", "; s += steps[i]; }
     return s;
 }
 
@@ -82,7 +82,7 @@ inline bool path_under(const std::string& path, const std::string& folder) {
 inline std::string plural(size_t n, const char* one, const char* many) { return std::to_string(n) + " " + (n == 1 ? one : many); }
 
 /* What the scan found. `game_paths` = the file of each game of your own; `folders` = your game folders. folders.empty() = nothing to report. */
-struct ScanSummary { std::string text; size_t games = 0, folders_with_games = 0; bool none = false; };
+struct ScanSummary { std::string text, last; size_t games = 0, folders_with_games = 0; bool none = false; };   // text: the toast; last: the same news as a sentence for the Home cards
 
 inline ScanSummary scan_summary(const std::vector<std::string>& game_paths, const std::vector<std::string>& folders, const std::string& home = "") {
     ScanSummary r;
@@ -90,8 +90,9 @@ inline ScanSummary scan_summary(const std::vector<std::string>& game_paths, cons
     r.games = game_paths.size();
     if (game_paths.empty()) {
         r.none = true;
-        r.text = folders.size() == 1 ? "Looked in " + short_path(folders[0], home) + ": no game files found."
-                                     : "Looked in " + plural(folders.size(), "folder", "folders") + ": no game files found.";
+        const std::string where = folders.size() == 1 ? short_path(folders[0], home) : plural(folders.size(), "folder", "folders");
+        r.text = "Looked in " + where + ": no game files found.";
+        r.last = "Your last scan looked in " + where + " and found no game files.";
         return r;
     }
     for (const std::string& f : folders) {
@@ -99,6 +100,7 @@ inline ScanSummary scan_summary(const std::vector<std::string>& game_paths, cons
     }
     r.text = "Found " + plural(r.games, "game", "games");
     if (r.folders_with_games) r.text += " in " + plural(r.folders_with_games, "folder", "folders");
+    r.last = "Your last scan found" + r.text.substr(5) + ".";   // "Found 3 games in 2 folders" -> "Your last scan found 3 games in 2 folders."
     r.text += ".";
     return r;
 }
