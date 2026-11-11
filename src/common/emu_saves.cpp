@@ -22,6 +22,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
+thread_local const std::atomic<bool>* t_cancel = nullptr;
+
 fs::path u8(const std::string& s) { return fs::u8path(s); }
 std::string to_u8(const fs::path& p) {
     auto s = p.u8string();
@@ -105,6 +107,21 @@ std::string wiiu_save_rel(uint64_t t) {
     return "usr/save/" + hex8(uint32_t(t >> 32)) + "/" + hex8(uint32_t(t & 0xFFFFFFFFu));
 }
 
+std::string xml_decode_entities(const std::string& in) {
+    static const struct { const char* ent; size_t len; char ch; } kEnt[] = {
+        {"&amp;", 5, '&'}, {"&lt;", 4, '<'}, {"&gt;", 4, '>'}, {"&quot;", 6, '"'}, {"&apos;", 6, '\''}};
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size();) {
+        bool hit = false;
+        if (in[i] == '&')
+            for (const auto& e : kEnt)
+                if (in.compare(i, e.len, e.ent) == 0) { out.push_back(e.ch); i += e.len; hit = true; break; }   // one pass: "&amp;lt;" is "&lt;", not "<"
+        if (!hit) out.push_back(in[i++]);
+    }
+    return out;
+}
+
 std::string cemu_settings_mlc_path(const std::string& xml) {
     size_t a = xml.find("<mlc_path>");
     if (a == std::string::npos) return "";
@@ -115,7 +132,7 @@ std::string cemu_settings_mlc_path(const std::string& xml) {
     while (!v.empty() && (v.back() == ' ' || v.back() == '\r' || v.back() == '\n')) v.pop_back();
     size_t s = 0;
     while (s < v.size() && (v[s] == ' ' || v[s] == '\r' || v[s] == '\n')) ++s;
-    return v.substr(s);
+    return xml_decode_entities(v.substr(s));
 }
 
 CemuDirs cemu_dirs_for(const std::string& exe_dir, const std::string& appdata, const FsProbe& p) {
@@ -206,6 +223,8 @@ static void prune_backups(const fs::path& backup_file, const std::string& tag, i
     for (size_t i = 0; i + keep < mine.size(); ++i) fs::remove(mine[i], ec);
 }
 
+void set_sync_cancel(const std::atomic<bool>* flag) { t_cancel = flag; }
+
 TreeSyncReport sync_tree_newest(const std::string& src, const std::string& dst, const std::string& backup_dir,
                                 const std::string& tag, SyncManifest* manifest, const std::string& key_prefix, int keep_backups) {
     TreeSyncReport r;
@@ -214,6 +233,7 @@ TreeSyncReport sync_tree_newest(const std::string& src, const std::string& dst, 
     if (!fs::is_directory(s, ec)) return r;
     auto fail = [&](const std::string& why) { r.ok = false; if (r.error.empty()) r.error = why; };
     for (fs::recursive_directory_iterator it(s, ec), end; !ec && it != end; it.increment(ec)) {
+        if (t_cancel && t_cancel->load()) { fail("cancelled"); break; }
         std::error_code e0;
         if (!it->is_regular_file(e0)) continue;
         if (it->path().extension() == L".hubtmp") continue;
