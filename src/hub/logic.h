@@ -210,6 +210,11 @@ RoomFailure room_failure_kind(const std::string& status, const std::string& code
 struct RoomCodeInput { std::string code, hint; };
 RoomCodeInput room_code_from_text(const std::string& text);
 
+/* May Esc / pad B leave the room right now? Only in the first "connecting" phase (nothing joined yet) and on a terminal failure; never while
+ * connected, never during an automatic reconnect ("Connection lost - reconnecting ...", "Server busy ..."), never with a game running
+ * (leaving a room ends this PC's online game). `status` is the lobby client's status text. */
+bool room_back_may_leave(bool in_room, bool connected, bool failed, const std::string& status, bool game_running);
+
 /* "Connecting" screen: wording changes after kConnectSlowMs (fake clock friendly: both times are millisecond counters, wrap safe). */
 enum class ConnectPhase { Contacting, StillTrying };
 constexpr unsigned kConnectSlowMs = 8000;
