@@ -621,6 +621,32 @@ Play as Mario &lt;or&gt; Luigi</synopsis>
         CHECK(mj.find("art2:") == std::string::npos);   // dropped, so the cover is looked up once more
         fs::remove_all(dir, ec);
     }
+    {   // UI-thread "no network" mode: nothing is downloaded, the shortcut maker falls back to the default icon
+        const std::string dir = (fs::temp_directory_path() / "hub_art_test_offline").string();
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        hubart::detail::init_headless(dir + "/");
+        hub::GameEntry g;
+        g.key = "n64:0123456789abcdef"; g.system = hub::System::N64; g.title = "Zebra Quest Offline Test";   // no catalog id: would need the No-Intro DAT
+        std::string name, how, err;
+        const int r0 = hubart::detail::offline_refused_count();
+        CHECK(!hubart::detail::resolve_name_cached(g, &name, &how));
+        CHECK(hubart::detail::offline_refused_count() > r0);   // it would have downloaded the DAT
+        const int r1 = hubart::detail::offline_refused_count();
+        int w = 0, h = 0;
+        CHECK(!hubart::detail::fetch_decode_cached("n64", "Zebra Quest Offline Test (USA)", hubart::Kind::Boxart, &w, &h, &err, nullptr));
+        CHECK(hubart::detail::offline_refused_count() > r1);   // it would have downloaded the cover
+        CHECK_EQ(err, "network error");
+        // a cached image is still used
+        const unsigned char png1[] = {0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00,0x00,0x00,0x0D,0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x06,0x00,0x00,0x00,0x1F,0x15,0xC4,0x89,0x00,0x00,0x00,0x0D,0x49,0x44,0x41,0x54,0x78,0x9C,0x63,0xF8,0xCF,0xC0,0xF0,0x1F,0x00,0x05,0x00,0x01,0xFF,0x89,0x99,0x3D,0x1D,0x00,0x00,0x00,0x00,0x49,0x45,0x4E,0x44,0xAE,0x42,0x60,0x82};
+        fs::create_directories(fs::path(dir) / "n64" / "boxart", ec);
+        { std::ofstream f(fs::path(dir) / "n64" / "boxart" / "Cached Offline Game.png", std::ios::binary); f.write((const char*)png1, sizeof png1); }
+        const int r2 = hubart::detail::offline_refused_count();
+        CHECK(hubart::detail::fetch_decode_cached("n64", "Cached Offline Game", hubart::Kind::Boxart, &w, &h, &err, nullptr) && w == 1 && h == 1);
+        CHECK(hubart::detail::offline_refused_count() == r2);   // no download attempted
+        fs::remove_all(dir, ec);
+    }
     {   // audit rows
         namespace ca = hubui::cases_audit;
         ca::Item it;

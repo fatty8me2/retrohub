@@ -3,7 +3,9 @@
 #include "toast.h"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -16,6 +18,7 @@
 
 #include "popup_guard.h"
 #include "shell_integration.h"
+#include "toast_worker.h"
 
 namespace hubtoast {
 namespace {
@@ -26,24 +29,54 @@ void log_err(const char* what, const std::string& msg) {
 }
 
 /* C++/WinRT needs an initialised apartment on the calling thread. The UI thread already has SDL's/OLE's apartment
- * (STA), so toasts are shown from a short-lived worker thread that owns its own MTA: no apartment-type conflict. */
+ * (STA), so toasts are shown from ONE persistent worker thread that owns its own MTA (initialised once when the thread starts): no
+ * apartment-type conflict, and the UI thread never pays for the WinRT init. It is joined at shutdown (shutdown(), else the static dtor). */
+SerialWorker& toast_worker() {
+    static SerialWorker w(
+        16,
+        [] { try { winrt::init_apartment(winrt::apartment_type::multi_threaded); } catch (...) { log_err("apartment", "init failed"); } },
+        [] { try { winrt::uninit_apartment(); } catch (...) {} });
+    return w;
+}
+
+template <class F>
+bool run_guarded(F& f) {
+    bool ok = false;
+    std::string err;
+    try {
+        ok = f(&err);
+        if (!ok && !err.empty()) log_err("failed", err);
+    } catch (const winrt::hresult_error& e) {
+        log_err("winrt error", winrt::to_string(e.message()) + " (0x" + std::to_string((unsigned)e.code().value) + ")");
+    } catch (const std::exception& e) { log_err("exception", e.what()); }
+    catch (...) { log_err("exception", "unknown"); }
+    return ok;
+}
+
+/* Runs f on the worker and WAITS for its result. Only for callers that need the answer (schedule / cancel keep a flag in sync with it, the
+ * self-test); the worker is warm after the first call, so the wait is short. A show() never waits: see run_async. */
 template <class F>
 bool run_on_mta_thread(F&& f) {
-    bool ok = false;
-    std::thread th([&] {
-        std::string err;
-        try {
-            winrt::init_apartment(winrt::apartment_type::multi_threaded);
-            ok = f(&err);
-            if (!ok && !err.empty()) log_err("failed", err);
-        } catch (const winrt::hresult_error& e) {
-            log_err("winrt error", winrt::to_string(e.message()) + " (0x" + std::to_string((unsigned)e.code().value) + ")");
-        } catch (const std::exception& e) { log_err("exception", e.what()); }
-        catch (...) { log_err("exception", "unknown"); }
-        try { winrt::uninit_apartment(); } catch (...) {}
+    std::mutex m;
+    std::condition_variable cv;
+    bool done = false, ok = false;
+    const bool queued = toast_worker().post([&] {
+        const bool r = run_guarded(f);
+        std::lock_guard<std::mutex> l(m);
+        ok = r;
+        done = true;
+        cv.notify_one();
     });
-    th.join();
+    if (!queued) return false;
+    std::unique_lock<std::mutex> l(m);
+    cv.wait(l, [&] { return done; });
     return ok;
+}
+
+/* Fire and forget: queued and returns at once (true = queued; a failure is only logged). */
+template <class F>
+bool run_async(F f) {
+    return toast_worker().post([f]() mutable { run_guarded(f); });
 }
 
 bool load_xml(const std::string& xml, winrt::Windows::Data::Xml::Dom::XmlDocument& doc, std::string* err) {
@@ -96,7 +129,8 @@ struct SystemNotifier : INotifier {
         /* Second lock on the one rule (should_toast is the first): whatever a call site passes, a Windows toast (banner and notification
          * sound) is never raised while a game runs. The caller's bell entry / the runner OSD carries the message. */
         if (g_game_probe && !hubguard::may_windows_toast(g_game_probe())) return false;
-        return run_on_mta_thread([&](std::string* err) { return show_impl(xml, tag, err); });
+        /* Queued, never waited for: this runs on the UI frame thread (friends_ui). The game gate above was checked on this thread. */
+        return run_async([xml, tag](std::string* err) { return show_impl(xml, tag, err); });
     }
 };
 /* Scheduling shows nothing now: Windows delivers it later, so the caller only keeps it pending while no game or session is up. */
@@ -121,6 +155,8 @@ struct SystemScheduler : IScheduler {
 IScheduler& system_scheduler() { static SystemScheduler s; return s; }
 
 void set_game_probe(bool (*fn)()) { g_game_probe = fn; }
+
+void shutdown() { toast_worker().stop(); }
 
 INotifier& system_notifier() { static SystemNotifier n; return n; }
 

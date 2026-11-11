@@ -249,10 +249,21 @@ void record_miss(const std::string& id) {
 
 /* Politeness (per-site spacing, 429 / Retry-After blocks) lives in common/netgate.*, shared with the game-info client. */
 
+/* "No network" mode for callers on the UI frame thread (the desktop-shortcut maker): every fetch is refused at once, so only what is already on
+ * disk is used. Thread-local, so the art worker is unaffected. g_offline_refused counts the refused fetches (tests assert "would have downloaded"). */
+thread_local bool t_offline = false;
+std::atomic<int> g_offline_refused{0};
+struct OfflineScope {
+    bool old;
+    OfflineScope() : old(t_offline) { t_offline = true; }
+    ~OfflineScope() { t_offline = old; }
+};
+
 /* status: HTTP status, or 0 for a transport failure. */
 bool http_get(const std::string& url, std::string* body, int* status, size_t max_bytes = 64u << 20) {
     *status = 0;
     body->clear();
+    if (t_offline) { ++g_offline_refused; return false; }
     std::wstring wurl = widen(url);
     URL_COMPONENTS uc{};
     uc.dwStructSize = sizeof uc;
@@ -321,7 +332,10 @@ bool http_get(const std::string& url, std::string* body, int* status, size_t max
 const std::vector<hm::DatRec>* get_dat(const std::string& system, bool tree = false) {
     if (system == "wiiu") tree = false;   // its DAT already is the tree
     const std::string slot = tree ? system + "#tree" : system;
-    std::lock_guard<std::mutex> l(g_dat_mu);
+    /* The worker holds g_dat_mu for the whole DAT download: an offline (UI thread) caller must not wait for it. */
+    std::unique_lock<std::mutex> l(g_dat_mu, std::defer_lock);
+    if (t_offline) { if (!l.try_lock()) { ++g_offline_refused; return nullptr; } }
+    else l.lock();
     auto it = g_dats.find(slot);
     if (it != g_dats.end()) return &it->second;
     { auto f = g_dat_failed.find(slot); if (f != g_dat_failed.end() && now_s() < f->second) return nullptr; }
@@ -339,7 +353,9 @@ const std::vector<hm::DatRec>* get_dat(const std::string& system, bool tree = fa
             stale = age > kDatRefreshSeconds;
         }
     }
-    if (!have || stale) {
+    if (t_offline) {   // use the cached DAT as it is (stale is fine); none cached: nothing to do, and no failure is recorded for the worker
+        if (!have) { ++g_offline_refused; return nullptr; }
+    } else if (!have || stale) {
         std::string body;
         int st = 0;
         if (http_get(url, &body, &st, 32u << 20) && st == 200 && body.size() > 1000) {
@@ -1124,6 +1140,19 @@ bool fetch_game(const hub::GameEntry& game, Kind kind, int* w, int* h, std::stri
     else if (err) *err = e + (transient ? " (transient)" : "");
     return ok;
 }
+
+bool resolve_name_cached(const hub::GameEntry& game, std::string* name, std::string* how) {
+    OfflineScope off;
+    return resolve_name_impl(game, name, how);
+}
+
+bool fetch_decode_cached(const std::string& system_short, const std::string& nointro_name, Kind kind, int* w, int* h,
+                         std::string* err, std::string* png_path) {
+    OfflineScope off;
+    return fetch_decode(system_short, nointro_name, kind, w, h, err, png_path);
+}
+
+int offline_refused_count() { return g_offline_refused.load(); }
 
 bool fetch_decode(const std::string& system_short, const std::string& nointro_name, Kind kind, int* w, int* h,
                   std::string* err, std::string* png_path) {

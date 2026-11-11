@@ -4,6 +4,7 @@
  * Kanto Together or an emulator job that still holds processes. Several of those never set A.proc, so checking A.proc alone let a
  * second Dolphin open on the same user folder and memory card. The caller passes session_active() (window_guard.cpp). */
 #include <string>
+#include <vector>
 
 namespace hubui {
 
@@ -29,6 +30,16 @@ inline PlayFirstDecision play_first_step(bool gate_busy, bool missing, bool pass
     if (gate_busy) return {PlayFirst::GateBusy, false};
     if (missing) return {PlayFirst::AskMissing, pass_pending};
     return {PlayFirst::Continue, false};
+}
+
+/* Wii U pad-screen combo (View + right bumper) reads the controller whatever window has focus. It may act (and raise Cemu) only while the
+ * player is looking at RetroHub or at one of this session's own game windows; with ANOTHER program in front (a second game the player
+ * alt-tabbed to) the press belongs to that program and Cemu must not be pulled over it. fg_pid 0 = no foreground window: do nothing. */
+inline bool pad_combo_may_act(unsigned long fg_pid, unsigned long hub_pid, const std::vector<unsigned long>& session_game_pids) {
+    if (fg_pid == 0) return false;
+    if (fg_pid == hub_pid) return true;
+    for (unsigned long p : session_game_pids) if (p == fg_pid) return true;
+    return false;
 }
 
 }  // namespace hubui
