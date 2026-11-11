@@ -61,7 +61,7 @@ bool load_save_dir(const std::string& dir, std::vector<SaveFile>* out, std::vect
     std::vector<std::string> names;
     for (auto& e : fs::directory_iterator(fs::path(dir), ec)) {
         if (!e.is_regular_file(ec)) continue;
-        std::string n = e.path().filename().string();
+        std::string n = e.path().filename().u8string();
         if (valid_save_name(n)) names.push_back(n);
     }
     std::sort(names.begin(), names.end());

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "winutil.h"
 #include "hang_watchdog.h"
 #include "addgames.h"
 #include "hack_ui.h"
@@ -32,7 +33,7 @@ std::string documents_dir() {
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &p)) && p) out = U(p);
     if (p) CoTaskMemFree(p);
     if (out.empty()) {
-        const char* up = std::getenv("USERPROFILE");
+        const std::string up_s = winutil::getenv_utf8("USERPROFILE"); const char* up = up_s.empty() ? nullptr : up_s.c_str();
         out = std::string(up ? up : "C:") + "\\Documents";
     }
     return out;

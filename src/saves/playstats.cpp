@@ -124,11 +124,11 @@ std::vector<Session> playlog_read_all() {
     std::error_code ec;
     fs::path root = fs::u8path(vault_dir());
     for (fs::directory_iterator si(root, ec), se; !ec && si != se; si.increment(ec)) {
-        std::string sys = si->path().filename().string();
+        std::string sys = si->path().filename().u8string();
         if (!si->is_directory(ec) || sys.empty() || sys[0] == '.' || sys[0] == '_') continue;
         std::error_code e2;
         for (fs::directory_iterator gi(si->path(), e2), ge; !e2 && gi != ge; gi.increment(e2)) {
-            read_playlog_dir(gi->path() / "playlog", sys, gi->path().filename().string(), &v);
+            read_playlog_dir(gi->path() / "playlog", sys, gi->path().filename().u8string(), &v);
         }
     }
     return v;

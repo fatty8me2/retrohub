@@ -42,7 +42,7 @@ int main() {
     Night later = n; later.id = "y@2"; later.start_ms = now + 2 * H; pl.add(later, now);
     CHECK(pl.v.size() == 2 && pl.v[0].id == n.id && pl.active(now).size() == 2);
     pl.find(n.id)->reminded = true;
-    std::string path = (std::filesystem::temp_directory_path() / "gn_test" / "gamenights.json").string();
+    std::string path = (std::filesystem::temp_directory_path() / "gn_test" / "gamenights.json").u8string();
     CHECK(save(path, pl));
     Plans r; CHECK(load(path, &r) && r.v.size() == 2 && r.v[0].reminded && r.v[0].invitees.size() == 1 && r.v[1].id == "y@2");
     std::filesystem::remove_all(std::filesystem::path(path).parent_path());

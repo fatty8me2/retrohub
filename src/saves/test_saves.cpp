@@ -569,7 +569,7 @@ int main() {
         write_file(sf / "n64/g/battery/x.sav", "old-restored", 5000);          // needs a backup of the vault file
         fs::create_directories(sf / "_conflicts");
         std::string user = getenv("USERNAME") ? getenv("USERNAME") : "";
-        std::string cmd = "icacls \"" + (sf / "_conflicts").string() + "\" /deny \"" + user + "\":(OI)(CI)(WD,AD) >nul 2>&1";
+        std::string cmd = "icacls \"" + (sf / "_conflicts").u8string() + "\" /deny \"" + user + "\":(OI)(CI)(WD,AD) >nul 2>&1";
         bool denied = !user.empty() && system(cmd.c_str()) == 0;
         bool really = false;
         if (denied) { std::ofstream t(sf / "_conflicts/probe.txt"); really = !t.good(); }
@@ -582,7 +582,7 @@ int main() {
                 CHECK(count_conflicts(V) == 0);                                  // no stray vault-side copy
             }
         }
-        std::string reset = "icacls \"" + (sf / "_conflicts").string() + "\" /remove:d \"" + user + "\" >nul 2>&1";
+        std::string reset = "icacls \"" + (sf / "_conflicts").u8string() + "\" /remove:d \"" + user + "\" >nul 2>&1";
         if (denied) system(reset.c_str());
         s = sync_folder(sf.u8string(), false);                                   // writable again: backup made, same winner as before
         CHECK(s.ok && s.pulled == 1 && count_conflicts(V) == 1 && count_conflicts(sf) == 1 && read_file(V / "n64/g/battery/x.sav") == "old-restored");

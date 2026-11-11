@@ -89,7 +89,7 @@ bool newest_png(const std::string& dir, ct::Pic* out) {
     for (fs::directory_iterator it(fs::u8path(dir), ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code e2;
         if (!it->is_regular_file(e2)) continue;
-        std::string ext = it->path().extension().string();
+        std::string ext = it->path().extension().u8string();
         for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
         if (ext != ".png") continue;
         const std::string name = it->path().filename().u8string();

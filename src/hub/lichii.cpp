@@ -65,7 +65,7 @@ static std::string config_dir(const std::string& install) { return join(lichii_u
 static bool dir_has_nca(const std::string& dir) {
     std::error_code ec;
     for (fs::directory_iterator it(P(dir), ec), end; !ec && it != end; it.increment(ec)) {
-        if (ends_with(lower(it->path().filename().string()), ".nca")) return true;
+        if (ends_with(lower(it->path().filename().u8string()), ".nca")) return true;
     }
     return false;
 }
@@ -235,7 +235,7 @@ static void collect_nca(const fs::path& dir, std::map<std::string, fs::path>* ou
     std::error_code ec;
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
         const fs::path& p = it->path();
-        std::string name = p.filename().string();
+        std::string name = p.filename().u8string();
         bool nca = ends_with(lower(name), ".nca");
         std::error_code e2;
         if (fs::is_directory(p, e2)) {
@@ -261,7 +261,7 @@ std::string lichii_import_firmware(const std::string& install, const std::string
     if (!fs::exists(src, ec)) return "that file or folder does not exist";
     {   // never wipe the folder we are copying from
         fs::path a = fs::weakly_canonical(src, ec), b = fs::weakly_canonical(P(reg), ec);
-        std::string as = lower(a.generic_string()), bs = lower(b.generic_string());
+        std::string as = lower(a.generic_u8string()), bs = lower(b.generic_u8string());
         if (!as.empty() && as.compare(0, bs.size(), bs) == 0 && (as.size() == bs.size() || as[bs.size()] == '/'))
             return "that is already Lichii's firmware folder";
     }
@@ -287,7 +287,7 @@ std::string lichii_import_firmware(const std::string& install, const std::string
     fs::remove_all(P(tmp), ec);
     fs::create_directories(P(tmp), ec);
     for (const auto& kv : files) {
-        std::string leaf = kv.second.filename() == "00" ? kv.second.parent_path().filename().string() : kv.second.filename().string();
+        std::string leaf = kv.second.filename() == "00" ? kv.second.parent_path().filename().u8string() : kv.second.filename().u8string();
         fs::copy_file(kv.second, P(tmp) / fs::u8path(leaf), fs::copy_options::overwrite_existing, ec);
         if (ec) { err = "could not copy " + leaf + ": " + ec.message(); break; }
     }

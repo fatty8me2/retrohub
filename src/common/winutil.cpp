@@ -26,6 +26,26 @@ std::string to_utf8(const std::wstring& w) {
 
 std::string to_utf8(const wchar_t* w) { return w ? to_utf8(std::wstring(w)) : std::string(); }
 
+bool getenv_utf8(const char* name, std::string* out) {
+    if (out) out->clear();
+    if (!name || !*name) return false;
+    const std::wstring wn = to_wide(name);
+    DWORD n = GetEnvironmentVariableW(wn.c_str(), nullptr, 0);   // size incl. NUL; 0 = unset (an empty value is 1)
+    if (n == 0) return false;
+    std::wstring v((size_t)n, L'\0');
+    DWORD got = GetEnvironmentVariableW(wn.c_str(), &v[0], n);
+    if (got >= n) return false;   // changed under us
+    v.resize(got);
+    if (out) *out = to_utf8(v);
+    return true;
+}
+
+std::string getenv_utf8(const char* name) {
+    std::string s;
+    getenv_utf8(name, &s);
+    return s;
+}
+
 std::wstring exe_path_w() {
     std::wstring buf(MAX_PATH, L'\0');
     for (;;) {

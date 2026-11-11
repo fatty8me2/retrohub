@@ -2320,7 +2320,7 @@ void sync_vault_to_emulator(SaveSession& s) {
      * snapshot that RetroHub never prunes (%LOCALAPPDATA%\RetroHub\save-backups\<game>\<stamp>-before-<emulator>-launch). No snapshot, no overwrite. */
     std::string snap_dir;
     if (s.own_install) {
-        const char* la = std::getenv("LOCALAPPDATA");   // the same place nx_runner's default_save_backup_root() uses (not linked into every test that builds this file)
+        const std::string la_s = winutil::getenv_utf8("LOCALAPPDATA"); const char* la = la_s.empty() ? nullptr : la_s.c_str();   // the same place nx_runner's default_save_backup_root() uses (not linked into every test that builds this file)
         const std::string root = la && *la ? join(join(la, "RetroHub"), "save-backups") : std::string();
         std::string label = S(P(s.battery).parent_path().filename());
         for (char& c : label) if (!(std::isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.')) c = '_';   // same folder naming as nx_runner's safe_name
