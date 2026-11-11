@@ -90,6 +90,12 @@ void display_settings_ui() {
     gap();
     if (ImGui::Checkbox("Reduce motion", &A.st.reduce_motion)) { ui::reduce_motion = A.st.reduce_motion; mark_dirty(); }
     text_wrapped_disabled("Turns off slides, pans, spins and the shelf tilt. The start-up animation stays still; its sound still plays. It starts out matching Windows' \"Show animations\" setting.");
+    gap();
+    if (ImGui::Checkbox("Larger small text", &A.st.large_text)) {
+        mark_dirty();
+        tvmode::set_base_scale(hubdisplay::effective_scale(hubdisplay::dpi_scale(), A.st.ui_scale));   // same font rebuild as a UI size change
+    }
+    text_wrapped_disabled("Makes hints and captions bigger, so they are easier to read from the sofa. The rest of the layout stays the same size.");
 }
 
 /* "Unpacked games" cache section. Disk usage is measured on a background thread (on open and after clearing), never per frame. */

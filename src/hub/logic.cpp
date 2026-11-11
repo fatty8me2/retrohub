@@ -91,6 +91,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"smash_save_notice_shown\": " << (s.smash_save_notice_shown ? "true" : "false") << ",\n"
       << "  \"show_whats_new\": " << (s.show_whats_new ? "true" : "false") << ",\n"
       << "  \"reduce_motion\": " << (s.reduce_motion ? "true" : "false") << ",\n"
+      << "  \"large_text\": " << (s.large_text ? "true" : "false") << ",\n"
       << "  \"ui_scale\": " << s.ui_scale << ",\n"
       << "  \"remember_window\": " << (s.remember_window ? "true" : "false") << ",\n"
       << "  \"win_x\": " << s.win_x << ",\n"
@@ -247,6 +248,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->setup_done = json_bool(j, "setup_done", out->setup_done);
     out->show_whats_new = json_bool(j, "show_whats_new", out->show_whats_new);
     out->reduce_motion = json_bool(j, "reduce_motion", out->reduce_motion);
+    out->large_text = json_bool(j, "large_text", out->large_text);
     out->ui_scale = std::max(80, std::min(200, (int)j.num("ui_scale", out->ui_scale)));
     out->remember_window = json_bool(j, "remember_window", out->remember_window);
     out->win_x = (int)j.num("win_x", out->win_x);

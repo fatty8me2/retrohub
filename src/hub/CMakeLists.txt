@@ -257,6 +257,10 @@ add_executable(hub_display_test test_display.cpp)
 target_include_directories(hub_display_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hub_display_test PRIVATE cxx_std_17)
 
+add_executable(hub_font_size_test test_font_size.cpp)
+target_include_directories(hub_font_size_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hub_font_size_test PRIVATE cxx_std_17)
+
 add_executable(hub_input_gate_test test_input_gate.cpp input_gate.cpp)
 target_include_directories(hub_input_gate_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hub_input_gate_test PRIVATE imgui)
