@@ -248,10 +248,17 @@ void do_report() {
     put_dec2(d, t.wYear, 4); put_dec2(d + 4, t.wMonth, 2); put_dec2(d + 6, t.wDay, 2); d[8] = '-';
     put_dec2(d + 9, t.wHour, 2); put_dec2(d + 11, t.wMinute, 2); put_dec2(d + 13, t.wSecond, 2);
     for (int i = 0; i < 15; ++i) *q++ = (wchar_t)d[i];
-    const wchar_t* ext = L".txt";
-    while (*ext) *q++ = *ext++;
-    *q = 0;
-    HANDLE h = CreateFileW(g_path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    wchar_t* const stem_end = q;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    for (int attempt = 1; attempt <= 9 && h == INVALID_HANDLE_VALUE; ++attempt) {   // two crashes in one second never overwrite each other
+        q = stem_end;
+        if (attempt > 1) { *q++ = L'-'; *q++ = (wchar_t)(L'0' + attempt); }
+        const wchar_t* ext = L".txt";
+        while (*ext) *q++ = *ext++;
+        *q = 0;
+        h = CreateFileW(g_path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE && GetLastError() != ERROR_FILE_EXISTS && GetLastError() != ERROR_ALREADY_EXISTS) break;
+    }
     if (h != INVALID_HANDLE_VALUE) {
         DWORD w = 0;
         WriteFile(h, g_out, (DWORD)len, &w, nullptr);
@@ -283,9 +290,13 @@ void request(EXCEPTION_POINTERS* ep, const char* kind) {
     }
 }
 
+LONG WINAPI unhandled_filter(EXCEPTION_POINTERS* ep);
+LPTOP_LEVEL_EXCEPTION_FILTER g_prev = nullptr;
+
 LONG WINAPI unhandled_filter(EXCEPTION_POINTERS* ep) {
     request(ep, "Unhandled exception");
-    return EXCEPTION_CONTINUE_SEARCH;   // Windows Error Reporting still runs; we never show a dialog
+    if (g_prev && g_prev != unhandled_filter) return g_prev(ep);   // a filter that was installed before ours (vendor / overlay DLL) still gets its turn
+    return EXCEPTION_CONTINUE_SEARCH;   // Windows Error Reporting still runs; this handler shows no dialog itself
 }
 
 void report_here(const char* kind, uint32_t code) {
@@ -337,7 +348,11 @@ std::string narrow_w(const std::wstring& w) {
 }
 
 bool is_report_name(const std::wstring& n) {
-    return n.size() == 6 + 15 + 4 && n.compare(0, 6, L"crash-") == 0 && n.compare(n.size() - 4, 4, L".txt") == 0;
+    /* crash-yyyymmdd-hhmmss.txt, or crash-yyyymmdd-hhmmss-N.txt when two reports share a second */
+    if (n.size() < 6 + 15 + 4 || n.size() > 6 + 15 + 2 + 4 || n.compare(0, 6, L"crash-") != 0 || n.compare(n.size() - 4, 4, L".txt") != 0) return false;
+    for (size_t i = 6; i < n.size() - 4; ++i)
+        if (!((n[i] >= L'0' && n[i] <= L'9') || n[i] == L'-')) return false;
+    return true;
 }
 
 }  // namespace
@@ -370,8 +385,15 @@ void install(const std::string& logs_dir_utf8, const std::string& version, const
         _set_invalid_parameter_handler(invalid_param);
         _set_purecall_handler(pure_call);
         std::set_terminate(terminate_handler);
-        SetUnhandledExceptionFilter(unhandled_filter);
+        g_prev = SetUnhandledExceptionFilter(unhandled_filter);
     } catch (...) {}
+}
+
+bool reassert() {
+    LPTOP_LEVEL_EXCEPTION_FILTER cur = SetUnhandledExceptionFilter(unhandled_filter);
+    if (cur == unhandled_filter) return false;
+    if (cur) g_prev = cur;   // someone replaced ours: keep theirs as the one we chain to
+    return true;
 }
 
 /* ------------------------------------------------------------------ next start */
@@ -416,8 +438,6 @@ bool find_unseen(const std::string& logs_dir_utf8, Found* out) {
 
 void mark_all_seen(const std::string& logs_dir_utf8) {
     try {
-        auto seen = read_seen(logs_dir_utf8);
-        for (const std::string& n : list_reports(logs_dir_utf8)) seen.insert(n);
         std::vector<std::string> existing = list_reports(logs_dir_utf8);
         std::ofstream o(std::filesystem::u8path(logs_dir_utf8) / L"crash-seen.txt", std::ios::trunc);
         for (const std::string& n : existing) o << n << "\n";   // only names that still exist: the file never grows

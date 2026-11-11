@@ -194,18 +194,26 @@ void shutdown() {
     try {
         if (!g_ready) return;
         info("shutdown (%llu ms since start)", since_start_ms());
+        bool joined = true;
         if (g_thread) {
             g_stop = true;
             SetEvent(g_wake);
-            WaitForSingleObject(g_thread, 2000);
-            CloseHandle(g_thread);
+            joined = WaitForSingleObject(g_thread, 2000) == WAIT_OBJECT_0;
+            CloseHandle(g_thread);   // a stuck worker (stalled disk) keeps running until the process ends
             g_thread = nullptr;
         }
-        if (g_wake) { CloseHandle(g_wake); g_wake = nullptr; }
-        drain();
+        if (g_wake && joined) { CloseHandle(g_wake); g_wake = nullptr; }
+        g_ready = false;   // no new lines from here on
+        if (!joined) {   // the worker may sit inside WriteFile holding g_io_mu: exit must never wait for the log
+            if (g_io_mu.try_lock()) {
+                if (g_h != INVALID_HANDLE_VALUE) { CloseHandle(g_h); g_h = INVALID_HANDLE_VALUE; }
+                g_io_mu.unlock();
+            }
+            return;
+        }
+        drain();   // the worker is gone: g_io_mu is free
         std::lock_guard<std::mutex> l(g_io_mu);
         if (g_h != INVALID_HANDLE_VALUE) { CloseHandle(g_h); g_h = INVALID_HANDLE_VALUE; }
-        g_ready = false;
     } catch (...) {}
 }
 

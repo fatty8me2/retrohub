@@ -1,5 +1,5 @@
 /* hub_crashlog_test: hub log rotation + header, privacy scrubbing, crash report formatter, diagnostics zip (non-ASCII temp dir), the
- * next-start report finder, and a child-process crash of hub_crash_helper.exe (argv[1]). Temp directories only. */
+ * next-start report finder, and a child-process crash of hub_crashlog_test_helper.exe (argv[1]). Temp directories only. */
 #include "crash_report.h"
 #include "diag_logic.h"
 #include "hub_log.h"
@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -171,6 +172,15 @@ static void test_diag_zip() {
     int crashes = 0; bool hub = false, old1 = false;
     for (auto& e : files) { crashes += e.zip_name.find("logs/crash-") == 0; hub |= e.zip_name == "logs/hub.log"; old1 |= e.zip_name.find("000001") != std::string::npos; }
     CHECK(crashes == 5 && hub && !old1);
+    {   // the byte cap keeps the newest files that fit
+        fs::create_directories(d / "cap");
+        spit(d / "cap" / "old.log", std::string(600, 'o'));
+        fs::last_write_time(d / "cap" / "old.log", fs::file_time_type::clock::now() - std::chrono::hours(48));
+        spit(d / "cap" / "new.log", std::string(600, 'n'));
+        auto capped = hubdiag::limit_total_bytes(hubdiag::collect_dir(d.u8string() + "\\cap", "cap/"), 1000);
+        CHECK(capped.size() == 1 && capped[0].zip_name == "cap/new.log");
+        CHECK(hubdiag::limit_total_bytes(hubdiag::collect_dir(d.u8string() + "\\cap", "cap/"), 2000).size() == 2);
+    }
     const fs::path zip = d / fs::u8path(std::string("out-") + kUni + ".zip");
     std::string err;
     CHECK(hubdiag::write_zip(zip.u8string(), files, {{"versions.txt", "RetroHub 1"}}, &err));
@@ -237,7 +247,7 @@ static void test_child_crash(const std::wstring& helper, const wchar_t* mode, co
     CHECK(has(r, "Version:      9.9.9"));
     CHECK(has(r, expect_name));
     CHECK(has(r, "Address:      0x"));
-    CHECK(has(r, "hub_crash_helper.exe+0x"));
+    CHECK(has(r, "hub_crashlog_test_helper.exe+0x"));
     CHECK(has(r, "UI phase:     helper_phase"));
     CHECK(has(r, "rip ") && has(r, "rsp "));
     CHECK(has(r, "about to crash"));
@@ -263,6 +273,13 @@ int main(int argc, char** argv) {
         test_child_crash(helper, L"terminate", "C++ exception");        // uncaught throw: the unhandled-exception filter sees it
         test_child_crash(helper, L"terminate-call", "STD_TERMINATE");   // std::terminate() / abort(): the terminate handler
         test_child_crash(helper, L"overflow", "STACK_OVERFLOW");
+        {   // two crashes into one folder (usually the same second) never overwrite each other
+            fs::path d = fresh("twice");
+            DWORD c1 = 0, c2 = 0;
+            CHECK(run_helper(helper, d, L"av", &c1));
+            CHECK(run_helper(helper, d, L"av", &c2));
+            CHECK(crashrep::list_reports(dir8(d)).size() == 2);
+        }
     } else {
         std::printf("no helper given: child-crash checks skipped\n");
     }

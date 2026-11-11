@@ -139,11 +139,11 @@ target_link_libraries(hub_convenience_test PRIVATE hubconv)
 add_library(hubcrashlog STATIC hub_log.cpp crash_report.cpp)
 target_include_directories(hubcrashlog PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubcrashlog PUBLIC cxx_std_17)
-add_executable(hub_crash_helper WIN32 crash_helper.cpp)   # test helper only: crashes on purpose, windowless
-target_link_libraries(hub_crash_helper PRIVATE hubcrashlog user32 shell32)
+add_executable(hub_crashlog_test_helper WIN32 test_crashlog_helper.cpp)   # test helper only: crashes on purpose, windowless
+target_link_libraries(hub_crashlog_test_helper PRIVATE hubcrashlog user32 shell32)
 add_executable(hub_crashlog_test test_crashlog.cpp)
 target_link_libraries(hub_crashlog_test PRIVATE hubcrashlog hubconv user32)
-add_dependencies(hub_crashlog_test hub_crash_helper)
+add_dependencies(hub_crashlog_test hub_crashlog_test_helper)
 
 add_library(hubversion STATIC ${HUB_VERSION_GEN}/hub_version.cpp ${HUB_VERSION_GEN}/hub_version_rc.h)
 set(RETROHUB_UI_SOURCES
