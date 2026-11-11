@@ -2,6 +2,7 @@
 
 #include "games.h"
 #include "json.h"
+#include "u8file.h"
 
 #include <fstream>
 #include <sstream>
@@ -40,7 +41,7 @@ const std::vector<Rec>& all()
 {
     static const std::vector<Rec> recs = [] {
         std::vector<Rec> v;
-        std::ifstream f(hub::exe_dir() + "data/recommended.json", std::ios::binary);
+        std::ifstream f = u8file::open_in(hub::exe_dir() + "data/recommended.json", std::ios::binary);
         if (f) {
             std::stringstream ss;
             ss << f.rdbuf();
