@@ -629,6 +629,40 @@ int main(int argc, char** argv) {
         std::filesystem::remove_all(d, ec);
     }
 
+    // --- shell/antivirus droppings do not make a staged folder untrusted; a repeatedly discarded tag stops being retried ---
+    {
+        std::filesystem::path d = std::filesystem::temp_directory_path() / ("hub_updater_dropping_test_" + std::to_string(_getpid()));
+        std::error_code ec; std::filesystem::remove_all(d, ec); std::filesystem::create_directories(d / "staged", ec);
+        auto put = [](const std::filesystem::path& p, const std::string& s) { std::ofstream o(p, std::ios::binary | std::ios::trunc); o << s; };
+        put(d / "staged" / "RetroHub.exe", "new-hub"); put(d / "staged" / "BattleShip.exe", "new-bs");
+        const std::string ud = d.u8string();
+        CHECK(write_staged_manifest(ud, "v1.42.0") && staged_reusable(ud, "v1.42.0"));
+        put(d / "staged" / "desktop.ini", "[.ShellClassInfo]"); put(d / "staged" / "Thumbs.db", "x"); put(d / "staged" / "THUMBS.DB", "y");
+        put(d / "staged" / "av_scan.tmp", "z"); SetFileAttributesW((d / "staged" / "av_scan.tmp").c_str(), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+        CHECK(staged_reusable(ud, "v1.42.0"));                                                  // all four ignored
+        CHECK(scan_staged(ud + "\\staged").files == 2);
+        put(d / "staged" / "hidden_only.txt", "h"); SetFileAttributesW((d / "staged" / "hidden_only.txt").c_str(), FILE_ATTRIBUTE_HIDDEN);
+        CHECK(!staged_reusable(ud, "v1.42.0"));                                                 // hidden alone is a real file
+        std::filesystem::remove(d / "staged" / "hidden_only.txt", ec);
+        CHECK(staged_reusable(ud, "v1.42.0"));
+        put(d / "staged" / "notes.txt", "n");
+        CHECK(!staged_reusable(ud, "v1.42.0"));                                                 // an ordinary extra file still counts
+        // droppings never hide a changed real file
+        std::filesystem::remove(d / "staged" / "notes.txt", ec); put(d / "staged" / "RetroHub.exe", "new-hux");
+        CHECK(!staged_reusable(ud, "v1.42.0"));
+        std::filesystem::remove_all(d, ec);
+
+        DiscardGuard g;
+        CHECK(discard_allowed(g, "v1.42.0"));
+        note_discard(g, "v1.42.0"); CHECK(discard_allowed(g, "v1.42.0"));                      // first discard: retry
+        note_discard(g, "v1.42.0"); CHECK(!discard_allowed(g, "v1.42.0"));                     // second: stop for this tag
+        CHECK(discard_allowed(g, "v1.42.1"));                                                   // another tag is unaffected
+        note_discard(g, "v1.42.1"); CHECK(g.tag == "v1.42.1" && g.count == 1 && discard_allowed(g, "v1.42.1") && discard_allowed(g, "v1.42.0"));
+        note_discard(g, "v1.42.1"); note_staged_ok(g); CHECK(discard_allowed(g, "v1.42.1") && g.count == 0);   // a good reuse resets
+        std::string dm = discard_message("v1.42.0");
+        CHECK(dm.find("v1.42.0") != std::string::npos && dm.find("\xE2\x80\x94") == std::string::npos);
+    }
+
     // --- download robustness: no hard cap, stall detector, retries, resume only for the same release ---
     {
         const std::string fl = download_flags(false), flr = download_flags(true);

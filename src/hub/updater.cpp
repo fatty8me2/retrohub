@@ -73,21 +73,27 @@ struct Pending {
     bool hub_only = false;   // the staged files are RetroHub's part only: the applier gets --hub-only
     std::string smash_sha256; // ... and --smash-sha256 <hash>: it refuses unless the installed BattleShip.exe still has this hash
 };
-Pending s_pending;            // guarded by s_mu
+Pending& s_pending = *new Pending;   // guarded by s_mu
 detail::Gate s_gate;          // UI thread only (tick)
 bool (*s_session_probe)() = nullptr;
 
 /* Startup pass (interrupted-update repair + the failure note of the last installer), run once on a background thread. */
-detail::OwnedThread s_check_th, s_download_th, s_handoff_th;   // joined by shutdown(): no worker outlives it
-std::thread s_startup_th;
+/* Everything a worker thread can touch is heap-allocated once and NEVER destroyed (an intentional leak): a straggler that outlives
+ * shutdown() then never meets a destroyed mutex or string during static destruction at exit. */
+detail::OwnedThread& s_check_th = *new detail::OwnedThread;       // joined by shutdown() (bounded)
+detail::OwnedThread& s_download_th = *new detail::OwnedThread;
+detail::OwnedThread& s_handoff_th = *new detail::OwnedThread;
+std::thread& s_startup_th = *new std::thread;
 std::atomic<bool> s_startup_started{false};
 std::atomic<bool> s_startup_done{false};
-std::vector<std::string> s_startup_notes;   // guarded by s_mu
+std::vector<std::string>& s_startup_notes = *new std::vector<std::string>;   // guarded by s_mu
 
-std::string s_latest, s_notes, s_url, s_digest, s_sums_url, s_sig_url, s_status;
-std::string s_hub_url, s_hub_digest;   // RetroHub-windows.zip of the latest release ("" => the release has none)
+std::string &s_latest = *new std::string, &s_notes = *new std::string, &s_url = *new std::string, &s_digest = *new std::string,
+            &s_sums_url = *new std::string, &s_sig_url = *new std::string, &s_status = *new std::string;
+std::string &s_hub_url = *new std::string, &s_hub_digest = *new std::string;   // RetroHub-windows.zip of the latest release ("" => the release has none)
 long long s_size = 0, s_hub_size = 0;
-std::mutex s_mu;
+std::mutex& s_mu = *new std::mutex;
+detail::DiscardGuard& s_discard = *new detail::DiscardGuard;   // guarded by s_mu
 
 /* Every path crosses the Win32 boundary as UTF-16 (the *W APIs and wide
  * streams). The ANSI (*A) APIs and narrow CRT calls would mangle paths that
@@ -143,8 +149,8 @@ std::vector<int> parse_version(const std::string& v) {
 }
 
 /* Every child process a worker waits on (curl, tar) is registered here, so shutdown() can end it by its handle. */
-std::mutex s_child_mu;
-std::vector<HANDLE> s_children;   // guarded by s_child_mu
+std::mutex& s_child_mu = *new std::mutex;
+std::vector<HANDLE>& s_children = *new std::vector<HANDLE>;   // guarded by s_child_mu
 
 /* false when the app is already leaving: the caller must end the child at once. */
 bool register_child(HANDLE h) {
@@ -207,7 +213,7 @@ int run_capture(std::string cmd, const std::function<void(const std::string&)>& 
     return timedOut.load() ? kRunTimedOut : (int)code;
 }
 
-std::string sha256_file(const std::string& path) {
+std::string sha256_file(const std::string& path, const std::atomic<bool>* cancel = nullptr) {   // "" on error or when *cancel turned true
     BCRYPT_ALG_HANDLE alg = nullptr; BCRYPT_HASH_HANDLE hash = nullptr; std::string hex;
     if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) return hex;
     if (BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) == 0) {
@@ -215,6 +221,7 @@ std::string sha256_file(const std::string& path) {
         std::vector<char> buf(1 << 16);
         bool ok = static_cast<bool>(in);
         while (ok && in) {
+            if (cancel && cancel->load()) { ok = false; break; }   // a large file must not hold up the app leaving
             in.read(buf.data(), buf.size());
             std::streamsize n = in.gcount();
             if (n > 0 && BCryptHashData(hash, reinterpret_cast<PUCHAR>(buf.data()), (ULONG)n, 0) != 0) ok = false;
@@ -232,6 +239,24 @@ std::string sha256_file(const std::string& path) {
 
 /* Growing UTF-16 buffer: long or non-ASCII install paths are not truncated. */
 std::string exe_path() { return winutil::exe_path(); }
+
+/* remove_all that checks *cancel between entries (a big staged folder must not delay exit). false when cancelled part-way. */
+bool remove_tree(const std::filesystem::path& dir, const std::atomic<bool>* cancel) {
+    std::vector<std::filesystem::path> kids;
+    {
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) kids.push_back(it->path());
+    }
+    for (const std::filesystem::path& k : kids) {
+        if (cancel && cancel->load()) return false;
+        std::error_code e2;
+        if (std::filesystem::is_directory(k, e2) && !std::filesystem::is_symlink(k, e2)) { if (!remove_tree(k, cancel)) return false; }
+        else std::filesystem::remove(k, e2);
+    }
+    std::error_code e3;
+    std::filesystem::remove(dir, e3);
+    return true;
+}
 
 std::string settings_path() { return hub::data_dir() + "updater.json"; }
 
@@ -792,7 +817,7 @@ bool download_verified(const FetchSpec& f, const std::string& zipPath, std::stri
     }
     long long actual = size_of();
     if (actual != f.size) return bad_all("download was incomplete.");
-    Verdict v = verify_hashes(f.tag, sha256_file(zipPath), haveSums ? &sums : nullptr, f.digest, f.asset_name);
+    Verdict v = verify_hashes(f.tag, sha256_file(zipPath, &s_quit), haveSums ? &sums : nullptr, f.digest, f.asset_name);
     if (v != Verdict::Ok && v != Verdict::OkLegacy) return bad_all(verdict_message(v));
     if (v == Verdict::OkLegacy) ulog("release %s predates SHA256SUMS.txt; accepted on TLS + size (+ API digest if present)", f.tag.c_str());
     rm_file(recPath);   // complete and verified: nothing left to resume
@@ -809,29 +834,32 @@ GateState gate_step(Gate& g, bool ready, bool session_busy, bool install_busy, u
     return GateState::Settling;
 }
 
-/* ---- staged files kept for a retry ---- */
-StagedInfo scan_staged(const std::string& staged_dir) {
-    StagedInfo s;
-    std::error_code ec;
-    for (std::filesystem::recursive_directory_iterator it(P(staged_dir), std::filesystem::directory_options::skip_permission_denied, ec), end;
-         !ec && it != end; it.increment(ec)) {
-        std::error_code e2;
-        if (!it->is_regular_file(e2)) continue;
-        s.files++;
-        s.bytes += (long long)it->file_size(e2);
-    }
-    return s;
+bool discard_allowed(const DiscardGuard& g, const std::string& tag) { return !(g.tag == tag && g.count >= kMaxStagedDiscards); }
+void note_discard(DiscardGuard& g, const std::string& tag) { if (g.tag != tag) { g.tag = tag; g.count = 0; } g.count++; }
+void note_staged_ok(DiscardGuard& g) { g = DiscardGuard(); }
+std::string discard_message(const std::string& tag) {
+    return "The downloaded update " + tag + " kept failing its safety check on this PC, so RetroHub has stopped trying it for now. "
+           "Restart RetroHub to try again, or download it manually: " + std::string(kManualUrl);
 }
 
+/* ---- staged files kept for a retry ---- */
 /* Regular files under dir: {relative path with '/', absolute path, size}, sorted by relative path. false when the walk failed. */
 struct StagedWalkEntry { std::string rel; std::filesystem::path abs; long long size = 0; };
+/* Files a shell or an antivirus drops into a folder on its own: desktop.ini, Thumbs.db, anything hidden AND system. Never part of an update. */
+static bool is_shell_dropping(const std::filesystem::path& p) {
+    std::wstring n = p.filename().wstring();
+    for (wchar_t& c : n) c = (wchar_t)towlower(c);
+    if (n == L"desktop.ini" || n == L"thumbs.db") return true;
+    DWORD a = GetFileAttributesW(p.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_HIDDEN) && (a & FILE_ATTRIBUTE_SYSTEM);
+}
 static bool walk_staged(const std::string& dir, std::vector<StagedWalkEntry>* out) {
     std::error_code ec;
     const std::filesystem::path base = P(dir);
     for (std::filesystem::recursive_directory_iterator it(base, std::filesystem::directory_options::skip_permission_denied, ec), end;
          !ec && it != end; it.increment(ec)) {
         std::error_code e2;
-        if (!it->is_regular_file(e2)) continue;
+        if (!it->is_regular_file(e2) || is_shell_dropping(it->path())) continue;
         StagedWalkEntry w;
         w.abs = it->path();
         w.rel = U8(std::filesystem::relative(w.abs, base, e2).generic_wstring());
@@ -845,6 +873,14 @@ static bool walk_staged(const std::string& dir, std::vector<StagedWalkEntry>* ou
     return true;
 }
 
+StagedInfo scan_staged(const std::string& staged_dir) {
+    StagedInfo s;
+    std::vector<StagedWalkEntry> walk;
+    walk_staged(staged_dir, &walk);
+    for (const StagedWalkEntry& w : walk) { s.files++; s.bytes += w.size; }
+    return s;
+}
+
 bool hash_staged(const std::string& dir, std::vector<StagedFile>* out, const std::atomic<bool>* cancel) {
     std::vector<StagedWalkEntry> walk;
     if (!walk_staged(dir, &walk)) return false;
@@ -852,7 +888,7 @@ bool hash_staged(const std::string& dir, std::vector<StagedFile>* out, const std
     for (const StagedWalkEntry& w : walk) {
         if (cancel && cancel->load()) return false;
         StagedFile f;
-        f.path = w.rel; f.size = w.size; f.sha256 = sha256_file(U8(w.abs.wstring()));
+        f.path = w.rel; f.size = w.size; f.sha256 = sha256_file(U8(w.abs.wstring()), cancel);
         if (f.sha256.empty()) return false;
         r.push_back(std::move(f));
     }
@@ -872,7 +908,7 @@ bool verify_staged_list(const std::string& dir, const std::vector<StagedFile>& l
     }
     for (const StagedWalkEntry& w : walk) {   // then the contents
         if (cancel && cancel->load()) return false;
-        if (sha256_file(U8(w.abs.wstring())) != lower(want[w.rel]->sha256)) return false;
+        if (sha256_file(U8(w.abs.wstring()), cancel) != lower(want[w.rel]->sha256)) return false;
     }
     return true;
 }
@@ -1001,7 +1037,7 @@ void check_async(bool force) {
             ulog("check failed (curl exit %d)", code);
             s_checked.store(false); s_last_fail_ms.store(GetTickCount64() | 1);   // a network failure is not an answer: the next automatic check may retry, spaced
             s_failed.store(true);
-            set_status("Unable to check for updates.");
+            set_status(haveCurl ? "Unable to check for updates." : "Unable to check for updates: " + curlErr);
             s_checking.store(false);
             return;
         }
@@ -1114,15 +1150,31 @@ void start_update() {
         if (detail::staged_reusable(updatesDir, version, &hubOnly, &smashHash, &s_quit)) {
             /* An earlier try (a postponed or failed install, or RetroHub closed while the update waited for a game) already unpacked this
              * exact release: nothing to download. */
+            { std::lock_guard<std::mutex> l(s_mu); detail::note_staged_ok(s_discard); }
             ulog("reusing the unpacked update %s from updates\\staged (no download)", version.c_str());
             set_status("Preparing...");
             s_progress.store(1.0f);
         } else {
             if (s_quit.load()) { fail("RetroHub is closing, so the update was stopped."); return; }
+            {   // an unpacked folder of THIS tag that is not trusted: counted, and after two the tag is left alone for this session
+                bool hadStaged = false;
+                std::ifstream mi(P(updatesDir + "\\staged.json"), std::ios::binary);
+                if (mi) {
+                    std::stringstream ms; ms << mi.rdbuf();
+                    detail::StagedInfo old;
+                    hadStaged = detail::parse_staged_manifest(ms.str(), &old) && old.version == version;
+                }
+                if (hadStaged) {
+                    bool allowed;
+                    { std::lock_guard<std::mutex> l(s_mu); allowed = detail::discard_allowed(s_discard, version); if (allowed) detail::note_discard(s_discard, version); }
+                    if (!allowed) { ulog("the unpacked %s failed its check twice already; not trying again this session", version.c_str()); fail(detail::discard_message(version)); return; }
+                    ulog("the unpacked %s did not match its file list; discarding it and downloading again", version.c_str());
+                }
+            }
             /* An unpacked folder that is not trusted (another release, an older manifest with no per-file list, a changed or missing file) is
              * discarded before anything new is fetched; it also frees its disk space. */
             rm_file(updatesDir + "\\staged.json");
-            { std::error_code de; std::filesystem::remove_all(P(staged), de); }
+            remove_tree(P(staged), &s_quit);
             /* A partial update.zip from an earlier try is NOT deleted here: download_verified continues it when it is the same release
              * (and deletes it otherwise). */
             /* Which payload: needs SHA256SUMS.txt (the hub-only marker lives there), so fetch it first. Without one the full zip is the
@@ -1171,7 +1223,7 @@ void start_update() {
             set_status("Preparing...");
             std::string tarExe, tarErr;
             if (!detail::find_system_tool("tar.exe", &tarExe, &tarErr)) { rm_file(zipPath); fail(tarErr); return; }
-            if (s_quit.load()) { rm_file(zipPath); fail("RetroHub is closing, so the update was stopped."); return; }
+            if (s_quit.load()) { fail("RetroHub is closing, so the update was stopped."); return; }   // the verified zip stays on disk
             long long unpackedBytes = detail::zip_unpacked_size(zipPath);   // exact, from the zip's own index (-1: unreadable, then the zip's size is the estimate)
             if (unpackedBytes < 0) unpackedBytes = spec.size;
             {
@@ -1185,14 +1237,14 @@ void start_update() {
                 }
             }
             rm_file(updatesDir + "\\staged.json");
-            std::filesystem::remove_all(P(staged), fec);
+            remove_tree(P(staged), &s_quit);
             std::filesystem::create_directories(P(staged), fec);
             std::string tarCmd = "\"" + tarExe + "\" -xf \"" + zipPath + "\" -C \"" + staged + "\"";
             int tarCode = run_capture(tarCmd, [](const std::string&) {}, detail::kTarTimeoutMs);   // a stuck tar is ended by its handle; the install is untouched either way
             const long long freeAfter = tarCode != 0 ? detail::free_bytes_on(updatesDir) : -1;   // read before the half-unpacked files are removed
             rm_file(zipPath); rm_file(zipPath + ".resume");
             if (tarCode != 0) {
-                std::filesystem::remove_all(P(staged), fec);
+                remove_tree(P(staged), &s_quit);
                 if (tarCode != kRunTimedOut && !s_quit.load() && freeAfter >= 0 && (unsigned long long)freeAfter < detail::kDiskFullBytes) {   // the disk filled up while unpacking
                     fail(detail::low_space_message(detail::space_needed_for_unpack((unsigned long long)unpackedBytes), (unsigned long long)freeAfter, updatesDir));
                     return;
@@ -1204,7 +1256,7 @@ void start_update() {
             for (const char* req : {"RetroHub.exe", "BattleShip.exe"}) {
                 if (hubOnly && std::strcmp(req, "BattleShip.exe") == 0) continue;
                 if (GetFileAttributesW(W(staged + "\\" + req).c_str()) == INVALID_FILE_ATTRIBUTES) {
-                    std::filesystem::remove_all(P(staged), fec);
+                    remove_tree(P(staged), &s_quit);
                     fail(std::string("the update is missing ") + req);
                     return;
                 }
@@ -1304,7 +1356,7 @@ static void begin_handoff(const Pending& p, bool game_active) {
             Sleep(100);
             started = GetFileAttributesW(marker.c_str()) != INVALID_FILE_ATTRIBUTES;
         }
-        if (!started) { fail("the installer did not start."); return; }
+        if (!started) { fail(s_quit.load() ? "RetroHub closed before the installer confirmed it had started." : "the installer did not start."); return; }
         ulog("installer started for %s, quitting", p.version.c_str());
         s_progress.store(1.0f);
         s_started.store(true);
@@ -1357,8 +1409,10 @@ void shutdown() {
     kill_children();   // a running curl or tar is ended by its handle (never the installer: it is not registered); its worker then returns at once
     /* No worker may outlive this call: it joins the check, download and hand-off threads (bounded; each wakes within moments because its
      * child is gone and it checks s_quit between steps). One that still does not end is detached and logged: a last resort. */
+    const unsigned long long t0 = GetTickCount64();   // ONE deadline for all three: leaving takes at most about 5 s in total
     for (detail::OwnedThread* t : {&s_check_th, &s_download_th, &s_handoff_th}) {
-        if (!t->join_for(5000)) { ulog("shutdown: an updater thread did not end in time; detaching it"); t->detach(); }
+        const unsigned long long used = GetTickCount64() - t0;
+        if (!t->join_for(used >= 5000 ? 0u : (unsigned)(5000 - used))) { ulog("shutdown: an updater thread did not end in time; detaching it"); t->detach(); }
     }
     if (s_ready.load() && !s_handing.load()) {   // downloaded but never handed over: the unpacked files stay for next time, the unused installer copy goes
         std::wstring dir;

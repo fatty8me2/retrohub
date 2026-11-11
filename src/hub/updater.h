@@ -235,6 +235,16 @@ inline bool check_retry_due(bool checked, unsigned long long last_fail_ms, unsig
     return last_fail_ms == 0 || now_ms < last_fail_ms || now_ms - last_fail_ms >= kCheckRetryMs;
 }
 
+/* ---- a staged folder that keeps failing its check is not retried forever ----
+ * Each time an unpacked folder of the SAME tag is found untrusted and discarded, note_discard counts it; after kMaxStagedDiscards the tag is
+ * not downloaded again in this session (discard_allowed false) and discard_message is shown instead. A good reuse resets the count. */
+constexpr int kMaxStagedDiscards = 2;
+struct DiscardGuard { std::string tag; int count = 0; };
+bool discard_allowed(const DiscardGuard& g, const std::string& tag);
+void note_discard(DiscardGuard& g, const std::string& tag);
+void note_staged_ok(DiscardGuard& g);
+std::string discard_message(const std::string& tag);
+
 /* ---- staged files kept for a retry ("updates\staged.json" beside "updates\staged\") ---- */
 struct StagedFile { std::string path; long long size = 0; std::string sha256; };   // path: relative to the staged dir, '/' separators
 struct StagedInfo {
