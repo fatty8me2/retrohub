@@ -1,6 +1,7 @@
 #include "lichii.h"
 #include "app.h"
 #include "capture_hold_logic.h"
+#include "ctl_pad_logic.h"
 #include "osk.h"
 #include "controls_live.h"
 
@@ -67,7 +68,7 @@ struct CtlState {
     double notice_until = 0;
     bool assign_on = false;                // "Assign players" mode
     hubctl::PortAssign assign;
-    std::map<std::string, bool> assign_prev;   // pad key -> A held last frame (rising edge = press)
+    hubui::AssignAGate assign_a;           // pad key -> A held last frame (rising edge = press)
     double assign_t = 0;                   // time of the last press (or of the start): the timeout counts from it
 };
 CtlState CTL;
@@ -92,11 +93,11 @@ void start_assign() {
     CTL.assign.start(ImGui::GetTime());
     CTL.assign_t = ImGui::GetTime();
     CTL.assign_on = true;
-    CTL.assign_prev.clear();
+    CTL.assign_a.clear();
     SDL_GameControllerUpdate();
     for (const auto& p : CTL.pads) {   // a button already held when the mode opens does not count as a press
         SDL_GameController* c = open_handle_for(p);
-        CTL.assign_prev[p.key] = c && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A);
+        CTL.assign_a.prime(p.key, c && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A));
     }
 }
 
@@ -113,33 +114,36 @@ void finish_assign() {
     CTL.assign_on = false;
 }
 
-/* One frame of the mode: rising edge of A on a connected pad takes the next port; Esc or a timeout ends it. */
+/* One frame of the mode: rising edge of A on a connected pad takes the next port; B, Esc or a timeout ends it. */
 void poll_assign(double now) {
     if (!CTL.assign.active() || (osk::hub_input_blocked() && !CTL.shot_nosave)) { finish_assign(); return; }   // unfocused: end the mode, an in-game press must not claim a port
     SDL_GameControllerUpdate();
+    ImGui::SetKeyOwner(ImGuiKey_GamepadFaceDown, ImGui::GetID("##assignA"));   // A claims ports here; it must not also press Done / Start over
+    if (hubui::assign_end_requested(ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false), ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+        ImGui::SetKeyOwner(ImGuiKey_GamepadFaceRight, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);   // this B ends the mode, it does not also leave the page
+        ImGui::SetKeyOwner(ImGuiKey_Escape, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);
+        finish_assign();
+        return;
+    }
     if (!CTL.shot_nosave && ImGui::GetTime() - CTL.pads_at >= 0.5) {   // hot-plug: refresh the pad list during the mode
         ctl_reload_pads();
         std::vector<std::string> present;
         for (const auto& p : CTL.pads) present.push_back(p.key);
         CTL.assign.sync(present);   // unplugged pads lose their port
-        for (auto it = CTL.assign_prev.begin(); it != CTL.assign_prev.end();) {
-            if (std::find(present.begin(), present.end(), it->first) == present.end()) it = CTL.assign_prev.erase(it); else ++it;
-        }
         for (const auto& p : CTL.pads) {   // newly plugged: a button already held does not count
-            if (CTL.assign_prev.count(p.key)) continue;
+            if (CTL.assign_a.known(p.key)) continue;
             SDL_GameController* c = open_handle_for(p);
-            CTL.assign_prev[p.key] = c && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A);
+            CTL.assign_a.prime(p.key, c && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A));
         }
     }
     for (const auto& p : CTL.pads) {
         SDL_GameController* c = open_handle_for(p);
         if (!c) continue;
         bool down = SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A) != 0;
-        bool was = CTL.assign_prev[p.key];
-        CTL.assign_prev[p.key] = down;
-        if (down && !was && CTL.assign.press(p.key, now)) CTL.assign_t = now;
+        /* ImGui navigation never sees A in this mode (locked above), so the press cannot also activate a focused button */
+        if (CTL.assign_a.a_press(p.key, down, false) && CTL.assign.press(p.key, now)) CTL.assign_t = now;
     }
-    if (CTL.assign.finished() || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { finish_assign(); return; }
+    if (CTL.assign.finished()) { finish_assign(); return; }
     if (!CTL.shot_nosave && now - CTL.assign_t >= kAssignTimeoutSecs) finish_assign();
 }
 
@@ -147,7 +151,7 @@ void draw_assign_panel() {
     begin_panel("assign");
     section_title("Assign players");
     text_wrapped_disabled("Press A on the controller for each player in turn. The first controller to press A takes that port. "
-                          "Esc or Done keeps the ports set so far; the mode also ends after 30 seconds without a press.");
+                          "B, Esc or Done keeps the ports set so far; the mode also ends after 30 seconds without a press.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     const int next = CTL.assign.next_port();
     ImGui::PushFont(ui::F.h2);
@@ -395,6 +399,15 @@ static std::string emu_phrase(const std::string& tab) {
     return "the emulator";
 }
 
+/* Which deadzone sliders reach the emulator (read from the config writers): GameCube writes a deadzone only above 0 (0 = Dolphin's own),
+ * PS2 sends the left stick value as the pad's deadzone (0 = PCSX2's own) and ignores the right stick, PSP sends none. */
+static bool deadzone_zero_is_default(const std::string& sys) { return sys == "gc" || sys == "ps2"; }
+static bool deadzone_has_effect(const std::string& sys, const std::string& control) {
+    if (sys == "psp") return false;
+    if (sys == "ps2" && control == "right_stick") return false;
+    return true;
+}
+
 void draw_mapping_panel() {
     const std::string sys = kTabs[CTL.tab].key;
     const hubctl::Profile cur = hubctl::resolve(CTL.st, sys, CTL.game);
@@ -429,7 +442,9 @@ void draw_mapping_panel() {
                                            : "Buttons and sticks of your controllers.");
         ImGui::Dummy(ImVec2(0, sp(0.75f)));
     } else {
-        text_wrapped_disabled("The keyboard can't be remapped for this system: the emulator takes one input source per button.");
+        text_wrapped_disabled(sys == "wiiu" || sys == "3ds" || sys == "switch" || sys == "switch2"
+                                  ? "RetroHub sets up controllers only for this system. It does not set up keyboard keys, so play with a controller, or set keys in " + emu_phrase(sys) + " yourself."
+                                  : "The keyboard can't be remapped for this system.");
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
     }
     const bool keys = CTL.dev == 1;
@@ -494,6 +509,7 @@ void draw_mapping_panel() {
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, sp(0.75f)));
         for (const hubctl::ControlInfo* ci : analogs) {
+            if (!deadzone_has_effect(sys, ci->name)) continue;   // RetroHub does not send this value to the emulator: no slider that does nothing
             ImGui::PushID(ci->name.c_str());
             auto ait = cur.analogs.find(ci->name);
             hubctl::Analog a = ait == cur.analogs.end() ? hubctl::Analog() : ait->second;
@@ -501,7 +517,7 @@ void draw_mapping_panel() {
             settings_label(ci->label.c_str(), "Deadzone ignores small movements near the centre; sensitivity scales how far the stick counts.");
             bool edit = false;
             ImGui::SetNextItemWidth(sp(34.f));
-            edit |= ImGui::SliderFloat("##dz", &dz, 0.f, 0.95f, "Deadzone  %.2f");
+            edit |= ImGui::SliderFloat("##dz", &dz, 0.f, 0.95f, deadzone_zero_is_default(sys) && dz <= 0.f ? "Deadzone  Default" : "Deadzone  %.2f");
             bool done = ImGui::IsItemDeactivatedAfterEdit();
             ImGui::SameLine(0, sp(2.f));
             if (sys == "n64") {   // the only system whose stick RetroHub itself scales; emulators take a deadzone at most
@@ -517,7 +533,10 @@ void draw_mapping_panel() {
     }
     if (!keys && turbo_ui) text_wrapped_disabled("Turbo buttons auto-fire while held. They are off in online games unless the room host allows them for everyone.");
     else if (!keys && !hubctl::turbo_supported(sys)) text_wrapped_disabled("Turbo buttons: not supported for this system (" + emu_phrase(sys) + " reads the controller itself).");
-    if (!keys && sys != "n64" && !analogs.empty()) text_wrapped_disabled("Sensitivity can only be adjusted for N64. Here you can set the deadzone.");
+    if (!keys && sys == "ps2" && !analogs.empty()) text_wrapped_disabled("PCSX2 takes one deadzone for the controller. RetroHub uses the left stick value. Default leaves it to PCSX2.");
+    else if (!keys && sys == "psp" && !analogs.empty()) text_wrapped_disabled("PPSSPP keeps its own deadzone. Change it in PPSSPP's settings.");
+    else if (!keys && sys != "n64" && !analogs.empty()) text_wrapped_disabled(deadzone_zero_is_default(sys) ? "Sensitivity can only be adjusted for N64. Here you can set the deadzone. Default leaves it to " + emu_phrase(sys) + "."
+                                                                                                          : "Sensitivity can only be adjusted for N64. Here you can set the deadzone.");
     if (!keys && sys == "n64") {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         bool rm = cur.rumble;
@@ -654,7 +673,7 @@ void controls_live_push() {
     bool wrote = false;
     for (int i = 0; i < 5 && !(wrote = hubctl::write_profile_file(A.run.controls_path, next)); ++i) Sleep(40);   // the runner may be reading the file right now
     if (!wrote) {   // never fail silently: the next launch regenerates the file from the saved store anyway
-        push_toast("Couldn't update the running game's controls â they'll apply next launch", COL_WARN, 6.0);
+        push_toast("Could not update the running game's controls. They apply the next time you start it.", COL_WARN, 6.0);
         return;
     }
     runctl::Command c;

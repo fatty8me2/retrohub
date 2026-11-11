@@ -29,6 +29,14 @@ inline bool clip_combo_down(const PadState& s) {
     return s.b[kBtnBack] && s.b[kBtnLB] && !s.b[kBtnStart] && !s.b[kBtnYButton] && s.a[kAxisLT] < kTriggerOn && s.a[kAxisRT] < kTriggerOn;
 }
 
+/* Wii U "pad screen" toggle: hold View/Back + RB for kPadScreenHoldMs. Same exclusions as the replay combo (Start, Y, LT, RT must NOT be
+ * held), so a game that uses Minus+R, and View+Start+RB on the way to the exit combo, never toggles the screen. RB is checked by SDL index. */
+constexpr int kBtnRB = 10;            // SDL_CONTROLLER_BUTTON_RIGHTSHOULDER
+constexpr int kPadScreenHoldMs = 250;
+inline bool pad_screen_combo_down(const PadState& s) {
+    return s.b[kBtnBack] && s.b[kBtnRB] && !s.b[kBtnStart] && !s.b[kBtnYButton] && s.a[kAxisLT] < kTriggerOn && s.a[kAxisRT] < kTriggerOn;
+}
+
 class ExitCombo {
   public:
     explicit ExitCombo(int hold_ms = kExitHoldMs) : hold_(hold_ms) {}
@@ -52,6 +60,15 @@ class ExitCombo {
     int hold_;
     bool held_ = false, fired_ = false;
     long long since_ = 0;
+};
+
+/* Pad-screen toggle with its hold requirement: feed it "some pad satisfies pad_screen_combo_down" each poll; true once per hold. */
+class PadScreenCombo {
+  public:
+    bool update(bool down, long long now_ms) { return c_.update(down, now_ms); }
+    void reset() { c_.reset(); }
+  private:
+    ExitCombo c_{kPadScreenHoldMs};
 };
 
 }  // namespace hubctl
