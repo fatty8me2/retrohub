@@ -153,6 +153,24 @@ int main() {
         set_vault_dir("");
     }
 
+    // read-only path getters never create folders; the writer getters still do
+    {
+        fs::path vault = root / "vault_ro";
+        set_vault_dir(U(vault));
+        const std::string bp = battery_dir_path("gba", "ro_game"), sp = states_dir_path("gba", "ro_game"), gp = game_dir_path("gba", "ro_game");
+        CHECK(bp == gp + "battery\\" && sp == gp + "states\\");
+        CHECK(!fs::exists(vault / "gba"));                       // looking at a game created nothing, not even the system folder
+        CHECK(playlog_read_game("gba", "ro_game").empty());
+        CHECK(history_list(game_history_dir("gba", "ro_game")).empty());
+        CHECK(!fs::exists(vault / "gba"));
+        const std::string bw = battery_dir("gba", "ro_game");    // a writer (launch, import, save) still gets its folder
+        CHECK(bw == bp && fs::is_directory(vault / "gba" / "ro_game" / "battery"));
+        CHECK(!fs::exists(vault / "gba" / "ro_game" / "states"));
+        const std::string sw = states_dir("gba", "ro_game");
+        CHECK(sw == sp && fs::is_directory(vault / "gba" / "ro_game" / "states"));
+        set_vault_dir("");
+    }
+
     fs::remove_all(root);
     std::printf(g_fail ? "history_test: %d FAILED\n" : "history_test: all ok\n", g_fail);
     return g_fail ? 1 : 0;

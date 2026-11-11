@@ -95,8 +95,8 @@ Facts facts_for(const hub::GameEntry& e) {
     Facts f;
     f.sys = sys_short(e);
     f.key = e.key;
-    f.battery = no_sep(hub::saves::battery_dir(f.sys, e.key));
-    f.states = no_sep(hub::saves::states_dir(f.sys, e.key));
+    f.battery = no_sep(hub::saves::battery_dir_path(f.sys, e.key));
+    f.states = no_sep(hub::saves::states_dir_path(f.sys, e.key));
     f.in.game_key = e.key;
     f.in.this_pc = pc_id();
     f.in.state_time = file_time(runctl::state_file(f.states, runctl::kAutoSlot));
@@ -250,7 +250,7 @@ bool resume_choice_gate(const hub::GameEntry& e, bool blocked) {
 
 void resume_note_exit(const std::string& system_short, const std::string& key, bool online, unsigned long long start_unix) {
     if (online || !resumes(system_short) || key.empty()) return;
-    const std::string states = no_sep(hub::saves::states_dir(system_short, key));
+    const std::string states = no_sep(hub::saves::states_dir_path(system_short, key));
     const long long st = file_time(runctl::state_file(states, runctl::kAutoSlot));
     if (st <= 0 || st + 2 < (long long)start_unix) return;   // no state written this session: the old sidecar still describes it
     ResumeSidecar s;
@@ -258,7 +258,7 @@ void resume_note_exit(const std::string& system_short, const std::string& key, b
     s.pc_name = pc_name();
     s.game_key = key;
     s.time = st;
-    s.battery_time = newest_battery(no_sep(hub::saves::battery_dir(system_short, key)));
+    s.battery_time = newest_battery(no_sep(hub::saves::battery_dir_path(system_short, key)));
     runctl::write_text_atomic(sidecar_path(states), make_resume_sidecar(s));
 }
 

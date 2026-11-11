@@ -39,7 +39,7 @@ on the next sync).
 API: `src/saves/savestore.h`. The hub calls `set_vault_dir()` at startup (setting is persisted by the hub),
 passes `battery_dir()` / `states_dir()` to runners, and calls `touch_game()` after a session.
 
-Vault layout: `<vault>\<system>\<game key>\{battery\, states\, meta.json}`; path components are sanitized.
+Vault layout: `<vault>\<system>\<game key>\{battery\, states\, meta.json}`; path components are sanitized. Read-only code (lists, thumbnails, counts, play time, resume facts) must use `game_dir_path()` / `battery_dir_path()` / `states_dir_path()`, which never create folders; `game_dir()` / `battery_dir()` / `states_dir()` create them and are for launching, saving, importing and syncing in, so merely looking at a game leaves nothing in the vault.
 Other top-level entries: `.sync\` (manifests, never synced), `_conflicts\` (synced like any other file), `_identity\`
 (this PC's account secret: never synced, exported or imported; the same goes for the old copies older versions kept in
 `_conflicts\_identity\`). A game save that merely has a name like `identity.json` is a save and travels.

@@ -243,7 +243,7 @@ bool export_game_zip(const std::string& game_dir, const std::string& zip_path, b
 }
 
 std::string game_history_dir(const std::string& system_short, const std::string& game_key) {
-    fs::path g = P(game_dir(system_short, game_key));
+    fs::path g = P(game_dir_path(system_short, game_key));
     if (g.filename().empty()) g = g.parent_path();
     std::string key = S(g.filename()), sys = S(g.parent_path().filename());
     return hub::data_dir() + "save_history\\" + sys + "\\" + key + "\\";
