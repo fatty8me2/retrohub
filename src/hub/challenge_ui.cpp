@@ -86,11 +86,29 @@ void results_load() {
 /* ---------------- pictures ---------------- */
 struct Pic { SDL_Texture* t = nullptr; int w = 0, h = 0; };
 hubtex::TexCache<Pic> g_pics(40, [](Pic& p) { if (p.t) SDL_DestroyTexture(p.t); });   // LRU; evicted textures are freed next frame (tex_cache_logic.h)
+/* Per-path probe: the file's mtime+size, re-checked at most every 500 ms. A missing file is never cached (the download may land later),
+ * and the stamp is part of the cache key, so a replaced picture is decoded again. */
+struct PicProbe { int64_t next_ms = 0; std::string stamp; };
+std::map<std::string, PicProbe> g_probe;
+std::string pic_stamp(const std::string& path) {
+    std::error_code ec;
+    auto t = fs::last_write_time(u8(path), ec);
+    if (ec) return std::string();
+    auto sz = fs::file_size(u8(path), ec);
+    if (ec) return std::string();
+    return std::to_string((long long)t.time_since_epoch().count()) + ":" + std::to_string((long long)sz);
+}
 Pic* pic_for(const std::string& path) {
-    if (Pic* hit = g_pics.find(path)) return hit->t ? hit : nullptr;
+    const int64_t now = tick_ms();
+    if (g_probe.size() > 200) g_probe.clear();
+    PicProbe& pr = g_probe[path];
+    if (now >= pr.next_ms) { pr.next_ms = now + 500; pr.stamp = pic_stamp(path); }
+    if (pr.stamp.empty()) return nullptr;   // not there (yet): nothing cached, asked again in half a second
+    const std::string key = path + "|" + pr.stamp;
+    if (Pic* hit = g_pics.find(key)) return hit->t ? hit : nullptr;
     Pic p;
     SDL_Renderer* ren = A.win ? SDL_GetRenderer(A.win) : nullptr;
-    if (ren && exists(path)) {
+    if (ren) {
         std::ifstream f(u8(path), std::ios::binary);
         std::string d((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         int w = 0, h = 0, n = 0;
@@ -101,7 +119,7 @@ Pic* pic_for(const std::string& path) {
             stbi_image_free(px);
         }
     }
-    Pic* stored = g_pics.insert(path, p);
+    Pic* stored = g_pics.insert(key, p);
     return stored->t ? stored : nullptr;
 }
 

@@ -45,8 +45,8 @@ SDL_Renderer* g_ren = nullptr;
 
 struct Tex { SDL_Texture* t = nullptr; int w = 0, h = 0; std::string stamp; };
 /* LRU, never evicts what was used this frame, destroys evicted textures at the start of the next frame (tex_cache_logic.h). */
-hubtex::TexCache<Tex> g_tex(80, [](Tex& t) { if (t.t) SDL_DestroyTexture(t.t); });
-hubtex::DecodeBudget g_shot_budget(2);   // gallery: at most this many new PNG decodes per frame
+hubtex::TexCache<Tex> g_tex(128, [](Tex& t) { if (t.t) SDL_DestroyTexture(t.t); });   // roomy: gallery (60) + state thumbnails + viewer all fit while touched each frame
+hubtex::DecodeBudget g_shot_budget(2);   // every tex_for call: at most this many new PNG decodes per frame
 
 std::string file_stamp(const std::string& p) {
     std::error_code ec;
@@ -58,14 +58,14 @@ std::string file_stamp(const std::string& p) {
 }
 
 /* PNG (or BMP, used by the headless screenshot aid) file -> texture, cached by path + stamp. */
-Tex* tex_for(const std::string& path, hubtex::DecodeBudget* budget = nullptr) {
+Tex* tex_for(const std::string& path, hubtex::DecodeBudget* budget = &g_shot_budget) {
     if (!g_ren) return nullptr;
     if (path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".mp4") == 0) return tex_for(path + ".jpg", budget);   // instant-replay clip: its thumbnail
     std::string st = file_stamp(path);
     if (st.empty()) return nullptr;
     Tex* hit = g_tex.find(path);
     if (hit && hit->stamp == st) return hit->t ? hit : nullptr;
-    if (budget && !budget->spend()) return nullptr;   // over this frame's decode budget: caller shows its placeholder, we try again next frame
+    if (budget && !budget->spend()) return hit && hit->t ? hit : nullptr;   // over this frame's decode budget: keep showing the old picture (or the caller's placeholder), refresh next frame
     Tex nt;
     nt.stamp = st;
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
