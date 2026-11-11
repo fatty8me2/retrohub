@@ -265,6 +265,55 @@ int main() {
         CHECK(lichii_ini_launch("", v, true).find("use_vsync") != std::string::npos);   // no list (Lichii) = all keys
     }
 
+    // ---- Ocarina of Time options (switch.oot_high_refresh / oot_refresh_cap / oot_aa)
+    {
+        const std::vector<std::string> none;
+        const std::string base = lichii_ini_launch("", hub::gs::Values{}, false, &none);
+        hub::gs::Values d;   // the defaults the settings table gives
+        for (const char* k : {"switch.oot_high_refresh", "switch.oot_refresh_cap", "switch.oot_aa"}) {
+            const hub::gs::Option* o = hub::gs::find_option(k);
+            CHECK(o && o->def == "default");
+            d[k] = "default";
+        }
+        CHECK(fritchii_oot_keys(d).empty() && fritchii_oot_keys(hub::gs::Values{}).empty());
+        CHECK(lichii_ini_launch("", d, false, &none) == base);   // defaults: the ini is exactly what it was
+        CHECK(base.find("oot_") == std::string::npos);
+        hub::gs::Values v;
+        v["switch.oot_high_refresh"] = "on";
+        const std::string on = lichii_ini_launch("", v, false, &none);
+        CHECK(on.find("oot_high_refresh\\default=false\noot_high_refresh=true\n") != std::string::npos);
+        v["switch.oot_high_refresh"] = "off";
+        CHECK(lichii_ini_launch(on, v, false, &none).find("oot_high_refresh=false") != std::string::npos);
+        CHECK(lichii_ini_launch(on, v, false, &none).find("oot_high_refresh=true") == std::string::npos);
+        const char* caps[] = {"display", "90", "120", "144", "165"};
+        for (int i = 0; i < 5; ++i) {
+            hub::gs::Values c;
+            c["switch.oot_refresh_cap"] = caps[i];
+            CHECK(lichii_ini_launch("", c, false, &none).find("oot_high_refresh_cap=" + std::to_string(i) + "\n") != std::string::npos);
+        }
+        const char* aas[] = {"game", "nosharp", "fsr3", "fsr4"};
+        for (int i = 0; i < 4; ++i) {
+            hub::gs::Values c;
+            c["switch.oot_aa"] = aas[i];
+            CHECK(lichii_ini_launch("", c, false, &none).find("oot_anti_aliasing=" + std::to_string(i) + "\n") != std::string::npos);
+        }
+        hub::gs::Values bad;
+        bad["switch.oot_aa"] = "bogus";
+        bad["switch.oot_refresh_cap"] = "240";
+        bad["switch.oot_high_refresh"] = "maybe";
+        CHECK(lichii_ini_launch("", bad, false, &none) == base);
+        v["switch.oot_refresh_cap"] = "144";
+        v["switch.oot_aa"] = "fsr3";
+        v["switch.oot_high_refresh"] = "on";
+        const std::string all = lichii_ini_launch("", v, false, &none);
+        CHECK(lichii_ini_launch(all, v, false, &none) == all);                      // idempotent
+        CHECK(fritchii_ini_pin(all) == fritchii_ini_pin(fritchii_ini_pin(all)));
+        CHECK(fritchii_ini_pin(all).find("oot_high_refresh_cap=3") != std::string::npos);   // the pin leaves them alone
+        CHECK(lichii_ini_launch("", v, false).find("oot_") == std::string::npos);      // Lichii (no skip list) never gets them
+        std::vector<std::string> skip = {"Renderer.oot_anti_aliasing"};
+        CHECK(lichii_ini_launch("", v, false, &skip).find("oot_anti_aliasing") == std::string::npos);
+    }
+
     // ---- keys + firmware copied from Lichii
     {
         World w(tmp / "keys");

@@ -368,6 +368,15 @@ into `<data>\emulators\fritchii`, with its own `user\` folder, and runs it throu
 - **NVIDIA.** Since v5.5 Fritchii sets `__GL_SHADER_DISK_CACHE_SIZE` (10 GiB) and `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1` in its own process environment (only if not set
   already; nothing is written to the driver or the registry), so the prepared shaders stay in the driver's cache; RetroHub never sets a smaller value. On older drivers the
   NVIDIA Control Panel's Shader Cache Size (Manage 3D settings) can still be set to Unlimited.
+- **Ocarina of Time options (`switch.oot_high_refresh`, `switch.oot_refresh_cap`, `switch.oot_aa`; per game, Settings > Switch).** They map to Fritchii v5.7's `[Renderer]` keys
+  `oot_high_refresh` (bool: the experimental "High refresh rate" patch that keeps the game at normal speed above 60 fps; off in Fritchii), `oot_high_refresh_cap` (enum `OotRefreshCap`
+  Display 0, 90 1, 120 2, 144 3, 165 4; never faster than the screen) and `oot_anti_aliasing` (enum `OotAntiAliasing` Game 0, No sharpening 1, FSR 3.1 2, FSR 4 3; FSR 4 needs AMD's runtime and
+  falls back to 3.1). Every one defaults to `default` = "Fritchii's setting": nothing is written, so a player who never touches them gets exactly the ini RetroHub wrote before. Other values are
+  written by `hubemu::fritchii_oot_keys` through `lichii_ini_launch` (Fritchii launches only, the ones that pass a skip list; Lichii never gets them) as the usual `key\default=false` + `key=value`
+  pair, idempotently, before every launch. None of the three is in Fritchii's tuned list (`frizti_settings.cpp`), so its settings migration (held off by `frizti_settings_revision=999`) neither
+  resets them nor writes them to `frizti.ini`; `frizti_ini_pin` keeps only `game.` lines. A per-game Fritchii config (`user\config\custom\<title>.ini`) is not touched, so an override
+  made inside Fritchii for the game would still win. Switching back to "Fritchii's setting" leaves the last written value in the ini (use On/Off or a value to change it). The rows show only for
+  Ocarina of Time when it plays with Fritchii (`settings_games_ui.cpp`). Not launched by RetroHub's tests: the keys follow Fritchii's source (`src/common/settings.h`, `settings_enums.h`).
 - **Frame generation.** A build named Fritchii never runs frame generation (`Settings::FrameGenActive`), so RetroHub's frame-generation and "smooth60" pacing settings have no
   frame generation under Fritchii ("smooth60" still sets Target_60 pacing).
 
