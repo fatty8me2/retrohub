@@ -1,5 +1,6 @@
 /* Save vault implementation. See savestore.h and docs/SAVES.md. */
 #include "winutil.h"
+#include "durable_write.h"
 #include "json.h"
 #include "savestore.h"
 #include "games.h"
@@ -252,7 +253,10 @@ bool copy_atomic(const ws& src, const ws& dst, uint64_t ft) {
     if (!CopyFileW(lp(src).c_str(), lp(tmp).c_str(), FALSE)) return false;
     SetFileAttributesW(lp(tmp).c_str(), FILE_ATTRIBUTE_NORMAL);
     set_mtime(tmp, ft);
-    return commit_tmp(tmp, dst);
+    SetFileAttributesW(lp(dst).c_str(), FILE_ATTRIBUTE_NORMAL);  // allow replacing read-only files (as commit_tmp)
+    if (durable::commit_replace(tmp, dst, durable::kRetryLongMs)) return true;           // flushes the copied data first, then one atomic replace
+    DeleteFileW(lp(tmp).c_str());
+    return false;
 }
 
 /* ---------------------------------------------------------------- scanning */

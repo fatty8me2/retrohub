@@ -1,4 +1,10 @@
 #include "emu_saves.h"
+#include "durable_write.h"
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 #include <algorithm>
 #include <chrono>
@@ -59,8 +65,11 @@ bool copy_keep_time(const fs::path& from, const fs::path& to, std::error_code& e
     auto t = fs::last_write_time(from, ec);
     if (!ec) fs::last_write_time(tmp, t, ec);
     ec.clear();
-    fs::rename(tmp, to, ec);   // replaces an existing file on Windows
-    if (ec) { std::error_code e2; fs::remove(tmp, e2); return false; }
+    if (!durable::commit_replace(tmp.wstring(), to.wstring(), durable::kRetryLongMs)) {   // flush, then one atomic replace of an existing file
+        ec = std::error_code((int)GetLastError(), std::system_category());
+        std::error_code e2; fs::remove(tmp, e2);
+        return false;
+    }
     return true;
 }
 
@@ -177,8 +186,8 @@ bool manifest_save(const std::string& path, const SyncManifest& m) {
         }
         if (!f) return false;
     }
-    fs::rename(tmp, u8(path), ec);
-    return !ec;
+    if (!durable::commit_replace(tmp.wstring(), u8(path).wstring())) { fs::remove(tmp, ec); return false; }
+    return true;
 }
 
 static void prune_backups(const fs::path& backup_file, const std::string& tag, int keep) {

@@ -1,5 +1,6 @@
 /* Cloud saves backend (see cloud.h). Windows only: WinHTTP + BCrypt. */
 #include "winutil.h"
+#include "durable_write.h"
 #include "json.h"
 #include "cloud.h"
 #include "cloud_http.h"
@@ -285,8 +286,7 @@ void save_state(const fs::path& mirror, const State& st) {
         for (auto& kv : st) f << kv.first << '\t' << kv.second.etag << '\t' << kv.second.sha << '\n';
     }
     std::error_code ec;
-    fs::rename(tmp, state_path(mirror), ec);
-    if (ec) { fs::remove(state_path(mirror), ec); fs::rename(tmp, state_path(mirror), ec); }
+    if (!durable::commit_replace(tmp.wstring(), state_path(mirror).wstring())) fs::remove(tmp, ec);
 }
 
 struct RemoteFile { str key, etag, sha, mtime; long long size = 0; };
@@ -408,9 +408,7 @@ bool download(Http& http, const fs::path& mirror, const RemoteFile& rf, str* err
         out.close();
         str got = sha_file(tmp);
         if (got == rf.sha) {
-            fs::remove(dst, ec);
-            fs::rename(tmp, dst, ec);
-            if (ec) { *err = "cannot place " + dst.string(); return false; }
+            if (!durable::commit_replace(tmp.wstring(), dst.wstring())) { *err = "cannot place " + dst.string(); return false; }
             set_mtime(dst, rf.mtime);
             return true;
         }
