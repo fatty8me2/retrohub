@@ -392,3 +392,11 @@ itself is `docs/HOOKSHOT.md`). Hookshot is made on the player's PC from their ow
   this time, or cancel. Nothing is started until the decoder is there.
 - **Offline only.** Online, room and netplay launches always use Lichii. Hookshot has no runner control channel, so the quick menu offers only the generic
   items (named "Hookshot"); the Lichii exit-hang watch does not apply to it. Hookshot takes `HOS_FULLSCREEN=1` from the Fullscreen setting.
+
+## Checking the pins
+`qa\check_pins.ps1` is a read-only check that every emulator download pinned in `src\hub\emulators.cpp` still exists upstream with the pinned size. It parses
+every `static const Release` declaration (with `fritchii_pin` resolved), refuses to report if it finds fewer pins than are declared, and then makes metadata
+requests only: `gh api repos/<owner>/<repo>/releases/tags/<tag>` for GitHub hosts (asset size, and the digest when GitHub publishes one), and an HTTP HEAD
+with User-Agent `pin-check` for the other hosts (Content-Length). It prints one line per pin (OK, SIZE MISMATCH, SHA MISMATCH, MISSING or SKIPPED(reason))
+and exits 1 if any pin is not OK or SKIPPED. A HEAD cannot verify a SHA-256, so non-GitHub lines say the hash was not checked. Hookshot's toolchain
+downloads (`hookshot_build.cpp`) are not covered. Run it after changing a pin, or whenever upstream may have moved a file.
