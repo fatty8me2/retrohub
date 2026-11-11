@@ -69,6 +69,7 @@ float init(SDL_Window* win, bool headless, float base_scale, bool cmd_flag, bool
  * (frame_begin): fullscreening the hub would cover a windowed game. */
 float base_scale() { return g_base_s; }
 void set_base_scale(float base) { if (base > 0.f && std::fabs(base - g_base_s) > 0.001f) g_pending_base = base; }
+void request_font_rebuild() { if (g_base_s > 0.f) g_pending_base = g_base_s; }   // same scale, new font sizes ("Larger small text"): rebuilt in frame_begin
 
 void toggle() { g_pending = g_active ? 0 : 1; g_pending_key = false; }
 

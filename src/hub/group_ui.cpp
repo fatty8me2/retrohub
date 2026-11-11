@@ -153,7 +153,13 @@ static void draw_entry(Entry& e, int idx, float cw, const World& w) {
     ImVec2 p1(p0.x + cw, p0.y + h);
     dl->AddRectFilled(p0, p1, e.read ? ui::PANEL : ui::PANEL2, sp(1.5f));
     if (s == State::Active) dl->AddRect(p0, p1, with_alpha(ui::ACCENT, 0.4f), sp(1.5f), 0, 1.f);
-    if (!e.read) dl->AddCircleFilled(ImVec2(p0.x + sp(1.f), p0.y + sp(1.f)), sp(0.55f), ui::BAD, 12);
+    if (!e.read) {
+        const ImVec2 dc(p0.x + sp(1.f), p0.y + sp(1.f));
+        dl->AddCircleFilled(dc, sp(0.55f), ui::BAD, 12);
+        dl->AddCircleFilled(dc, sp(0.2f), IM_COL32(255, 255, 255, 235), 8);   // not colour alone: a white centre marks "unread"
+        if (ImGui::IsMouseHoveringRect(ImVec2(dc.x - sp(0.9f), dc.y - sp(0.9f)), ImVec2(dc.x + sp(0.9f), dc.y + sp(0.9f))) && ImGui::IsWindowHovered())
+            ImGui::SetTooltip("Unread");
+    }
     float bw = e.kind == Kind::JoinWaiting ? sp(8.f) : sp(10.f), by = p0.y + (h - sp(3.5f)) * 0.5f;   // a waiting account's buttons are narrower so "<name> wants to join" fits
     float rx = p1.x - pad;
     const float dw = e.kind == Kind::JoinWaiting ? sp(6.5f) : sp(3.5f);   // dismiss ("Deny" for a waiting account)

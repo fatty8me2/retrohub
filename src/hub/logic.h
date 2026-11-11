@@ -98,6 +98,7 @@ struct Settings {
     std::string ps2_bios_dir;         // user-chosen folder with the PS2 BIOS ("" = look next to the games / Desktop\Everything\BIOS)
     /* Plan 4 Wave 3 D1/D2 (display) */
     bool reduce_motion = false;       // calmer UI: no slides, pans, spins or shelf tilt (read by every animation)
+    bool large_text = false;          // "Larger small text": hints and captions at 14 / 18 px (layout scale unchanged)
     int ui_scale = 100;               // UI scale in percent (80..200), on top of the monitor DPI
     bool remember_window = true;      // reopen on the same monitor, position and size
     int win_x = 0, win_y = 0, win_w = 0, win_h = 0;   // last normal window rect (0 size = never saved)
