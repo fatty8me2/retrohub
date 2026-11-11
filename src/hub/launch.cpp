@@ -53,6 +53,10 @@
 #include "hookshot_build.h"
 #include "nup_repair.h"
 #include "hub_log.h"
+#include "env_scope.h"
+#include "proc_spawn.h"
+#include "session_journal.h"
+#include <mutex>
 #include <thread>
 #include <xinput.h>
 
@@ -67,6 +71,11 @@ bool NP3_pending = false;
 /* ---------- process launching ---------- */
 
 static starthint::Popup g_hint;
+
+/* The pending-session journal of the launch in progress (session_journal.h): launch_external / launch_hookshot set it just before spawn(),
+ * spawn() records the process id in it while the child is still suspended, the caller clears it again. */
+static std::shared_ptr<hubjournal::Entry> g_journal_next;
+static std::string journal_dir() { return hubjournal::pending_dir(hub::data_dir()); }
 
 bool spawn(const std::string& exe, const std::string& args_in, const std::string& cwd,
                   const std::vector<std::pair<std::string, std::string>>& env, const RunInfo& ri) {
@@ -92,35 +101,35 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     }
     if (!hubui::launch_allowed(A.proc != nullptr, session_active(), /*system_launch=*/true)) { set_notice(hubui::launch_busy_reason(true)); return false; }   // rooms start their own game inside their own session: only A.proc refuses
     if (!file_exists(exe)) { set_notice("Cannot find " + file_name(exe) + " (" + exe + ")"); return false; }
-    std::vector<std::pair<std::string, std::string>> env_all = env;   // + the instant-replay switch for n64run (set below, cleared again after the spawn)
+    std::vector<std::pair<std::string, std::string>> env_all = env;   // + the instant-replay switch for n64run (set below, put back after the spawn)
     if (file_name(exe) == "n64run.exe") for (auto& kv : hubui::n64_clips_env(A.st.n64_clips)) env_all.push_back(kv);
-    if (!A.st.start_hint) SetEnvironmentVariableW(L"RETROHUB_START_HINT", L"0");   // retrorun / n64run read it (inherited by the child)
+    std::vector<std::pair<std::wstring, std::wstring>> wenv;   // the child inherits these; a variable the player already had is given back with its own value afterwards, not removed
+    if (!A.st.start_hint) wenv.push_back({L"RETROHUB_START_HINT", L"0"});   // retrorun / n64run read it
+    for (auto& e : env_all) wenv.push_back({W(e.first), W(e.second)});
     std::wstring cmd = L"\"" + W(exe) + L"\" " + W(args);
-    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
-    buf.push_back(0);
-    for (auto& e : env_all) SetEnvironmentVariableW(W(e.first).c_str(), W(e.second).c_str());
+    const std::vector<hubenv::Saved> env_saved = hubenv::apply(wenv);
     const std::string exe_name = file_name(exe);
     const bool own_runner = exe_name == "retrorun.exe" || exe_name == "n64run.exe" || exe_name == "streamrun.exe" || exe == smash_exe_path();   // our own processes that open /hub: they prove the account (strict rooms); emulators never get it
     if (own_runner) fr_ident_env(true);
-    STARTUPINFOW si{};
-    si.cb = sizeof si;
-    PROCESS_INFORMATION pi{};
     /* CREATE_NO_WINDOW: n64run / retrorun are console-subsystem programs (they log to files). Without the flag Windows gives them a
      * console, which on PCs where Windows Terminal is the default console host opens a visible terminal window over the game.
-     * GUI emulators (Dolphin, PCSX2, Azahar, Cemu) ignore the flag. */
-    BOOL ok = CreateProcessW(W(exe).c_str(), buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, W(cwd).c_str(), &si, &pi);
-    DWORD err = GetLastError();
-    for (auto& e : env_all) SetEnvironmentVariableW(W(e.first).c_str(), nullptr);
+     * GUI emulators (Dolphin, PCSX2, Azahar, Cemu) ignore the flag.
+     * The child starts suspended and joins its job (external emulators: follow every process it starts, so a relaunch / hand-off keeps the
+     * session open) before it runs its first instruction, so nothing it spawns early can escape the job. */
+    hubproc::SpawnResult sr;
+    const bool want_job = ri.after_exit != nullptr;
+    const bool ok = hubproc::spawn(W(exe), cmd, W(cwd), CREATE_NO_WINDOW, want_job, [](const hubproc::SpawnResult& r) {
+        if (!g_journal_next) return;   // record which process this session's after-exit work waits for (still suspended: it cannot have written anything yet)
+        g_journal_next->pid = r.pid;
+        g_journal_next->created = r.created;
+        hubjournal::update(journal_dir(), *g_journal_next);
+    }, &sr);
+    const DWORD err = sr.error;
+    hubenv::restore(env_saved);
     if (own_runner) fr_ident_env(false);
-    SetEnvironmentVariableW(L"RETROHUB_START_HINT", nullptr);
     if (!ok) { set_notice("Could not start " + file_name(exe) + " (error " + std::to_string(err) + ")"); return false; }
-    CloseHandle(pi.hThread);
-    if (ri.after_exit) {   // external emulator: follow every process it starts, so a relaunch / hand-off keeps the session open
-        HANDLE job = CreateJobObjectW(nullptr, nullptr);
-        if (job && !AssignProcessToJobObject(job, pi.hProcess)) { CloseHandle(job); job = nullptr; }
-        A.job_h = job;
-    }
-    A.proc = pi.hProcess;
+    if (want_job) A.job_h = sr.job;
+    A.proc = sr.process;
     A.proc_title = ri.title;
     A.run = ri;
     A.run.controls_path.clear();
@@ -628,6 +637,10 @@ static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const st
     if (hookshot::swap_in_progress()) { set_notice("Hookshot is being updated: try again in a moment.", 8.0); return; }
     if (hubemu::is_running(exe)) { set_notice("Hookshot is already running. Close it first, then start the game from RetroHub.", 10.0); return; }
     if (!hookshot::av1_decoder_present(true)) { hookshot_av1_ask(e); return; }   // Hookshot would open a top-most box over the game: ask here instead
+    /* One lock for launching and replaying a leftover session (session_journal.h): held until the spawn has returned and the journal is written.
+     * A replay is copying a save tree right now: say so instead of freezing the frame. */
+    std::unique_lock<std::mutex> session_guard(hubjournal::session_lock(), std::try_to_lock);
+    if (!session_guard.owns_lock()) { set_notice("Still saving your last game. Try again in a moment."); return; }
     auto sess = std::make_shared<hubemu::SaveSession>(hookshot::begin_save_session(e, battery));
     autotest_log("external: hookshot save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
     if (!sess->error.empty()) {   // the vault -> Hookshot copy failed: starting would play an older or missing save (and end_session must not run)
@@ -637,14 +650,27 @@ static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const st
     std::vector<std::pair<std::string, std::string>> env;
     if (hub::gs::is_fullscreen(gs_values_for(e))) env.push_back({"HOS_FULLSCREEN", "1"});
     RunInfo r = ri;
-    r.after_exit = [sess]() {   // Hookshot's save folder -> vault
-        hubemu::end_session(*sess);
+    auto jr = std::make_shared<hubjournal::Entry>();   // the pending-session journal: replayed at the next hub start when the hub is closed during play
+    jr->emu_kind = 100;   // (not a hubemu::Kind: Hookshot has its own)
+    jr->emu_exe = exe;
+    jr->inst_dir = hookshot::user_dir();
+    jr->system_short = hub::system_short(e.system);
+    jr->game_key = e.key;
+    jr->title = e.title;
+    jr->sess = *sess;
+    const std::string jdir = journal_dir();
+    if (sess->active) hubjournal::begin(jdir, *jr);
+    r.after_exit = [sess, jr, jdir]() {   // Hookshot's save folder -> vault
+        hubjournal::finish(*sess, *jr, jdir);
         autotest_log("end_session: " + sess->summary + (sess->error.empty() ? "" : " ERROR " + sess->error));
         if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (Hookshot's copy is untouched)", ui::WARN, 15.0);
     };
     autotest_log("external: starting " + exe);
-    if (spawn(exe, "", hookshot::game_dir(), env, r)) g_hookshot_run = true;
-    else autotest_log("external: spawn failed");
+    if (sess->active) g_journal_next = jr;
+    const bool started = spawn(exe, "", hookshot::game_dir(), env, r);
+    g_journal_next.reset();
+    if (started) g_hookshot_run = true;
+    else { autotest_log("external: spawn failed"); hubjournal::abort_unspawned(*jr, jdir, false); }
 }
 
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg) {
@@ -664,6 +690,10 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         else UNZ.state = UnzipJob::Asking;
         return;
     }
+    /* One lock for launching and replaying a leftover session (session_journal.h): held until the spawn has returned and the journal is written.
+     * A replay is copying a save tree right now: say so instead of freezing the frame. */
+    std::unique_lock<std::mutex> session_guard(hubjournal::session_lock(), std::try_to_lock);
+    if (!session_guard.owns_lock()) { set_notice("Still saving your last game. Try again in a moment."); return; }
     hubemu::Install inst = hubemu::find(kind, A.st.cemu_exe, e.path);
     {   // a download / update job already runs (or its question is up): never ask over it, and never start the build it is replacing
         const bool want_install = inst.exe.empty();
@@ -818,6 +848,22 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     }
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, "", wiiu_tid, hubemu::nx_manifest_suffix(kind)));
     autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
+    /* Pending-session journal (session_journal.h): what the after-exit work needs, so it still happens when RetroHub is closed during play
+     * (replayed at the next start once the emulator has ended) and the Cemu overrides below are put back when the spawn fails. */
+    auto jr = std::make_shared<hubjournal::Entry>();
+    jr->emu_kind = (int)kind;
+    jr->emu_exe = inst.exe;
+    jr->inst_dir = inst.dir;
+    jr->inst_managed = inst.managed;
+    jr->system_short = hub::system_short(e.system);
+    jr->game_key = e.key;
+    jr->title = e.title;
+    jr->sess = *sess;
+    if (hubemu::is_nx(kind) && e.system == hub::System::Switch) { jr->nx_install_dir = inst.dir; jr->nx_title_id = hubemu::title_id_from_key(e.key); }
+    if (kind == hubemu::Kind::Cemu) { jr->cemu_user = cemu_user; jr->cemu_tid = wiiu_tid; jr->revert_profile = true; jr->revert_own_settings = !inst.managed; }
+    const std::string jdir = journal_dir();
+    const bool journaled = sess->active || kind == hubemu::Kind::Cemu;
+    if (journaled) hubjournal::begin(jdir, *jr);
     std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
                        : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI", hub::gs::volume_of(gsv))
                        : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(game, fs)
@@ -833,13 +879,8 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     }
     RunInfo r = ri;
     r.emu_kind = (int)kind; r.emu_exe = inst.exe; r.emu_dir = inst.dir;   // for the crash note
-    const bool cemu_managed = inst.managed;
-    r.after_exit = [sess, kind, cemu_user, wiiu_tid, cemu_managed]() {   // emulator save folder -> vault, before the sync runs
-        if (kind == hubemu::Kind::Cemu) {   // put back everything RetroHub changed in the user's Cemu for this session
-            hubemu::revert_cemu_game_profile(cemu_user, wiiu_tid);
-            if (!cemu_managed) hubemu::revert_cemu_own_settings(cemu_user);
-        }
-        hubemu::end_session(*sess);
+    r.after_exit = [sess, jr, jdir, kind]() {   // emulator save folder -> vault, before the sync runs
+        hubjournal::finish(*sess, *jr, jdir);   // puts back what RetroHub changed in the user's Cemu, re-reads the Switch save folders, copies the saves, deletes the journal
         if (kind == hubemu::Kind::Dolphin) gba_link_after_exit();   // Wave 3 X2: GBA saves -> vault (no-op without a GBA link)
         autotest_log("end_session: " + sess->summary + (sess->error.empty() ? "" : " ERROR " + sess->error));
         NP3.stop();
@@ -848,7 +889,15 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     autotest_log("external: starting " + inst.exe + " " + args);
     std::vector<std::pair<std::string, std::string>> xenv;   // added to RetroHub's environment for the child (spawn)
     if (hubemu::is_nx(kind)) { xenv = hubemu::nx_env(kind, gsv, hubemu::physical_ram_bytes()); autotest_log(std::string(hubemu::name(kind)) + ": " + std::to_string(xenv.size()) + " extra environment variable(s)"); }
-    if (!spawn(inst.exe, args, inst.dir, xenv, r)) { autotest_log("external: spawn failed"); NP3.stop(); }
+    if (journaled) g_journal_next = jr;
+    const bool started = spawn(inst.exe, args, inst.dir, xenv, r);
+    g_journal_next.reset();
+    if (!started) {
+        autotest_log("external: spawn failed");
+        NP3.stop();
+        /* The emulator never ran: put the temporary Cemu overrides back. (When another game is running, its own session owns them: leave everything.) */
+        hubjournal::abort_unspawned(*jr, jdir, !A.proc && !session_active());
+    }
     else g_fritchii_run = kind == hubemu::Kind::Fritchii;
 }
 

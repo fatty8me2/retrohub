@@ -278,9 +278,13 @@ add_custom_command(TARGET hub_shell_test POST_BUILD
 
 # ---- 3DS (Azahar) / Wii U (Cemu): external emulators, downloaded on demand (docs/EMULATORS.md) ----
 target_sources(RetroHub PRIVATE emulators.cpp netplay_3ds_run.cpp netplay_3ds_join.cpp)
+target_sources(RetroHub PRIVATE proc_spawn.cpp session_journal.cpp)   # suspended spawn into a job, pending-session journal
 target_link_libraries(RetroHub PRIVATE ws2_32)
 target_link_libraries(RetroHub PRIVATE xinput setupapi)
 target_link_libraries(RetroHub PRIVATE hubminiz)
+add_executable(hub_emuproc_test test_session_journal.cpp proc_spawn.cpp session_journal.cpp emulators.cpp lichii.cpp ppsspp.cpp)   # emulator process lane: mlc_path entities, env restore, suspended spawn, pending-session journal (temp dirs)
+target_include_directories(hub_emuproc_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(hub_emuproc_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 add_executable(hub_emu_test test_emulators.cpp lichii.cpp emulators.cpp ppsspp.cpp)
 target_include_directories(hub_emu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_emu_test PRIVATE hubcrashlog hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
