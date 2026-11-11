@@ -207,7 +207,7 @@ int main() {
     dump(r);
     CHECK(r.conflicts == 1);
     CHECK(read_file(cloud / "n64/mp1/battery/mp1.eep") == "A-newer");
-    CHECK(count_conflicts(cloud) == 2);
+    CHECK(count_conflicts(cloud) == 3);   // [5]'s copy + the older B edit that replaced a newer sync-folder file (now backed up) + this conflict
     useB();
     sync_folder(cl, false);
     CHECK(read_file(B / "n64/mp1/battery/mp1.eep") == "A-newer");

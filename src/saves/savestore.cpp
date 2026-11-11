@@ -285,15 +285,38 @@ EnumErrorHook g_enum_hook = nullptr;   // test seam, null (inert) unless a test 
 
 str hook_dir(const ws& dir) { str s = U(dir); for (auto& c : s) if (c == '/') c = '\\'; return s; }
 
-void walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str>& log) {
+/* Cloud-client / OS litter that must never travel into a vault battery folder (emulators read those folders): matched on the file
+ * name only, case-insensitively, on both sides of a sync. Deliberately NOT here: *.tmp, *.partial and names ending in "~". Games
+ * running under Cemu, Azahar and Eden choose their own save file names inside the vault battery folder, so those could be real saves. */
+bool is_junk_name(const ws& name0) {
+    ws n = lower(name0);
+    auto starts = [&](const wchar_t* p) { return n.rfind(p, 0) == 0; };
+    auto ends = [&](const wchar_t* p) { size_t k = wcslen(p); return n.size() >= k && n.compare(n.size() - k, k, p) == 0; };
+    return n == L"desktop.ini" || n == L"thumbs.db" || n == L".ds_store" || starts(L"~$") || starts(L".~lock.") ||
+           n == L".dropbox" || starts(L".dropbox.") || n == L".sync" || starts(L".syncthing.") ||
+           ends(L".crdownload") || ends(L".!sync");
+}
+
+/* Lists root/rel into `out`. Returns false (with *err set) when the listing is incomplete for any reason other than the folder being
+ * gone or empty: an incomplete scan would make files that exist look absent, so callers must not act on it. */
+bool walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str>& log, str* err = nullptr, bool junk = false) {
     ws dir = rel.empty() ? root : root + L"/" + rel;
+    auto bad = [&](DWORD code) {
+        if (err) *err = "could not list the folder " + U(dir) + " (Windows error " + std::to_string((unsigned long)code) + ")";
+        return false;
+    };
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileExW((lp(dir) + L"\\*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr,
                                 FIND_FIRST_EX_LARGE_FETCH);
-    if (g_enum_hook && g_enum_hook(hook_dir(dir), 0)) { if (h != INVALID_HANDLE_VALUE) FindClose(h); return; }
-    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD first_err = h == INVALID_HANDLE_VALUE ? GetLastError() : 0;
+    if (g_enum_hook) if (DWORD inj = (DWORD)g_enum_hook(hook_dir(dir), 0)) { if (h != INVALID_HANDLE_VALUE) FindClose(h); return bad(inj); }
+    if (h == INVALID_HANDLE_VALUE) {
+        if (first_err == ERROR_FILE_NOT_FOUND || first_err == ERROR_PATH_NOT_FOUND || first_err == ERROR_NO_MORE_FILES) return true;   // gone or empty: normal
+        return bad(first_err);
+    }
     int seen = 0;
     do {
+        if (seen && g_enum_hook) if (DWORD inj = (DWORD)g_enum_hook(hook_dir(dir), seen)) { FindClose(h); return bad(inj); }
         seen++;
         ws name = fd.cFileName;
         if (name == L"." || name == L"..") continue;
@@ -306,11 +329,13 @@ void walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str
         }
         if (isdir) {
             if (rel.empty() && lower(name) == L".sync") continue;
+            if (rel.empty() && (lower(name) == L"system volume information" || lower(name) == L"$recycle.bin")) continue;   // a USB stick's root: Windows keeps these closed, they never hold saves
             if ((rel.empty() && lower(name) == L"_identity") || (lower(rel) == L"_conflicts" && lower(name) == L"_identity")) continue;   // the account secret never travels (F6)
             if (!states && is_states_path(crel)) continue;
-            walk(root, crel, states, out, log);
+            if (!walk(root, crel, states, out, log, err, junk)) { FindClose(h); return false; }
         } else {
             if (name.size() > 7 && name.compare(name.size() - 7, 7, L".hubtmp") == 0) continue;
+            if (junk && is_junk_name(name)) continue;
             if (!states && is_states_path(crel)) continue;
             FE e;
             e.rel = crel;
@@ -319,9 +344,12 @@ void walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str
             e.attrs = fd.dwFileAttributes;
             out[lower(crel)] = e;
         }
-    } while (!(g_enum_hook && g_enum_hook(hook_dir(dir), seen)) && FindNextFileW(h, &fd));
+    } while (FindNextFileW(h, &fd));
+    DWORD last = GetLastError();
     FindClose(h);
+    if (last != ERROR_NO_MORE_FILES && last != ERROR_FILE_NOT_FOUND && last != ERROR_PATH_NOT_FOUND) return bad(last);
     if (g_enum_hook) g_enum_hook(hook_dir(dir), -1);   // directory finished (the return value is ignored)
+    return true;
 }
 
 /* --------------------------------------------------------- JSON (shared reader, src/common/json.h) */
@@ -481,8 +509,13 @@ SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
     if (same_or_nested(vault, root)) return fail("sync folder and save vault must be separate folders");
 
     FMap L, R;
-    walk(vault, L"", include_states, L, rep.log);
-    walk(root, L"", include_states, R, rep.log);
+    /* Both listings must be complete before anything is copied: a folder that could not be listed would make its files look absent
+     * and the "only one side has it" branches would then replace them. On any listing error nothing is changed. */
+    {
+        str werr;
+        if (!walk(vault, L"", include_states, L, rep.log, &werr, true)) return fail("sync stopped, nothing was changed: " + werr + " (vault)");
+        if (!walk(root, L"", include_states, R, rep.log, &werr, true)) return fail("sync stopped, nothing was changed: " + werr + " (sync folder)");
+    }
 
     ws mpath = manifest_path(vault, root);
     Manifest old;
@@ -513,24 +546,53 @@ SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
                                    ? " (cloud placeholder not downloaded)" : ""));
         };
 
-        if (il != L.end() && ir == R.end()) {
-            const FE& e = il->second; str h;
-            if (!hash_of(vault, e, &h)) { skip(e, "cannot read"); continue; }
-            if (copy_atomic(vault + L"/" + e.rel, root + L"/" + e.rel, e.mtime)) {
-                rep.pushed++; rep.log.push_back("push " + lrel(e)); record(e, h);
-            } else skip(e, "copy to sync folder failed");
-            continue;
-        }
-        if (il == L.end() && ir != R.end()) {
-            const FE& e = ir->second; str h;
-            if (!hash_of(root, e, &h)) { skip(e, "cannot read"); continue; }
-            if (copy_atomic(root + L"/" + e.rel, vault + L"/" + e.rel, e.mtime)) {
-                rep.pulled++; rep.log.push_back("pull " + lrel(e)); record(e, h);
-            } else skip(e, "copy from sync folder failed");
-            continue;
+        /* Never replace an existing destination in the "only one side has it" branches: the scan said the file is absent there, but if
+         * it exists after all (it appeared since the scan, or the scan missed it) it is compared like any two-sided file below. */
+        FE extra;   // the destination file when the scan missed it
+        auto probe = [&](const ws& base, const FE& want, FE* out) -> int {   // 0 absent, 1 present (filled), 2 cannot tell / not a file
+            WIN32_FILE_ATTRIBUTE_DATA ad;
+            if (!GetFileAttributesExW(lp(base + L"/" + want.rel).c_str(), GetFileExInfoStandard, &ad)) {
+                DWORD e = GetLastError();
+                return (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) ? 0 : 2;
+            }
+            if (ad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return 2;
+            out->rel = want.rel;
+            out->size = ((uint64_t)ad.nFileSizeHigh << 32) | ad.nFileSizeLow;
+            out->mtime = ((uint64_t)ad.ftLastWriteTime.dwHighDateTime << 32) | ad.ftLastWriteTime.dwLowDateTime;
+            out->attrs = ad.dwFileAttributes;
+            return 1;
+        };
+        const FE* pl = il != L.end() ? &il->second : nullptr;
+        const FE* pr = ir != R.end() ? &ir->second : nullptr;
+        if (pl && !pr) {
+            const FE& e = *pl; str h;
+            int pr_state = probe(root, e, &extra);
+            if (pr_state == 2) { skip(e, "cannot check the sync folder copy; left untouched"); continue; }
+            if (pr_state == 0) {
+                if (!hash_of(vault, e, &h)) { skip(e, "cannot read"); continue; }
+                if (copy_atomic(vault + L"/" + e.rel, root + L"/" + e.rel, e.mtime)) {
+                    rep.pushed++; rep.log.push_back("push " + lrel(e)); record(e, h);
+                } else skip(e, "copy to sync folder failed");
+                continue;
+            }
+            rep.log.push_back("note: " + lrel(e) + " exists in the sync folder although the scan missed it; compared instead of overwritten");
+            pr = &extra;
+        } else if (!pl && pr) {
+            const FE& e = *pr; str h;
+            int pl_state = probe(vault, e, &extra);
+            if (pl_state == 2) { skip(e, "cannot check the vault copy; left untouched"); continue; }
+            if (pl_state == 0) {
+                if (!hash_of(root, e, &h)) { skip(e, "cannot read"); continue; }
+                if (copy_atomic(root + L"/" + e.rel, vault + L"/" + e.rel, e.mtime)) {
+                    rep.pulled++; rep.log.push_back("pull " + lrel(e)); record(e, h);
+                } else skip(e, "copy from sync folder failed");
+                continue;
+            }
+            rep.log.push_back("note: " + lrel(e) + " exists in the vault although the scan missed it; compared instead of overwritten");
+            pl = &extra;
         }
 
-        const FE& el = il->second; const FE& er = ir->second;
+        const FE& el = *pl; const FE& er = *pr;
         str hl, hr;
         if (!hash_of(vault, el, &hl)) { skip(el, "cannot read (vault)"); continue; }
         if (!hash_of(root, er, &hr)) { skip(er, "cannot read (sync folder)"); continue; }
@@ -549,17 +611,26 @@ SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
         const ws& wbase = local_wins ? vault : root;
         const ws& lbase = local_wins ? root : vault;
 
-        if (conflict && !is_meta(el.rel)) {
+        /* One side changed: it wins on its hash alone, as always. But when the file about to be overwritten is clearly NEWER than the
+         * incoming one (2 s = FAT granularity; an old version restored by a cloud client, a stale USB stick) or the incoming one is
+         * empty while the existing one is not (a half-written file), the overwritten copy is kept in _conflicts first. */
+        const uint64_t kTwoSec = 20000000ULL;
+        bool suspicious = !conflict && ((lose.mtime > win.mtime && lose.mtime - win.mtime > kTwoSec) || (win.size == 0 && lose.size != 0));
+        if ((conflict || suspicious) && !is_meta(el.rel)) {
             ws cr = conflict_rel(el.rel, {vault, root});
             uint64_t lm = lose.mtime;
             if (!copy_atomic(lbase + L"/" + lose.rel, vault + L"/" + cr, lm) ||
                 !copy_atomic(lbase + L"/" + lose.rel, root + L"/" + cr, lm)) {
-                skip(el, "could not preserve conflicting copy; left untouched");
+                skip(el, "could not preserve the overwritten copy; left untouched");
                 continue;
             }
             rep.conflicts++;
-            rep.log.push_back("conflict " + lrel(el) + ": " + (local_wins ? "vault" : "sync folder") +
-                              " is newer and wins; other version kept as " + U(cr));
+            if (conflict)
+                rep.log.push_back("conflict " + lrel(el) + ": " + (local_wins ? "vault" : "sync folder") +
+                                  " is newer and wins; other version kept as " + U(cr));
+            else
+                rep.log.push_back("backup " + lrel(el) + ": the " + (local_wins ? "vault" : "sync folder") +
+                                  " copy changed but is older or empty compared to the one it replaces; the replaced version kept as " + U(cr));
         }
         if (copy_atomic(wbase + L"/" + win.rel, lbase + L"/" + win.rel, win.mtime)) {
             if (local_wins) { rep.pushed++; rep.log.push_back("push " + lrel(el)); }
