@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <map>
 #include <set>
 #include <string>
@@ -186,6 +187,19 @@ inline std::string hours_text(int64_t secs) {
     if (mins < 60) return std::to_string(mins) + " min";
     const int64_t h = mins / 60, m = mins % 60;
     return m ? std::to_string(h) + " h " + std::to_string(m) + " min" : std::to_string(h) + " h";
+}
+
+/* File name of the saved sheet: "wrapped-2026-10.png" for a month, "wrapped-2026.png" for a year. */
+inline std::string image_file_name(const Range& r) {
+    char nm[64];
+    if (r.month) std::snprintf(nm, sizeof nm, "wrapped-%04d-%02d.png", r.year, r.month);
+    else std::snprintf(nm, sizeof nm, "wrapped-%04d.png", r.year);
+    return nm;
+}
+
+/* Text for the status line when the attachment size guard (attach_size_problem) refuses the picture; "" when it may be sent. */
+inline std::string send_block_message(const std::string& guard_problem) {
+    return guard_problem.empty() ? std::string() : "Not sent. " + guard_problem;
 }
 
 }  // namespace hubui::wrapped

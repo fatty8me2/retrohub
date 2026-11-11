@@ -12,6 +12,9 @@
 #include "../net/username.h"
 #include "homefun.h"
 #include "wrapped_logic.h"
+#include "attach_xfer.h"
+#include "friend_pick_ui.h"
+#include <shellapi.h>
 
 namespace {
 
@@ -35,7 +38,9 @@ struct Wrapped {
     std::vector<wr::GroupEvent> fake_groups;
     bool use_fake = false;
     std::string shown_key;   // game whose cover the Top games card shows
+    std::string send_path;   // picture the friend picker is for
 } WS;
+hubui::FriendPicker g_wpick;
 
 int local_tz() {
     std::time_t t = std::time(nullptr);
@@ -367,10 +372,7 @@ std::string save_image(const wr::Data& d, const std::string& player, std::string
     const std::string sys = hub::system_short(hub::console_system(d.top[0].system));   // vault folder is keyed by the real system
     const std::string dir = no_slash(hs::game_dir(sys, key)) + "\\shots";
     make_dirs(dir);
-    char nm[64];
-    if (d.range.month) std::snprintf(nm, sizeof nm, "wrapped-%04d-%02d.png", d.range.year, d.range.month);
-    else std::snprintf(nm, sizeof nm, "wrapped-%04d.png", d.range.year);
-    const std::string path = dir + "\\" + nm;
+    const std::string path = dir + "\\" + wr::image_file_name(d.range);
     int w = 0, h = 0;
     std::vector<unsigned char> rgb;
     if (!render_sheet(d, player, &w, &h, &rgb)) { *err = "Could not draw the picture."; return std::string(); }
@@ -380,6 +382,30 @@ std::string save_image(const wr::Data& d, const std::string& player, std::string
     std::fclose(f);
     if (!ok) { *err = "Could not write the picture."; return std::string(); }
     return path;
+}
+
+/* Share actions: each writes the picture first (same file and place as "Save as image"), then acts on it. */
+void share_action(int what, const std::string& player) {   // 0 copy, 1 send, 2 open folder
+    std::string err;
+    const std::string path = save_image(WS.data, player, &err);
+    if (path.empty()) { WS.status_ok = false; WS.status = err; return; }
+    if (what == 0) {
+        WS.status_ok = shot_copy_to_clipboard(path);
+        WS.status = WS.status_ok ? "Copied the picture to the clipboard." : "Could not copy the picture.";
+    } else if (what == 1) {
+        std::error_code ec;
+        const auto sz = std::filesystem::file_size(std::filesystem::u8path(path), ec);
+        const std::string block = ec ? std::string() : wr::send_block_message(hub::attach::attach_size_problem((int64_t)sz, "shot"));
+        if (!block.empty()) { WS.status_ok = false; WS.status = block; return; }
+        WS.send_path = path;
+        g_wpick.open("Send your Wrapped", "Pick who should get it. They see it in your chat and can open it for 7 days (max 8 MB).");
+        WS.status_ok = true;
+        WS.status = "Saved to " + path;
+    } else if (!g_headless) {   // only on this click
+        ShellExecuteW(nullptr, L"open", L"explorer.exe", (L"/select,\"" + std::filesystem::u8path(path).wstring() + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+        WS.status_ok = true;
+        WS.status = "Opened the folder: " + path;
+    }
 }
 
 void select_period(wr::Period p) {
@@ -493,6 +519,20 @@ void wrapped_ui_modal() {
     }
     ImGui::SameLine(0, sp(1.f));
     if (button("Close", ImVec2(0, bh), false, true, ui::Icon::Close)) { WS.open = false; ImGui::CloseCurrentPopup(); }
+    {   // second row: share the picture
+        const bool has = !WS.data.empty();
+        if (button("Copy image", ImVec2(0, bh), false, has)) share_action(0, player);
+        ImGui::SameLine(0, sp(1.f));
+        if (button("Send to a friend", ImVec2(0, bh), false, has)) share_action(1, player);
+        ImGui::SameLine(0, sp(1.f));
+        if (button("Open folder", ImVec2(0, bh), false, has)) share_action(2, player);
+        if (g_wpick.draw("Send to friends##wrappedpick") && !WS.send_path.empty()) {
+            const std::string fname = std::filesystem::u8path(WS.send_path).filename().u8string();
+            hubui::attach_send_start(WS.send_path, "shot", fname, g_wpick.chosen(), "Sent my RetroHub Wrapped");
+        }
+        const std::string st = hubui::attach_send_status();
+        if (!st.empty()) ImGui::TextDisabled("%s", st.c_str());
+    }
     if (!WS.status.empty()) result_line(WS.status, WS.status_ok);
     else {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);

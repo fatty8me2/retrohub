@@ -2,6 +2,7 @@
 #include "attract_logic.h"
 #include "surprise_logic.h"
 #include "wrapped_logic.h"
+#include "attach_xfer.h"
 
 #include <cstdio>
 #include <map>
@@ -229,6 +230,16 @@ static void test_wrapped() {
     CHECK(hours_text(0) == "0 min" && hours_text(30) == "<1 min" && hours_text(5 * 60) == "5 min");
     CHECK(hours_text(3600) == "1 h" && hours_text(3600 + 30 * 60) == "1 h 30 min");
     CHECK(std::string(weekday_name(0)) == "Sunday" && std::string(weekday_name(9)).empty());
+
+    // sharing: file naming and the attachment size guard
+    { Range r; r.year = 2026; r.month = 10; CHECK(image_file_name(r) == "wrapped-2026-10.png");
+      r.month = 0; CHECK(image_file_name(r) == "wrapped-2026.png");
+      r.year = 2026; r.month = 3; CHECK(image_file_name(r) == "wrapped-2026-03.png"); }
+    CHECK(send_block_message(hub::attach::attach_size_problem(1000000, "shot")).empty());
+    CHECK(send_block_message(hub::attach::attach_size_problem(hub::attach::kMaxBytes, "shot")).empty());
+    { std::string m = send_block_message(hub::attach::attach_size_problem(hub::attach::kMaxBytes + 1, "shot"));
+      CHECK(m.find("Not sent.") == 0 && m.find("8 MB") != std::string::npos); }
+    CHECK(!send_block_message(hub::attach::attach_size_problem(0, "shot")).empty());
 }
 
 int main() {
