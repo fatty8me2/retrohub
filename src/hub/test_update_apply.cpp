@@ -143,11 +143,12 @@ static void kill_spawned() { for (auto& p : g_spawned) { proc_kill(p); if (p.h) 
 static double secs_since(std::chrono::steady_clock::time_point t0) { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); }
 
 /* A recovery manifest as the applier writes it (hand-built so the test needs no private API). */
-static void put_manifest(const fs::path& dir, const fs::path& install, const char* from, const char* to, DWORD pid) {
+static void put_manifest(const fs::path& dir, const fs::path& install, const char* from, const char* to, DWORD pid, int booting = -1) {
     std::string inst = winutil::to_utf8(install.wstring()), esc;
     for (char c : inst) { if (c == '\\' || c == '"') esc += '\\'; esc += c; }
+    // booting -1 = the manifest an OLD applier wrote (no "booting" key at all)
     put(dir / L"manifest.json", "{\"v\":1,\"install\":\"" + esc + "\",\"from\":\"" + from + "\",\"to\":\"" + to + "\",\"pid\":" + std::to_string(pid) +
-                                ",\"started\":1,\"reported\":false}");
+                                ",\"started\":1,\"reported\":false" + (booting < 0 ? "" : booting ? ",\"booting\":true" : ",\"booting\":false") + "}");
 }
 
 static HANDLE g_lock = INVALID_HANDLE_VALUE;
@@ -219,8 +220,97 @@ static void check_hub_old(const fs::path& install) {
     CHECK(get(install / L"licenses\\emulator-README.txt") == "old-emu-readme");
 }
 
+/* ---- boot-check stubs: a copy of this exe placed as RetroHub.exe behaves by its sibling fake_mode.txt ("<mode> [ms]"):
+ *   old        the restored OLD RetroHub: leaves old_started.txt, exits
+ *   ok         the NEW RetroHub: writes the boot marker (the real note_boot_ok), stays alive ~1.5 s
+ *   slow N     sleeps N ms, then writes the marker, stays alive ~1 s
+ *   hang N     never writes the marker; runs N ms and ends by itself
+ *   crash      exits 3 at once without the marker
+ *   crashgame N  starts a "game" (retrorun.exe, sleeps N ms) from the install folder, then exits 3 without the marker
+ * Every stub writes fake.pid first and fake.done when it ends by itself (so a test can tell a natural end from a kill). */
+static bool fake_run(int* rc) {
+    const fs::path self = self_exe(), dir = self.parent_path();
+    const std::string m = get(dir / L"fake_mode.txt");
+    if (m.empty()) return false;
+    std::istringstream is(m); std::string mode; unsigned long long n = 0; is >> mode >> n;
+    put(dir / L"fake.pid", std::to_string(GetCurrentProcessId()));
+    *rc = 0;
+    if (mode == "old") put(dir / L"old_started.txt", "1");
+    else if (mode == "ok") { note_boot_ok(); Sleep(1500); }
+    else if (mode == "slow") { Sleep((DWORD)n); note_boot_ok(); Sleep(1000); }
+    else if (mode == "hang") Sleep((DWORD)n);
+    else if (mode == "crash") *rc = (int)0xC0000005u;
+    else if (mode == "exit") *rc = (int)(unsigned long)n;   // "exit <code>": any exit code, no marker
+    else if (mode == "crashgame") {
+        const fs::path game = dir / L"retrorun.exe";
+        std::error_code ec; fs::copy_file(self, game, fs::copy_options::overwrite_existing, ec);
+        std::wstring wc = L"\"" + game.wstring() + L"\" --sleep " + std::to_wstring(n);
+        STARTUPINFOW si{}; si.cb = sizeof si; PROCESS_INFORMATION pi{};
+        if (CreateProcessW(nullptr, wc.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
+        Sleep(300);
+        *rc = (int)0xC0000005u;
+    }
+    put(dir / L"fake.done", "1");
+    return true;
+}
+
+/* Waits (up to ms) for the stub that wrote <dir>\fake.pid to end by itself. */
+static bool wait_fake(const fs::path& dir, DWORD ms) {
+    const ULONGLONG t0 = GetTickCount64();
+    std::string pid;
+    while (pid.empty() && GetTickCount64() - t0 < 8000) { pid = get(dir / L"fake.pid"); if (pid.empty()) Sleep(100); }
+    if (pid.empty()) return false;
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)std::atol(pid.c_str()));
+    if (!h) return true;   // already gone
+    const bool ended = WaitForSingleObject(h, ms) == WAIT_OBJECT_0;
+    CloseHandle(h);
+    return ended;
+}
+
+static std::string g_old_exe, g_new_exe;   // the stub exe bytes with an OLD / NEW tail
+/* staged = the new version, install = the old one (+ user data); both RetroHub.exe are stubs. */
+static void boot_scene(const fs::path& root, fs::path* staged, fs::path* install, const std::string& new_mode, const std::string& old_mode = "old") {
+    std::error_code ec; fs::remove_all(root, ec);
+    *staged = root / L"staged"; *install = root / L"RetroHub";
+    if (g_old_exe.empty()) { const std::string base = get(self_exe()); g_old_exe = base + "OLD-TAIL"; g_new_exe = base + "NEW-TAIL"; }
+    put(*staged / L"RetroHub.exe", g_new_exe);
+    put(*staged / L"BattleShip.exe", "new-bs");
+    put(*staged / L"a.txt", "a-new");
+    put(*staged / L"0new.txt", "brand new");
+    put(*staged / L"fake_mode.txt", new_mode);
+    put(*install / L"RetroHub.exe", g_old_exe);
+    put(*install / L"BattleShip.exe", "old-bs");
+    put(*install / L"a.txt", "a-old");
+    put(*install / L"fake_mode.txt", old_mode);
+    put(*install / L"BattleShip.o2r", "user-o2r");
+    put(*install / L"userdata\\hub.json", "user-settings");
+    put(*install / L"userdata\\saves\\mario.sav", "user-save");
+    age_files(*install);
+}
+static void check_boot_old(const fs::path& install) {
+    CHECK(get(install / L"RetroHub.exe") == g_old_exe);          // byte-identical to what was there
+    CHECK(get(install / L"BattleShip.exe") == "old-bs" && get(install / L"a.txt") == "a-old" && get(install / L"fake_mode.txt") == "old");
+    CHECK(!has(install / L"0new.txt"));                          // a file only the new version brought is gone again
+    CHECK(get(install / L"BattleShip.o2r") == "user-o2r" && get(install / L"userdata\\hub.json") == "user-settings" && get(install / L"userdata\\saves\\mario.sav") == "user-save");
+}
+static void check_boot_new(const fs::path& install) {
+    CHECK(get(install / L"RetroHub.exe") == g_new_exe && get(install / L"a.txt") == "a-new" && get(install / L"0new.txt") == "brand new");
+    CHECK(get(install / L"BattleShip.o2r") == "user-o2r" && get(install / L"userdata\\hub.json") == "user-settings");
+}
+static int count_entries(const fs::path& dir) {
+    std::error_code ec; int n = 0;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) ++n;
+    return n;
+}
+static bool wait_for_file(const fs::path& p, DWORD ms) {
+    const ULONGLONG t0 = GetTickCount64();
+    while (!has(p) && GetTickCount64() - t0 < ms) Sleep(100);
+    return has(p);
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && std::strcmp(argv[1], "--sleep") == 0) { Sleep((DWORD)std::atoi(argv[2])); return 0; }   // fake game mode
+    { int frc = 0; if (fake_run(&frc)) return frc; }   // a stub RetroHub.exe of the boot-check cases
     // ---- pure helpers ----
     CHECK(!is_excluded(L"rh-helper.exe") && !is_excluded(L"data\\helpers\\dolphin_netplay_driver.ps1") && !is_excluded(L"data\\helpers\\n3ds_join.ps1"));   // an update delivers the helper exe + scripts
     CHECK(is_excluded(L"userdata\\hub.json"));
@@ -432,6 +522,28 @@ int main(int argc, char** argv) {
         CHECK(!read_status((root / L"status" / L"none.json").wstring(), &back));
     }
 
+    // ---- boot check: pure pieces ----
+    {
+        const fs::path d = root / L"bootpure";
+        const std::wstring inst = (d / L"RetroHub").wstring();
+        CHECK(boot_ok_path(inst) == inst + L"\\updates\\boot_ok" && bad_version_path(inst) == inst + L"\\updates\\bad_version.json");
+        CHECK(is_excluded(L"updates\\boot_ok") && is_excluded(L"updates\\bad_version.json"));   // never part of an update payload
+        put(d / L"m1", "v1.2.3\n");
+        CHECK(boot_marker_matches((d / L"m1").wstring(), "v1.2.3") && boot_marker_matches((d / L"m1").wstring(), "1.2.3") && boot_marker_matches((d / L"m1").wstring(), "V1.2.3 "));
+        CHECK(!boot_marker_matches((d / L"m1").wstring(), "v1.2.4") && !boot_marker_matches((d / L"m1").wstring(), "") && !boot_marker_matches((d / L"none").wstring(), "v1.2.3"));
+        put(d / L"m2", ""); CHECK(!boot_marker_matches((d / L"m2").wstring(), "v1.2.3"));
+        BadVersion b; CHECK(!bad_version_read(inst, &b));
+        BadVersion w; w.version = "v1.2.3"; w.from = "v1.2.2"; w.reason = "did not start"; w.exit_code = -1073741515; w.at = 4242;
+        CHECK(bad_version_write(inst, w) && bad_version_read(inst, &b));
+        CHECK(b.version == "v1.2.3" && b.from == "v1.2.2" && b.reason == "did not start" && b.exit_code == -1073741515L && b.at == 4242);
+        put(d / L"RetroHub" / L"updates" / L"bad_version.json", "garbage"); CHECK(!bad_version_read(inst, &b));
+        Status rb; rb.result = "rolled_back"; rb.version = "v1.2.3";
+        CHECK(status_line(rb) == "Update could not start; rolled back" && status_line(rb).size() <= 40);
+        // note_boot_ok does nothing (and never throws) when this process was not started with --boot-ok
+        note_boot_ok();
+        CHECK(!has(d / L"RetroHub" / L"updates" / L"boot_ok"));
+    }
+
     // ---- H1: the applier NEVER terminates a game or emulator running from the install folder ----
     {
         make_scene(root / L"game", &staged, &install);
@@ -530,6 +642,90 @@ int main(int argc, char** argv) {
         CloseHandle(zl);
         rep = recover_interrupted(install.wstring(), "v1.0.0", tmp4.wstring());     // the lock is gone: now it is repaired
         CHECK(rep.repaired == 1 && get(install / L"z.txt") == "z-original" && !has(tmp4 / L"RetroHub-update-8"));
+    }
+
+    // ---- boot check: version order, bad-version clear ----
+    CHECK(version_lower("v0.9.0", "v1.0.0") && version_lower("1.2.3", "1.10.0") && version_lower("v1.0", "v1.0.1") && !version_lower("v1.0.0", "v1.0.0"));
+    CHECK(!version_lower("v2.0.0", "v1.9.9") && !version_lower("garbage", "v1.0.0") && !version_lower("", "v1.0.0") && !version_lower("v1.0.0", "1.0.0-beta"));
+    {
+        const fs::path d = root / L"badclear";
+        BadVersion w; w.version = "v1.2.3";
+        CHECK(bad_version_write((d / L"RetroHub").wstring(), w));
+        bad_version_clear((d / L"RetroHub").wstring());
+        CHECK(!bad_version_read((d / L"RetroHub").wstring(), &w) && !has(bad_version_path((d / L"RetroHub").wstring())));
+        bad_version_clear((d / L"RetroHub").wstring());   // none: no harm
+    }
+    // ---- boot check: startup recovery of the states the new applier leaves (hand-built, no processes) ----
+    {
+        // A) the applier watching the boot died; the NEW version is the one running: healthy, backup dropped, NEVER restored, no note
+        make_scene(root / L"rb_a", &staged, &install);
+        fs::path tmp = root / L"rb_a" / L"tmp";
+        put(tmp / L"RetroHub-update-11" / L"backup" / L"a.txt", "a-ancient");
+        put(tmp / L"RetroHub-update-11" / L"added.txt", "0new.txt\n");
+        put_manifest(tmp / L"RetroHub-update-11", install, "v1.0.0", "v2.0.0", 0, 1);
+        put(install / L"a.txt", "a-new-healthy"); put(install / L"0new.txt", "brand new");
+        RecoverReport rep = recover_interrupted(install.wstring(), "v2.0.0", tmp.wstring());   // the new hub is running, no marker yet: NOT trusted
+        CHECK(rep.found == 1 && rep.pending == 1 && rep.healthy == 0 && rep.repaired == 0 && has(tmp / L"RetroHub-update-11") && get(install / L"a.txt") == "a-new-healthy");
+        put(install / L"updates" / L"boot_ok", "v2.0.0\n");
+        { BadVersion bv; bv.version = "v2.0.0"; bad_version_write(install.wstring(), bv); }   // ... and never dropped while recorded as bad
+        rep = recover_interrupted(install.wstring(), "v2.0.0", tmp.wstring());
+        CHECK(rep.pending == 1 && rep.healthy == 0 && has(tmp / L"RetroHub-update-11"));
+        bad_version_clear(install.wstring());
+        rep = recover_interrupted(install.wstring(), "v2.0.0", tmp.wstring());
+        CHECK(rep.found == 1 && rep.healthy == 1 && rep.repaired == 0 && rep.stale == 0 && rep.notes.empty());
+        CHECK(get(install / L"a.txt") == "a-new-healthy" && has(install / L"0new.txt") && !has(tmp / L"RetroHub-update-11"));
+        // ... the same state seen through "v"-less / differently written versions
+        put(tmp / L"RetroHub-update-12" / L"backup" / L"a.txt", "a-ancient");
+        put_manifest(tmp / L"RetroHub-update-12", install, "1.0.0", "v2.0.0", 0, 1);
+        put(install / L"updates" / L"boot_ok", "v2.0.0\n");
+        rep = recover_interrupted(install.wstring(), "2.0.0", tmp.wstring());
+        CHECK(rep.healthy == 1 && get(install / L"a.txt") == "a-new-healthy");
+
+        // B) the boot marker names the target version even though an older exe is reporting (never put old files over a healthy new install)
+        put(tmp / L"RetroHub-update-13" / L"backup" / L"a.txt", "a-ancient");
+        put_manifest(tmp / L"RetroHub-update-13", install, "v1.0.0", "v2.0.0", 0, 1);
+        put(install / L"updates" / L"boot_ok", "v2.0.0\n");
+        rep = recover_interrupted(install.wstring(), "v1.0.0", tmp.wstring());
+        CHECK(rep.healthy == 1 && rep.repaired == 0 && get(install / L"a.txt") == "a-new-healthy");
+        fs::remove(install / L"updates" / L"boot_ok");
+
+        // C) backup present, no marker, no live applier, the OLD version is the one running: the existing recovery path restores it,
+        //    and removes exactly the files the update added
+        put(tmp / L"RetroHub-update-14" / L"backup" / L"a.txt", "a-old");
+        put(tmp / L"RetroHub-update-14" / L"added.txt", "0new.txt\nuserdata\\hub.json\n..\\evil.txt\n");   // user data / unsafe entries in the list are ignored
+        put_manifest(tmp / L"RetroHub-update-14", install, "v1.0.0", "v2.0.0", 0, 1);
+        rep = recover_interrupted(install.wstring(), "v1.0.0", tmp.wstring());
+        CHECK(rep.repaired == 1 && rep.healthy == 0 && !rep.notes.empty() && rep.notes[0].find("Repaired") == 0);
+        CHECK(get(install / L"a.txt") == "a-old" && !has(install / L"0new.txt") && get(install / L"userdata\\hub.json") == "user-settings");
+        CHECK(!has(tmp / L"RetroHub-update-14"));
+
+        // D) a live applier is watching the boot: left alone, whatever the versions
+        Proc applier = spawn_sleeper(root / L"rb_a" / L"RetroHub-apply-9" / L"RetroHub.exe", 20000);
+        Sleep(300);
+        put(tmp / L"RetroHub-update-15" / L"backup" / L"a.txt", "a-old");
+        put_manifest(tmp / L"RetroHub-update-15", install, "v1.0.0", "v2.0.0", applier.pid, 1);
+        rep = recover_interrupted(install.wstring(), "v1.0.0", tmp.wstring());
+        CHECK(rep.active == 1 && rep.repaired == 0 && rep.healthy == 0 && has(tmp / L"RetroHub-update-15"));
+        rep = recover_interrupted(install.wstring(), "v2.0.0", tmp.wstring());
+        CHECK(rep.active == 1 && rep.healthy == 0 && has(tmp / L"RetroHub-update-15"));
+        kill_spawned();
+        fs::remove_all(tmp / L"RetroHub-update-15");
+
+        // E) an OLD applier's leftovers (no "booting" key) keep the old rules: the new exe in place = "interrupted" note, never a restore
+        put(tmp / L"RetroHub-update-16" / L"backup" / L"a.txt", "a-ancient");
+        put_manifest(tmp / L"RetroHub-update-16", install, "v1.0.0", "v2.0.0", 0);
+        rep = recover_interrupted(install.wstring(), "v2.0.0", tmp.wstring());
+        CHECK(rep.stale == 1 && rep.healthy == 0 && rep.notes.size() == 1 && get(install / L"a.txt") == "a-old");
+        // ... and a new-format manifest that is NOT booting yet (the copy was still in progress) behaves exactly like that
+        put(tmp / L"RetroHub-update-17" / L"backup" / L"a.txt", "a-ancient");
+        put_manifest(tmp / L"RetroHub-update-17", install, "v1.0.0", "v2.0.0", 0, 0);
+        rep = recover_interrupted(install.wstring(), "v2.0.0", tmp.wstring());
+        CHECK(rep.stale == 1 && rep.healthy == 0 && get(install / L"a.txt") == "a-old");
+        // a booting leftover for yet another version is stale, never restored
+        put(tmp / L"RetroHub-update-18" / L"backup" / L"a.txt", "a-ancient");
+        put_manifest(tmp / L"RetroHub-update-18", install, "v1.0.0", "v2.0.0", 0, 1);
+        rep = recover_interrupted(install.wstring(), "v3.0.0", tmp.wstring());
+        CHECK(rep.stale == 1 && rep.healthy == 0 && get(install / L"a.txt") == "a-old");
     }
 
     // ---- integration: RetroHub.exe --apply-update (needs the exe) ----
@@ -633,6 +829,196 @@ int main(int argc, char** argv) {
             CHECK(rc == 1);
             check_hub_old(install); check_smash_untouched(install);
             CHECK(has(staged));   // kept for a retry
+        }
+        // ---- boot check: the applier relaunches the new RetroHub (a stub) and waits for its boot marker ----
+        {
+            auto bootCmd = [&](const fs::path& st, const fs::path& in, const fs::path& tmpr, const std::wstring& extra, const wchar_t* vers = L"--version v9.9.9 --from v1.0.0") {
+                return L"\"" + exe + L"\" --apply-update \"" + st.wstring() + L"\" \"" + in.wstring() + L"\" 0 " + vers + L" --relaunch-no-window --tmp-root \"" + tmpr.wstring() + L"\" " + extra;
+            };
+
+            // 1) success: the marker appears -> the backup is deleted, the new files stay, the applier exits 0
+            {
+                boot_scene(root / L"b_ok", &staged, &install, "ok");
+                const fs::path tmpr = root / L"b_ok" / L"tmp";
+                rc = run_hidden(bootCmd(staged, install, tmpr, L"--boot-wait-secs 20 --boot-cap-secs 40"));
+                CHECK(rc == 0);
+                check_boot_new(install);
+                CHECK(boot_marker_matches(boot_ok_path(install.wstring()), "v9.9.9"));
+                CHECK(count_entries(tmpr) == 0);                         // backup + manifest are gone
+                CHECK(!has(install / L"updates" / L"bad_version.json") && !has(install / L"userdata" / L"update_status.json"));
+                CHECK(wait_fake(install, 10000) && has(install / L"fake.done") && !has(install / L"old_started.txt"));
+            }
+            // 2) crash: the new RetroHub exits without the marker -> byte-identical old files, the OLD stub relaunched, a note, a bad-version record
+            {
+                boot_scene(root / L"b_crash", &staged, &install, "crash");
+                const fs::path tmpr = root / L"b_crash" / L"tmp";
+                rc = run_hidden(bootCmd(staged, install, tmpr, L"--boot-wait-secs 20 --boot-cap-secs 40"));
+                CHECK(rc == 5);
+                check_boot_old(install);
+                CHECK(wait_for_file(install / L"old_started.txt", 8000));   // the old RetroHub was started again
+                wait_fake(install, 8000);
+                CHECK(count_entries(tmpr) == 0);
+                BadVersion bv;
+                CHECK(bad_version_read(install.wstring(), &bv) && bv.version == "v9.9.9" && bv.from == "v1.0.0" && bv.reason == "did not start" && bv.exit_code == (long)0xC0000005u && bv.at > 0);
+                Status rs;
+                CHECK(read_status(default_status_path(install.wstring()), &rs) && rs.result == "rolled_back" && rs.version == "v9.9.9");
+                CHECK(status_line(rs) == "Update could not start; rolled back");
+                CHECK(!boot_marker_matches(boot_ok_path(install.wstring()), "v9.9.9"));
+                CHECK(!has(staged));                                      // staged files are gone: the bad version is not retried from them
+            }
+            // 3) slow start: the new RetroHub needs longer than --boot-wait-secs; the applier keeps waiting (it is running) and never ends it
+            {
+                boot_scene(root / L"b_slow", &staged, &install, "slow 3500");
+                const fs::path tmpr = root / L"b_slow" / L"tmp";
+                auto t1 = std::chrono::steady_clock::now();
+                rc = run_hidden(bootCmd(staged, install, tmpr, L"--boot-wait-secs 1 --boot-cap-secs 40"));
+                CHECK(rc == 0 && secs_since(t1) >= 3.0);
+                check_boot_new(install);
+                CHECK(count_entries(tmpr) == 0 && !has(install / L"old_started.txt") && !has(install / L"updates" / L"bad_version.json"));
+                CHECK(wait_fake(install, 10000) && has(install / L"fake.done"));
+            }
+            // 4) hangs without ever writing the marker: after the hard cap the applier stops watching, changes NOTHING and does not end it
+            {
+                boot_scene(root / L"b_hang", &staged, &install, "hang 9000");
+                const fs::path tmpr = root / L"b_hang" / L"tmp";
+                auto t1 = std::chrono::steady_clock::now();
+                rc = run_hidden(bootCmd(staged, install, tmpr, L"--boot-wait-secs 1 --boot-cap-secs 3"));
+                CHECK(rc == 4 && secs_since(t1) >= 2.5);
+                CHECK(!has(install / L"fake.done"));                       // still running when the applier left: it was not ended...
+                check_boot_new(install);                                   // ...and nothing was rolled back under it
+                CHECK(!has(install / L"old_started.txt") && !has(install / L"updates" / L"bad_version.json"));
+                CHECK(count_entries(tmpr) == 1);                           // backup kept for the next start
+                CHECK(wait_fake(install, 15000) && has(install / L"fake.done"));   // it ends by itself (so it was never killed)
+                // the next start of the NEW version cleans up silently
+                RecoverReport rr = recover_interrupted(install.wstring(), "v9.9.9", tmpr.wstring());   // the new hub is running but has proven nothing yet
+                CHECK(rr.pending == 1 && rr.healthy == 0 && rr.repaired == 0 && count_entries(tmpr) == 1);
+                put(install / L"updates" / L"boot_ok", "v9.9.9\n");                                        // a later start: its marker exists
+                rr = recover_interrupted(install.wstring(), "v9.9.9", tmpr.wstring());
+                CHECK(rr.healthy == 1 && rr.repaired == 0 && rr.notes.empty() && count_entries(tmpr) == 0);
+                check_boot_new(install);
+            }
+            // 5) the applier is killed mid-wait (by its own PID): the next startup recovers correctly
+            {
+                boot_scene(root / L"b_kill", &staged, &install, "hang 5000");
+                const fs::path tmpr = root / L"b_kill" / L"tmp";
+                DWORD apid = 0;
+                run_hidden(bootCmd(staged, install, tmpr, L"--boot-wait-secs 1 --boot-cap-secs 60"), &apid, false);
+                CHECK(apid != 0);
+                CHECK(wait_for_file(install / L"fake.pid", 15000));        // the new stub is up, the applier is waiting for its marker
+                HANDLE ah = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, apid);
+                CHECK(ah != nullptr);
+                if (ah) { TerminateProcess(ah, 9); WaitForSingleObject(ah, 5000); CloseHandle(ah); }   // only the applier THIS test started
+                CHECK(wait_fake(install, 15000) && has(install / L"fake.done"));   // the stub was not touched by the applier's death
+                check_boot_new(install);
+                CHECK(count_entries(tmpr) == 1);
+                RecoverReport rr = recover_interrupted(install.wstring(), "v9.9.9", tmpr.wstring());   // the new version starts (by hand): not trusted yet
+                CHECK(rr.found == 1 && rr.pending == 1 && rr.healthy == 0 && count_entries(tmpr) == 1);
+                put(install / L"updates" / L"boot_ok", "v9.9.9\n");
+                rr = recover_interrupted(install.wstring(), "v9.9.9", tmpr.wstring());
+                CHECK(rr.found == 1 && rr.healthy == 1 && rr.repaired == 0 && rr.stale == 0 && rr.notes.empty());
+                check_boot_new(install);
+                CHECK(count_entries(tmpr) == 0);
+            }
+            // 5b) ... and the same kill, but the old version is the one that comes up (the new one never started): files come back
+            {
+                boot_scene(root / L"b_kill2", &staged, &install, "hang 3000");
+                const fs::path tmpr = root / L"b_kill2" / L"tmp";
+                DWORD apid = 0;
+                run_hidden(bootCmd(staged, install, tmpr, L"--boot-wait-secs 1 --boot-cap-secs 60"), &apid, false);
+                CHECK(wait_for_file(install / L"fake.pid", 15000));
+                HANDLE ah = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, apid);
+                if (ah) { TerminateProcess(ah, 9); WaitForSingleObject(ah, 5000); CloseHandle(ah); }
+                CHECK(wait_fake(install, 15000));
+                RecoverReport rr = recover_interrupted(install.wstring(), "v1.0.0", tmpr.wstring());
+                CHECK(rr.found == 1 && rr.repaired == 1 && rr.healthy == 0);
+                check_boot_old(install);
+                CHECK(count_entries(tmpr) == 0);
+            }
+            // 6) a game is running from the install folder when the rollback is due: the rollback waits for it, never ends it
+            {
+                boot_scene(root / L"b_game", &staged, &install, "crashgame 4500");
+                const fs::path tmpr = root / L"b_game" / L"tmp";
+                auto t1 = std::chrono::steady_clock::now();
+                rc = run_hidden(bootCmd(staged, install, tmpr, L"--boot-wait-secs 20 --boot-cap-secs 40"));
+                CHECK(rc == 5 && secs_since(t1) >= 3.5);                   // it waited for the game to end on its own
+                check_boot_old(install);
+                CHECK(wait_for_file(install / L"old_started.txt", 8000));
+                wait_fake(install, 8000);
+            }
+            // 6b) the game outlasts the applier's patience: nothing is rolled back, nothing ended, the backup is kept for recovery
+            {
+                boot_scene(root / L"b_game2", &staged, &install, "crashgame 7000");
+                const fs::path tmpr = root / L"b_game2" / L"tmp";
+                rc = run_hidden(bootCmd(staged, install, tmpr, L"--boot-wait-secs 20 --boot-cap-secs 40 --wait-secs 2"));
+                CHECK(rc == 6);
+                check_boot_new(install);                                    // untouched while the game ran
+                CHECK(count_entries(tmpr) == 1);
+                Status gs;
+                CHECK(read_status(default_status_path(install.wstring()), &gs) && gs.result == "rollback_failed");
+                Sleep(7500);                                                // the game ends by itself
+                RecoverReport rr = recover_interrupted(install.wstring(), "v1.0.0", tmpr.wstring());   // the next start of the OLD launcher
+                CHECK(rr.found == 1 && rr.repaired == 1);
+                check_boot_old(install);
+            }
+            // 7) a state created by the OLD applier format (no booting key) still recovers under the new code
+            {
+                boot_scene(root / L"b_old", &staged, &install, "ok");
+                const fs::path tmpr = root / L"b_old" / L"tmp";
+                put(tmpr / L"RetroHub-update-21" / L"backup" / L"a.txt", "a-old");
+                put(install / L"a.txt", "a-new");
+                put_manifest(tmpr / L"RetroHub-update-21", install, "v1.0.0", "v2.0.0", 0);
+                RecoverReport rr = recover_interrupted(install.wstring(), "v1.0.0", tmpr.wstring());
+                CHECK(rr.repaired == 1 && get(install / L"a.txt") == "a-old");
+            }
+            // 2b) only a real crash or RetroHub's own "could not start" code rolls back; anything else keeps the update AND the backup
+            for (int variant = 0; variant < 4; variant++) {
+                const char* modes[] = {"exit 1", "exit 0", "exit 70", "exit 3221225477"};   // user kill, clean exit, kStartFailExit, 0xC0000005
+                const bool rolls = variant >= 2;
+                boot_scene(root / (L"b_exit" + std::to_wstring(variant)), &staged, &install, modes[variant]);
+                const fs::path tmpr = root / (L"b_exit" + std::to_wstring(variant)) / L"tmp";
+                rc = run_hidden(bootCmd(staged, install, tmpr, L"--boot-wait-secs 20 --boot-cap-secs 40"));
+                wait_fake(install, 8000);
+                if (rolls) {
+                    CHECK(rc == 5);
+                    check_boot_old(install);
+                    CHECK(has(install / L"updates" / L"bad_version.json") && count_entries(tmpr) == 0);
+                } else {
+                    CHECK(rc == 4);
+                    check_boot_new(install);                                   // nothing irreversible happened
+                    CHECK(!has(install / L"updates" / L"bad_version.json") && count_entries(tmpr) == 1 && !has(install / L"old_started.txt"));
+                    // the next start (new version, no marker yet) leaves the backup alone; once the marker exists it is cleaned
+                    RecoverReport rr = recover_interrupted(install.wstring(), "v9.9.9", tmpr.wstring());
+                    CHECK(rr.pending == 1 && rr.repaired == 0 && count_entries(tmpr) == 1);
+                    put(install / L"updates" / L"boot_ok", "v9.9.9\n");
+                    rr = recover_interrupted(install.wstring(), "v9.9.9", tmpr.wstring());
+                    CHECK(rr.healthy == 1 && count_entries(tmpr) == 0);
+                    check_boot_new(install);
+                }
+            }
+            // 2c) a deliberate downgrade (version < from) is never watched: even a crashing older hub cannot roll it back
+            {
+                boot_scene(root / L"b_down", &staged, &install, "crash");
+                const fs::path tmpr = root / L"b_down" / L"tmp";
+                rc = run_hidden(bootCmd(staged, install, tmpr, L"--boot-wait-secs 20 --boot-cap-secs 40", L"--version v0.9.0 --from v1.0.0"));
+                wait_fake(install, 8000);
+                CHECK(rc == 0);
+                check_boot_new(install);
+                CHECK(!has(install / L"updates" / L"bad_version.json") && !has(install / L"old_started.txt") && count_entries(tmpr) == 0);
+            }
+            // 8) an apply that fails (locked file) still behaves as before: exit 1, everything old, no watch, no bad-version record
+            {
+                boot_scene(root / L"b_lock", &staged, &install, "ok");
+                const fs::path tmpr = root / L"b_lock" / L"tmp";
+                put(install / L"b.dat", "b-old"); put(staged / L"b.dat", "b-new"); age_files(install);
+                HANDLE bl = CreateFileW((install / L"b.dat").c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                CHECK(bl != INVALID_HANDLE_VALUE);
+                rc = run_hidden(bootCmd(staged, install, tmpr, L"--retries 1 --retry-ms 0 --boot-wait-secs 5 --boot-cap-secs 10"));
+                CloseHandle(bl);
+                CHECK(rc == 1);
+                CHECK(get(install / L"a.txt") == "a-old" && !has(install / L"0new.txt") && !has(install / L"updates" / L"bad_version.json"));
+                CHECK(wait_for_file(install / L"old_started.txt", 8000));
+                wait_fake(install, 8000);
+            }
         }
         // usage error
         CHECK(run_hidden(L"\"" + exe + L"\" --apply-update onlyone") == 2);
