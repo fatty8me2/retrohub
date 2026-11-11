@@ -3,6 +3,7 @@
 #include "json.h"
 #include "savestore.h"
 #include "games.h"
+#include "library.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -299,15 +300,16 @@ bool is_junk_name(const ws& name0) {
 
 /* Lists root/rel into `out`. Returns false (with *err set) when the listing is incomplete for any reason other than the folder being
  * gone or empty: an incomplete scan would make files that exist look absent, so callers must not act on it. */
-bool known_system_dir(const ws& lower_name) {
-    static const wchar_t* k[] = {L"n64", L"gba", L"gb", L"gbc", L"gc", L"wii", L"3ds", L"wiiu", L"nds", L"ps1", L"ps2", L"nes", L"snes", L"psp", L"switch"};
-    for (const wchar_t* s : k) if (lower_name == s) return true;
-    return false;
-}
-
 /* Parts of a tree that could not be listed and are left out of this sync on BOTH sides (lowercase "<system>/<game>" or lowercase
- * top-level folder name -> text for the player). Only used by sync_folder. */
-struct Excluded { std::map<ws, str> games, folders; };
+ * top-level folder name -> text for the player). Only used by sync_folder. `vault` = the vault root. */
+struct Excluded { std::map<ws, str> games, folders; ws vault; };
+
+/* A top-level folder is a save tree (system folder) when its name is in the canonical system table (hub::system_short / console_id,
+ * so a system added there is protected automatically) OR the vault itself already has a folder of that name. */
+bool known_system_dir(const ws& lower_name, const Excluded* ex) {
+    if (is_system_folder_name(U(lower_name))) return true;
+    return ex && !ex->vault.empty() && is_dir(ex->vault + L"/" + lower_name);
+}
 
 /* With `ex` set, a listing error is only fatal where a wrong "absent" verdict could lead to an overwrite and the damage cannot be
  * confined: the root, `_conflicts`, `_account` and a system folder itself. Inside <system>/<game>/ the game is excluded; in any other
@@ -319,7 +321,7 @@ bool walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str
         if (ex && !rel.empty()) {
             ws top = lower(comp_at(rel, 0));
             if (top != L"_conflicts" && top != L"_account") {
-                if (!known_system_dir(top)) {
+                if (!known_system_dir(top, ex)) {
                     ex->folders[top] = U(comp_at(rel, 0));
                     log.push_back("skip folder " + U(comp_at(rel, 0)) + ": could not be read in the " + side + " (Windows error " + code_s + "); left out of this sync");
                     return true;
@@ -528,6 +530,12 @@ void touch_game(const std::string& system_short, const std::string& game_key, co
 
 void set_enum_error_hook(EnumErrorHook h) { g_enum_hook = h; }
 
+bool is_system_folder_name(const std::string& name) {
+    std::string l = name;
+    for (auto& c : l) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    return hub::console_system(l) != hub::System::Unknown;
+}
+
 SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
     SyncReport rep;
     auto fail = [&](const str& e) { rep.ok = false; rep.error = e; return rep; };
@@ -545,6 +553,7 @@ SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
     {
         str werr;
         Excluded ex;
+        ex.vault = vault;
         if (!walk(vault, L"", include_states, L, rep.log, &werr, true, &ex, "vault")) return fail("Sync stopped and nothing was changed. " + werr + " in the save vault.");
         if (!walk(root, L"", include_states, R, rep.log, &werr, true, &ex, "sync folder")) return fail("Sync stopped and nothing was changed. " + werr + " in the sync folder.");
         auto drop = [&](FMap& m, const ws& prefix) {

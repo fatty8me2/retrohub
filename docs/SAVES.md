@@ -61,8 +61,9 @@ Other top-level entries: `.sync\` (manifests, never synced), `_conflicts\` (sync
   made, the file is left untouched.
 - **Incomplete scans refuse to sync, as narrowly as the layout allows.** Both trees are listed completely before anything is copied. Only
   "folder gone / empty" (`ERROR_NO_MORE_FILES`, `ERROR_FILE_NOT_FOUND`, `ERROR_PATH_NOT_FOUND`) counts as normal. Any other listing
-  error (antivirus, sync-client lock, access denied) inside a game's tree (`<system>/<game>/...`, systems: n64 gba gb gbc gc wii 3ds
-  wiiu nds ps1 ps2 nes snes psp switch) leaves out just that game on both sides this run: it is logged (`skip game ...` with the Windows
+  error (antivirus, sync-client lock, access denied) inside a game's tree (`<system>/<game>/...`; a "system" is any name in the canonical
+  table `system_short()`/`console_id()` in `library.h`, so new systems are covered automatically, or any top-level folder the vault
+  itself already has) leaves out just that game on both sides this run: it is logged (`skip game ...` with the Windows
   error code), reported in `SyncReport::warning` in plain words, and the rest syncs (`ok` stays true). An unreadable top-level folder
   that is not a system is left out with a `skip folder ...` log line. An error listing the root, a system folder itself, `_conflicts`
   or `_account` fails the whole sync (`ok=false`, plain-words `error`) and changes nothing.
