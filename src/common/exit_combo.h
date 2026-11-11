@@ -37,6 +37,18 @@ inline bool pad_screen_combo_down(const PadState& s) {
     return s.b[kBtnBack] && s.b[kBtnRB] && !s.b[kBtnStart] && !s.b[kBtnYButton] && s.a[kAxisLT] < kTriggerOn && s.a[kAxisRT] < kTriggerOn;
 }
 
+/* XInput state -> the PadState the combos above take (pure; RetroHub reads Xbox pads directly while a game has the focus).
+ * wButtons bits: DPAD 0x1-0x8, START 0x10, BACK 0x20, LTHUMB 0x40, RTHUMB 0x80, LB 0x100, RB 0x200, A 0x1000, B 0x2000, X 0x4000, Y 0x8000.
+ * Triggers are 0..255 and scaled to the SDL range 0..32767 (so kTriggerOn 16000 is a byte value of about 125). */
+inline PadState pad_from_xinput(unsigned short w, unsigned char lt, unsigned char rt) {
+    PadState s;
+    s.b[0] = (w & 0x1000) != 0; s.b[1] = (w & 0x2000) != 0; s.b[2] = (w & 0x4000) != 0; s.b[kBtnYButton] = (w & 0x8000) != 0;
+    s.b[kBtnBack] = (w & 0x20) != 0; s.b[kBtnStart] = (w & 0x10) != 0;
+    s.b[kBtnLB] = (w & 0x100) != 0; s.b[kBtnRB] = (w & 0x200) != 0;
+    s.a[kAxisLT] = lt * 32767 / 255; s.a[kAxisRT] = rt * 32767 / 255;
+    return s;
+}
+
 class ExitCombo {
   public:
     explicit ExitCombo(int hold_ms = kExitHoldMs) : hold_(hold_ms) {}

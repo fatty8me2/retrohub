@@ -441,8 +441,12 @@ void wiiu_pad_watch() {
     static ULONGLONG qa_until = 0;
     bool down = false;
     if (A.proc && !g_headless && A.run.system_short == "wiiu") {
-        SDL_GameControllerUpdate();
-        for (auto* c : A.pads) {
+        for (DWORD i = 0; i < 4; ++i) {   // Xbox pads, read directly (works while the game window has the focus)
+            XINPUT_STATE xs{};
+            if (XInputGetState(i, &xs) == ERROR_SUCCESS &&
+                hubctl::pad_screen_combo_down(hubctl::pad_from_xinput(xs.Gamepad.wButtons, xs.Gamepad.bLeftTrigger, xs.Gamepad.bRightTrigger))) down = true;
+        }
+        for (auto* c : A.pads) {   // SDL pads (state as the event loop last left it, as before)
             hubctl::PadState st;
             hubctl::read_state(c, &st);
             if (hubctl::pad_screen_combo_down(st)) down = true;
