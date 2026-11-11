@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.40.11",
+      "date": "2026-11-10",
+      "title": "Ocarina of Time: shader preparation crash fixed",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Ocarina of Time (Switch 2) on Fritchii v5.7 no longer crashes while it prepares shaders. Press Play and choose Update to get the repaired Fritchii",
+        "Preparing shaders carries on from where it stopped; it does not start over"
+      ]
+    },
+    {
       "version": "1.40.10",
       "date": "2026-11-10",
       "title": "Fritchii v5.7 for Ocarina of Time",
