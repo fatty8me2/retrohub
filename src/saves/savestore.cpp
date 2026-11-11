@@ -253,7 +253,7 @@ bool copy_atomic(const ws& src, const ws& dst, uint64_t ft) {
     SetFileAttributesW(lp(tmp).c_str(), FILE_ATTRIBUTE_NORMAL);
     set_mtime(tmp, ft);
     SetFileAttributesW(lp(dst).c_str(), FILE_ATTRIBUTE_NORMAL);  // allow replacing read-only files (as commit_tmp)
-    if (durable::commit_replace(tmp, dst)) return true;           // flushes the copied data first, then one atomic replace
+    if (durable::commit_replace(tmp, dst, durable::kRetryLongMs)) return true;           // flushes the copied data first, then one atomic replace
     DeleteFileW(lp(tmp).c_str());
     return false;
 }

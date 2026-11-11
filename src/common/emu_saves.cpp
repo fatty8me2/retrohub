@@ -65,7 +65,7 @@ bool copy_keep_time(const fs::path& from, const fs::path& to, std::error_code& e
     auto t = fs::last_write_time(from, ec);
     if (!ec) fs::last_write_time(tmp, t, ec);
     ec.clear();
-    if (!durable::commit_replace(tmp.wstring(), to.wstring())) {   // flush, then one atomic replace of an existing file
+    if (!durable::commit_replace(tmp.wstring(), to.wstring(), durable::kRetryLongMs)) {   // flush, then one atomic replace of an existing file
         ec = std::error_code((int)GetLastError(), std::system_category());
         std::error_code e2; fs::remove(tmp, e2);
         return false;
