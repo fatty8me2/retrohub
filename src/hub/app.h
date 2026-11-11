@@ -438,6 +438,9 @@ struct ShotDriver {
     std::string pending_shot;             // shot:<name> waiting for the end of the frame
     void pad_trace(const std::string& tok);
     double last_key = 0;
+    std::string details_key;              // HUB_SHOT_DETAILS: the game page that must open (missing key -> fail)
+    unsigned frames = 0;                  // frames driven so far
+    bool fail = false;                    // a requested aid could not be honoured: exit non-zero, no screenshot
     bool room_hook_done = false;
     void init(const char* shot_path);
     void pre_frame(ImGuiIO& io);
@@ -445,6 +448,7 @@ struct ShotDriver {
 };
 extern ShotDriver SH;
 void shot_init_ui();
+extern std::string g_details_shown;   // game key whose details page was drawn this frame (empty = none); the shot report reads it
 void shot_trace(const char* what, const std::string& arg = std::string());   // HUB_SHOT_TRACE action line
 void shot_trace_once(const char* what, const std::string& arg);               // same, but an identical line is written once (per-frame UI state)
 void guest_apply_launch(const std::string& body);                               // lobby.cpp: a guest handles the host's "launch" message (HUB_SHOT_GUEST_MSG drives it headless)
