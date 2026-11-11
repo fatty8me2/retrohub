@@ -1,6 +1,32 @@
 {
   "versions": [
     {
+      "version": "1.42.0",
+      "date": "2026-11-10",
+      "title": "Safer saves, quieter notifications, more in the game menu",
+      "new": [
+        "The game menu has two new rows for the built-in player: Next screen filter and Save a clip of the last 30 seconds. It also reminds you how to rewind (hold LT + View)",
+        "Saving over a save state slot that is already used now asks for a second press, so a slip cannot erase it",
+        "Wrapped: Copy image, Send to a friend and Open folder, next to Save as image",
+        "Game night: Add to calendar saves a calendar file with a reminder for your planned session",
+        "Rewind can be turned off per game (offline play), and Settings > Online has a separate switch for friend came online notices"
+      ],
+      "improved": [
+        "Friend requests, invites, messages and game night cards no longer pop up or chime while you are in a game. They wait in the bell and you get one quiet summary afterwards",
+        "Play on a game whose file was moved or deleted shows Locate file at once, before the cloud save check",
+        "Deleting a screenshot sends it to the Recycle Bin when the drive has one",
+        "Settings explain missing options: when achievements, screen filters or console frames are not available for a console, the page says so",
+        "A failed update check at start is tried again when you come back to RetroHub, and an update that gets stuck unpacking now stops cleanly after 10 minutes"
+      ],
+      "fixed": [
+        "Save sync: when an older or empty file would replace a newer save, the newer one is first kept as a backup copy. A folder that cannot be read no longer makes saves in it look missing, and system junk files (desktop.ini, Thumbs.db and similar) no longer travel with your saves",
+        "Cloud saves: when both PCs changed the same save state, the copy from this PC is now backed up before the cloud copy replaces it. If the backup cannot be made, nothing is overwritten",
+        "Save and settings files are now written so that a crash or power cut cannot leave an empty file",
+        "RetroAchievements hardcore: the resume point is no longer written on exit",
+        "Menu sounds could still play over some running games. They no longer do"
+      ]
+    },
+    {
       "version": "1.41.0",
       "date": "2026-11-10",
       "title": "Crash notices, Ocarina of Time options, tidier save folders",
