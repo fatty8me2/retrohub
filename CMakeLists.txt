@@ -100,6 +100,7 @@ add_test(NAME prefs_test COMMAND prefs_test)   # synced account prefs: field-wis
 add_test(NAME save_import_test COMMAND save_import_test)   # Bring your saves (Wave 3 L4)
 add_test(NAME profile_test COMMAND profile_test)   # social profile + reaction tally logic
 add_test(NAME winutil_test COMMAND winutil_test)
+add_test(NAME durable_write_test COMMAND durable_write_test)   # crash-safe commit helper: replace, held-open destination, non-ASCII + long paths (temp dirs)
 add_test(NAME starthint_test COMMAND starthint_test)
 add_test(NAME hint_popup_test COMMAND hint_popup_test)
 add_test(NAME cheats_test COMMAND cheats_test)                         # cheat file model + code parsing per format

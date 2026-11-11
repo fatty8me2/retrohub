@@ -1,11 +1,13 @@
 # Shared JSON reader/writer + Windows helpers (UTF-8/UTF-16, exe dir, quoting, file I/O). Tiny static lib, no deps.
-add_library(hubbase STATIC json.cpp winutil.cpp cheats.cpp runner_ctl.cpp start_hint.cpp hint_popup.cpp osd.cpp)
+add_library(hubbase STATIC json.cpp winutil.cpp durable_write.cpp cheats.cpp runner_ctl.cpp start_hint.cpp hint_popup.cpp osd.cpp)
 target_link_libraries(hubbase PUBLIC user32 gdi32)
 target_include_directories(hubbase PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubbase PUBLIC cxx_std_17)
 
 add_executable(json_test test_json.cpp)
 target_link_libraries(json_test PRIVATE hubbase)
+add_executable(durable_write_test test_durable_write.cpp)
+target_link_libraries(durable_write_test PRIVATE hubbase)
 add_executable(winutil_test test_winutil.cpp)
 target_link_libraries(winutil_test PRIVATE hubbase shell32)
 

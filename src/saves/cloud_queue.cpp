@@ -1,6 +1,7 @@
 /* Persistent retry queue, per-account base state and the three-way rule of the cloud saves v2 engine. */
 #include "cloud_internal.h"
 #include "json.h"
+#include "durable_write.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -34,9 +35,8 @@ bool write_atomic(const str& path, const str& data) {
         f << data;
         if (!f) return false;
     }
-    fs::rename(tmp, p, ec);
-    if (ec) { fs::remove(p, ec); fs::rename(tmp, p, ec); }
-    return !ec;
+    if (!durable::commit_replace(tmp.wstring(), p.wstring())) { fs::remove(tmp, ec); return false; }
+    return true;
 }
 }  // namespace
 
