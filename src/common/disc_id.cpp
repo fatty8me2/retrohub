@@ -35,6 +35,7 @@ std::string normalize_serial(const std::string& s) {
         else break;
     }
     if (digits.size() != 5) return "";
+    if (i < s.size() && is_digit(s[i])) return "";   // a sixth digit: not a serial (serial_from_filename rejects the same input)
     return letters + "-" + digits;
 }
 
