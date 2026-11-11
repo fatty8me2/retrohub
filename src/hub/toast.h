@@ -62,6 +62,9 @@ IScheduler& system_scheduler();
 INotifier& system_notifier();
 /* RetroHub.exe registers hub::game_active here; the system notifier then refuses to show anything while it returns true. */
 void set_game_probe(bool (*fn)());
+/* Windows only (toast_win.cpp): show() is queued to ONE persistent worker thread (never waits on the caller, the UI thread); this lets the
+ * queued toasts finish and joins that thread. Optional (the worker is also joined when the process exits normally); safe to call twice. */
+void shutdown();
 /* Windows only (toast_win.cpp): inits a WinRT apartment on a worker thread and loads the XML; shows nothing. */
 bool toast_winrt_selftest(const std::string& xml, std::string* err);
 
