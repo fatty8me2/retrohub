@@ -157,6 +157,8 @@ void set_favorite(const std::string& key, bool fav);   // also mirrored into the
 std::vector<std::string> favorite_keys();               // every favorited key (sorted)
 void record_play(const std::string& key, uint64_t started_unix, uint64_t seconds);
 void flush_library_state();
+void shot_set_play(const std::string& key, uint64_t last_played, uint64_t seconds);   // screenshots only: assigns (not adds) the play history of one game
+void shot_clear_play(bool all);   // screenshots only: wipes the play history of the "fake:*" games (all = every game) so a run never sees an earlier run's
 
 /* ---- additions (tests / diagnostics) ---- */
 

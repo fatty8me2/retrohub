@@ -2107,8 +2107,77 @@ void cloud_game_changed(const GameId& g) {   // F13: nothing else tells the engi
     enqueue(gkey, "push");
 }
 
+/* Screenshot aid (HUB_SHOT_CLOUD2, only ever called from the hub's headless screenshot mode, see src/hub/shot.cpp): a fake account +
+ * game list returned by the three readers below instead of the real engine state. Nothing is ever sent or written. */
+namespace { struct ShotFake { bool on = false; CloudAccountInfo acct; std::vector<GameCloudInfo> games; } g_shot_fake; }
+
+bool cloud_shot_fake(const std::string& state) {
+    ShotFake f;
+    const int64_t now = (int64_t)std::time(nullptr);
+    f.acct.known = true;
+    f.acct.online = true;
+    f.acct.cap = 50ll << 20;
+    f.acct.used = 18ll << 20;
+    f.acct.pool = "ok";
+    f.acct.devices = 2;
+    f.acct.device_name = "PC-DESK";
+    auto game = [&](const char* sys, const char* key, CloudState st, int64_t mb, int64_t ago_s, const char* msg) {
+        GameCloudInfo g;
+        g.id = {sys, key};
+        g.state = st;
+        g.message = msg;
+        g.last_synced = now - ago_s;
+        g.cloud_bytes = mb << 20;
+        g.files_synced = 2;
+        f.games.push_back(g);
+        return (int)f.games.size() - 1;
+    };
+    if (state == "ok" || state == "offline" || state == "paused" || state == "attention" || state == "over" || state == "mixed") {
+        game("n64", "mario-kart-64", CloudState::Synced, 1, 3600, "");
+        game("gba", "pokemon-emerald", CloudState::Synced, 2, 86400, "");
+        game("gc", "super-smash-bros-melee", CloudState::Synced, 9, 2 * 86400, "");
+    }
+    if (state == "mixed") {
+        game("snes", "super-metroid", CloudState::Syncing, 1, 60, "");
+        game("n64", "zelda-ocarina", CloudState::Waiting, 1, 5 * 86400, "Waiting to sync.");
+        game("gb", "pokemon-red", CloudState::PlayingElsewhere, 1, 600, "");
+        f.games.back().playing_on = "PC-LIVINGROOM";
+        const int ci = game("nes", "super-mario-bros-3", CloudState::Conflict, 1, 3 * 86400, "");
+        ConflictItem it;
+        it.path = "battery/smb3.sav";
+        it.local = {true, "a", 8 * 1024, now - 5 * 86400, "PC-DESK"};
+        it.cloud = {true, "b", 8 * 1024, now - 3 * 86400, "PC-LIVINGROOM"};
+        f.games[ci].conflicts.push_back(it);
+        const int li = game("ps1", "crash-bash", CloudState::LocalOnly, 0, 0, "Not uploaded (you turned cloud saves off for this game)");
+        f.games[li].local_only = LocalOnlyReason::User;
+    } else if (state == "over") {
+        f.acct.used = (50ll << 20) - (200ll << 10);
+        f.acct.pool = "full";
+        for (const char* k : {"super-smash-bros-melee", "wind-waker"}) {
+            const int i = game("gc", k, CloudState::LocalOnly, 0, 0, "Cloud space is full: save states stay on this PC only.");
+            f.games[i].local_only = LocalOnlyReason::OverCap;
+        }
+    } else if (state == "attention") {
+        f.acct.needs_attention = true;
+        f.acct.attention = "account";
+        for (auto& g : f.games) { g.state = CloudState::NeedsAttention; g.message = "Could not sign in."; }
+    } else if (state == "offline") {
+        f.acct.online = false;
+        for (auto& g : f.games) { g.state = CloudState::Waiting; g.message = "Waiting to sync."; }
+    } else if (state == "paused") {
+        f.acct.queued_games = 3;
+    } else if (state != "ok" && state != "fresh") {
+        return false;   // unknown name ("checking" and "" keep the real engine's still-checking look)
+    }
+    f.on = true;
+    std::lock_guard<std::mutex> lk(E.mu);
+    g_shot_fake = f;
+    return true;
+}
+
 CloudAccountInfo cloud_account() {
     std::lock_guard<std::mutex> lk(E.mu);
+    if (g_shot_fake.on) return g_shot_fake.acct;
     CloudAccountInfo a = E.acct;
     a.queued_games = queued_count_locked();
     if (E.paused) a.paused_by_server = false;
@@ -2118,6 +2187,7 @@ CloudAccountInfo cloud_account() {
 
 std::vector<GameCloudInfo> cloud_games() {
     std::lock_guard<std::mutex> lk(E.mu);
+    if (g_shot_fake.on) return g_shot_fake.games;
     std::vector<GameCloudInfo> v;
     for (auto& kv : E.info) if (kv.second.id.system != "_account") v.push_back(kv.second);
     return v;
@@ -2125,6 +2195,10 @@ std::vector<GameCloudInfo> cloud_games() {
 
 bool cloud_game(const GameId& g, GameCloudInfo* out) {
     std::lock_guard<std::mutex> lk(E.mu);
+    if (g_shot_fake.on) {
+        for (const auto& fg : g_shot_fake.games) if (fg.id.gkey() == g.gkey()) { if (out) *out = fg; return true; }
+        return false;
+    }
     auto it = E.info.find(wire_key(g));
     if (it == E.info.end()) return false;
     if (out) *out = it->second;

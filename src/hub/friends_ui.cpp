@@ -1267,9 +1267,8 @@ void fr_top_bar() {
     ImGui::SetCursorScreenPos(ImVec2(p.x + w - bs * 2 - sp(0.75f), p.y + sp(0.25f)));
     ImVec2 bell_max;
     int pend = fr_pending_count();
-    if (fr_icon_button("bell", FrIcon::Bell, bs, false, pend, ui::ACCENT, "Notifications", &bell_max) || FR.shot_bell) {
+    if (fr_icon_button("bell", FrIcon::Bell, bs, false, pend, ui::ACCENT, "Notifications", &bell_max) || (FR.shot_bell && !ImGui::IsPopupOpen("##notifs"))) {   // shot_bell (headless aid only) stays armed: something else closing the popup in the first frames must not lose the shot
         ImGui::OpenPopup("##notifs");
-        FR.shot_bell = false;
     }
     ImGui::SetNextWindowPos(ImVec2(bell_max.x, bell_max.y + sp(0.75f)), ImGuiCond_Always, ImVec2(1.f, 0.f));
     float pwid = std::min(sp(46.f), ImGui::GetIO().DisplaySize.x - sp(4.f));

@@ -50,6 +50,13 @@ ImGuiKey shot_key(const std::string& n) {
 
 /* Screenshot aids that seed UI state before the first frame (friends / room / emulator dialogs). Never any network. */
 void shot_init_ui() {
+    /* Fake play history is deterministic: the seeds below ASSIGN their hours (shot_set_play), and what an earlier run left for the "fake:*" games is wiped first.
+     * HUB_SHOT_FRESH=1 does the same without HUB_SHOT_FAKE_LIB. Only "fake:*" games are ever touched (never a real game's history), and only in headless mode:
+     * shot_init_ui runs for HUB_SCREENSHOT alone. */
+    if (g_headless) {
+        const char* fr = std::getenv("HUB_SHOT_FRESH");
+        if ((fr && *fr && std::string(fr) != "0") || std::getenv("HUB_SHOT_FAKE_LIB") || std::getenv("HUB_SHOT_HOOKSHOT")) hub::shot_clear_play(false);
+    }
     lib_shot_seed();   // HUB_SHOT_LIBVIEW=grid|list|compact|showcase (+ HUB_SHOT_LIBCOL=last:desc)
     if (const char* sq = std::getenv("HUB_SHOT_SEARCH")) { std::snprintf(A.search_buf, sizeof A.search_buf, "%s", sq); A.vis_dirty = true; }   // screenshot aid: preset the library search text
     if (const char* lf = std::getenv("HUB_SHOT_LIBFILTER")) {   // screenshot aid: "fav", "group" and "genre=Action" (';'-separated) seed the All Games filters
@@ -70,14 +77,56 @@ void shot_init_ui() {
     }
     if (const char* po = std::getenv("HUB_SHOT_PLAYED_ONLINE")) A.st.played_online = std::string(po) != "0";   // screenshot aid: Play Online help collapsed (1) / open (0)
     if (const char* dk = std::getenv("HUB_SHOT_DETAILS")) { A.env_select = dk; A.show_details = true; SH.details_key = dk; }   // screenshot aid: open the details modal of this game key (kept pending in env_select: ensure_selection() clears sel_game while the library is still empty)
-    if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly ("saves")
-        if (std::string(pg) == "saves") A.page = Page::Saves;
-        else if (std::string(pg).rfind("settings", 0) == 0) {   // "settings" or "settings:<tab 0-5>"
+    if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly (see docs/QA_SHOTS.md); an unknown page or Settings section exits 2 with no screenshot
+        const std::string p = pg;
+        if (p == "library") A.page = Page::Library;
+        else if (p == "saves") A.page = Page::Saves;
+        else if (p == "controllers") A.page = Page::Controllers;
+        else if (p == "about" || p == "updates") A.page = Page::About;
+        else if (p.rfind("settings", 0) == 0) {   // "settings" or "settings:<section index 0-4 or name: general|online|video|account|help>"
             A.page = Page::Settings;
-            if (const char* c = std::strchr(pg, ':')) A.st.settings_tab = hubui::settings_tab_clamp(std::atoi(c + 1));
+            if (const char* c = std::strchr(pg, ':')) {
+                std::string s = c + 1;
+                for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
+                int t = -1;
+                if (!s.empty() && std::all_of(s.begin(), s.end(), [](char ch) { return std::isdigit((unsigned char)ch); })) t = std::atoi(s.c_str());
+                else for (int i = 0; i < hubui::ST_Count; ++i) {
+                    std::string nm = hubui::settings_tab_name(i);
+                    for (char& ch : nm) ch = (char)std::tolower((unsigned char)ch);
+                    if (s == nm || (i == hubui::ST_Video && (s == "video" || s == "games" || s == "video&games"))) t = i;
+                }
+                if (t < 0 || t >= hubui::ST_Count) {
+                    std::fprintf(stderr, "HUB_SHOT_PAGE: unknown Settings section '%s' (use 0-%d or general, online, video, account, help); no screenshot taken\n", s.c_str(), hubui::ST_Count - 1);
+                    SH.fail = true;
+                } else A.st.settings_tab = t;
+            }
         }
-        else if (std::string(pg) == "online") A.page = Page::Online;
-        else if (std::string(pg).rfind("discover", 0) == 0) { A.page = Page::Discover; if (const char* c = std::strchr(pg, ':')) discover_shot_console(c + 1); }   // "discover" or "discover:<console>"
+        else if (p == "online") A.page = Page::Online;
+        else if (p.rfind("discover", 0) == 0) { A.page = Page::Discover; if (const char* c = std::strchr(pg, ':')) discover_shot_console(c + 1); }   // "discover" or "discover:<console>"
+        else {
+            std::fprintf(stderr, "HUB_SHOT_PAGE: unknown page '%s' (library, discover[:console], online, saves, controllers, settings[:section], about); no screenshot taken\n", pg);
+            SH.fail = true;
+        }
+    }
+    if (const char* c2 = std::getenv("HUB_SHOT_CLOUD2")) {   // screenshot aid: the Saves page cloud box with a fake account (the real engine never runs headless)
+        const std::string m = c2;
+        if (m == "checking" || m.empty()) {}   // the real engine's "Checking your cloud saves..." look
+        else if (hub::saves::cloud_shot_fake(m)) { if (m == "paused") A.st.cloud_enabled = false; }
+        else { std::fprintf(stderr, "HUB_SHOT_CLOUD2: unknown state '%s' (checking, ok, mixed, offline, over, attention, paused, fresh); no screenshot taken\n", c2); SH.fail = true; }
+    }
+    if (std::getenv("HUB_SHOT_UPDATE_NOTES")) {   // screenshot aid: open the Notifications list (bell panel) that holds the update notes
+        A.st.show_friends = true;
+        if (const char* b = std::getenv("HUB_SHOT_BELL"); !b || std::string(b) != "0") FR.shot_bell = true;
+    }
+    if (std::getenv("HUB_SHOT_OFFLINE")) {   // screenshot aid: Play Online with no network. home = the Online page, friends panel "offline"; room = a room that is still connecting
+        const std::string m = std::getenv("HUB_SHOT_OFFLINE");
+        A.page = Page::Online;
+        if (m == "room") { A.in_room = true; A.code = "K7M2QX"; }
+        else if (m != "home" && m != "1") { std::fprintf(stderr, "HUB_SHOT_OFFLINE: unknown value '%s' (home or room); no screenshot taken\n", m.c_str()); SH.fail = true; }
+    }
+    if (std::getenv("HUB_SHOT_HOOKSHOT") && g_headless && !std::getenv("HUB_SHOT_DETAILS")) {   // the Hookshot / Fritchii About card lives on Ocarina of Time's game page (see lib_state.cpp: the fake library always holds it)
+        const char* hs = std::getenv("HUB_SHOT_HOOKSHOT");
+        if (*hs && !(hs[0] == '0' && !hs[1])) { A.env_select = "switch:0400486024dec000"; A.show_details = true; SH.details_key = A.env_select; }
     }
     if (std::getenv("HUB_SHOT_CTL_SYS") || std::getenv("HUB_SHOT_FAKE_PADS")) A.page = Page::Controllers;   // Controllers page aids: HUB_SHOT_CTL_SYS/_GAME/_DEMO/_CAPTURE, HUB_SHOT_FAKE_PADS=n
     static hubemu::Release s_fake_fritchii = {"v4.1", L"github.com", L"/fatty8me2/Fritchii/releases/download/v4.1/Fritchii-v4.1-Windows-x64.zip", 96ull << 20,
@@ -92,6 +141,26 @@ void shot_init_ui() {
     if (const char* se = std::getenv("HUB_SHOT_EMU")) {   // screenshot aid: show an emulator dialog (azahar | cemu | lichiiupdate | unzip | failed | ...)
         std::string m = se;
         if (m == "azahar" || m == "cemu") { EMU.kind = m == "cemu" ? hubemu::Kind::Cemu : hubemu::Kind::Azahar; EMU.state = hubemu::Installer::Asking; }
+        else if (m.rfind("working", 0) == 0) {   // "working[:<emulator>[:<percent>]]": the install-in-progress dialog frozen at a fixed percentage (default azahar, 42; no download runs, nothing is installed)
+            std::string emu = "azahar", pct = "42";
+            if (size_t a = m.find(':'); a != std::string::npos) {
+                emu = m.substr(a + 1);
+                if (size_t b = emu.find(':'); b != std::string::npos) { pct = emu.substr(b + 1); emu.resize(b); }
+            }
+            static const std::pair<const char*, hubemu::Kind> kinds[] = {{"azahar", hubemu::Kind::Azahar}, {"cemu", hubemu::Kind::Cemu}, {"dolphin", hubemu::Kind::Dolphin}, {"pcsx2", hubemu::Kind::Pcsx2},
+                                                                         {"ppsspp", hubemu::Kind::Ppsspp}, {"lichii", hubemu::Kind::Lichii}, {"fritchii", hubemu::Kind::Fritchii}};
+            bool found = false;
+            for (const auto& k : kinds) if (emu == k.first) { EMU.kind = k.second; found = true; }
+            const int p = std::max(0, std::min(100, std::atoi(pct.c_str())));
+            if (!found) { std::fprintf(stderr, "HUB_SHOT_EMU: unknown emulator '%s' in '%s' (azahar, cemu, dolphin, pcsx2, ppsspp, lichii, fritchii); no screenshot taken\n", emu.c_str(), se); SH.fail = true; }
+            else {
+                EMU.updating = false;
+                EMU.phase = 0;
+                EMU.total = hubemu::release(EMU.kind).size ? hubemu::release(EMU.kind).size : (100ull << 20);
+                EMU.got = EMU.total * (uint64_t)p / 100;
+                EMU.state = hubemu::Installer::Working;   // no thread and done stays false: poll_emulators() leaves it alone
+            }
+        }
         else if (m == "lichiiupdate") { EMU.kind = hubemu::Kind::Lichii; EMU.updating = true; EMU.state = hubemu::Installer::Asking; }   // the "newer Lichii" offer at Play
         else if (m == "fritchii" || m == "fritchiiunpublished") { EMU.kind = hubemu::Kind::Fritchii; EMU.updating = false; EMU.state = hubemu::Installer::Asking; }   // the Play prompt to install Fritchii (fritchiiunpublished: the same prompt; the real pin is set now, so it is no longer "not available yet")
         else if (m == "failed") { EMU.kind = hubemu::Kind::Azahar; EMU.error = "checksum mismatch: the download was rejected"; EMU.state = hubemu::Installer::Failed; }
@@ -199,6 +268,9 @@ void ShotDriver::init(const char* shot_path) {
     }
     wheel = shot_path && std::getenv("HUB_SHOT_WHEEL") &&
             std::sscanf(std::getenv("HUB_SHOT_WHEEL"), "%f,%f,%f", &wx, &wy, &wn) == 3;
+    if (const char* hv = std::getenv("HUB_SHOT_HOVER"); hv && shot_path) {   // headless only (shot_path is the HUB_SCREENSHOT file)
+        if (std::sscanf(hv, "%f,%f", &hx, &hy) == 2) hover = true;   // x,y = a pointer position; any other text is the Friends panel's own "hovered friend uid" aid (friends_ui.cpp)
+    }
 }
 
 static ImGuiKey pad_token_key(const std::string& n) {
@@ -330,6 +402,10 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
         click_stage = (click_stage + 1) % 3;
         click_t = el;
     }
+    if (hover && click_i >= clicks.size() && A.scanned_once && el > std::max(2.0, secs - 2.0)) {   // keep the pointer parked every frame so the tooltip delay can run out
+        io.AddMousePosEvent(hx, hy);
+        if (hover_t <= 0) hover_t = el;
+    }
     if (wheel && wheel_stage == 0 && A.scanned_once && el > std::max(2.0, secs - 2.0)) {
         io.AddMousePosEvent(wx, wy);   // window pixels
         wheel_stage = 1;
@@ -343,5 +419,5 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
 bool ShotDriver::ready() const {
     return el >= secs && (keys.empty() || (key_i >= keys.size() && el - last_key > 0.8)) &&   // the last key needs time to take effect (modal open + fade) before the frame is saved
  (pad_seq.empty() || pad_i > pad_seq.size()) && pad_key == ImGuiKey_None && (A.scanned_once || el > secs + 20 || std::getenv("HUB_SHOT_NOWAIT")) && key_i >= keys.size() && !key_down && click_i >= clicks.size() && (clicks.empty() || el - click_t > 0.8) &&
-           (!wheel || (wheel_stage == 2 && el - wheel_t > 1.5)) && (!userflow_active() || userflow_done());
+           (!wheel || (wheel_stage == 2 && el - wheel_t > 1.5)) && (!hover || (hover_t > 0 && el - hover_t > 1.2)) && (!userflow_active() || userflow_done());
 }

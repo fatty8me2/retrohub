@@ -274,7 +274,7 @@ void states_shot_seed() {
             uint64_t t = now - (s < 0 ? 600 : 3600ull * (s + 2) * 5);
             write_file(b + ".json", "{\"game_key\":\"" + std::string(g.key) + "\",\"time\":" + std::to_string(t) + ",\"playtime\":" + std::to_string(s < 0 ? 5025 : 700 + s * 311) + ",\"disc\":0}");
         }
-        hub::record_play(g.key, now - 2 * 3600 - gi * 86400ull, 5400 + gi * 120000);
+        hub::shot_set_play(g.key, now - 2 * 3600 - gi * 86400ull, 5400 + gi * 120000);   // assigned, so the fake hours never climb between runs
         ++gi;
     }
 }
