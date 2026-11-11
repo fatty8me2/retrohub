@@ -108,20 +108,32 @@ bool read_all(const fs::path& p, str* out) {
     *out = s.str();
     return true;
 }
+/* Why the last write_atomic on this thread failed (a Win32 error), so a pull can say "file in use" or "disk full" instead of a vague failure. */
+thread_local DWORD g_write_err = 0;
+/* Crash-safe replace: the bytes go to a temp file that is flushed to disk, then ONE MoveFileExW swaps it in (write-through). On any failure the
+ * old file is left exactly as it was and the temp file is removed. */
 bool write_atomic(const fs::path& dst, const str& data) {
+    g_write_err = 0;
     std::error_code ec;
     fs::create_directories(dst.parent_path(), ec);
     fs::path tmp = dst;
     tmp += ".hubtmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) return false;
-        f.write(data.data(), (std::streamsize)data.size());
-        if (!f) return false;
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) { g_write_err = GetLastError(); return false; }
+    bool ok = true;
+    size_t off = 0;
+    while (ok && off < data.size()) {
+        DWORD n = 0;
+        DWORD chunk = (DWORD)std::min<size_t>(data.size() - off, 1u << 20);
+        if (!WriteFile(h, data.data() + off, chunk, &n, nullptr) || n == 0) ok = false;
+        else off += n;
     }
-    fs::rename(tmp, dst, ec);
-    if (ec) { fs::remove(dst, ec); fs::rename(tmp, dst, ec); }
-    return !ec;
+    if (ok && !FlushFileBuffers(h)) ok = false;
+    if (!ok) g_write_err = GetLastError();
+    CloseHandle(h);
+    if (ok && !MoveFileExW(tmp.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) { g_write_err = GetLastError(); ok = false; }
+    if (!ok) { std::error_code e2; fs::remove(tmp, e2); }
+    return ok;
 }
 str stamp() {
     SYSTEMTIME t; GetLocalTime(&t);
@@ -667,7 +679,15 @@ PullResult pull_file(Api& api, const GameId& g, const str& gkey, const str& path
             if (!inflate_raw(partial, &plain, (size_t)kMaxPlain)) { fs::remove(dl, ec); pr.err = "bad compressed data"; continue; }
         } else plain = partial;
         if ((int64_t)plain.size() != v.size || sha256_hex_of(plain) != v.sha) { fs::remove(dl, ec); pr.err = "checksum mismatch"; continue; }
-        if (!write_atomic(dst, plain)) { pr.err = "cannot write " + path; pr.oc.k = Outcome::Other; return pr; }
+        if (!write_atomic(dst, plain)) {
+            pr.err = "cannot write " + path; pr.oc.k = Outcome::Other;
+            const DWORD we = g_write_err;
+            if (we == ERROR_SHARING_VIOLATION || we == ERROR_LOCK_VIOLATION) pr.oc.code = "file-locked";
+            else if (we == ERROR_ACCESS_DENIED) pr.oc.code = "access-denied";
+            else if (we == ERROR_DISK_FULL || we == ERROR_HANDLE_DISK_FULL) pr.oc.code = "disk-full";
+            else pr.oc.code = "write-failed";
+            return pr;
+        }
         fs::remove(dl, ec);
         fs::remove(tmp, ec);
         set_file_mtime_unix(dst.u8string(), v.mtime);
@@ -685,7 +705,7 @@ PullResult pull_file(Api& api, const GameId& g, const str& gkey, const str& path
 
 /* Copies the local file to _conflicts before it is replaced. True when there was nothing to copy or the copy exists; false = the caller must NOT overwrite the file.
  * The name carries milliseconds and a counter, so two backups of one file in the same second never replace each other. */
-bool backup_local(const GameId& g, const str& path, const str& tag) {
+bool backup_local(const GameId& g, const str& path, const str& tag, fs::path* made = nullptr) {
     fs::path src = abs_of(g, path);
     std::error_code ec;
     if (!fs::is_regular_file(src, ec)) return true;
@@ -696,6 +716,7 @@ bool backup_local(const GameId& g, const str& path, const str& tag) {
     fs::create_directories(dst.parent_path(), ec);
     if (ec) return false;
     fs::copy_file(src, dst, fs::copy_options::none, ec);   // never overwrites an existing backup
+    if (!ec && made) *made = dst;
     return !ec;
 }
 
@@ -765,19 +786,39 @@ void prefs_after_change() {   // library.json favorites follow the merged prefs
     if (hub::prefs::load(vault_dir(), &p)) hub::prefs::apply_favorites_to_library(p);
 }
 
-bool merge_prefs_conflict(Api& api, const GameId& g, const str& gkey, const str& path, const WVer& cv, int64_t deadline_ms, Item* repush, int* pulled) {
+/* A pass that could not finish for a LOCAL reason (no safety copy, merge impossible): nothing was changed, the game is not "Synced", and the
+ * normal retry (queue backoff, no polling) runs it again. Pushing is skipped for the pass, so no stale local file is put over the cloud's. */
+void refuse_pass(SyncOut& out, const char* code, int64_t bytes) {
+    out.pending_bytes += bytes;
+    if (out.oc.ok()) { out.oc.k = Outcome::Other; out.oc.code = code; }
+}
+
+/* Returns true when the file was merged (or already identical); false = NOTHING was changed on either side and out.oc says why (the caller
+ * leaves the file alone: it never falls through to a plain pull or a push). The safety copy is taken BEFORE anything is downloaded. */
+bool merge_prefs_conflict(Api& api, const GameId& g, const str& gkey, const str& path, const WVer& cv, int64_t deadline_ms, Item* repush, SyncOut& out) {
     fs::path local = abs_of(g, path);
     fs::path scratch = local; scratch += ".merge.hubtmp";
     str mine, theirs;
     read_all(local, &mine);
+    fs::path made;
+    if (!backup_local(g, path, "pc", &made)) {
+        log_line("could not back up " + path + " before merging; kept this PC's file");
+        refuse_pass(out, "backup-failed", cv.size);
+        return false;
+    }
     PullResult r = pull_file(api, g, gkey, path, cv, deadline_ms, &scratch);
     std::error_code ec;
-    if (!r.ok || !read_all(scratch, &theirs)) { fs::remove(scratch, ec); return false; }
+    if (!r.ok || !read_all(scratch, &theirs)) {
+        fs::remove(scratch, ec);
+        if (!made.empty()) fs::remove(made, ec);   // nothing was replaced: the copy would only pile up on every retry
+        out.pending_bytes += cv.size;
+        if (out.oc.ok()) { if (!r.oc.ok()) out.oc = r.oc; else { out.oc.k = Outcome::Other; out.oc.code = "merge-failed"; } }
+        return false;
+    }
     fs::remove(scratch, ec);
     str merged;
     if (is_merged_file(g, path)) {
         /* saves-F11: per-game settings / cheats. Key by key: what only one PC set is kept, the newer wins a key both set. Nothing is written when the cloud copy is unreadable. */
-        if (!backup_local(g, path, "pc")) { log_line("could not back up " + path + " before merging; kept this PC's file"); return false; }   // nothing is replaced without a copy
         const bool ok = path == kCloudCheats ? cheatstore::merge_cloud_into_vault(vault_dir(), theirs) : hub::gs::merge_cloud_into_vault(vault_dir(), theirs);
         if (!ok) {   // the cloud copy is unreadable: keep this PC's file as it is, keep the cloud copy aside to look at
             fs::path bad = fs::u8path(vault_dir()) / "_conflicts" / "_account" / fs::u8path(path + ".cloud-unreadable-" + stamp());
@@ -785,18 +826,18 @@ bool merge_prefs_conflict(Api& api, const GameId& g, const str& gkey, const str&
             fs::create_directories(bad.parent_path(), e2);
             write_atomic(bad, theirs);
             log_line("cloud copy of " + path + " could not be read; kept this PC's file");
+            refuse_pass(out, "merge-failed", cv.size);
             return false;
         }
-        if (!read_all(local, &merged)) return false;
+        if (!read_all(local, &merged)) { refuse_pass(out, "merge-failed", cv.size); return false; }
         g_settings_rev++;
-        ++*pulled;
+        ++out.pulled;
     } else {
         hub::prefs::Prefs incoming;
         hub::prefs::parse(theirs, &incoming);
-        backup_local(g, path, "pc");
         hub::prefs::merge_into_file(vault_dir(), incoming);   // merges with the CURRENT local file under the prefs lock (no race with favorite toggles)
-        if (!read_all(local, &merged)) return false;
-        ++*pulled;
+        if (!read_all(local, &merged)) { refuse_pass(out, "merge-failed", cv.size); return false; }
+        ++out.pulled;
         prefs_after_change();
     }
     if (merged == theirs) {   // the cloud copy already contains everything
@@ -901,13 +942,18 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                     it.local.present = true; it.local.sha = p.lf.sha; it.local.size = p.lf.size; it.local.mtime = p.lf.mtime;
                     if (a.has_current && is_prefs_conflict(g, p.path)) {
                         Item re;
-                        if (merge_prefs_conflict(api, g, gkey, p.path, a.current, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) next.push_back(re); continue; }
-                        if (is_merged_file(g, p.path)) continue;   // could not merge: keep this PC's file, never overwrite it with the cloud copy
+                        if (merge_prefs_conflict(api, g, gkey, p.path, a.current, opts.deadline_ms, &re, out) && !re.path.empty()) next.push_back(re);
+                        continue;   // merged, or could not merge: both sides stay as they are, never the cloud copy over this PC's file
                     }
                     if (it.cls == FileClass::Battery || it.cls == FileClass::Card || !a.has_current) out.conflicts.push_back(conflict_item(it));
                     else if (a.current.mtime > p.lf.mtime) {    // newest wins: cloud
+                        if (!backup_local(g, p.path, "pc")) {   // the copy comes FIRST: nothing is replaced without it
+                            refuse_pass(out, "backup-failed", a.current.size);
+                            log_line("could not back up " + gkey + "/" + p.path + " before replacing it; kept the local file");
+                            continue;
+                        }
                         PullResult r = pull_file(api, g, gkey, p.path, a.current, opts.deadline_ms);
-                        if (r.ok) { backup_local(g, p.path, "pc"); base_set(gkey, p.path, a.current.ver, a.current.sha, a.current.size, a.current.mtime); out.pulled++; }
+                        if (r.ok) { base_set(gkey, p.path, a.current.ver, a.current.sha, a.current.size, a.current.mtime); out.pulled++; }
                         else if (!r.oc.ok()) { out.oc = r.oc; return; }
                     } else {                                     // newest wins: this PC, retry against the new base
                         base_set(gkey, p.path, a.current.ver, a.current.sha, a.current.size, a.current.mtime);
@@ -949,13 +995,18 @@ void do_push(Api& api, const GameId& g, const str& gkey, std::vector<Item> todo,
                     it.local.present = true; it.local.sha = pp->lf.sha; it.local.size = pp->lf.size; it.local.mtime = pp->lf.mtime;
                     if (r.has_current && is_prefs_conflict(g, r.path)) {
                         Item re;
-                        if (merge_prefs_conflict(api, g, gkey, r.path, r.current, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) next.push_back(re); continue; }
-                        if (is_merged_file(g, r.path)) continue;   // could not merge: keep this PC's file, never overwrite it with the cloud copy
+                        if (merge_prefs_conflict(api, g, gkey, r.path, r.current, opts.deadline_ms, &re, out) && !re.path.empty()) next.push_back(re);
+                        continue;   // merged, or could not merge: both sides stay as they are, never the cloud copy over this PC's file
                     }
                     if ((it.cls == FileClass::Battery || it.cls == FileClass::Card) || !r.has_current) out.conflicts.push_back(conflict_item(it));
                     else if (r.current.mtime > pp->lf.mtime) {
+                        if (!backup_local(g, r.path, "pc")) {   // the copy comes FIRST: nothing is replaced without it
+                            refuse_pass(out, "backup-failed", r.current.size);
+                            log_line("could not back up " + gkey + "/" + r.path + " before replacing it; kept the local file");
+                            continue;
+                        }
                         PullResult pr2 = pull_file(api, g, gkey, r.path, r.current, opts.deadline_ms);
-                        if (pr2.ok) { backup_local(g, r.path, "pc"); base_set(gkey, r.path, r.current.ver, r.current.sha, r.current.size, r.current.mtime); out.pulled++; }
+                        if (pr2.ok) { base_set(gkey, r.path, r.current.ver, r.current.sha, r.current.size, r.current.mtime); out.pulled++; }
                     } else {
                         base_set(gkey, r.path, r.current.ver, r.current.sha, r.current.size, r.current.mtime);
                         Item re = it; re.base_ver = r.current.ver; re.act = Act::Push; next.push_back(re);
@@ -1065,13 +1116,12 @@ SyncOut sync_game_with(Api& api, const GameId& g, const WGame* cg, const SyncOpt
         if (opts.deadline_ms && mono_ms() > opts.deadline_ms) { out.pending_bytes += it->cloud.size; out.oc.k = Outcome::Offline; out.oc.code = "deadline"; continue; }
         if (it->has_cv && is_merged_file(g, it->path)) {   // always merged under the settings mutex (a UI save may have changed the file meanwhile, and the file may not exist yet), never replaced
             Item re;
-            if (merge_prefs_conflict(api, g, gkey, it->path, it->cv, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) push_items.push_back(re); }
-            else out.pending_bytes += it->cloud.size;
+            if (merge_prefs_conflict(api, g, gkey, it->path, it->cv, opts.deadline_ms, &re, out) && !re.path.empty()) push_items.push_back(re);
             continue;
         }
         /* newest-wins replaced a changed local copy; also a copy the cloud once refused (its sha is not an agreement) - never overwritten unseen */
         if (it->local.present && (it->local.sha != it->base.sha || it->lo_marked || !it->refused_sha.empty()) && !backup_local(g, it->path, "pc")) {
-            out.pending_bytes += it->cloud.size;   // no copy of the local file, no overwrite
+            refuse_pass(out, "backup-failed", it->cloud.size);   // no copy of the local file, no overwrite
             log_line("could not back up " + gkey + "/" + it->path + " before replacing it; kept the local file");
             continue;
         }
@@ -1100,11 +1150,16 @@ SyncOut sync_game_with(Api& api, const GameId& g, const WGame* cg, const SyncOpt
             case Act::Conflict: {
                 if (it.has_cv && is_prefs_conflict(g, it.path) && (!opts.auto_newest || is_merged_file(g, it.path))) {
                     Item re;
-                    if (merge_prefs_conflict(api, g, gkey, it.path, it.cv, opts.deadline_ms, &re, &out.pulled)) { if (!re.path.empty()) push_items.push_back(re); break; }
-                    if (is_merged_file(g, it.path)) break;   // could not merge: keep this PC's file
+                    if (merge_prefs_conflict(api, g, gkey, it.path, it.cv, opts.deadline_ms, &re, out) && !re.path.empty()) push_items.push_back(re);
+                    break;   // merged, or could not merge: both sides stay as they are
                 }
                 if (opts.auto_newest) {   // read-only session: newest wins, the loser is kept
-                    if (it.cloud.mtime > it.local.mtime && backup_local(g, it.path, "pc")) {
+                    if (it.cloud.mtime > it.local.mtime) {
+                        if (!backup_local(g, it.path, "pc")) {
+                            refuse_pass(out, "backup-failed", it.cloud.size);
+                            log_line("could not back up " + gkey + "/" + it.path + " before replacing it; kept the local file");
+                            break;
+                        }
                         PullResult r = pull_file(api, g, gkey, it.path, it.cv, opts.deadline_ms);
                         if (r.ok) { base_set(gkey, it.path, it.cv.ver, it.cv.sha, it.cv.size, it.cv.mtime); out.pulled++; }
                     }
@@ -1168,7 +1223,7 @@ void update_info(const GameId& g, const WGame* cg, const SyncOut& out, bool pend
                 gi.state = out.oc.code.find("paused") != str::npos || out.oc.code.find("busy") != str::npos || out.oc.code.find("unavailable") != str::npos ? CloudState::Paused : CloudState::Waiting;
                 gi.message = gi.state == CloudState::Paused ? "Cloud saves are paused for now." : "Will try again soon.";
                 break;
-            default: gi.state = CloudState::Waiting; gi.message = "Offline: will sync when you are back."; break;
+            default: gi.state = CloudState::Waiting; gi.message = sync_failure_text(out.oc.status, out.oc.code); break;
         }
         return;
     }
@@ -1741,6 +1796,22 @@ void stop_beat_if_idle() {
 
 } // namespace
 
+/* Calm, short text for a failed pass; specific only where the cause is known (see the tests). */
+std::string sync_failure_text(int status, const std::string& code) {
+    if (code == "backup-failed") return "Waiting: could not make a safety copy.";
+    if (code == "merge-failed") return "Waiting: could not combine the saves. Nothing was changed.";
+    if (code == "file-locked") return "Another program is using the save file. Will try again soon.";
+    if (code == "access-denied") return "Windows would not allow writing the file.";
+    if (code == "disk-full") return "This PC is out of disk space. Will try again soon.";
+    if (code == "write-failed") return "Could not write the save on this PC.";
+    if (status == 0 && code == "deadline") return "Still syncing. Will finish next time.";
+    if (status == 0 && code.empty()) return "Offline: will sync when you are back.";
+    if (status == 0) return "Could not sync yet. Will try again soon.";
+    if (status >= 400 && status < 500) return "The cloud could not take this save. Will try again.";
+    return "Will try again soon.";
+}
+bool cloud_write_atomic(const std::string& path_utf8, const std::string& data) { return write_atomic(fs::u8path(path_utf8), data); }
+
 /* ================================================================== public API */
 void cloud_engine_configure(const EngineConfig& cfg) {
     std::lock_guard<std::mutex> lk(E.mu);
@@ -1943,14 +2014,18 @@ void cloud_resolve_conflict(const GameId& g, ConflictChoice c) {
     const WGame* cg = nullptr;
     for (auto& w : mf.m.games) if (w.gkey == gkey) cg = &w;
     std::vector<Item> items = evaluate(g, scan_game(g), cg);
-    bool need_push = false;
+    bool need_push = false, copy_failed = false;
     int resolved = 0;
     for (auto& it : items) {
         if (it.act != Act::Conflict) continue;
         ConflictChoice use = c;
         if (c == ConflictChoice::UseNewer) use = it.cloud.mtime > it.local.mtime ? ConflictChoice::UseCloud : ConflictChoice::UseLocal;
         if (use == ConflictChoice::UseCloud) {
-            backup_local(g, it.path, "pc");
+            if (!backup_local(g, it.path, "pc")) {   // no copy of the current save, no overwrite
+                log_line("could not back up " + gkey + "/" + it.path + " before using the cloud copy; nothing was changed");
+                copy_failed = true;
+                continue;
+            }
             PullResult r = pull_file(api, g, gkey, it.path, it.cv, mono_ms() + 15000);
             if (r.ok) { base_set(gkey, it.path, it.cv.ver, it.cv.sha, it.cv.size, it.cv.mtime); resolved++; }
         } else {   // keep this PC: the cloud copy stays as a version on the server and is kept locally in _conflicts as well
@@ -1963,6 +2038,11 @@ void cloud_resolve_conflict(const GameId& g, ConflictChoice c) {
         }
     }
     (void)need_push;
+    if (copy_failed) {   // the conflict stays open: the player is told plainly and can try again
+        base_save();
+        set_state(g, CloudState::NeedsAttention, LocalOnlyReason::None, "Could not keep a copy of your current save, so nothing was changed.");
+        return;
+    }
     { std::lock_guard<std::mutex> lk(E.mu); bgame(gkey).decide_later = false; base_save_locked(); }
     push_event(CloudEvent::ConflictResolved, g, "Saves for " + g.key + " are sorted out.", true);
     SyncOut none;
@@ -2151,7 +2231,7 @@ bool cloud_restore_version(const GameId& g, const std::string& path, int ver, st
     const WFile* f2 = g2 ? g2->find(path) : nullptr;
     const WVer* cur = f2 ? f2->current() : nullptr;
     if (!cur) return fail("Restored in the cloud, but could not download it yet.");
-    backup_local(g, path, "pc");
+    if (!backup_local(g, path, "pc")) return fail("Could not keep a copy of your current save, so nothing was changed.");
     PullResult pr = pull_file(api, g, gkey, path, *cur, mono_ms() + 15000);
     if (!pr.ok) return fail("Restored in the cloud, but the download failed: " + pr.err);
     base_set(gkey, path, cur->ver, cur->sha, cur->size, cur->mtime);
