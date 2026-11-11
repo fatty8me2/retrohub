@@ -190,6 +190,24 @@ static HWND game_main_window() {
     return pk.best;
 }
 
+/* Watchdog-only: does the game still own ANY top-level window? A minimised window counts (its client rect is 0x0, which game_main_window
+ * deliberately skips for focus / tips / screenshots); only a destroyed or hidden one does not. */
+static bool game_has_window() {
+    struct Ctx { std::vector<DWORD> pids; bool found = false; } c;
+    c.pids = game_pids();
+    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+        auto* p = (Ctx*)lp;
+        DWORD pid = 0;
+        GetWindowThreadProcessId(h, &pid);
+        if (std::find(p->pids.begin(), p->pids.end(), pid) == p->pids.end()) return TRUE;
+        RECT r{};
+        if (!IsIconic(h) && !GetClientRect(h, &r)) return TRUE;
+        if (hubhang::window_counts_as_present(IsWindowVisible(h) != 0, IsIconic(h) != 0, r.right - r.left, r.bottom - r.top, (GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0)) { p->found = true; return FALSE; }
+        return TRUE;
+    }, (LPARAM)&c);
+    return c.found;
+}
+
 bool game_window_pid(unsigned long* pid) {
     HWND h = game_main_window();
     if (!h) return false;
@@ -296,7 +314,7 @@ void lichii_hang_watch() {
     if (!A.proc) { g_hookshot_run = false; g_fritchii_run = false; }
     if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { watch.reset(); return; }   // Hookshot has its own exit; the hang is a Lichii issue (builds 88-95; builds 125 and 130 unknown)
     const ULONGLONG now = GetTickCount64();
-    const bool window = game_main_window() != nullptr;
+    const bool window = game_has_window();   // a minimised game still has its window (the cap must never end a minimised game)
     ULONGLONG cpu = 0, io = 0;
     if (!window) {
         FILETIME c, x, k, u;   // total CPU time (100 ns units) of the game process; a failed read counts as 0

@@ -423,6 +423,6 @@ silent and nothing else diverges, so it is harmless for Strikers. A game that mi
 diverge; Dolphin has no setting for it (a raw card would carry the host's header, but RetroHub's vault is GCI folders).
 
 End to end through RetroHub's real room flow (`qa\gc_room_online.ps1 -Game gc:g4qe01-0 -SeedGci <save> -CardKey gc_g4qe01-0`,
-local wrangler): `host-sync\USA|EUR|JPN` held the host's save, the guest's `NetPlayTemp\Card A` received it (41024 bytes), and
+local wrangler): `host-sync\USA|EUR|JAP` held the host's save, the guest's `NetPlayTemp\Card A` received it (41024 bytes), and
 no desync line appeared.
 Also: the harness's DSU pad maps its `a` to GC B and `b` to GC A (DSU face layout), which is why older patterns never left the title.

@@ -245,6 +245,15 @@ static std::vector<std::string> preserved_names(Kind k) {
     if (is_nx(k)) return {"user"};   // Lichii and Fritchii: each keeps its own user folder
     return {};
 }
+/* The emulator's OWN user-data folders (saves, memory cards, save states, configs) for a first / repair install into an existing folder (exe or marker
+ * missing: antivirus quarantine, deleted marker). Never deleted or replaced by the archive; unsure = keep. Case-insensitive. Superset of preserved_names. */
+static std::vector<std::string> userdata_names(Kind k) {
+    std::vector<std::string> v = preserved_names(k);
+    if (is_nx(k)) return v;
+    for (const char* n : {"User", "user", "portable", "mlc01", "inis", "memcards", "sstates", "snaps", "memstick", "cheats", "bios", "gamesettings", "patches", "textures",
+                          "covers", "shaderCache", "controllerProfiles", "gameProfiles", "graphicPacks"}) v.push_back(n);
+    return v;
+}
 static bool upgradable(Kind k) { return !preserved_names(k).empty(); }
 static bool name_in(const std::vector<std::string>& v, const std::string& n) {
     for (const auto& x : v) if (_stricmp(x.c_str(), n.c_str()) == 0) return true;
@@ -925,7 +934,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     set_log_path(join(root, "install-log.txt"));
     std::string dir = managed_dir(k, root);
     std::string exe = join(dir, U(rel.exe));
-    const std::vector<std::string> keep = preserved_names(k);
+    const std::vector<std::string> keep = userdata_names(k);   // (== preserved_names for Switch; every other kind keeps its user-data folders on a repair install)
     recover_interrupted(k, root);   // an upgrade that a crash cut short comes back to a whole install first
     if (upgradable(k) && file_exists(join(dir, kJournal))) {   // ...but could not be undone yet (a file still in use): the parked old build in _old must survive for the next try
         *err = std::string("an earlier ") + name(k) + " update could not be finished yet. Close " + name(k) + " if it is open, then try again";
@@ -1012,9 +1021,9 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
         } else {
             std::error_code ec;
             for (fs::directory_iterator it(P(inner), ec), end; !ec && it != end; it.increment(ec)) {
-                if (name_in(keep, S(it->path().filename()))) continue;   // never let the archive replace the player's data folder
                 std::error_code e2;
                 fs::path to = P(dir) / it->path().filename();
+                if (name_in(keep, S(it->path().filename())) && (is_nx(k) || fs::exists(to, e2))) continue;   // never let the archive replace the player's data folder (a kept name the folder does not have yet is taken from the archive)
                 fs::remove_all(to, e2);
                 std::string why;
                 if (!rename_retry(it->path(), to, &why)) { ok = false; *err = "could not install " + S(it->path().filename()) + ": " + why; break; }

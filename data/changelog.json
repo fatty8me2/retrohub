@@ -1,6 +1,18 @@
 {
   "versions": [
     {
+      "version": "1.42.1",
+      "date": "2026-11-11",
+      "title": "Fixes: minimised Switch games, emulator repair",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "A Switch or Switch 2 game that stayed minimised for 3 minutes could be closed by RetroHub, losing unsaved progress. A minimised game is now always left running",
+        "Repairing an emulator whose program file went missing (for example after an antivirus removed it) could delete that emulator's own save and settings folders. They are now always kept",
+        "GameCube online play: a Japanese game's memory card from the host now reaches the other players"
+      ]
+    },
+    {
       "version": "1.42.0",
       "date": "2026-11-10",
       "title": "Safer saves, quieter notifications, more in the game menu",
