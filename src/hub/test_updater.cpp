@@ -381,6 +381,20 @@ int main(int argc, char** argv) {
         CHECK(std::string(kReadyBellText) == "Update ready: installs after your game" && std::strlen(kReadyBellText) <= 40);   // fits the bell uncut
     }
 
+    // --- failed check retry spacing + unpack timeout ---
+    {
+        const unsigned long long T = 1000000;
+        CHECK(check_retry_due(false, 0, T));                                  // never checked: runs
+        CHECK(!check_retry_due(true, 0, T));                                  // an answer was received: not again this session
+        CHECK(!check_retry_due(true, T, T + kCheckRetryMs * 10));
+        CHECK(!check_retry_due(false, T, T + 1000));                          // just failed: a dead network is not hammered
+        CHECK(!check_retry_due(false, T, T + kCheckRetryMs - 1));
+        CHECK(check_retry_due(false, T, T + kCheckRetryMs));                  // spacing passed: the next natural trigger retries
+        CHECK(check_retry_due(false, T, T - 5));                              // clock went backwards: do not stay blocked
+        CHECK(kCheckRetryMs >= 60ull * 1000 && kCheckRetryMs <= 3600ull * 1000);
+        CHECK(kTarTimeoutMs >= 2ul * 60 * 1000 && kTarTimeoutMs <= 30ul * 60 * 1000);   // generous (minutes), never infinite
+    }
+
     // --- M1: staged files are kept for a retry, and reused only when they are exactly what was unpacked ---
     {
         std::filesystem::path d = std::filesystem::temp_directory_path() / ("hub_updater_staged_test_" + std::to_string(_getpid()));

@@ -1,6 +1,7 @@
 /* Menu sounds: every UI sfx and the ambient loop render to non-silent, finite, bounded buffers (never played).
  */
 #include "boot_synth.h"
+#include "ui_sound.h"
 #include <cmath>
 #include <cstdio>
 
@@ -29,6 +30,14 @@ int main() {
         CHECK(a == b, "%s not deterministic", names[i]);
     }
     check("ambient", bootsynth::render_ambient(), bootsynth::kAmbientSeconds + 0.01, bootsynth::kAmbientSeconds - 0.01);
+    // mute policy: no sound while a game runs, while unfocused, when off, at 0 volume or under a mute env
+    CHECK(ui_sound::allowed(true, 50, false, true, false), "plain menu sound must play");
+    CHECK(!ui_sound::allowed(true, 50, true, true, false), "must be silent while a game runs");
+    CHECK(!ui_sound::allowed(true, 50, false, false, false), "must be silent unfocused");
+    CHECK(!ui_sound::allowed(false, 50, false, true, false) && !ui_sound::allowed(true, 0, false, true, false) && !ui_sound::allowed(true, 50, false, true, true), "off / zero volume / muted");
+    // the frame feeds the policy through game_running(): a game with no owned process (game_active alone) silences it too
+    CHECK(ui_sound::game_running(true, false) && ui_sound::game_running(false, true) && ui_sound::game_running(true, true) && !ui_sound::game_running(false, false), "game_running");
+    CHECK(!ui_sound::allowed(true, 50, ui_sound::game_running(true, false), true, false), "no sound for a game that has no A.proc");
     std::printf(fails ? "hub_uisound_test: %d FAILED\n" : "hub_uisound_test: all passed\n", fails);
     return fails ? 1 : 0;
 }
