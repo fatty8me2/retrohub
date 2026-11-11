@@ -194,6 +194,9 @@ target_link_libraries(RetroHub PRIVATE propsys windowsapp)
 add_executable(hub_cloud_ui_test test_cloud_ui.cpp)
 target_link_libraries(hub_cloud_ui_test PRIVATE hublogic)
 
+add_executable(hub_emu_error_text_test test_emu_error_text.cpp)
+target_link_libraries(hub_emu_error_text_test PRIVATE hublogic)
+
 add_executable(hub_wizard_test test_wizard.cpp)
 target_link_libraries(hub_wizard_test PRIVATE hublogic)
 target_include_directories(hub_wizard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
