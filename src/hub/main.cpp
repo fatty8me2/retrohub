@@ -498,7 +498,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             std::error_code ec; std::filesystem::remove(std::filesystem::path(W(installer_hand)), ec);
         }
 
-        if (SDL_GetWindowFlags(A.win) & SDL_WINDOW_MINIMIZED) { SDL_Delay(50); continue; }
+        if (SDL_GetWindowFlags(A.win) & SDL_WINDOW_MINIMIZED) { hubupdate::apply::note_boot_ok(); SDL_Delay(50); continue; }   // up, but minimised behind a game: no frame will be presented, so this counts as started
 
         bool bg_this_iter = false;
         if (idle_on) {   // idle throttle: pump everything every iteration, draw only when something needs a frame (idle_logic.h)
@@ -687,6 +687,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         if (fps_report) { q_present = qpc_ms(); ms_raster += q_present - q_raster; }
         SDL_RenderPresent(ren);
         ++n_presented;
+        hubupdate::apply::note_boot_ok();   // first frame is on screen: tells a watching update applier this version started (no-op without --boot-ok)
         if (fps_report) { const double q_end = qpc_ms(); ms_present += q_end - q_present; frame_ms.push_back(q_end - q_iter); }
     }
 

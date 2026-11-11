@@ -17,7 +17,10 @@
  *
  * Flags: --version <tag>  --from <tag>  --no-relaunch  --retries <n>  --retry-ms <ms>  --game-active
  *        --started-marker <file>  --backup-dir <dir>  --wait-secs <n>  --hub-wait-secs <n>  --hub-only --smash-sha256 <hex>
- * Exit code: 0 applied, 1 failed (rolled back), 2 usage, 3 postponed (a game was still running; nothing changed). */
+ *        --boot-wait-secs <n>  --boot-cap-secs <n>  --relaunch-no-window
+ * Exit code: 0 applied (and the new RetroHub started), 1 failed (rolled back), 2 usage, 3 postponed (a game was still running; nothing
+ * changed), 4 applied but the new RetroHub never confirmed (still running at the cap), 5 applied, new RetroHub did not start, rolled back,
+ * 6 the boot rollback could not restore everything (backup kept for startup recovery). See "boot check" below. */
 
 #include <string>
 #include <vector>
@@ -41,6 +44,10 @@ struct Options {
     int restore_retry_ms = 500;
     unsigned wait_games_secs = 1200;         // how long to wait for a game / emulator / helper from the install folder before giving up
     unsigned hub_wait_secs = 300;            // how long the OLD RetroHub gets to exit; it is never ended either: after this the apply is postponed
+    bool keep_backup = false;                // apply_files only: keep the backup dir after a successful copy (the boot watch needs it)
+    unsigned boot_wait_secs = 45;            // run(): after this long without the "boot ok" marker a slow start is only logged; the new RetroHub is never ended
+    unsigned boot_cap_secs = 600;            // run(): hard cap while the new RetroHub is still running without the marker: stop watching, change nothing
+    bool relaunch_no_window = false;         // --relaunch-no-window (tests only): the relaunched exe is a console stub, so start it without a console window
     std::wstring tmp_root;                   // where RetroHub-update-<pid>\ goes ("" => %TEMP%); tests
     std::wstring status_path;                // "" => <install>\userdata\update_status.json
     bool (*copy_hook)(const std::wstring& from, const std::wstring& to) = nullptr;   // tests only: replaces the copy
@@ -52,7 +59,8 @@ struct Result {
     bool backup_kept = false;                // a restore failed: the backup dir holds the only good copy of unrestored[]
     std::wstring backup_dir;
     std::vector<std::wstring> unrestored;    // relative paths whose restore failed
-    bool smash_changed = false;              // hub-only apply refused: the installed BattleShip.exe is not the one the update was made for (nothing touched)
+    std::vector<std::wstring> added;         // files the apply created that did not exist before (a boot rollback removes exactly these)
+    bool smash_changed = false;             // hub-only apply refused: the installed BattleShip.exe is not the one the update was made for (nothing touched)
     int copied = 0;
     unsigned long err = 0;                   // Windows error of the failing step
     std::wstring error;
@@ -81,7 +89,7 @@ WaitOutcome wait_for_old_processes(const Options& o, std::wstring* blocker);
 
 /* ---- update status note (userdata\update_status.json): one line for the bell on the next start ---- */
 struct Status {
-    std::string result;     // "failed" (rolled back) | "postponed" (a game was running) | "rollback_failed" (backup kept) | "interrupted" | "repaired"
+    std::string result;     // "failed" (rolled back) | "postponed" (a game was running) | "rollback_failed" (backup kept) | "interrupted" | "repaired" | "rolled_back" (the new RetroHub did not start; the old one is back)
     std::string version;    // the version that was being installed
     std::string reason;     // plain language
     std::string detail;     // technical (error code, file)
@@ -107,10 +115,39 @@ struct RecoverReport {
     int repaired = 0;     // files put back from the backup, dir removed
     int partial = 0;      // some files could not be put back: backup kept
     int stale = 0;        // the install is no longer on the version the backup came from: removed, never restored (would downgrade)
+    int healthy = 0;      // an applier that was watching the new version's start died, and the new version is the one running: backup dropped, no note
     int restored_files = 0;
     std::vector<std::string> notes;   // one-line bell texts for the next start
 };
 RecoverReport recover_interrupted(const std::wstring& install, const std::string& current_version, const std::wstring& tmp_root = std::wstring());
+
+/* ---- boot check: did the new RetroHub actually start? ----
+ * The applier relaunches the new RetroHub with `--boot-ok "<marker file>" "<version>"`. Once that RetroHub has a window, a renderer and has
+ * presented its first frame (or is up minimised behind a game) it calls note_boot_ok(), which writes <version> to the marker (temp +
+ * rename, never fails the app). The applier, still alive and window-less, waits for the marker:
+ *   marker with the expected version -> the update is good: the backup is deleted.
+ *   the new process exited with a non-zero code (or could not start) without writing it -> ROLLBACK: the replaced files are restored
+ *     from the backup, the files the update added are removed, the OLD RetroHub is relaunched quietly, a status note ("rolled_back",
+ *     shown once in the bell) and updates\bad_version.json are written. Exit code 5.
+ *   the new process exited with code 0 -> a clean exit (a second instance handing over, or the player closed it): kept, backup deleted.
+ *   the new process is still running after boot_wait_secs -> keep waiting (slow PC), never kill it; after boot_cap_secs stop watching and
+ *     change nothing (backup kept for the next start to clean up). Exit code 4.
+ * The applier never terminates any process and shows no UI. A rollback only starts when the new RetroHub is gone and nothing else runs
+ * from the install folder (a game: it waits).
+ *
+ * updates\bad_version.json (written on a rollback; the updater must not offer or retry that version again):
+ *   {"v":1,"version":"v1.2.3","from":"v1.2.2","at":<unix seconds>,"reason":"did not start","exit_code":<n>}
+ * "version" is the release tag exactly as the update was offered. Read it with bad_version_read(); it stays until the updater sees a
+ * DIFFERENT (newer) release, which it may try normally. */
+std::wstring boot_ok_path(const std::wstring& install);      // <install>\updates\boot_ok
+std::wstring bad_version_path(const std::wstring& install);  // <install>\updates\bad_version.json
+struct BadVersion { std::string version, from, reason; long long at = 0; long exit_code = 0; };
+bool bad_version_read(const std::wstring& install, BadVersion* out);   // false: none or unreadable
+bool bad_version_write(const std::wstring& install, const BadVersion& b);
+/* Called by the running RetroHub (main.cpp) once it is up. Cheap, idempotent, thread-safe, never throws, does nothing without --boot-ok. */
+void note_boot_ok();
+/* Pure helper (tested): reads the marker and compares its version with `expect` (leading v and spaces ignored). */
+bool boot_marker_matches(const std::wstring& marker, const std::string& expect);
 
 /* ---- full flow ---- */
 int run(const Options& o);
