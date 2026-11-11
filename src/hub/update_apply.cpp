@@ -364,6 +364,7 @@ bool read_status(const std::wstring& path, Status* s) {
 std::string status_line(const Status& s) {
     if (s.result == "postponed") return "Update postponed: a game was running";
     if (s.result == "rollback_failed") return "Update failed; some files not restored";
+    if (s.result == "rollback_waiting") return "Update could not start; going back";   // nothing was changed yet: it goes back once the game is closed
     if (s.result == "interrupted") return "Earlier update interrupted; run Setup";
     if (s.result == "rolled_back") return "Update could not start; rolled back";
     if (s.result == "failed") return "Update failed: " + (s.reason.empty() ? std::string("a file was not replaced") : short_reason(s.reason));
@@ -386,6 +387,8 @@ struct Manifest {
     long long started = 0;
     bool reported = false;
     bool booting = false;   // the files are all copied and the applier is watching the new RetroHub start (absent in manifests of older appliers)
+    bool rollback_due = false;   // the new RetroHub did not start but the rollback had to wait for a game: nothing restored yet, bad_version.json already written
+    long exit_code = 0;          // ... and how the new RetroHub ended
 };
 
 bool write_manifest(const fs::path& file, const Manifest& m) {
@@ -398,6 +401,8 @@ bool write_manifest(const fs::path& file, const Manifest& m) {
     o.o.push_back({"started", json::make_int(m.started)});
     o.o.push_back({"reported", json::make_bool(m.reported)});
     o.o.push_back({"booting", json::make_bool(m.booting)});
+    o.o.push_back({"rollback_due", json::make_bool(m.rollback_due)});
+    o.o.push_back({"exit_code", json::make_int((int64_t)m.exit_code)});
     std::error_code ec;
     fs::create_directories(file.parent_path(), ec);
     return winutil::write_file_atomic(u8(file.wstring()), json::stringify(o) + "\n");
@@ -411,6 +416,7 @@ bool read_manifest(const fs::path& file, Manifest* m) {
     m->install = v.str("install"); m->from = v.str("from"); m->to = v.str("to");
     m->pid = (unsigned long)v.i64("pid"); m->started = v.i64("started"); m->reported = v.boolean("reported");
     m->booting = v.boolean("booting");
+    m->rollback_due = v.boolean("rollback_due"); m->exit_code = (long)v.i64("exit_code");
     return true;
 }
 
@@ -546,18 +552,38 @@ bool bad_version_read(const std::wstring& install, BadVersion* out) {
     return true;
 }
 
+static std::string g_own_version;   // set once at startup, before the first frame
+void set_own_version(const std::string& version) { g_own_version = version; }
+
+bool write_boot_marker(const std::wstring& install, const std::string& version) {
+    if (strip_v(version).empty()) return false;
+    const std::wstring marker = boot_ok_path(install);
+    if (boot_marker_matches(marker, version)) return true;   // already says so: no write
+    std::error_code ec;
+    fs::create_directories(fs::path(marker).parent_path(), ec);
+    return winutil::write_file_atomic(u8(marker), version + "\n");
+}
+
 void note_boot_ok() {
     static std::atomic<bool> done{false};
-    if (done.exchange(true)) return;
+    if (done.load()) return;
     try {
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        if (!argv) return;
         std::wstring marker, version;
-        for (int i = 1; i + 2 < argc; i++)
-            if (wcscmp(argv[i], L"--boot-ok") == 0) { marker = argv[i + 1]; version = argv[i + 2]; break; }
-        LocalFree(argv);
-        if (marker.empty() || version.empty()) return;
+        if (argv) {
+            for (int i = 1; i + 2 < argc; i++)
+                if (wcscmp(argv[i], L"--boot-ok") == 0) { marker = argv[i + 1]; version = argv[i + 2]; break; }
+            LocalFree(argv);
+        }
+        if (marker.empty() || version.empty()) {   // a normal start (or a hand-over): confirm this version in the install's own marker
+            if (g_own_version.empty()) return;     // not told yet: try again on the next call
+            done.store(true);
+            write_boot_marker(fs::path(winutil::exe_path_w()).parent_path().wstring(), g_own_version);
+            return;
+        }
+        done.store(true);
+        if (boot_marker_matches(marker, u8(version))) return;
         std::error_code ec;
         fs::create_directories(fs::path(marker).parent_path(), ec);
         winutil::write_file_atomic(u8(marker), u8(version) + "\n");
@@ -681,8 +707,15 @@ RecoverReport recover_interrupted(const std::wstring& installIn, const std::stri
         const std::string cur = strip_v(current_version), from = strip_v(m.from), to = strip_v(m.to);
         if (m.booting && !to.empty()) {
             BadVersion bv;
-            const bool named_bad = bad_version_read(install, &bv) && strip_v(bv.version) == to;
+            bool named_bad = bad_version_read(install, &bv) && strip_v(bv.version) == to;
             const bool marker_ok = boot_marker_matches(boot_ok_path(install), to);
+            if (cur == to && m.rollback_due && named_bad && marker_ok) {
+                /* The rollback was waiting for a game and never ran, but the new version has since started and confirmed itself (the first
+                 * crash was a one-off): it is trusted after all, so it is no longer recorded as bad. */
+                bad_version_clear(install);
+                named_bad = false;
+                alog(L"recovery: " + w16(m.to) + L" started after all; it is no longer recorded as bad");
+            }
             if (cur == to && (named_bad || !marker_ok)) {
                 /* The new version is running (or was recorded as bad) but has not proven that it started: it is not trusted, so the backup
                  * stays and nothing is restored over it. A later start that finds the marker (the hub writes it itself after its first
@@ -711,6 +744,13 @@ RecoverReport recover_interrupted(const std::wstring& installIn, const std::stri
             fs::remove_all(dir, ec);
             continue;
         }
+        if (m.rollback_due && !to.empty()) {   // a rollback that waited for a game: make sure the release stays recorded as bad (it was written at the time)
+            BadVersion bv;
+            if (!bad_version_read(install, &bv) || strip_v(bv.version) != to) {
+                BadVersion b; b.version = m.to; b.from = m.from; b.reason = "did not start"; b.exit_code = m.exit_code; b.at = unix_now();
+                if (!bad_version_write(install, b)) alog(L"recovery: could not write updates\\bad_version.json");
+            }
+        }
         int restored = 0, failed = 0;
         const std::wstring broot = norm(backup.wstring());
         for (fs::recursive_directory_iterator bi(backup, fs::directory_options::skip_permission_denied, ec), bend; !ec && bi != bend; bi.increment(ec)) {
@@ -731,7 +771,8 @@ RecoverReport recover_interrupted(const std::wstring& installIn, const std::stri
             fs::remove_all(dir, ec);
             if (restored > 0) {
                 ++rep.repaired; rep.restored_files += restored;
-                rep.notes.push_back("Repaired an interrupted update");   // the file count is in updater.log
+                if (m.rollback_due) { Status rb; rb.result = "rolled_back"; rep.notes.push_back(status_line(rb)); }   // the postponed rollback is now done
+                else rep.notes.push_back("Repaired an interrupted update");   // the file count is in updater.log
             } else ++rep.cleaned;
         } else {
             ++rep.partial;
@@ -929,19 +970,25 @@ int run(const Options& o) {
     /* The new RetroHub is gone and never confirmed: it did not start. Roll back, but never while something runs from the install folder
      * (a game): wait for it, like the apply itself did. */
     alog(L"the new RetroHub did not start (exit code " + std::to_wstring(code) + L"); rolling back to " + o.from_version);
+    /* Recorded FIRST, before the wait and before any file is put back: if this process dies half way, the old RetroHub must still never offer
+     * this release again. A failed write is logged (and tried once more). */
+    BadVersion bad; bad.version = u8(o.version); bad.from = u8(o.from_version); bad.reason = "did not start"; bad.exit_code = (long)code; bad.at = unix_now();
+    if (!bad_version_write(install, bad) && !bad_version_write(install, bad))
+        alog(L"COULD NOT WRITE " + bad_version_path(install) + L" (error " + std::to_wstring(GetLastError()) + L"): the old RetroHub may offer this release again");
     {
         std::wstring why; Options nopid = o; nopid.pid = 0;
         if (wait_for_old_processes(nopid, &why) == WaitOutcome::TimedOut) {
-            alog(L"ROLLBACK POSTPONED: " + why + L" is running; nothing was touched. The backup is kept in " + bk_parent.wstring());
-            Status st; st.result = "rollback_failed"; st.version = u8(o.version); st.reason = "a game was still running"; st.detail = u8(why); st.at = unix_now();
+            alog(L"ROLLBACK POSTPONED: " + why + L" is running; nothing was touched (no file was changed, none was restored). The backup is kept in " + bk_parent.wstring() + L"; the next start finishes going back");
+            man.rollback_due = true; man.exit_code = (long)code;
+            write_manifest(bk_parent / L"manifest.json", man);   // recovery completes the rollback from this (and re-writes bad_version.json if it is missing)
+            Status st; st.result = "rollback_waiting"; st.version = u8(o.version); st.reason = "the new version could not start";
+            st.detail = "a game was running (" + u8(why) + "); RetroHub finishes going back once the game is closed"; st.at = unix_now();
             st.backup = u8(bk_parent.wstring());
             write_status(status_path, st);
             return 6;
         }
     }
     const std::vector<std::wstring> failed = restore_backup(install, bk_parent / L"backup", o.restore_retries, o.restore_retry_ms);
-    BadVersion bad; bad.version = u8(o.version); bad.from = u8(o.from_version); bad.reason = "did not start"; bad.exit_code = (long)code; bad.at = unix_now();
-    bad_version_write(install, bad);   // before anything else can fail: the updater must not offer this release again
     Status st; st.version = u8(o.version); st.at = unix_now();
     if (!failed.empty()) {
         st.result = "rollback_failed"; st.reason = "some files could not be put back"; st.detail = u8(failed[0]); st.backup = u8(bk_parent.wstring());

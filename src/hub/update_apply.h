@@ -153,8 +153,14 @@ void bad_version_clear(const std::wstring& install);
 constexpr int kStartFailExit = 70;
 /* True when `v` is a lower dotted version than `than` (leading v ignored). False when either is unparsable. A downgrade is never watched. */
 bool version_lower(const std::string& v, const std::string& than);
-/* Called by the running RetroHub (main.cpp) once it is up. Cheap, idempotent, thread-safe, never throws, does nothing without --boot-ok. */
+/* Called by the running RetroHub (main.cpp) once it is up. Cheap, idempotent, never throws. It ALWAYS records that this version started:
+ * the marker goes to the --boot-ok path when the applier passed one, otherwise to <install>\updates\boot_ok, holding this RetroHub's own
+ * version (set_own_version) and skipped when the file already says so. So a freshly updated hub that exits before it is watched to the end
+ * (closed by the player, a second instance) still confirms itself on any later start, and startup recovery can drop the backup. */
 void note_boot_ok();
+void set_own_version(const std::string& version);   // this RetroHub's version, for note_boot_ok when no --boot-ok was given (updater.cpp passes it at startup)
+/* Pure core of note_boot_ok (tested): makes <install>\updates\boot_ok hold `version`; no write when it already does. false when it could not. */
+bool write_boot_marker(const std::wstring& install, const std::string& version);
 /* Pure helper (tested): reads the marker and compares its version with `expect` (leading v and spaces ignored). */
 bool boot_marker_matches(const std::wstring& marker, const std::string& expect);
 
