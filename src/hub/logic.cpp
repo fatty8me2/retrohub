@@ -127,6 +127,7 @@ std::string settings_to_json(const Settings& s) {
       << "  \"menu_sounds_v\": 1,\n"
       << "  \"pack_links\": \"" << json::escape(s.pack_links) << "\",\n"
       << "  \"share_playtime\": " << (s.share_playtime ? "true" : "false") << ",\n"
+      << "  \"notify_online\": " << (s.notify_online ? "true" : "false") << ",\n"
       << "  \"auto_friend\": " << (s.auto_friend ? "true" : "false") << ",\n"
       << "  \"username_claimed\": " << (s.username_claimed ? "true" : "false") << ",\n"
       << "  \"find_games_done\": " << (s.find_games_done ? "true" : "false") << ",\n"
@@ -228,6 +229,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->menu_volume = std::max(0, std::min(100, (int)j.num("menu_volume", out->menu_volume)));
     out->attract_mode = json_bool(j, "attract_mode", out->attract_mode);
     out->auto_friend = json_bool(j, "auto_friend", out->auto_friend);
+    out->notify_online = json_bool(j, "notify_online", out->notify_online);
     out->discord_presence = json_bool(j, "discord_presence", out->discord_presence);
     out->discord_join = json_bool(j, "discord_join", out->discord_join);
     out->net_probe_done = json_bool(j, "net_probe_done", out->net_probe_done);

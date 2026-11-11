@@ -718,6 +718,10 @@ int main() {
             CHECK(settings_from_json(settings_to_json(a), &b) && !b.auto_friend);
             Settings c;
             CHECK(settings_from_json("{\"name\":\"x\"}", &c) && c.auto_friend);
+            Settings no, nb; CHECK(no.notify_online);   // default: today's behaviour
+            no.notify_online = false;
+            CHECK(settings_from_json(settings_to_json(no), &nb) && !nb.notify_online);
+            Settings nc; CHECK(settings_from_json("{\"name\":\"x\"}", &nc) && nc.notify_online);
             CHECK(auto_friend_text("Mia") == "You and Mia are now friends" && auto_friend_text("") == "You and a new player are now friends");
             CHECK(lobby_ident_json("u1", "s\"2") == "{\"type\":\"ident\",\"uid\":\"u1\",\"secret\":\"s\\\"2\"}");
             CHECK(lobby_ident_json("u1", "s", true) == "{\"type\":\"ident\",\"uid\":\"u1\",\"secret\":\"s\",\"nopair\":true}");   // auto-friend off: proof only

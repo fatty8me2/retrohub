@@ -12,6 +12,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "json.h"
@@ -33,6 +34,53 @@ inline EventRoute route_event(bool game_active, bool session_active, bool runner
     r.osd = (game_active || session_active) && runner_has_osd && !headless;
     return r;
 }
+
+/* In-hub chimes and toast cards (DMs, friend requests, invites, "came online"). While a game or session runs they are HELD: never a
+ * sound, and no toast card unless `focused_toast_ok` and the hub window itself has focus (a windowed game with the hub in front: the
+ * ask-to-join card). The item itself stays (chat unread count, bell entry); HeldNotices counts held ones so that when play ends the hub
+ * shows ONE quiet summary toast instead of replaying every stale toast and chime. Headless runs (screenshots) are never held. */
+struct InHubRoute { bool sound = true; bool toast = true; bool hold = false; };
+inline InHubRoute in_hub_route(bool game_active, bool session_active, bool headless, bool hub_focused = false, bool focused_toast_ok = false) {
+    InHubRoute r;
+    const bool busy = !headless && (game_active || session_active);
+    r.sound = !busy;
+    r.toast = !busy || (focused_toast_ok && hub_focused);
+    r.hold = busy && !r.toast;
+    return r;
+}
+/* Whether "NAME came online" may notify at all: its own switch (default on) AND the friend is on the watch list (caller checks that). */
+inline bool online_alert_wanted(bool setting_on) { return setting_on; }
+
+/* One toast per friend within a short window: accept feedback, the requester's "accepted" and the server's friend_added can all arrive
+ * for the same person. allow() records the show and returns false for a repeat inside the window. */
+struct FriendToastDedup {
+    std::vector<std::pair<std::string, int64_t>> seen;
+    bool allow(const std::string& uid, int64_t now_ms, int64_t window_ms = 5000) {
+        for (auto& s : seen) if (s.first == uid) { if (now_ms - s.second < window_ms && now_ms >= s.second) return false; s.second = now_ms; return true; }
+        if (seen.size() >= 32) seen.erase(seen.begin());
+        seen.push_back({uid, now_ms});
+        return true;
+    }
+};
+
+struct HeldNotices {
+    int count = 0;
+    bool all_bell = true;     // every held item is also a bell entry (so "open the bell" is true)
+    bool was_busy = false;
+    void note(bool bell_item) { if (count < 1000) ++count; if (!bell_item) all_bell = false; }
+    /* Call once per frame. `ready` = the hub window has focus. Returns the summary on the first frame play is over AND ready (stays pending
+     * until then), then resets; else "". */
+    std::string tick(bool busy, bool ready = true) {
+        if (busy) { was_busy = true; return ""; }
+        if (count == 0) { was_busy = false; all_bell = true; return ""; }
+        if (!was_busy) { count = 0; all_bell = true; return ""; }   // nothing was held by play
+        if (!ready) return "";
+        std::string out = std::to_string(count) + (count == 1 ? " new notification" : " new notifications") + " while you played.";
+        if (all_bell) out += count == 1 ? " Open the bell to see it." : " Open the bell to see them.";
+        count = 0; all_bell = true; was_busy = false;
+        return out;
+    }
+};
 
 /* "just now", "5 min ago", "3 hours ago", "yesterday", "2 days ago", "3 weeks ago", "5 months ago". */
 inline std::string ago_text(int64_t at, int64_t now) {
