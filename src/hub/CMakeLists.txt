@@ -102,6 +102,11 @@ add_executable(hub_playtime_test test_playtime.cpp)
 target_include_directories(hub_playtime_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../saves)
 target_compile_features(hub_playtime_test PRIVATE cxx_std_17)
 
+# Library top area on small windows (compact threshold, icon-only fallback planner): pure header.
+add_executable(hub_libcompact_test test_libcompact.cpp)
+target_include_directories(hub_libcompact_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hub_libcompact_test PRIVATE cxx_std_17)
+
 # Home scrolling: wheel axis routing + eased page spring (pure header).
 add_executable(hub_homescroll_test test_homescroll.cpp)
 target_include_directories(hub_homescroll_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

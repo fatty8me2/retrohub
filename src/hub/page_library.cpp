@@ -13,6 +13,7 @@
 #include "hidden_games.h"
 #include "hidden_ui.h"
 #include "playtime_logic.h"
+#include "lib_compact_logic.h"
 
 #include <algorithm>
 #include <cctype>
@@ -140,6 +141,8 @@ void seed_nav_here() {
     set_nav_here();
 }
 
+static bool g_play_focused = false;   // the Play / Resume button of the last action_row has the visible nav focus (its game title tooltip follows)
+
 float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool compact, bool seed_nav) {
     bool idle = hubui::launch_allowed(A.proc != nullptr, session_active());   // shell-H2: any session, not just A.proc
     const hub::GameState& gs = gstate(e.key);
@@ -156,6 +159,7 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
     if (button(resume ? "Resume" : "Play", ImVec2(play_w, bh), true, idle, ui::Icon::Play)) { hub::GameEntry c = e; if (resume) play_entry_anim(c, true, [](const hub::GameEntry& g) { resume_entry(g, -1); }); else play_entry_anim(c, true); }
     if (!idle && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", hubui::launch_busy_reason(A.proc != nullptr));
     else if (resume && ImGui::IsItemHovered()) ImGui::SetTooltip("Continue from where you left off");
+    g_play_focused = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
     if (seed_nav) seed_nav_here();
     if (online) {
         ImGui::SameLine(0, gap);
@@ -175,6 +179,13 @@ float action_row(const hub::GameEntry& e, float bh, bool draw, ImVec2 at, bool c
     ImGui::SameLine(0, gap);
     if (ui::icon_button("more", ui::Icon::Dots, bh, false, "Details")) A.show_details = true;
     return total;
+}
+
+/* Did wrap_lines cut the title short (it ends the last line with "...")? */
+static bool title_cut(const std::vector<std::string>& lines, const std::string& title) {
+    if (lines.empty()) return false;
+    const std::string& l = lines.back();
+    return l.size() >= 3 && l.compare(l.size() - 3, 3, "...") == 0 && !(title.size() >= 3 && title.compare(title.size() - 3, 3, "...") == 0);
 }
 
 void draw_hero(const hub::GameEntry& e, float h) {
@@ -216,9 +227,11 @@ void draw_hero(const hub::GameEntry& e, float h) {
     float tx = a1.x + pad, tw = p1.x - pad - tx, ty = p0.y + pad;
     ImFont* cf = ui::F.cap;
     std::string eyebrow = gs.last_played ? hubui::resume_line(e.title, unix_now(), gs.last_played, "  ·  ") : std::string("Ready to play");
+    const std::string eyebrow_full = eyebrow;
     eyebrow = ui::ellipsize(cf, cf->FontSize, eyebrow, tw);
     shot_trace_once("hero", e.key + " " + eyebrow + (has_resume(e) ? " [resume]" : " [play]"));
     dl->AddText(cf, cf->FontSize, ImVec2(tx, ty), ui::scale_alpha(mix(c1, IM_COL32_WHITE, 0.45f), ha), eyebrow.c_str());
+    if (eyebrow != eyebrow_full && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImVec2(tx, ty), ImVec2(tx + tw, ty + cf->FontSize))) ImGui::SetTooltip("%s", eyebrow_full.c_str());
     ty += cf->FontSize + sp(0.75f);
 
     ImFont* tf = compact ? ui::F.title : ui::F.hero;
@@ -228,10 +241,12 @@ void draw_hero(const hub::GameEntry& e, float h) {
         tf = ui::F.title;
         lines = ui::wrap_lines(tf, tf->FontSize, e.title, tw, 2);
     }
+    const float title_y0 = ty;
     for (auto& ln : lines) {
         ui::text_shadowed(dl, tf, tf->FontSize, ImVec2(tx, ty), ui::scale_alpha(IM_COL32_WHITE, ha), ln.c_str());
         ty += tf->FontSize * 1.08f;
     }
+    if (title_cut(lines, e.title) && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImVec2(tx, title_y0), ImVec2(tx + tw, ty))) ImGui::SetTooltip("%s", e.title.c_str());   // the full title when it is cut off
     ty += sp(0.5f);
 
     // meta pills
@@ -267,6 +282,7 @@ void draw_hero(const hub::GameEntry& e, float h) {
 
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.3f + 0.7f * ha);
     action_row(e, bh, true, ImVec2(tx, by), compact || tw < sp(70.f), true);
+    if (g_play_focused && title_cut(lines, e.title)) ImGui::SetTooltip("%s", e.title.c_str());
     ImGui::PopStyleVar();
     ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
     ImGui::Dummy(ImVec2(w, sp(2.f)));
@@ -375,9 +391,40 @@ void empty_library_state() {
 
 /* ---------- top bar ---------- */
 
-static std::string lib_sort_label = "Sort: Title", lib_friends_label = "Friends' games";   // shortened when the bar is tight (see library_top_bar)
+static std::string lib_sort_label = "Sort: Title", lib_friends_label = "Friends' games";   // one label per control at every width: a tight bar turns the control into an icon, never into different words
+static bool g_lib_overlay = false;   // lib_menu_overlay_body is drawing the bar: the Cases menu never goes compact
+static bool g_lib_compact = false;   // this frame's answer from library_top_bar (the filter chips follow it)
+
+/* An icon-only stand-in for a chip: same height and colours, the full label in the tooltip. kind 0 = sort (three bars), 1 = friends (two people). */
+static bool tb_icon_chip(const char* id, int kind, bool on, ImU32 col, const std::string& tip) {
+    const float h = ImGui::GetFontSize() + sp(1.75f);
+    const ImVec2 sz(h * 1.5f, h);
+    const bool pressed = ImGui::InvisibleButton(id, sz, ImGuiButtonFlags_EnableNav);
+    const bool hov = ImGui::IsItemHovered(), foc = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
+    float* hv = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID(), 0.f);
+    ui::anim(*hv, (hov || foc) ? 1.f : 0.f, 16.f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax(), c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+    dl->AddRectFilled(p0, p1, on ? col : ui::mix(ui::PANEL, ui::PANEL3, *hv), h * 0.5f);
+    if (!on) dl->AddRect(p0, p1, ui::HAIRLINE, h * 0.5f, 0, 1.f);
+    if (foc) ui::focus_ring(dl, p0, p1, h * 0.5f);
+    const ImU32 ic = on ? IM_COL32_WHITE : ui::mix(ui::TEXT2, ui::TEXT, *hv);
+    const float u = h * 0.125f;
+    if (kind == 0) {
+        for (int i = 0; i < 3; ++i) dl->AddRectFilled(ImVec2(c.x - u * (3.0f - i), c.y + (i - 1) * u * 1.5f - u * 0.3f), ImVec2(c.x + u * (3.0f - i), c.y + (i - 1) * u * 1.5f + u * 0.3f), ic, u * 0.3f);
+    } else {
+        dl->AddCircleFilled(ImVec2(c.x - u * 1.5f, c.y - u * 1.1f), u * 1.2f, ic, 12);
+        dl->AddCircleFilled(ImVec2(c.x + u * 1.6f, c.y - u * 0.7f), u * 1.0f, ic, 12);
+        dl->AddRectFilled(ImVec2(c.x - u * 3.1f, c.y + u * 0.5f), ImVec2(c.x + u * 0.1f, c.y + u * 2.2f), ic, u * 0.8f);
+        dl->AddRectFilled(ImVec2(c.x + u * 0.5f, c.y + u * 0.7f), ImVec2(c.x + u * 3.2f, c.y + u * 2.2f), ic, u * 0.7f);
+    }
+    if (hov || foc) ImGui::SetTooltip("%s", tip.c_str());
+    return pressed;
+}
+
 void library_top_bar() {
     ImGuiIO& io = ImGui::GetIO();
+    const float bar_w = ImGui::GetContentRegionAvail().x;   // the whole row, before the view tabs take their share
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);   // D-pad focus starts on the hero / tiles, not here
     static const char* tabs[] = {"Home", "All Games"};
     int cur = A.view == LibView::Home ? 0 : 1;
@@ -395,37 +442,41 @@ void library_top_bar() {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(sp(5.f), (bh - ImGui::GetFontSize()) * 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, bh * 0.5f);
     float search_w = sp(10.f);
-    const char* search_hint = "Search";
+    const char* search_hint = "Search games";
+    const bool compact = !g_lib_overlay && hubui::lc::compact_top(io.DisplaySize.y, bar_w, sp(1.f));   // short or narrow window: slimmer top area
+    g_lib_compact = compact;
+    hubui::lc::Plan plan;   // which controls are icon-only
     const bool dice = A.view == LibView::Home && !A.lib.empty();   // L7: Surprise me
     float total = bh + sp(1.f) + add_games_header_width(bh) + (dice ? bh + sp(1.f) : 0.f);
     const float sw_w = lib_switcher_width() + (A.view == LibView::All ? sp(1.f) : 0.f);
     bool util_low = false;     // wrapped AND still tight: dice / rescan buttons on the second row, right-aligned
     bool wrap_chips = false;   // sort / layout / friends chips on a second row (see below)
     {   // the search box gives way so the pinned right-hand buttons (Add games...) are never pushed past the edge (narrow window / Friends panel open)
-        /* Search keeps a usable width: when the chips would squeeze it, "Friends' games" shortens to "Friends" and then "Sort: X" to "X". */
-        const float min_search = sp(17.f);
+        /* Search keeps a usable width: when the chips would squeeze it, Friends' games and then the sort chip turn into icons (the tooltip has the full label);
+         * the compact bar may also turn Add games into an icon. The words never change. */
+        const float min_search = ImGui::CalcTextSize("Search games").x + sp(9.f);
         const std::string sort_nm = hubui::sort_label(hubui::SortSpec(hubui::sort_from_key(A.st.library_sort), A.st.library_sort_rev, A.st.library_favs_first));
-        auto chips_w = [&](const std::string& s, const std::string& f) { return ImGui::CalcTextSize(s.c_str()).x + ImGui::CalcTextSize(f.c_str()).x + sp(6.5f) + sp(4.5f); };
-        const float base = ImGui::GetContentRegionAvail().x - total - sw_w;
-        for (int lvl = 0; lvl < 3; ++lvl) {
-            lib_sort_label = lvl >= 2 ? sort_nm : "Sort: " + sort_nm;
-            lib_friends_label = lvl >= 1 ? "Friends" : "Friends' games";
-            if (base - chips_w(lib_sort_label, lib_friends_label) >= min_search) break;
-            if (lvl == 2) wrap_chips = true;   // big UI size / narrow window: even the short labels would squeeze the search box, so the chips take a second row
-        }
-        if (wrap_chips) {   // full labels again (the second row has the room); search keeps what the first row has left, but never less than a usable minimum
-            lib_sort_label = "Sort: " + sort_nm;
-            lib_friends_label = "Friends' games";
-            float room1 = ImGui::GetContentRegionAvail().x - total - sp(1.5f);
-            if (room1 < sp(10.f)) { util_low = true; room1 = ImGui::GetContentRegionAvail().x - add_games_header_width(bh) - sp(1.5f); }   // still too tight: the dice / rescan buttons join the second row
+        lib_sort_label = "Sort: " + sort_nm;
+        lib_friends_label = "Friends' games";
+        const float chip_h = ImGui::GetFontSize() + sp(1.75f);
+        const float sort_w = ImGui::CalcTextSize(lib_sort_label.c_str()).x + sp(3.25f), fr_w = ImGui::CalcTextSize(lib_friends_label.c_str()).x + sp(3.25f);
+        const float icon_w = chip_h * 1.5f;
+        const float avail = ImGui::GetContentRegionAvail().x;
+        const float fixed = bh + sp(1.f) + (dice ? bh + sp(1.f) : 0.f) + sw_w + sp(5.f);   // rescan, dice, layout switcher, gaps
+        plan = hubui::lc::plan_row(avail, fixed, sort_w, fr_w, icon_w, add_games_header_width(bh), bh, min_search, compact ? 3 : 2);
+        if (!plan.fits && !compact) {   // big UI size / narrow window: even the icons would squeeze the search box, so the chips take a second row (full labels again)
+            wrap_chips = true;
+            plan.level = 0;
+            float room1 = avail - total - sp(1.5f);
+            if (room1 < sp(10.f)) { util_low = true; room1 = avail - add_games_header_width(bh) - sp(1.5f); }   // still too tight: the dice / rescan buttons join the second row
             search_w = std::max(sp(10.f), std::min(sp(46.f), room1));
         } else {
-            const float room = base - chips_w(lib_sort_label, lib_friends_label);
-            search_w = std::max(sp(10.f), std::min(std::min(sp(46.f), ImGui::GetContentRegionAvail().x * 0.36f), room));
+            const float room = avail - fixed - (plan.sort_icon() ? icon_w : sort_w) - (plan.friends_icon() ? icon_w : fr_w) - (plan.add_icon() ? bh : add_games_header_width(bh));
+            search_w = std::max(sp(10.f), std::min(std::min(sp(46.f), avail * 0.36f), room));
         }
         ImGui::SetNextItemWidth(search_w);
     }
-    {   // the hint gives way to a shorter one instead of being clipped (1280x800): the text starts after the search icon and ends before the rounded edge
+    if (!compact) {   // regular sizes keep the placeholder with the shortcut; it gives way to a shorter one instead of being clipped (1280x800)
         const float room_txt = search_w - sp(5.f) - sp(2.5f);
         static const char* hints[] = {"Search games   (Ctrl+F)", "Search games (Ctrl+F)", "Search games", "Search"};
         search_hint = hints[3];
@@ -433,6 +484,7 @@ void library_top_bar() {
     }
     osk::input("##search", search_hint, A.search_buf, sizeof A.search_buf);
     ImVec2 s0 = ImGui::GetItemRectMin(), s1 = ImGui::GetItemRectMax();
+    if (compact && ImGui::IsItemHovered() && !ImGui::IsItemActive()) ImGui::SetTooltip("Search your games  (Ctrl+F)");
     ImGui::GetWindowDrawList()->AddRect(s0, s1, ImGui::IsItemActive() ? ui::ACCENT : ui::HAIRLINE, bh * 0.5f, 0, 1.f);
     ui::icon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(s0.x + sp(2.5f), (s0.y + s1.y) * 0.5f), sp(2.f), ui::TEXT2);
     ImGui::PopStyleVar(2);
@@ -442,9 +494,12 @@ void library_top_bar() {
     {   // sort chip: A cycles Title / Last played / Most played / Recently added (RT on the pad)
         if (!first_on_row) ImGui::SameLine(0, sp(1.5f));
         std::string sl = lib_sort_label;
-        if (chip(sl.c_str(), hubui::sort_from_key(A.st.library_sort) != hubui::SortMode::Title || A.st.library_sort_rev || A.st.library_favs_first, ui::ACCENT)) cycle_sort(1);
+        const bool sort_on = hubui::sort_from_key(A.st.library_sort) != hubui::SortMode::Title || A.st.library_sort_rev || A.st.library_favs_first;
+        const bool sort_icon = plan.sort_icon() && !wrap_chips;
+        const char* sort_tip = "Change the order of your games  (RT on a controller)\nRight-click: reverse the order";
+        if (sort_icon ? tb_icon_chip("##sort_icon", 0, sort_on, ui::ACCENT, sl + "\n" + sort_tip) : chip(sl.c_str(), sort_on, ui::ACCENT)) cycle_sort(1);
         if (ImGui::IsItemClicked(1)) { A.st.library_sort_rev = !A.st.library_sort_rev; sort_changed(); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change the order of your games  (RT on a controller)\nRight-click: reverse the order");
+        if (!sort_icon && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sort_tip);
     }
     if (A.view == LibView::All) {   // layout switcher: grid / list / compact / showcase
         ImGui::SameLine(0, sp(1.f));
@@ -452,8 +507,9 @@ void library_top_bar() {
     }
     {   // "Show friends' games": friends' titles you do not own, greyed out (metadata only)
         ImGui::SameLine(0, sp(1.f));
-        if (chip(lib_friends_label.c_str(), A.friends_chip, ui::ACCENT)) { A.friends_chip = !A.friends_chip; A.vis_dirty = true; }   // session-only: never saved
-        if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) ImGui::SetTooltip("Show or hide friends' games for now");
+        const bool fr_icon = plan.friends_icon() && !wrap_chips;
+        if (fr_icon ? tb_icon_chip("##friends_icon", 1, A.friends_chip, ui::ACCENT, lib_friends_label + "\nShow or hide friends' games for now") : chip(lib_friends_label.c_str(), A.friends_chip, ui::ACCENT)) { A.friends_chip = !A.friends_chip; A.vis_dirty = true; }   // session-only: never saved
+        if (!fr_icon && (ImGui::IsItemHovered() || ImGui::IsItemFocused())) ImGui::SetTooltip("Show or hide friends' games for now");
     }
     };
     if (!wrap_chips) draw_chips(false);
@@ -472,7 +528,10 @@ void library_top_bar() {
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ax - (util_low ? add_w : total)));
     }
     if (!util_low) { draw_utility(); ImGui::SameLine(0, sp(1.f)); }
-    add_games_header_button(bh);
+    if (plan.add_icon()) {
+        if (ui::icon_button("add_games_icon", ui::Icon::Plus, bh, true, nullptr)) add_games_open();
+        if (ImGui::IsItemHovered() || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible)) ImGui::SetTooltip("Add games");
+    } else add_games_header_button(bh);
     if (wrap_chips) {   // second row, left-aligned under the search box
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         draw_chips(true);
@@ -502,14 +561,18 @@ void library_top_bar() {
         std::snprintf(buf, sizeof buf, t2 > 0 ? "Scanning your games...  %d / %d" : "Scanning your games...", d, t2);
         dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(o.x + sp(0.25f), o.y + sp(1.25f)), ui::TEXT3, buf);
     }
-    ImGui::Dummy(ImVec2(w, sp(A.scanning ? 3.25f : 1.5f)));
+    ImGui::Dummy(ImVec2(w, sp(A.scanning ? (compact ? 2.5f : 3.25f) : (compact ? 0.25f : 1.5f))));
+    if (compact) ImGui::SetCursorPosY(ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y * 1.5f);   // pull the filter chips up under the bar
 }
 
 /* ---------- All Games ---------- */
 
+/* The selected-game bar under the grid is slimmer on a short window (the grid gets the room). */
+static float sel_bar_h() { return g_lib_compact && !g_lib_overlay ? sp(6.5f) : sp(8.f); }
+
 void selected_bar(const hub::GameEntry& e) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    float w = ImGui::GetContentRegionAvail().x, h = sp(8.f);
+    float w = ImGui::GetContentRegionAvail().x, h = sel_bar_h();
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
     dl->AddRectFilled(p0, p1, ui::PANEL, sp(2.f));
     dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.f), 0, 1.f);
@@ -524,16 +587,21 @@ void selected_bar(const hub::GameEntry& e) {
     ts.c1 = c1;
     if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, sp(1.25f));
     else draw_no_art(dl, ts, a0, a1, sp(1.25f), 1.f);
-    float bh = sp(5.f);
+    float bh = h < sp(8.f) ? sp(4.5f) : sp(5.f);
     float row_w = action_row(e, bh, false, ImVec2(0, 0), true);
     float tx = a1.x + sp(2.f);
     float text_w = std::max(sp(8.f), p1.x - sp(2.f) - row_w - tx - sp(2.f));
     const hub::GameState& gs = gstate(e.key);
-    dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(tx, p0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.h2, ui::F.h2->FontSize, e.title, text_w).c_str());
+    const std::string bar_title = ui::ellipsize(ui::F.h2, ui::F.h2->FontSize, e.title, text_w);
+    dl->AddText(ui::F.h2, ui::F.h2->FontSize, ImVec2(tx, p0.y + sp(1.25f)), ui::TEXT, bar_title.c_str());
     std::string sub = std::string(hub::console_name(e)) + "  -  " + hubui::format_play_time(gs.play_seconds);
-    dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.25f) + ui::F.h2->FontSize + sp(0.5f)), ui::TEXT2,
-                ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, text_w).c_str());
+    const std::string bar_sub = ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, text_w);
+    dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.25f) + ui::F.h2->FontSize + sp(0.5f)), ui::TEXT2, bar_sub.c_str());
+    if ((bar_title != e.title || bar_sub != sub) && ImGui::IsWindowHovered() &&
+        ImGui::IsMouseHoveringRect(ImVec2(tx, p0.y + sp(1.25f)), ImVec2(tx + text_w, p0.y + sp(1.25f) + ui::F.h2->FontSize + sp(0.5f) + ui::F.cap->FontSize)))
+        ImGui::SetTooltip("%s", bar_title != e.title ? e.title.c_str() : sub.c_str());
     action_row(e, bh, true, ImVec2(p1.x - sp(2.f) - row_w, p0.y + (h - bh) * 0.5f), true);
+    if (g_play_focused && (bar_title != e.title || bar_sub != sub)) ImGui::SetTooltip("%s", bar_title != e.title ? e.title.c_str() : sub.c_str());
     ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
     ImGui::Dummy(ImVec2(w, 1));
 }
@@ -547,9 +615,18 @@ void library_filter_chips() {
     std::map<std::string, int>& counts = A.chip_counts;
     /* At big UI sizes the wrapped chip rows alone could fill the page and push the grid out of view: the rows live in a child that is as tall as
      * its rows, up to about a quarter of the page, and scrolls past that. (Padding-free, so at normal sizes it looks exactly like before.) */
+    const bool compact = g_lib_compact && !g_lib_overlay && lib_layout() != hubui::LibLayout::Cases;   // short window: ONE row that scrolls sideways, the health chip rides at its end
+    static bool compact_overflow = false;   // last frame's answer: reserve room for the thin scrollbar only while the row overflows
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, std::max(sp(7.f), ImGui::GetContentRegionAvail().y * 0.25f)));
-    ImGui::BeginChild("##lib_chips", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground);
+    if (compact) {
+        const float ch = ImGui::GetFontSize() + sp(1.75f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, sp(0.6f));
+        ImGui::BeginChild("##lib_chips", ImVec2(0, hubui::lc::chips_row_h(ch + sp(0.5f), sp(0.6f), compact_overflow)), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::PopStyleVar();
+    } else {
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, std::max(sp(7.f), ImGui::GetContentRegionAvail().y * 0.25f)));
+        ImGui::BeginChild("##lib_chips", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground);
+    }
     ImGui::PopStyleVar();
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(1.f), sp(1.f)));
     /* The chip rows wrap onto a new line instead of running off the right edge (1280x800 / 1100x700). */
@@ -558,9 +635,17 @@ void library_filter_chips() {
     auto chip_same_line = [&](const char* label, float spacing) {
         if (first) return;   // nothing before it on this row yet (Cases hides the console chips)
         if (spacing < 0.f) spacing = ImGui::GetStyle().ItemSpacing.x;
+        if (compact) { ImGui::SameLine(0, spacing); return; }   // never wrap: the row scrolls instead
         if (ImGui::GetItemRectMax().x + spacing + ImGui::CalcTextSize(label).x + sp(3.25f) <= chips_right) ImGui::SameLine(0, spacing);
     };
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
+    if (compact) {   // the health chip leads the row (only drawn when there is something to say): one small chip that opens the same panel as a popup (verify_ui.cpp)
+        ImGui::PushID("health");
+        first = !verify_library_card(true);
+        ImGui::PopID();
+        if (!first) ImGui::SameLine(0, sp(1.f));
+        first = true;   // the console chips below start the line themselves; the SameLine above joined them
+    }
     const bool cases_view = lib_layout() == hubui::LibLayout::Cases;   // Cases has its own console tabs along the top
     for (auto& c : chips) {
         if (cases_view) break;
@@ -635,17 +720,25 @@ void library_filter_chips() {
     }
     ImGui::PopItemFlag();
     ImGui::PopStyleVar();
+    if (compact) {
+        compact_overflow = ImGui::GetScrollMaxX() > 0.f;
+        const ImGuiIO& cio = ImGui::GetIO();   // the wheel scrolls the row sideways
+        if (compact_overflow && ImGui::IsWindowHovered() && cio.MouseWheel != 0.f) ImGui::SetScrollX(ImGui::GetScrollX() - cio.MouseWheel * sp(6.f));
+    }
     ImGui::EndChild();
+    if (compact) ImGui::SetCursorPosY(ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y * 0.75f);   // and the grid up under the chips
     hidden_strip_draw();   // "Show hidden" on: the hidden games, dimmed, each with Unhide (libcopies_ui.cpp)
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    ImGui::Dummy(ImVec2(0, compact ? sp(0.f) : sp(0.5f)));
 }
 
 /* The Cases menu overlay (libview_ui.cpp slides it down over the carousel): the toolbar (Home / All Games, search, sort, layout switcher to
  * leave Cases, friends' games, rescan, add games), the filters, and a button for every page, so nothing is out of reach. */
 void lib_menu_overlay_body(bool* close) {
+    g_lib_overlay = true;   // the Cases menu keeps the regular (non-compact) bar and chips
     library_top_bar();
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     library_filter_chips();
+    g_lib_overlay = false;
     static const struct { Page p; const char* label; } pages[] = {{Page::Discover, "Discover"}, {Page::Online, "Play Online"}, {Page::Saves, "Saves"},
                                                                   {Page::Controllers, "Controllers"}, {Page::Settings, "Settings"}, {Page::About, "Updates"}};
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, false);
@@ -661,12 +754,12 @@ void all_games_view() {
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     const bool cases_view = lib_layout() == hubui::LibLayout::Cases;   // immersive: the filters live in its menu overlay
     if (!cases_view) library_filter_chips();
-    if (!cases_view) verify_library_card();   // Wave 3 L3: only when there is something to say (Cases is a full-screen view: it stays out)
+    if (!cases_view && !g_lib_compact) verify_library_card();   // Wave 3 L3: only when there is something to say (Cases is a full-screen view: it stays out)
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
 
     const hubui::fg::Ghost* selg = (lib_layout_has_bar() && !A.sel_ghost.empty()) ? find_ghost(A.sel_ghost) : nullptr;   // a friend's game is selected
     const hub::GameEntry* sel = (lib_layout_has_bar() && !selg) ? find_entry(A.sel_game) : nullptr;
-    float bar_h = (sel || selg) ? sp(8.f) + ImGui::GetStyle().ItemSpacing.y + 2.f : 0;   // selected bar + the gap above it
+    float bar_h = (sel || selg) ? (selg ? sp(8.f) : sel_bar_h()) + ImGui::GetStyle().ItemSpacing.y + 2.f : 0;   // selected bar + the gap above it
     if (A.vis.empty() && !cases_view) {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(1.5f), sp(1.5f)));
         if (A.grid_scroll_top) { ImGui::SetNextWindowScroll(ImVec2(0.f, 0.f)); A.grid_scroll_top = false; }
@@ -924,13 +1017,18 @@ void draw_details_modal() {
     ImGuiIO& io = ImGui::GetIO();
     float w = std::min(sp(104.f), io.DisplaySize.x * 0.92f);
     ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    const float win_max_h = io.DisplaySize.y * 0.92f;
     ImGui::SetNextWindowSize(ImVec2(w, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0), ImVec2(w, win_max_h));   // never taller than the window: the tab body scrolls above a fixed footer
+    const bool short_win = io.DisplaySize.y < hubui::lc::kShortWindowPx;   // short window: tighter padding and gaps so the body keeps some height
+    const float win_pad = short_win ? sp(2.f) : sp(3.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(win_pad, win_pad));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
     bool open = ImGui::BeginPopupModal("##details", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
     ImGui::PopStyleVar(2);
     if (!open) return;
     if (!ep || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    if (short_win) ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.75f)));
     const hub::GameEntry& e = *ep;
     g_details_shown = e.key;
     const hub::GameState& gs = gstate(e.key);
@@ -945,7 +1043,7 @@ void draw_details_modal() {
     ImVec2 o = ImGui::GetCursorScreenPos();
     float avail = ImGui::GetContentRegionAvail().x;
     bool with_art = avail > sp(62.f);
-    float aw = with_art ? sp(20.f) : 0, ah = aw / kTileAspect;
+    float aw = with_art ? (io.DisplaySize.y < hubui::lc::kShortWindowPx ? sp(14.f) : sp(20.f)) : 0, ah = aw / kTileAspect;   // slimmer header on a short window
     if (with_art) {
         ArtRef art = art_for_entry(e);
         TileSpec ts;
@@ -990,31 +1088,7 @@ void draw_details_modal() {
             ImGui::TextUnformatted("Not played yet");
             ImGui::PopStyleColor();
         } else {
-            const std::string full = hubui::pt::header_line(pst.total_secs, pst.last_played, pt_now, pt_tz, dot);
-            const std::string hp = hubui::pt::hours_played(pst.total_secs);
-            const bool has_hp = !hp.empty() && full.compare(0, hp.size(), hp) == 0;
-            std::string rest = has_hp ? full.substr(hp.size()) : full;
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
-            if (has_hp) {
-                ImGui::PushFont(ui::F.bold);
-                const float hw = ImGui::CalcTextSize(hp.c_str()).x;
-                ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT);
-                ImGui::TextUnformatted(hp.c_str());
-                ImGui::PopStyleColor();
-                ImGui::PopFont();
-                if (!rest.empty()) {
-                    if (hw + ImGui::CalcTextSize(rest.c_str()).x <= tw) ImGui::SameLine(0, 0);
-                    else rest = rest.substr(std::min(rest.size(), std::strlen(dot)));   // too narrow: the rest wraps onto its own line, without the separator
-                    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-                    ImGui::TextWrapped("%s", rest.c_str());
-                    ImGui::PopStyleColor();
-                }
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-                ImGui::TextWrapped("%s", rest.c_str());
-                ImGui::PopStyleColor();
-            }
-            ImGui::PopTextWrapPos();
+            /* The stats strip below says it all (Play time, Last played, ...): no extra bold hours line above it. */
             const std::vector<hubui::pt::Cell> cells = hubui::pt::strip_cells(pst, pt_now, pt_tz);
             if (!cells.empty()) {
                 ImGui::Dummy(ImVec2(0, sp(0.75f)));
@@ -1132,25 +1206,35 @@ void draw_details_modal() {
     if (!native) tabs.push_back({TabSaves, "Saves"});
     if (nshots > 0) tabs.push_back({TabShots, "Screenshots (" + std::to_string(nshots) + ")"});
     if (has_settings) tabs.push_back({TabSettings, "Settings"});
+    int tab_shown = tab;   // what is drawn; `tab` keeps the request so a gallery that is seeded a frame later still lands on its tab
     {
         bool ok = false;
         for (auto& t : tabs) ok |= t.id == tab;
-        if (!ok && !(g_headless && std::getenv("HUB_SHOT_TAB"))) tab = TabAbout;
+        if (!ok) {
+            if (g_headless && std::getenv("HUB_SHOT_TAB")) {   // the screenshot aid asked for a tab this game does not have: clamp to the nearest one that exists
+                tab_shown = tabs.back().id;
+                for (auto& t : tabs) if (t.id >= tab) { tab_shown = t.id; break; }
+            } else tab = tab_shown = TabAbout;
+        }
     }
     for (size_t i = 0; i < tabs.size(); ++i) {
         float w = label_w(tabs[i].label.c_str(), false) - sp(1.5f);
         if (i) ImGui::SameLine(0, sp(1.f));
         ImGui::PushID((int)i);
-        if (button(tabs[i].label.c_str(), ImVec2(w, sp(4.f)), tab == tabs[i].id)) tab = tabs[i].id;
+        if (button(tabs[i].label.c_str(), ImVec2(w, sp(4.f)), tab_shown == tabs[i].id)) tab = tab_shown = tabs[i].id;
         ImGui::PopID();
     }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     /* the content area keeps one height for every tab so the page does not jump; it scrolls inside if needed */
-    float room = io.DisplaySize.y * 0.92f - ImGui::GetCursorPosY() - (bh2 + sp(1.5f) + sp(3.f) + sp(1.f));
-    float tabh = std::max(sp(12.f), std::min(sp(36.f), room));
+    /* The footer (secondary actions, wraps to several rows) keeps its measured height from the last frame; the body takes what is left of the
+     * window's maximum height and scrolls inside it, so nothing is ever hidden behind the buttons. */
+    static float footer_h = 0.f;
+    const float footer_est = footer_h > 0.f ? footer_h : bh2 * 2.f + sp(1.5f);
+    float room = hubui::lc::body_room(win_max_h, ImGui::GetCursorPosY(), footer_est + sp(1.f), win_pad, sp(6.f));
+    float tabh = std::min(sp(36.f), room);
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, std::min(tabh, sp(15.f))), ImVec2(FLT_MAX, tabh));
     ImGui::BeginChild("##tabbody", ImVec2(0, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AutoResizeY);
-    if (tab == TabAbout) {
+    if (tab_shown == TabAbout) {
         dumpwarn_details_section(e);   // first: a copy that looks incomplete must be seen without scrolling
         nuprepair_details_section(e);   // a damaged .nup copy RetroHub fills in at launch
         gameinfo_ui_section(e, cat ? cat->title : std::string(), 2);
@@ -1190,7 +1274,7 @@ void draw_details_modal() {
             ImGui::PopTextWrapPos();
             ImGui::PopStyleColor();
         }
-    } else if (tab == TabSaves) {
+    } else if (tab_shown == TabSaves) {
         std::string sv;
         if (A.info_battery_files > 0) sv = "Save data: " + std::to_string(A.info_battery_files) + " file(s), " + size_text(A.info_battery_bytes);
         if (A.info_state_files > 0 || A.info_auto_state) {
@@ -1203,15 +1287,16 @@ void draw_details_modal() {
         history_ui_details_section(e);
         resume_details_section(e);   // Wave 3 R1
         draw_state_strip(e);
-    } else if (tab == TabShots) {
+    } else if (tab_shown == TabShots) {
         shots_gallery(e);
-    } else if (tab == TabSettings) {
+    } else if (tab_shown == TabSettings) {
         gs_draw_game_section(e);
     }
     ImGui::EndChild();
     ImGui::Dummy(ImVec2(0, sp(1.f)));
 
     /* secondary actions */
+    const float footer_y0 = ImGui::GetCursorPosY();
     row_started = false;
     const char* fav_label = gs.favorite ? "Unfavorite" : "Favorite";
     place(label_w(fav_label, true));
@@ -1272,11 +1357,14 @@ void draw_details_modal() {
             hide_game_now(hk);   // e is gone from the library after this: nothing below may use it
             A.show_details = false;
             ImGui::CloseCurrentPopup();
+            if (short_win) ImGui::PopStyleVar();
             ImGui::EndPopup();
             return;   // nothing after this touches the (now removed) entry
         }
     }
+    footer_h = ImGui::GetCursorPosY() - footer_y0 + ImGui::GetStyle().ItemSpacing.y;
     custom_draw(1);   // Customize / Add to shelf modals nest inside this one
+    if (short_win) ImGui::PopStyleVar();
     ImGui::EndPopup();
 }
 
