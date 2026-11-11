@@ -1,6 +1,19 @@
 {
   "versions": [
     {
+      "version": "1.41.0",
+      "date": "2026-11-10",
+      "title": "Crash notices, Ocarina of Time options, tidier save folders",
+      "new": [
+        "RetroHub now tells you when an emulator stopped unexpectedly or could not start. The note has buttons to open the crash file folder and the emulator's log, and to copy the details. It waits until you are back in RetroHub and never appears over a game",
+        "Ocarina of Time on Fritchii has three new options in the game's settings: high refresh rate (experimental, above 60 fps at normal game speed), its frame rate cap, and anti-aliasing. Left alone, they keep Fritchii's own settings"
+      ],
+      "improved": [],
+      "fixed": [
+        "Looking at a game no longer creates empty battery and states folders for it in the save vault. Folders that already exist are left alone"
+      ]
+    },
+    {
       "version": "1.40.11",
       "date": "2026-11-10",
       "title": "Ocarina of Time: shader preparation crash fixed",
