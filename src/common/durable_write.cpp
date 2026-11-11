@@ -5,6 +5,10 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <mutex>
+#include <set>
 #include <system_error>
 
 namespace durable {
@@ -137,6 +141,75 @@ bool commit_replace_ansi(const std::string& tmp, const std::string& dst, int bud
         return r;
     };
     return commit_replace(w(tmp), w(dst), budget_ms);
+}
+
+static std::wstring mb_to_wide(UINT cp, const std::string& s) {
+    if (s.empty()) return std::wstring();
+    int n = MultiByteToWideChar(cp, 0, s.data(), (int)s.size(), nullptr, 0);
+    std::wstring r(n > 0 ? n : 0, L'\0');
+    if (n > 0) MultiByteToWideChar(cp, 0, s.data(), (int)s.size(), &r[0], n);
+    return r;
+}
+std::wstring utf8_to_wide(const std::string& utf8) { return mb_to_wide(CP_UTF8, utf8); }
+std::wstring legacy_ansi_to_wide(const std::string& utf8) { return mb_to_wide(CP_ACP, utf8); }
+
+bool commit_replace_utf8(const std::string& tmp, const std::string& dst, int budget_ms) {
+    return commit_replace(utf8_to_wide(tmp), utf8_to_wide(dst), budget_ms);
+}
+
+static bool slurp_wide(const std::wstring& w, std::string* out) {
+    std::ifstream f(std::filesystem::path(w), std::ios::binary);
+    if (!f) return false;
+    out->assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+
+/* Paths whose last read found an existing but unreadable file: writes to them are refused for the rest of the session, so a caller
+ * running on in-memory defaults can never replace the real file. */
+static std::mutex g_guard_mu;
+static std::set<std::wstring>& guarded() { static std::set<std::wstring> s; return s; }
+static void guard_set(const std::wstring& p, bool on) { std::lock_guard<std::mutex> l(g_guard_mu); if (on) guarded().insert(p); else guarded().erase(p); }
+static bool guard_has(const std::wstring& p) { std::lock_guard<std::mutex> l(g_guard_mu); return guarded().count(p) != 0; }
+
+static bool missing_err(DWORD e) { return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND || e == ERROR_INVALID_NAME; }
+
+ReadResult read_file_utf8_migrating(const std::string& path, std::string* bytes) {
+    bytes->clear();
+    const std::wstring good = utf8_to_wide(path);
+    const int attempts = attempts_for(kRetryShortMs);
+    for (int i = 0; i < attempts; ++i) {
+        if (slurp_wide(good, bytes)) { guard_set(good, false); return ReadResult::Primary; }
+        bytes->clear();
+        DWORD a = GetFileAttributesW(lp(good).c_str());
+        if (a == INVALID_FILE_ATTRIBUTES && missing_err(GetLastError())) break;   // really absent: legacy fallback below
+        if (i + 1 == attempts) { guard_set(good, true); return ReadResult::Unreadable; }   // exists but locked / denied: never fall back
+        Sleep(kWaitMs);
+    }
+    guard_set(good, false);
+    const std::wstring old = legacy_ansi_to_wide(path);
+    if (old != good && !old.empty() && slurp_wide(old, bytes)) return ReadResult::Legacy;
+    bytes->clear();
+    return ReadResult::NotFound;
+}
+
+bool write_file_atomic_utf8(const std::string& path, const std::string& bytes, int budget_ms) {
+    const std::string tmp = path + ".tmp";
+    const std::wstring wtmp = utf8_to_wide(tmp);
+    if (guard_has(utf8_to_wide(path))) { SetLastError(ERROR_ACCESS_DENIED); return false; }   // the real file was unreadable at load
+    {
+        std::ofstream f(std::filesystem::path(wtmp), std::ios::binary | std::ios::trunc);
+        if (!f) return false;
+        f.write(bytes.data(), (std::streamsize)bytes.size());
+        f.flush();
+        if (!f.good()) { f.close(); std::error_code ec; std::filesystem::remove(std::filesystem::path(wtmp), ec); return false; }
+    }
+    if (!commit_replace(wtmp, utf8_to_wide(path), budget_ms)) {
+        DWORD e = GetLastError();
+        std::error_code ec; std::filesystem::remove(std::filesystem::path(wtmp), ec);
+        SetLastError(e);
+        return false;
+    }
+    return true;
 }
 
 bool write_file_durable(const std::wstring& dst, const void* bytes, size_t len, int budget_ms) {

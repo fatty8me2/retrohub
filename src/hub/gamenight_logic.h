@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "json.h"
+#include "durable_write.h"
 
 namespace hubui {
 namespace night {
@@ -214,22 +215,21 @@ inline bool from_json(const std::string& text, Plans* out) {
     return true;
 }
 
+/* Same UTF-8 path + legacy-location migration as hubui::load_settings (see there). */
+inline bool save(const std::string& path, const Plans& p);
 inline bool load(const std::string& path, Plans* out) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return false;
-    std::stringstream ss;
-    ss << f.rdbuf();
-    return from_json(ss.str(), out);
+    std::string text;
+    const durable::ReadResult r = durable::read_file_utf8_migrating(path, &text);
+    if (r == durable::ReadResult::NotFound || r == durable::ReadResult::Unreadable) return false;   // Unreadable: saves to this path are refused (durable guard)
+    if (!from_json(text, out)) return false;
+    if (r == durable::ReadResult::Legacy) save(path, *out);
+    return true;
 }
 inline bool save(const std::string& path, const Plans& p) {
     std::error_code ec;
-    std::filesystem::path pp(path);
+    std::filesystem::path pp = std::filesystem::path(durable::utf8_to_wide(path));
     if (pp.has_parent_path()) std::filesystem::create_directories(pp.parent_path(), ec);
-    std::string tmp = path + ".tmp";
-    { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); if (!f) return false; f << to_json(p); if (!f) return false; }
-    std::filesystem::rename(tmp, path, ec);
-    if (ec) { std::filesystem::remove(path, ec); std::filesystem::rename(tmp, path, ec); }
-    return !ec;
+    return durable::write_file_atomic_utf8(path, to_json(p));
 }
 
 /* ---- "Add to calendar": a standard iCalendar (RFC 5545) file for one game night ----

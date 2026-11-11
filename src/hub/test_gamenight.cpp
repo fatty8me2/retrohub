@@ -46,6 +46,34 @@ int main() {
     CHECK(save(path, pl));
     Plans r; CHECK(load(path, &r) && r.v.size() == 2 && r.v[0].reminded && r.v[0].invitees.size() == 1 && r.v[1].id == "y@2");
     std::filesystem::remove_all(std::filesystem::path(path).parent_path());
+    {   // UTF-8 path round trip + legacy (ANSI-misread) migration + failed save keeps the old file
+        namespace fs = std::filesystem; std::error_code ec;
+        auto u8 = [](const fs::path& p) { auto q = p.u8string(); return std::string(q.begin(), q.end()); };
+        const std::string dir = u8(fs::temp_directory_path()) + "\\gn_utf8_Zo\xC3\xAB_\xD0\x96_\xE6\x97\xA5", f = dir + "\\gamenights.json";
+        const std::wstring good = durable::utf8_to_wide(f), old = durable::legacy_ansi_to_wide(f);
+        fs::remove_all(fs::path(durable::utf8_to_wide(dir)), ec);
+        CHECK(save(f, pl));   // creates the (non-ASCII) folder itself
+        Plans q; CHECK(load(f, &q) && q.v.size() == 2 && q.v[0].reminded);
+        std::string before; { std::ifstream in(fs::path(good), std::ios::binary); std::stringstream ss; ss << in.rdbuf(); before = ss.str(); }
+        fs::create_directories(fs::path(good + L".tmp"), ec);
+        Plans one = pl; one.v.pop_back(); CHECK(!save(f, one));
+        { std::ifstream in(fs::path(good), std::ios::binary); std::stringstream ss; ss << in.rdbuf(); CHECK(ss.str() == before); }
+        fs::remove_all(fs::path(good + L".tmp"), ec);
+        fs::remove_all(fs::path(durable::utf8_to_wide(dir)), ec);
+        const fs::path olddir = fs::path(old).parent_path();
+        if (old == good) std::printf("  gamenight: path is ASCII-equivalent here, legacy case n/a\n");
+        else {
+            fs::create_directories(olddir, ec);
+            if (!fs::exists(olddir)) std::printf("  SKIP gamenight legacy migration: ANSI path not creatable\n");
+            else {
+                { std::ofstream o(fs::path(old), std::ios::binary); o << to_json(pl); }
+                Plans m; CHECK(load(f, &m) && m.v.size() == 2 && fs::exists(fs::path(good)) && fs::exists(fs::path(old)));
+                std::printf("  gamenight legacy migration: ok\n");
+            }
+            fs::remove_all(olddir, ec);
+        }
+        fs::remove_all(fs::path(durable::utf8_to_wide(dir)), ec);
+    }
     CHECK(!from_json("garbage", &r));
     // ---- scheduled toast decisions (social-F15), mock scheduler: nothing real is created ----
     struct Mock : hubtoast::IScheduler {
