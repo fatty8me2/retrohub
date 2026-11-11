@@ -136,6 +136,15 @@ std::vector<SkippedArchive> scan_skipped_archives();
 /* ---- unpacked-games cache (data_dir()/rom-cache) ----
  * Archives are unpacked ONCE (cartridge ROMs at scan time, discs on first Play) and reused until the archive changes.
  * The user's archive is never touched. Entries are evicted least-recently-used when a limit is set. */
+/* Cooperative cancel for app exit. scan_request_cancel() makes scan_library (and the unpacks / rom_cache_clear / _trim running under it) stop at their next
+ * check point; a cancelled scan_library returns an empty list and writes nothing (the cache on disk stays the old one, complete). The flag stays set until
+ * scan_cancel_reset_for_tests() (tests only: the app exits afterwards). rom_cache_busy(): a clear or trim runs or waits (grey the cache buttons). */
+void scan_request_cancel();
+void scan_cancel_reset_for_tests();   // tests only: the app exits after a cancel
+bool scan_result_applies();           // false once cancelled: the (empty) result of a cancelled scan is never applied or saved
+int child_wait_cancellable(void* process, unsigned timeout_ms);   // exposed for tests: 0 exited, 1 timed out (ended), 2 cancelled (ended)
+bool scan_cancelled();
+bool rom_cache_busy();
 uint64_t rom_cache_bytes();                          // disk space used by unpacked games
 bool rom_cache_clear();                              // delete every unpacked game (the next scan unpacks cartridges again)
 void rom_cache_set_limit(uint64_t bytes);            // 0 = unlimited (default 40 GB until the hub sets it)

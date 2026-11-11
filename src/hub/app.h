@@ -1047,6 +1047,7 @@ void cloud_ui_ask_lease(const hub::saves::GameId& g, const std::string& title, c
 
 /* ---- find_games_ui.cpp ---- */
 void find_games_open();   // start the scan + checklist modal (first run, Settings > ROM folders)
+void settings_cache_shutdown();   // page_settings.cpp: join the ROM-cache measure / clear / trim threads (app exit)
 void find_games_shutdown();   // cancel + join a running scan (call at app exit)
 void draw_find_games();   // call every frame
 void wizard_open();   // first-run setup wizard (Welcome, Controller, Games, Name); Settings > Run setup again
