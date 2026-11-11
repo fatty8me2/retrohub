@@ -514,8 +514,8 @@ const char* short_name(const std::string& id);
 void system_colors(hub::System s, ImU32* a, ImU32* b);
 const char* sys_badge(hub::System s);
 void console_colors(const std::string& console, ImU32* a, ImU32* b);   // like system_colors for a library.h console id ("switch2" has its own colours)
-const char* console_badge(const std::string& console);                 // like sys_badge for a console id ("SWITCH 2")
-const char* sys_badge(const hub::GameEntry& e);   // like sys_badge(System) but a Switch 2 game reads "SWITCH 2"
+const char* console_badge(const std::string& console);                 // like sys_badge for a console id ("Switch 2")
+const char* sys_badge(const hub::GameEntry& e);   // like sys_badge(System) but a Switch 2 game reads "Switch 2"
 void entry_colors(const hub::GameEntry& e, ImU32* a, ImU32* b);
 
 

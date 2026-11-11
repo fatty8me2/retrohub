@@ -31,7 +31,7 @@ static void online_friend_rooms_panel(float w) {
         if (++shown > 6) break;
         ImGui::PushID(f->uid.c_str());
         std::string game = f->status.game_title.empty() ? std::string("a game") : f->status.game_title;
-        std::string line = f->name + "  -  " + game;
+        std::string line = f->name + " is in a room playing " + game;
         if (f->status.max_players > 0) line += "  (" + std::to_string(f->status.players) + "/" + std::to_string(f->status.max_players) + ")";
         float bw = sp(10.f), bh = sp(3.5f);
         ImVec2 p = ImGui::GetCursorScreenPos();
@@ -69,11 +69,11 @@ void page_online_home() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, same_h), ImVec2(FLT_MAX, FLT_MAX));
     begin_panel("host", ImVec2(w, 0));
     ImGui::PushFont(ui::F.h2);
-    ImGui::TextUnformatted("Host a room");
+    ImGui::TextUnformatted("Start a room");
     ImGui::PopFont();
-    text_wrapped_disabled("Create a room, pick a game everyone owns, and share the 6-letter code.");
+    text_wrapped_disabled("Create a room, pick a game, and share its 6-character code with your friends.");
     ImGui::Dummy(ImVec2(0, 8 * S));
-    if (button("Host Room", ImVec2(-1, sp(7.f)), true, A.proc == nullptr && access_ok, ui::Icon::Globe)) enter_room(true, hubnet::new_room_code());
+    if (button("Host a room", ImVec2(-1, sp(7.f)), true, A.proc == nullptr && access_ok, ui::Icon::Globe)) enter_room(true, hubnet::new_room_code());
     if (!group_last_label().empty()) {
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         if (button(group_last_label().c_str(), ImVec2(-1, sp(5.f)), false, A.proc == nullptr, ui::Icon::Globe)) group_invite_last();
@@ -88,7 +88,7 @@ void page_online_home() {
     ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Join a room");
     ImGui::PopFont();
-    text_wrapped_disabled("Type the 6-character code your friend gave you, or paste it here from a message or an invite link. Joining puts you in their room right away.");
+    text_wrapped_disabled("Type the 6-character code your friend gave you, or paste it here from a message or an invite link.");
     ImGui::Dummy(ImVec2(0, 8 * S));
     char buf[16];
     std::snprintf(buf, sizeof buf, "%s", A.join_buf.c_str());
@@ -100,7 +100,7 @@ void page_online_home() {
     bool valid = hubnet::valid_room_code(A.join_buf);
     ImGui::SameLine();
     bool go = button("Join", ImVec2(120 * S, 0), true, valid && A.proc == nullptr && access_ok);
-    if (!A.join_buf.empty() && !valid) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_WARN), "Codes are 6 letters/digits (no I, O, 0, 1).");
+    if (!A.join_buf.empty() && !valid) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(COL_WARN), "Room codes have 6 characters: letters and numbers, never I, O, 0 or 1.");
     if ((go || (enter && valid)) && access_ok) enter_room(false, A.join_buf);
     join_nat = natural_h();
     end_panel();
@@ -126,9 +126,9 @@ void page_online_home() {
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     int online_games = 0;
     for (auto& e : A.lib) if (supports_online(e)) ++online_games;
-    static const char* steps[] = {"Host a room (or join with a code) - everyone in the room sees each other's games.",
-                                  "The host picks a game that everybody owns, then everyone presses Ready.",
-                                  "The host presses Launch - the game starts on every PC at the same moment."};
+    static const char* steps[] = {"Host a room, or join one with a 6-character code. Everyone in the room can see each other's games.",
+                                  "The host picks a game, then everyone presses Ready. Wii U games are streamed from the host, so friends do not need a copy.",
+                                  "The host presses Launch. The game starts on every PC at the same time."};
     ImDrawList* dl = ImGui::GetWindowDrawList();
     for (int i = 0; i < 3; ++i) {
         ImVec2 p = ImGui::GetCursorScreenPos();
