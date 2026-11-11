@@ -30,6 +30,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <shared_mutex>
 #include <system_error>
 #include <thread>
 #include <unordered_map>
@@ -1097,6 +1098,24 @@ uint64_t library_identify_count() { return g_identify_calls.load(); }
 namespace {
 fs::path lib_dir();   // defined below, in this file's unnamed namespace
 
+/* Cooperative cancel (set at app exit): scan_library, the archive unpacks it starts and rom_cache_clear / _trim stop at their next check point. */
+std::atomic<bool> g_cancel{false};
+/* The rom-cache guard: every unpack holds it shared (many scan workers may unpack together), clear and trim hold it exclusive, so a folder is never removed
+ * while it is being written and two removers never run together. g_cache_excl counts removers that run or wait (the UI greys its buttons meanwhile). */
+std::shared_mutex g_cache_mu;
+std::atomic<int> g_cache_excl{0};
+struct CacheRemoverGuard {
+    CacheRemoverGuard() { g_cache_excl.fetch_add(1); lk = std::unique_lock<std::shared_mutex>(g_cache_mu); }
+    ~CacheRemoverGuard() { lk.unlock(); g_cache_excl.fetch_sub(1); }
+    std::unique_lock<std::shared_mutex> lk;
+};
+
+/* miniz write callback for an extraction to a file that also stops when the app is closing. */
+size_t cancel_file_write_cb(void* user, mz_uint64 /*ofs*/, const void* data, size_t n) {
+    if (g_cancel.load()) return 0;
+    return std::fwrite(data, 1, n, static_cast<FILE*>(user)) == n ? n : 0;
+}
+
 /* The \\?\ form of an absolute path, used only when the plain one is near MAX_PATH (short paths stay as they are). */
 fs::path long_path(const fs::path& p) {
     std::wstring w = p.wstring();
@@ -1111,6 +1130,8 @@ fs::path long_path(const fs::path& p) {
  * extracted once to data_dir()/rom-cache/<zip name>-<entry crc>/ and that file
  * is what gets identified and launched. Disc images are never extracted. */
 static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom, fs::path* inner_name) {
+    if (g_cancel.load()) return false;
+    std::shared_lock<std::shared_mutex> unpack_guard(g_cache_mu);   // clear / trim wait for this unpack
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
     std::string zpath = path_utf8(zip);
@@ -1119,7 +1140,7 @@ static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom, fs::path*
     if (!mz_zip_reader_init_cfile(&za, f, 0, 0)) { std::fclose(f); return false; }
     bool ok = false;
     mz_uint n = mz_zip_reader_get_num_files(&za);
-    for (mz_uint i = 0; i < n && !ok; i++) {
+    for (mz_uint i = 0; i < n && !ok && !g_cancel.load(); i++) {
         mz_zip_archive_file_stat st;
         if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory) continue;
         std::string name = st.m_filename;
@@ -1142,7 +1163,7 @@ static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom, fs::path*
             fs::path tmp = rom; tmp += L".part";
             bool done = false;
             if (FILE* out = _wfopen(tmp.c_str(), L"wbN")) {   // wide path: works past MAX_PATH
-                done = mz_zip_reader_extract_to_cfile(&za, i, out, 0) != 0;
+                done = mz_zip_reader_extract_to_callback(&za, i, cancel_file_write_cb, out, 0) != 0;   // stops mid-file when the app closes: the .part is removed below
                 done = (std::fclose(out) == 0) && done;
             }
             if (done) { fs::rename(tmp, rom, ec); done = !ec; }
@@ -1976,10 +1997,12 @@ static uint64_t fnv64(const std::string& s) {
 
 static bool extract_archived_rom(const fs::path& arch, fs::path* out_rom, fs::path* inner_name) {
     std::string ap = path_utf8(arch);
+    if (g_cancel.load()) return false;
     if (!archive_sig_ok(ap) || !fs::exists(tar_exe())) return false;
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
     if (!list_archive(ap, &l) || !find_rom_entry(l, &ent)) return false;
+    std::shared_lock<std::shared_mutex> unpack_guard(g_cache_mu);   // clear / trim wait for this unpack
     std::error_code ec;
     uintmax_t asz = fs::file_size(arch, ec);
     long long mt = (long long)fs::last_write_time(arch, ec).time_since_epoch().count();
@@ -2002,14 +2025,19 @@ static bool extract_archived_rom(const fs::path& arch, fs::path* out_rom, fs::pa
         HANDLE proc = tar_spawn(L"-xOf " + tar_archive_arg(ap) + L" " + tar_member_arg(ent.name), f);
         bool good = false;
         if (proc) {
-            if (WaitForSingleObject(proc, 300000) == WAIT_TIMEOUT) TerminateProcess(proc, 1);
+            bool stopped = false;
+            const ULONGLONG t0 = GetTickCount64();
+            for (;;) {   // waits in short slices so a closing app can stop the unpack
+                if (WaitForSingleObject(proc, 100) != WAIT_TIMEOUT) break;
+                if (g_cancel.load() || GetTickCount64() - t0 > 300000) { stopped = true; TerminateProcess(proc, 1); break; }
+            }
             DWORD code = 1;
             WaitForSingleObject(proc, 5000);
             GetExitCodeProcess(proc, &code);
             CloseHandle(proc);
             LARGE_INTEGER sz{};
             GetFileSizeEx(f, &sz);
-            good = code == 0 && (uint64_t)sz.QuadPart == ent.size;
+            good = !stopped && code == 0 && (uint64_t)sz.QuadPart == ent.size;
         }
         FlushFileBuffers(f);
         CloseHandle(f);
@@ -2597,7 +2625,11 @@ static bool extract_3ds_zip_impl(const GameEntry& e, const std::function<bool(ui
 
 bool extract_3ds_zip(const GameEntry& e, const std::function<bool(uint64_t, uint64_t)>& progress,
                      std::string* out_path, std::string* err) {
-    bool ok = extract_3ds_zip_impl(e, progress, out_path, err);
+    bool ok;
+    {
+        std::shared_lock<std::shared_mutex> unpack_guard(g_cache_mu);   // clear / trim wait for this unpack; released before the trim below
+        ok = extract_3ds_zip_impl(e, progress, out_path, err);
+    }
     if (ok) rom_cache_trim(rom_cache_limit());   // LRU eviction (the copy just unpacked is protected: used within the hour)
     return ok;
 }
@@ -2898,7 +2930,7 @@ constexpr size_t kMaxWalkDepth = 24;   // library-9: a backstop for any loop the
 /* Directory walk that skips unreadable dirs and never follows symlinks/junctions. */
 void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::string>& seen, bool* incomplete = nullptr) {
     std::vector<std::pair<fs::path, size_t>> stack{{root, 0}};
-    while (!stack.empty()) {
+    while (!stack.empty() && !g_cancel.load()) {   // a closing app stops the walk between folders
         fs::path dir = std::move(stack.back().first);
         const size_t depth = stack.back().second;
         stack.pop_back();
@@ -2939,6 +2971,7 @@ void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::strin
 
 std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
                                     const std::function<void(int, int)>& progress) {
+    if (g_cancel.load()) return {};   // cancelled scans return nothing and write nothing
     {   /* once per process: stale "*.part" files from an interrupted unzip / extraction in the rom cache */
         static std::once_flag cleaned;
         std::call_once(cleaned, [] {
@@ -2969,6 +3002,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
         if (ec || !fs::is_directory(root, ec)) { st.reachable = false; st.complete = false; unknown_prefixes.push_back(pre); fstat.push_back(st); continue; }
         bool incomplete = false;
         walk(root, cands, seen, &incomplete);
+        if (g_cancel.load()) return {};
         if (incomplete) { st.complete = false; unknown_prefixes.push_back(pre); }
         else prefixes.push_back(pre);   // only a fully read folder may drop cache rows of vanished files
         fstat.push_back(st);
@@ -3024,6 +3058,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
 
     auto worker = [&] {
         for (;;) {
+            if (g_cancel.load()) return;   // between files; an unpack in progress stops itself
             size_t k = next.fetch_add(1);
             if (k >= work.size()) return;
             Candidate& c = cands[work[k]];
@@ -3052,12 +3087,13 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
         std::vector<std::thread> pool;
         for (size_t i = 0; i < nthreads; ++i) pool.emplace_back(worker);
         int last = -1;
-        while (done.load() < total) {
+        while (done.load() < total && !g_cancel.load()) {
             int d = done.load();
             if (d != last) { last = d; if (progress) progress(d, total); }
             std::this_thread::sleep_for(std::chrono::milliseconds(15));
         }
         for (auto& t : pool) t.join();
+        if (g_cancel.load()) return {};   // before anything is saved: library_cache.json stays the old, complete one (it is only ever replaced whole, atomically)
         if (progress) progress(total, total);
     }
 
@@ -3249,8 +3285,10 @@ uint64_t rom_cache_bytes() {
 }
 
 bool rom_cache_clear() {
+    CacheRemoverGuard guard;   // no unpack runs while folders are removed, and clear / trim never overlap
     bool ok = true;
     for (const CacheItem& c : cache_items()) {
+        if (g_cancel.load()) { ok = false; break; }
         if (cache_item_pinned(c.dir)) { ok = false; continue; }   // the running game's files stay (library-14)
         std::error_code ec;
         fs::remove_all(c.dir, ec);
@@ -3268,18 +3306,24 @@ void rom_cache_pin(const GameEntry* e) {
     g_pin_dir = d;
 }
 
+void scan_request_cancel() { g_cancel = true; }
+void scan_cancel_reset() { g_cancel = false; }
+bool scan_cancelled() { return g_cancel.load(); }
+bool rom_cache_busy() { return g_cache_excl.load() > 0; }
+
 void rom_cache_set_limit(uint64_t bytes) { g_cache_limit = bytes; }
 uint64_t rom_cache_limit() { return g_cache_limit; }
 
 uint64_t rom_cache_trim(uint64_t max_bytes) {
     if (max_bytes == 0) return 0;
+    CacheRemoverGuard guard;
     std::vector<CacheItem> items = cache_items();
     uint64_t total = 0, freed = 0;
     for (const CacheItem& c : items) total += c.bytes;
     std::sort(items.begin(), items.end(), [](const CacheItem& a, const CacheItem& b) { return a.cart != b.cart ? !a.cart : a.used < b.used; });   // discs / 3DS first, cartridges last
     const auto recent = fs::file_time_type::clock::now() - std::chrono::hours(1);
     for (const CacheItem& c : items) {
-        if (total <= max_bytes) break;
+        if (total <= max_bytes || g_cancel.load()) break;
         if (c.used > recent || cache_item_pinned(c.dir)) continue;   // just unpacked, or the running game's (library-14)
         std::error_code ec;
         fs::remove_all(c.dir, ec);

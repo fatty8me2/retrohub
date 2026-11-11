@@ -95,7 +95,8 @@ void display_settings_ui() {
 /* "Unpacked games" cache section. Disk usage is measured on a background thread (on open and after clearing), never per frame. */
 struct CacheUi {
     std::atomic<uint64_t> bytes{0};
-    std::atomic<bool> measuring{false}, clearing{false}, clear_done{false};
+    std::atomic<bool> measuring{false}, clearing{false}, clear_done{false}, trimming{false}, trim_again{false};
+    std::thread measure_th, clear_th, trim_th;   // joinable (never detached): joined before the next start and at app exit
     bool measured = false, confirm = false;
     int last_frame = -10;
     std::vector<hub::SkippedArchive> skipped;
@@ -104,8 +105,12 @@ CacheUi CU;
 
 void cache_measure() {
     if (CU.measuring.exchange(true)) return;
-    std::thread([] { CU.bytes = hub::rom_cache_bytes(); CU.measuring = false; }).detach();
+    if (CU.measure_th.joinable()) CU.measure_th.join();   // the previous run has finished (measuring was false)
+    CU.measure_th = std::thread([] { CU.bytes = hub::rom_cache_bytes(); CU.measuring = false; });
 }
+
+/* Clear and the Limit box wait while a scan runs (it unpacks into the cache), a clear / trim is running, or either is queued. */
+bool cache_editable() { return !A.scanning && !CU.clearing && !CU.trimming && !hub::rom_cache_busy(); }
 
 void cache_section() {
     int fr = ImGui::GetFrameCount();
@@ -127,13 +132,14 @@ void cache_section() {
     if (CU.clearing) {
         text_wrapped_disabled("Clearing...");
     } else if (!CU.confirm) {
-        if (button("Clear cache", ImVec2(0, 0), false, !A.scanning)) CU.confirm = true;
+        if (button("Clear cache", ImVec2(0, 0), false, cache_editable())) CU.confirm = true;
     } else {
         text_wrapped_disabled("Delete all unpacked games? Your archives are not touched; cartridges unpack again on the next scan.");
         if (button("Yes, clear", ImVec2(0, 0))) {
             CU.confirm = false;
             CU.clearing = true;
-            std::thread([] { hub::rom_cache_clear(); CU.clear_done = true; }).detach();
+            if (CU.clear_th.joinable()) CU.clear_th.join();   // the previous clear finished (clear_done was consumed)
+            CU.clear_th = std::thread([] { hub::rom_cache_clear(); CU.clear_done = true; });
         }
         ImGui::SameLine();
         if (button("Cancel", ImVec2(0, 0))) CU.confirm = false;
@@ -147,16 +153,25 @@ void cache_section() {
     ImGui::TextUnformatted("Limit");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(sp(20.f));
+    ImGui::BeginDisabled(!cache_editable());   // same gate as Clear: not while a scan unpacks or a clear / trim runs
     if (ImGui::BeginCombo("##romcachelimit", labels[cur])) {
         for (int i = 0; i < 5; ++i)
             if (ImGui::Selectable(labels[i], i == cur)) {
                 A.st.rom_cache_limit_gb = gbs[i];
                 hub::rom_cache_set_limit((uint64_t)gbs[i] << 30);
                 mark_dirty();
-                std::thread([] { hub::rom_cache_trim(hub::rom_cache_limit()); }).detach();
+                if (CU.trimming.exchange(true)) CU.trim_again = true;
+                else {
+                    if (CU.trim_th.joinable()) CU.trim_th.join();   // the previous trim has finished (trimming was false)
+                    CU.trim_th = std::thread([] {
+                        do { CU.trim_again = false; hub::rom_cache_trim(hub::rom_cache_limit()); } while (CU.trim_again.load());
+                        CU.trimming = false;
+                    });
+                }
             }
         ImGui::EndCombo();
     }
+    ImGui::EndDisabled();
     text_wrapped_disabled("Oldest unpacked games are removed first; your archives are never touched.");
     if (!CU.skipped.empty()) {
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -427,6 +442,11 @@ void tab_video() {
 }
 
 }  // namespace
+
+void settings_cache_shutdown() {   // app exit (the cancel flag is already set: clear / trim stop at their next folder)
+    for (std::thread* t : {&CU.measure_th, &CU.clear_th, &CU.trim_th})
+        if (t->joinable()) t->join();
+}
 
 void settings_open(int tab) {
     A.st.settings_tab = hubui::settings_tab_clamp(tab);
