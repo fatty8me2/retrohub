@@ -633,6 +633,33 @@ static void test_conflict() {
     CHECK(g_srv->cur_sha(g_uid, GK, "battery/s.sra") == sha256_hex_file((pc2.game() / "battery" / "s.sra").u8string()) == false);
 }
 
+/* A state edited on both PCs where the cloud copy is the newer one: the cloud copy wins, and _conflicts must hold the LOCAL bytes as they were
+ * BEFORE the pull (the backup used to be taken after the pull, so it was a copy of the winner and the local file was lost). */
+static void test_loser_backup_is_taken_before_the_pull() {
+    printf(" newest-wins pull keeps the pre-pull local file in _conflicts\n");
+    Pc pc2("pc2");
+    use(pc2);
+    put(pc2.game() / "states" / "slot2.state", rnd(6000, 20), now_unix() - 900);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();           // the base: both sides agree
+    cloud_prelaunch(G, SyncMode::ReadWrite); play();
+    const str local_bytes = rnd(6000, 21), cloud_bytes = rnd(6000, 22);
+    put(pc2.game() / "states" / "slot2.state", local_bytes, now_unix() - 500);
+    bool seeded = false;
+    g_srv->before_plan = [&]() {      // another PC pushes a NEWER copy between this PC's manifest and its plan: the plan answers "conflict"
+        if (seeded) return;
+        seeded = true;
+        g_srv->seed_file(g_uid, GK, "states/slot2.state", cloud_bytes, now_unix() - 10, "PC-ELSE", now_unix());
+    };
+    exit_game();
+    g_srv->before_plan = nullptr;
+    CHECK(seeded);
+    CHECK(get(pc2.game() / "states" / "slot2.state") == cloud_bytes);
+    int kept = 0;
+    fs::path cd = pc2.vault / "_conflicts";
+    if (fs::exists(cd)) for (auto& e : fs::recursive_directory_iterator(cd)) if (e.is_regular_file()) { kept++; CHECK(get(e.path()) == local_bytes); }
+    CHECK(kept == 1);
+}
+
 /* A plain both-sides-edited conflict (no "decide later" involved) must be visible without launching the game:
  * the background pass flags the game as Conflict with its sides, and the next launch asks. */
 static void test_plain_conflict_surfaces() {
@@ -1566,6 +1593,7 @@ int main(int argc, char** argv) {
     RUN_SCENARIO(test_account_rivals_two_pcs);
     RUN_SCENARIO(test_conflict);
     RUN_SCENARIO(test_plain_conflict_surfaces);
+    RUN_SCENARIO(test_loser_backup_is_taken_before_the_pull);
     RUN_SCENARIO(test_states_switch);
     RUN_SCENARIO(test_states_never_prompt);
     RUN_SCENARIO(test_deleted_state_stays_deleted);
