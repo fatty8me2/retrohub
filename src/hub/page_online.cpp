@@ -69,9 +69,9 @@ void page_online_home() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, same_h), ImVec2(FLT_MAX, FLT_MAX));
     begin_panel("host", ImVec2(w, 0));
     ImGui::PushFont(ui::F.h2);
-    ImGui::TextUnformatted("Host a room");
+    ImGui::TextUnformatted("Start a room");
     ImGui::PopFont();
-    text_wrapped_disabled("Create a room, pick a game everyone owns, and share its 6-character code.");
+    text_wrapped_disabled("Create a room, pick a game, and share its 6-character code with your friends.");
     ImGui::Dummy(ImVec2(0, 8 * S));
     if (button("Host a room", ImVec2(-1, sp(7.f)), true, A.proc == nullptr && access_ok, ui::Icon::Globe)) enter_room(true, hubnet::new_room_code());
     if (!group_last_label().empty()) {
@@ -127,7 +127,7 @@ void page_online_home() {
     int online_games = 0;
     for (auto& e : A.lib) if (supports_online(e)) ++online_games;
     static const char* steps[] = {"Host a room, or join one with a 6-character code. Everyone in the room can see each other's games.",
-                                  "The host picks a game that everyone has, then everyone presses Ready.",
+                                  "The host picks a game, then everyone presses Ready. Wii U games are streamed from the host, so friends do not need a copy.",
                                   "The host presses Launch. The game starts on every PC at the same time."};
     ImDrawList* dl = ImGui::GetWindowDrawList();
     for (int i = 0; i < 3; ++i) {

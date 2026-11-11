@@ -70,26 +70,30 @@ void page_about() {
         else if (A.update_check_requested && !hubupdate::checking() && !hubupdate::update_available() && !hubupdate::check_failed())
             text_wrapped_disabled("You're on the latest version.");
     }
-    text_wrapped_disabled("RetroHub checks for updates each time it starts. Updating downloads the new version, installs it and reopens RetroHub. "
-                          "Your saves and settings are kept.");
+    text_wrapped_disabled("RetroHub checks for updates each time it starts. Updating keeps your saves and settings, and reopens RetroHub when it finishes.");
     ImGui::Dummy(ImVec2(0, 6 * S));
     {   // the console list comes from the one name table (console_names.h)
         static const hub::System order[] = {hub::System::NES, hub::System::SNES, hub::System::N64, hub::System::GC, hub::System::WiiU,
                                             hub::System::GB, hub::System::GBC, hub::System::GBA, hub::System::NDS, hub::System::N3DS,
                                             hub::System::PS1, hub::System::PS2, hub::System::PSP, hub::System::Switch};
+        std::vector<std::string> names;
+        for (hub::System s : order) {
+            names.push_back(hub::full_name(s));
+            if (s == hub::System::Switch) names.push_back(hub::full_name(s, true));   // Switch 2 is a console of its own
+        }
         std::string list;
-        const size_t n = sizeof order / sizeof order[0];
-        for (size_t i = 0; i < n; ++i) {
-            list += hub::full_name(order[i]);
-            list += i + 2 < n ? ", " : i + 2 == n ? " and " : "";
+        for (size_t i = 0; i < names.size(); ++i) {
+            list += names[i];
+            list += i + 2 < names.size() ? ", " : i + 2 == names.size() ? " and " : "";
         }
         ImGui::TextWrapped("One library for your %s games. Pick up where you left off, and your saves follow you between PCs.", list.c_str());
     }
     ImGui::Dummy(ImVec2(0, 6 * S));
-    text_wrapped_disabled("You can play online with friends on every console except PlayStation Portable and Nintendo Switch. "
+    text_wrapped_disabled("Most games on every console except PlayStation Portable, Nintendo Switch and Nintendo Switch 2 can be played online with friends. "
+                          "A few games can't be played online, and some features are limited in a room. "
                           "Host a room and share its 6-character code, or join a friend's room with theirs. "
                           "On Wii U the host's game is streamed to everyone else. "
-                          "You bring your own game files; none are included. Some game programs download the first time you need them.");
+                          "You bring your own game files; none are included. Some extra programs download the first time you play a console that needs them.");
     end_panel();
     draw_changelog_list();
 }

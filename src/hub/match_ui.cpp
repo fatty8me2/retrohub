@@ -246,7 +246,7 @@ static void member_row(const hubui::PeerInfo* p, int slot, ImVec2 size) {
                 if (it == per.end()) continue;
                 ImU32 a, b;
                 console_colors(cid, &a, &b);
-                chips.push_back({std::string(hub::short_name_id(cid)) + " (" + std::to_string(it->second) + ")", mix(a, IM_COL32_BLACK, 0.15f)});
+                chips.push_back({std::string(console_badge(cid)) + " (" + std::to_string(it->second) + ")", mix(a, IM_COL32_BLACK, 0.15f)});
             }
             if (other) chips.push_back({"Other (" + std::to_string(other) + ")", grey});
         } else {
@@ -426,7 +426,7 @@ void member_card(const hubui::PeerInfo* p, int slot, ImVec2 size) {
                 ImU32 a, b;
                 console_colors(cid, &a, &b);
                 char lab[48];
-                std::snprintf(lab, sizeof lab, "%s (%d)", hub::short_name_id(cid), it->second);
+                std::snprintf(lab, sizeof lab, "%s (%d)", console_badge(cid), it->second);
                 first = false;
                 chip(lab, mix(a, IM_COL32_BLACK, 0.15f));
             }
