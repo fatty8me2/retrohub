@@ -545,7 +545,8 @@ void wrapped_ui_modal() {
     if (!WS.status.empty()) result_line(WS.status, WS.status_ok);
     else {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
-        ImGui::TextUnformatted("LB / RB  change card      B  close");
+        ImGui::TextUnformatted(A.pad_mode ? (std::string(hubglyph::label(ui::pad_kind, "LB")) + " / " + hubglyph::label(ui::pad_kind, "RB") + "  change card      " + hubglyph::label(ui::pad_kind, "B") + "  close").c_str()
+                                          : "Left / Right  change card      Esc  close");
         ImGui::PopStyleColor();
     }
     if (g_headless && std::getenv("HUB_SHOT_WRAPPED_SAVE")) {
