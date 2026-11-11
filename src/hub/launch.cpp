@@ -56,6 +56,7 @@
 #include "env_scope.h"
 #include "proc_spawn.h"
 #include "session_journal.h"
+#include <mutex>
 #include <thread>
 #include <xinput.h>
 
@@ -618,6 +619,10 @@ static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const st
     if (hookshot::swap_in_progress()) { set_notice("Hookshot is being updated: try again in a moment.", 8.0); return; }
     if (hubemu::is_running(exe)) { set_notice("Hookshot is already running. Close it first, then start the game from RetroHub.", 10.0); return; }
     if (!hookshot::av1_decoder_present(true)) { hookshot_av1_ask(e); return; }   // Hookshot would open a top-most box over the game: ask here instead
+    /* One lock for launching and replaying a leftover session (session_journal.h): held until the spawn has returned and the journal is written.
+     * A replay is copying a save tree right now: say so instead of freezing the frame. */
+    std::unique_lock<std::mutex> session_guard(hubjournal::session_lock(), std::try_to_lock);
+    if (!session_guard.owns_lock()) { set_notice("Still saving your last game. Try again in a moment."); return; }
     auto sess = std::make_shared<hubemu::SaveSession>(hookshot::begin_save_session(e, battery));
     autotest_log("external: hookshot save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
     if (!sess->error.empty()) {   // the vault -> Hookshot copy failed: starting would play an older or missing save (and end_session must not run)
@@ -630,6 +635,7 @@ static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const st
     auto jr = std::make_shared<hubjournal::Entry>();   // the pending-session journal: replayed at the next hub start when the hub is closed during play
     jr->emu_kind = 100;   // (not a hubemu::Kind: Hookshot has its own)
     jr->emu_exe = exe;
+    jr->inst_dir = hookshot::user_dir();
     jr->system_short = hub::system_short(e.system);
     jr->game_key = e.key;
     jr->title = e.title;
@@ -666,6 +672,10 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         else UNZ.state = UnzipJob::Asking;
         return;
     }
+    /* One lock for launching and replaying a leftover session (session_journal.h): held until the spawn has returned and the journal is written.
+     * A replay is copying a save tree right now: say so instead of freezing the frame. */
+    std::unique_lock<std::mutex> session_guard(hubjournal::session_lock(), std::try_to_lock);
+    if (!session_guard.owns_lock()) { set_notice("Still saving your last game. Try again in a moment."); return; }
     hubemu::Install inst = hubemu::find(kind, A.st.cemu_exe, e.path);
     {   // a download / update job already runs (or its question is up): never ask over it, and never start the build it is replacing
         const bool want_install = inst.exe.empty();
@@ -825,6 +835,8 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     auto jr = std::make_shared<hubjournal::Entry>();
     jr->emu_kind = (int)kind;
     jr->emu_exe = inst.exe;
+    jr->inst_dir = inst.dir;
+    jr->inst_managed = inst.managed;
     jr->system_short = hub::system_short(e.system);
     jr->game_key = e.key;
     jr->title = e.title;

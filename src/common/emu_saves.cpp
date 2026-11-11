@@ -22,6 +22,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
+thread_local const std::atomic<bool>* t_cancel = nullptr;
+
 fs::path u8(const std::string& s) { return fs::u8path(s); }
 std::string to_u8(const fs::path& p) {
     auto s = p.u8string();
@@ -221,6 +223,8 @@ static void prune_backups(const fs::path& backup_file, const std::string& tag, i
     for (size_t i = 0; i + keep < mine.size(); ++i) fs::remove(mine[i], ec);
 }
 
+void set_sync_cancel(const std::atomic<bool>* flag) { t_cancel = flag; }
+
 TreeSyncReport sync_tree_newest(const std::string& src, const std::string& dst, const std::string& backup_dir,
                                 const std::string& tag, SyncManifest* manifest, const std::string& key_prefix, int keep_backups) {
     TreeSyncReport r;
@@ -229,6 +233,7 @@ TreeSyncReport sync_tree_newest(const std::string& src, const std::string& dst, 
     if (!fs::is_directory(s, ec)) return r;
     auto fail = [&](const std::string& why) { r.ok = false; if (r.error.empty()) r.error = why; };
     for (fs::recursive_directory_iterator it(s, ec), end; !ec && it != end; it.increment(ec)) {
+        if (t_cancel && t_cancel->load()) { fail("cancelled"); break; }
         std::error_code e0;
         if (!it->is_regular_file(e0)) continue;
         if (it->path().extension() == L".hubtmp") continue;
