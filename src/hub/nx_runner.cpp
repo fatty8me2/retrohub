@@ -1,4 +1,5 @@
 #include "nx_runner.h"
+#include "winutil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -243,7 +244,7 @@ std::string shader_seed_run(const std::vector<ShaderSeedItem>& plan, const std::
 /* ------------------------------------------------------------------ saves */
 
 std::string default_save_backup_root() {
-    const char* la = std::getenv("LOCALAPPDATA");
+    const std::string la_s = winutil::getenv_utf8("LOCALAPPDATA"); const char* la = la_s.empty() ? nullptr : la_s.c_str();
     if (!la || !*la) return "";
     return join(join(la, "RetroHub"), "save-backups");
 }

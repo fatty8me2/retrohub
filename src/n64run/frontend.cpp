@@ -485,7 +485,7 @@ static void ctl_ack(long long seq, bool ok, const std::string& msg) {
 static std::set<std::string> list_dir(const std::string& d) {
     std::set<std::string> r;
     std::error_code ec;
-    for (auto& e : fs::directory_iterator(fs::path(d), ec)) r.insert(e.path().filename().string());
+    for (auto& e : fs::directory_iterator(fs::path(d), ec)) r.insert(e.path().filename().u8string());
     return r;
 }
 
@@ -1378,7 +1378,7 @@ static void headless_frame_cb(unsigned int) {
     }
 }
 
-static bool file_exists(const std::string& p) { std::error_code ec; return fs::exists(fs::path(p), ec); }
+static bool file_exists(const std::string& p) { std::error_code ec; return fs::exists(fs::u8path(p), ec); }
 
 static std::string find_emu_dir(const std::string& requested) {
     std::vector<std::string> cands;
@@ -1388,8 +1388,8 @@ static std::string find_emu_dir(const std::string& requested) {
     cands.push_back(ed + "..\\..\\deps\\emu");
     cands.push_back(ed + "..\\..\\..\\deps\\emu");
     for (auto& c : cands) {
-        fs::path p = fs::absolute(fs::path(c)).lexically_normal();
-        if (file_exists((p / "mupen64plus.dll").string())) return p.string();
+        fs::path p = fs::absolute(fs::u8path(c)).lexically_normal();   // c is UTF-8 (exe_dir): fs::path(c) would read it as ANSI
+        if (file_exists((p / "mupen64plus.dll").u8string())) return p.u8string();
     }
     return "";
 }

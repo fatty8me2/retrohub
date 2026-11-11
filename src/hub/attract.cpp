@@ -53,7 +53,7 @@ bool any_input(const ImGuiIO& io) {
 }
 
 bool is_png(const fs::path& p) {
-    std::string e = p.extension().string();
+    std::string e = p.extension().u8string();
     for (auto& c : e) c = (char)std::tolower((unsigned char)c);
     return e == ".png";
 }

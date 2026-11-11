@@ -1,4 +1,5 @@
 #include "lichii.h"
+#include "winutil.h"
 #include "app.h"
 #include "capture_hold_logic.h"
 #include "osk.h"
@@ -567,7 +568,7 @@ void draw_cemu_panel() {
                               "SDL pads). Your original controllerProfiles folder is first copied once to controllerProfiles.retrohub-backup. "
                               "Off: your Cemu controls are never touched.");
         if (button("Restore my Cemu controls", ImVec2(0, 0))) {
-            const char* ad = std::getenv("APPDATA");
+            const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str();
             bool ok = hubemu::cemu_restore_controls(hubemu::cemu_user_data_dir(cm.dir, ad ? ad : ""));
             set_toast(ok ? "Your Cemu controls were restored from the backup." : "No RetroHub backup of your Cemu controls exists yet.", ok, 4.0);
         }

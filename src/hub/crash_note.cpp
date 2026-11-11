@@ -1,4 +1,5 @@
 #include "crash_note.h"
+#include "winutil.h"
 
 #include <chrono>
 #include <cctype>
@@ -39,7 +40,7 @@ std::string hex_code(uint32_t c) {
 }
 
 std::string default_dumps_dir() {
-    const char* la = std::getenv("LOCALAPPDATA");
+    const std::string la_s = winutil::getenv_utf8("LOCALAPPDATA"); const char* la = la_s.empty() ? nullptr : la_s.c_str();
     if (!la || !*la) return "";
     std::string p = la;
     if (p.back() != '\\' && p.back() != '/') p += '\\';

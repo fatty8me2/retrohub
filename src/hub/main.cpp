@@ -9,6 +9,7 @@
 #include "dolphin_speed.h"
 #include "hang_watchdog.h"
 #include "hub_log.h"
+#include "winutil.h"
 #include "hub_version.h"
 #include "crash_report.h"
 #include "crash_report_ui.h"
@@ -121,11 +122,29 @@ unsigned long long hash_draw_data(const ImDrawData* dd) {
 
 }  // namespace
 
+static int hub_main();
+
+/* Last-resort guard: an exception nobody caught (for example a std::filesystem path conversion) is written to the log and the
+ * process leaves with a normal exit code, instead of std::terminate -> abort -> a silent 0xC0000409. */
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    try {
+        return hub_main();
+    } catch (const std::exception& e) {
+        hublog::error("fatal: uncaught exception in the main thread: %s", e.what());
+    } catch (...) {
+        hublog::error("fatal: uncaught unknown exception in the main thread");
+    }
+    std::fprintf(stderr, "RetroHub: stopped by an unexpected error (see hub.log)\n");
+    hublog::shutdown();
+    return hubupdate::apply::kStartFailExit;
+}
+
+static int hub_main() {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
     const bool autotest = autotest_active();   // QA room driver: isolated instance, no shell/registry/update side effects
     if (!autotest) shell_set_app_id();
-    const char* shot_path = std::getenv("HUB_SCREENSHOT");
+    const std::string shot_path_store = winutil::getenv_utf8("HUB_SCREENSHOT");   // UTF-8: std::getenv would hand back ANSI bytes (a non-ANSI folder name turns into '?')
+    const char* shot_path = std::getenv("HUB_SCREENSHOT") ? shot_path_store.c_str() : nullptr;
     // Single instance + command-line actions: `retrohub://join/<CODE>`, `--join <CODE>`, `--play <game key>`.
     std::wstring cmd_join, cmd_play;
     const bool has_join = invite_parse_command_line(GetCommandLineW(), &cmd_join);
@@ -232,8 +251,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     // No ROM folder is assumed: an empty library offers detected folders as one-click "Add" suggestions.
     if (!A.st.vault_dir.empty()) hub::saves::set_vault_dir(A.st.vault_dir);
     if (g_headless) {   // screenshot mode never touches a real vault: HUB_SHOT_VAULT=<dir>, else a scratch dir under %TEMP%
-        const char* sv = std::getenv("HUB_SHOT_VAULT");
-        std::string dir = sv && *sv ? sv : (std::filesystem::temp_directory_path() / "retrohub-shot-vault").u8string();
+        const std::string sv = winutil::getenv_utf8("HUB_SHOT_VAULT");   // UTF-8 (std::getenv is ANSI: u8path would throw on an accented folder)
+        std::string dir = !sv.empty() ? sv : (std::filesystem::temp_directory_path() / "retrohub-shot-vault").u8string();
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::u8path(dir), ec);
         hub::saves::set_vault_dir(dir);

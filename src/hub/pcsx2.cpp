@@ -154,7 +154,7 @@ Bios pcsx2_find_bios(const std::vector<std::string>& dirs) {
 std::vector<std::string> pcsx2_bios_search_dirs(const std::string& chosen, const std::vector<std::string>& rom_folders) {
     std::vector<std::string> v;
     if (!chosen.empty()) v.push_back(chosen);
-    const char* up = std::getenv("USERPROFILE");
+    const std::string up_s = winutil::getenv_utf8("USERPROFILE"); const char* up = up_s.empty() ? nullptr : up_s.c_str();
     if (up) { v.push_back(join(up, "Desktop\\Everything\\BIOS")); v.push_back(join(up, "Desktop\\Everything\\GamesBios")); }
     for (const auto& f : rom_folders) {
         v.push_back(f);

@@ -243,13 +243,13 @@ static void test_library_ids(const fs::path& dir) {
         fs::create_directories(z.parent_path());
         mz_zip_archive za;
         std::memset(&za, 0, sizeof za);
-        CHECK(mz_zip_writer_init_file(&za, z.string().c_str(), 0));
+        CHECK(mz_zip_writer_init_file(&za, z.u8string().c_str(), 0));
         CHECK(mz_zip_writer_add_mem(&za, "Pokemon Moon (USA).3ds", img.data(), img.size(), MZ_DEFAULT_COMPRESSION));
         CHECK(mz_zip_writer_finalize_archive(&za));
         mz_zip_writer_end(&za);
     }
-    library_set_data_dir((dir / "data").string());
-    auto lib = scan_library({games.string()}, nullptr);
+    library_set_data_dir((dir / "data").u8string());
+    auto lib = scan_library({games.u8string()}, nullptr);
     auto find = [&](const std::string& key) -> const GameEntry* {
         for (auto& e : lib) if (e.key == key) return &e;
         return nullptr;
@@ -322,22 +322,22 @@ static void test_tree_sync(const fs::path& dir) {
     fs::path a = dir / "a", b = dir / "b", bk = dir / "bk";
     write_text(a / "x" / "one.sav", "AAAA");
     write_text(a / "two.sav", "BBBB");
-    TreeSyncReport r = sync_tree_newest(a.string(), b.string(), bk.string(), "t1");
+    TreeSyncReport r = sync_tree_newest(a.u8string(), b.u8string(), bk.u8string(), "t1");
     CHECK(r.ok && r.copied == 2 && read_text(b / "x" / "one.sav") == "AAAA");
-    r = sync_tree_newest(a.string(), b.string(), bk.string(), "t1");
+    r = sync_tree_newest(a.u8string(), b.u8string(), bk.u8string(), "t1");
     CHECK(r.copied == 0 && r.identical == 2);   // idempotent
 
     /* source newer: wins, old destination file kept as a backup */
     write_text(a / "two.sav", "NEW!");
     set_mtime(a / "two.sav", 0);
     set_mtime(b / "two.sav", 100);
-    r = sync_tree_newest(a.string(), b.string(), bk.string(), "t2");
+    r = sync_tree_newest(a.u8string(), b.u8string(), bk.u8string(), "t2");
     CHECK(r.copied == 1 && r.backed_up == 1 && read_text(b / "two.sav") == "NEW!" && read_text(bk / "two.sav.t2") == "BBBB");
 
     /* destination newer: left alone */
     write_text(a / "x" / "one.sav", "OLD?");
     set_mtime(a / "x" / "one.sav", 500);
-    r = sync_tree_newest(a.string(), b.string(), bk.string(), "t3");
+    r = sync_tree_newest(a.u8string(), b.u8string(), bk.u8string(), "t3");
     CHECK(r.kept == 1 && r.copied == 0 && read_text(b / "x" / "one.sav") == "AAAA");
 
     /* clock skew: with a manifest the side that changed since the last agreement wins, whatever its mtime says */
@@ -345,14 +345,14 @@ static void test_tree_sync(const fs::path& dir) {
         fs::path sa = dir / "sa", sb = dir / "sb";
         write_text(sa / "f.sav", "v1");
         SyncManifest man;
-        CHECK(sync_tree_newest(sa.string(), sb.string(), "", "t", &man, "k/").copied == 1);
+        CHECK(sync_tree_newest(sa.u8string(), sb.u8string(), "", "t", &man, "k/").copied == 1);
         write_text(sa / "f.sav", "v2-edited-on-skewed-pc");
         set_mtime(sa / "f.sav", 5000);   // its clock is far behind: older than sb's copy
-        TreeSyncReport rr = sync_tree_newest(sa.string(), sb.string(), (dir / "skbk").string(), "local.20260101-000001", &man, "k/");
+        TreeSyncReport rr = sync_tree_newest(sa.u8string(), sb.u8string(), (dir / "skbk").u8string(), "local.20260101-000001", &man, "k/");
         CHECK(rr.copied == 1 && read_text(sb / "f.sav") == "v2-edited-on-skewed-pc");
         write_text(sa / "f.sav", "v1");   // without a manifest the older mtime loses
         set_mtime(sa / "f.sav", 9000);
-        CHECK(sync_tree_newest(sa.string(), sb.string(), "", "t").kept == 1 && read_text(sb / "f.sav") == "v2-edited-on-skewed-pc");
+        CHECK(sync_tree_newest(sa.u8string(), sb.u8string(), "", "t").kept == 1 && read_text(sb / "f.sav") == "v2-edited-on-skewed-pc");
         /* backups are pruned to the newest 10 per file; identical content makes no backup */
         fs::path pa = dir / "pa", pb = dir / "pb", pbk = dir / "pbk";
         write_text(pb / "g.sav", "start");
@@ -362,20 +362,20 @@ static void test_tree_sync(const fs::path& dir) {
             set_mtime(pb / "g.sav", 3000);
             char tg[40];
             std::snprintf(tg, sizeof tg, "local.20260101-0000%02d", i);
-            sync_tree_newest(pa.string(), pb.string(), pbk.string(), tg);
+            sync_tree_newest(pa.u8string(), pb.u8string(), pbk.u8string(), tg);
         }
         int nb = 0;
         for (auto& de : fs::directory_iterator(pbk)) { (void)de; ++nb; }
         CHECK(nb == 10);
-        CHECK(sync_tree_newest(pa.string(), pb.string(), pbk.string(), "local.zzz").identical == 1);
+        CHECK(sync_tree_newest(pa.u8string(), pb.u8string(), pbk.u8string(), "local.zzz").identical == 1);
     }
 
     /* missing source is fine; nothing is ever deleted */
-    r = sync_tree_newest((dir / "nope").string(), b.string(), "", "t");
+    r = sync_tree_newest((dir / "nope").u8string(), b.u8string(), "", "t");
     CHECK(r.ok && r.copied == 0);
-    CHECK(tree_has_files(b.string()) && !tree_has_files((dir / "empty").string()));
+    CHECK(tree_has_files(b.u8string()) && !tree_has_files((dir / "empty").u8string()));
     fs::create_directories(dir / "empty" / "sub");
-    CHECK(!tree_has_files((dir / "empty").string()));
+    CHECK(!tree_has_files((dir / "empty").u8string()));
 }
 
 static void test_sessions(const fs::path& dir) {
@@ -385,26 +385,26 @@ static void test_sessions(const fs::path& dir) {
     fs::path battery = vault / "3ds" / "3ds-0004000000055d00" / "battery";
     fs::create_directories(inst3);
     hubemu::Install ai;
-    ai.dir = inst3.string();
-    ai.exe = (inst3 / "azahar.exe").string();
+    ai.dir = inst3.u8string();
+    ai.exe = (inst3 / "azahar.exe").u8string();
     ai.managed = true;
     GameEntry e;
     e.system = System::N3DS;
     e.key = "3ds:0004000000055d00";
     std::string zeros(32, '0');
     fs::path sd = inst3 / "user" / "sdmc" / "Nintendo 3DS" / zeros / zeros;
-    CHECK(n3ds_sd_root((inst3 / "user").string()) == sd.string());   // not created yet: the all-zero ids
+    CHECK(n3ds_sd_root((inst3 / "user").u8string()) == sd.u8string());   // not created yet: the all-zero ids
 
     /* PC 1 played: save exists only in the emulator */
     write_text(sd / "title" / "00040000" / "00055d00" / "data" / "00000001.sav", "SAVE-PC1");
-    hubemu::SaveSession s = hubemu::begin_session(e, ai, battery.string(), vault.string());
+    hubemu::SaveSession s = hubemu::begin_session(e, ai, battery.u8string(), vault.u8string());
     CHECK(s.active && s.rels.size() == 2);
     hubemu::end_session(s);
     CHECK(read_text(battery / "title" / "00040000" / "00055d00" / "data" / "00000001.sav") == "SAVE-PC1");
 
     /* PC 2: fresh emulator dir, the vault copy is restored before launch */
     fs::remove_all(inst3 / "user");
-    s = hubemu::begin_session(e, ai, battery.string(), vault.string());
+    s = hubemu::begin_session(e, ai, battery.u8string(), vault.u8string());
     CHECK(read_text(sd / "title" / "00040000" / "00055d00" / "data" / "00000001.sav") == "SAVE-PC1");
     /* the game updates its save; after the session the vault follows */
     write_text(sd / "title" / "00040000" / "00055d00" / "data" / "00000001.sav", "SAVE-PC2");
@@ -417,14 +417,14 @@ static void test_sessions(const fs::path& dir) {
     GameEntry hb;
     hb.system = System::N3DS;
     hb.key = "3ds:file-homebrew";
-    CHECK(!hubemu::begin_session(hb, ai, battery.string(), vault.string()).active);
+    CHECK(!hubemu::begin_session(hb, ai, battery.u8string(), vault.u8string()).active);
 
     /* ---- Wii U managed: <install>\portable\mlc01\usr\save\00050000\<lo> ---- */
     fs::path instc = dir / "cemu";
     fs::create_directories(instc);
     hubemu::Install ci;
-    ci.dir = instc.string();
-    ci.exe = (instc / "Cemu.exe").string();
+    ci.dir = instc.u8string();
+    ci.exe = (instc / "Cemu.exe").u8string();
     ci.managed = true;
     GameEntry w;
     w.system = System::WiiU;
@@ -432,25 +432,25 @@ static void test_sessions(const fs::path& dir) {
     fs::path vb = vault / "wiiu" / "wiiu-000500001019e500" / "battery";
     fs::path save = instc / "portable" / "mlc01" / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav";
     write_text(save, "ZELDA1");
-    s = hubemu::begin_session(w, ci, vb.string(), vault.string());
+    s = hubemu::begin_session(w, ci, vb.u8string(), vault.u8string());
     CHECK(s.active && s.rels.size() == 2 && s.rels[0] == "usr/save/00050000/1019e500" && s.rels[1] == "usr/save/0005000e/1019e500");
     hubemu::end_session(s);
     CHECK(read_text(vb / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav") == "ZELDA1");
 
     /* ---- Wii U in the user's own install: the newest save wins; their copy is snapshotted (never pruned) before it is replaced ---- */
-    _putenv_s("LOCALAPPDATA", (dir / "localappdata").string().c_str());   // where the snapshots go (save-backups)
+    _putenv_s("LOCALAPPDATA", (dir / "localappdata").u8string().c_str());   // where the snapshots go (save-backups)
     const fs::path snaps = dir / "localappdata" / "RetroHub" / "save-backups";
     auto snap_files = [&]() { int n = 0; std::error_code ec; for (fs::recursive_directory_iterator it(snaps, ec), end; !ec && it != end; it.increment(ec)) if (it->is_regular_file(ec)) ++n; return n; };
     auto snap_has = [&](const char* text) { std::error_code ec; for (fs::recursive_directory_iterator it(snaps, ec), end; !ec && it != end; it.increment(ec)) if (it->is_regular_file(ec) && read_text(it->path()) == text) return true; return false; };
     fs::path user_inst = dir / "usercemu";
     fs::create_directories(user_inst / "portable");   // portable user data inside their install
     hubemu::Install ui;
-    ui.dir = user_inst.string();
-    ui.exe = (user_inst / "Cemu.exe").string();
+    ui.dir = user_inst.u8string();
+    ui.exe = (user_inst / "Cemu.exe").u8string();
     ui.managed = false;
     fs::path usave = user_inst / "portable" / "mlc01" / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav";
     fs::path vslot = vb / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav";
-    s = hubemu::begin_session(w, ui, vb.string(), vault.string());   // empty: restored from the vault, nothing of theirs to snapshot
+    s = hubemu::begin_session(w, ui, vb.u8string(), vault.u8string());   // empty: restored from the vault, nothing of theirs to snapshot
     CHECK(s.own_install && read_text(usave) == "ZELDA1" && snap_files() == 0);
     write_text(usave, "THEIR-OWN");   // now "their" newer progress exists
     set_mtime(vslot, 300);
@@ -458,14 +458,14 @@ static void test_sessions(const fs::path& dir) {
     CHECK(read_text(usave) == "THEIR-OWN");   // their save untouched
     CHECK(read_text(vslot) == "THEIR-OWN");   // copied into the vault
     /* the install is the newer side: it is left alone, no snapshot is needed */
-    s = hubemu::begin_session(w, ui, vb.string(), vault.string());
+    s = hubemu::begin_session(w, ui, vb.u8string(), vault.u8string());
     CHECK(read_text(usave) == "THEIR-OWN" && snap_files() == 0);
     hubemu::end_session(s);
     /* the vault holds a newer save (pulled from another PC): it is applied, and their copy is snapshotted first */
     write_text(vslot, "FROM-OTHER-PC");
     set_mtime(vslot, 0);
     set_mtime(usave, 600);
-    s = hubemu::begin_session(w, ui, vb.string(), vault.string());
+    s = hubemu::begin_session(w, ui, vb.u8string(), vault.u8string());
     CHECK(read_text(usave) == "FROM-OTHER-PC");
     CHECK(snap_files() == 1 && snap_has("THEIR-OWN"));   // <save-backups>\<game>\<stamp>-before-cemu-launch\...
     hubemu::end_session(s);
@@ -473,7 +473,7 @@ static void test_sessions(const fs::path& dir) {
     /* a later local edit is newer than the vault again: kept, and the earlier snapshot is still there */
     write_text(usave, "NEWER-LOCAL");
     set_mtime(vslot, 900);
-    s = hubemu::begin_session(w, ui, vb.string(), vault.string());
+    s = hubemu::begin_session(w, ui, vb.u8string(), vault.u8string());
     CHECK(read_text(usave) == "NEWER-LOCAL" && snap_files() == 1 && snap_has("THEIR-OWN"));
     hubemu::end_session(s);
     CHECK(read_text(vslot) == "NEWER-LOCAL");
@@ -483,21 +483,21 @@ static void test_sessions(const fs::path& dir) {
     set_mtime(vslot, 0);
     set_mtime(usave, 700);
     _putenv_s("LOCALAPPDATA", "");   // removes the variable: nowhere to put a snapshot
-    s = hubemu::begin_session(w, ui, vb.string(), vault.string());
+    s = hubemu::begin_session(w, ui, vb.u8string(), vault.u8string());
     CHECK(read_text(usave) == "NEWER-LOCAL" && !s.error.empty() && snap_files() == 1);
     hubemu::end_session(s);
     write_text(vslot, "VAULT-X");
     set_mtime(vslot, 0);
     fs::create_directories(dir / "blocked");
     write_text(dir / "blocked" / "RetroHub", "i am a file, so RetroHub\save-backups cannot be created");
-    _putenv_s("LOCALAPPDATA", (dir / "blocked").string().c_str());
-    s = hubemu::begin_session(w, ui, vb.string(), vault.string());
+    _putenv_s("LOCALAPPDATA", (dir / "blocked").u8string().c_str());
+    s = hubemu::begin_session(w, ui, vb.u8string(), vault.u8string());
     CHECK(read_text(usave) == "NEWER-LOCAL" && !s.error.empty());   // the snapshot copy failed: not overwritten
     hubemu::end_session(s);
     write_text(vslot, "VAULT-X");
     set_mtime(vslot, 0);
-    _putenv_s("LOCALAPPDATA", (dir / "localappdata").string().c_str());
-    s = hubemu::begin_session(w, ui, vb.string(), vault.string());   // a snapshot is possible again: applied, with the old copy saved first
+    _putenv_s("LOCALAPPDATA", (dir / "localappdata").u8string().c_str());
+    s = hubemu::begin_session(w, ui, vb.u8string(), vault.u8string());   // a snapshot is possible again: applied, with the old copy saved first
     CHECK(read_text(usave) == "VAULT-X" && s.error.empty() && snap_has("NEWER-LOCAL"));
     hubemu::end_session(s);
 
@@ -507,12 +507,12 @@ static void test_sessions(const fs::path& dir) {
     wud.key = "wiiu:wup-p-alze";
     fs::path vb2 = vault / "wiiu" / "wiiu-wup-p-alze" / "battery";
     set_mtime(save, 500);   // the other title (played earlier) must not look like it changed during this session
-    s = hubemu::begin_session(wud, ci, vb2.string(), vault.string());
+    s = hubemu::begin_session(wud, ci, vb2.u8string(), vault.u8string());
     CHECK(s.active && s.wiiu_unknown_title && s.rels.empty());
     write_text(instc / "portable" / "mlc01" / "usr" / "save" / "00050000" / "10aa0000" / "user" / "s.sav", "NEWGAME");
     hubemu::end_session(s);
     CHECK(read_text(vb2 / "usr" / "save" / "00050000" / "10aa0000" / "user" / "s.sav") == "NEWGAME");
-    s = hubemu::begin_session(wud, ci, vb2.string(), vault.string());
+    s = hubemu::begin_session(wud, ci, vb2.u8string(), vault.u8string());
     CHECK(s.rels.size() == 1 && s.rels[0] == "usr/save/00050000/10aa0000");   // next session knows the folder
 }
 
@@ -590,46 +590,46 @@ static void test_config() {
 
 static void test_prepare_and_find(const fs::path& dir) {
     fs::path az = dir / "root" / "azahar";
-    hubemu::prepare_azahar(az.string());
+    hubemu::prepare_azahar(az.u8string());
     CHECK(fs::is_directory(az / "user" / "config") && fs::is_directory(az / "user" / "sdmc"));
     std::string cfg = read_text(az / "user" / "config" / "qt-config.ini");
     CHECK(cfg.find("button_start = ") != std::string::npos);
     write_text(az / "user" / "config" / "qt-config.ini", "[Controls]\nbutton_a = \"user-choice\"\n");
-    hubemu::prepare_azahar(az.string());   // marker present: the player's own mapping stays
+    hubemu::prepare_azahar(az.u8string());   // marker present: the player's own mapping stays
     CHECK(read_text(az / "user" / "config" / "qt-config.ini").find("user-choice") != std::string::npos);
 
     fs::path ce = dir / "root" / "cemu";
-    hubemu::prepare_cemu_managed(ce.string());
+    hubemu::prepare_cemu_managed(ce.u8string());
     CHECK(fs::exists(ce / "portable" / "settings.xml") && fs::exists(ce / "portable" / "controllerProfiles" / "controller0.xml"));
 
     /* discovery: an install above the game file wins and is flagged unmanaged; otherwise RetroHub's own */
     fs::path user_cemu = dir / "Everything" / "Cemu_2.6";
     write_text(user_cemu / "Cemu.exe", "x");
     write_text(user_cemu / "game" / "TPHD.wua", "x");
-    hubemu::Install i = hubemu::find(hubemu::Kind::Cemu, "", (user_cemu / "game" / "TPHD.wua").string(), (dir / "root").string());
-    CHECK(i.exe == (user_cemu / "Cemu.exe").string() && !i.managed);
+    hubemu::Install i = hubemu::find(hubemu::Kind::Cemu, "", (user_cemu / "game" / "TPHD.wua").u8string(), (dir / "root").u8string());
+    CHECK(i.exe == (user_cemu / "Cemu.exe").u8string() && !i.managed);
     write_text(ce / "Cemu.exe", "x");
-    i = hubemu::find(hubemu::Kind::Cemu, (ce / "Cemu.exe").string(), "", (dir / "root").string());
-    CHECK(i.exe == (ce / "Cemu.exe").string() && !i.managed);   // an explicit Settings path is honored
-    i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").string());
+    i = hubemu::find(hubemu::Kind::Cemu, (ce / "Cemu.exe").u8string(), "", (dir / "root").u8string());
+    CHECK(i.exe == (ce / "Cemu.exe").u8string() && !i.managed);   // an explicit Settings path is honored
+    i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").u8string());
     CHECK(i.exe.empty());   // not downloaded yet
     write_text(az / "azahar.exe", "x");
-    i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").string());
+    i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").u8string());
     CHECK(i.exe.empty());   // exe without the install marker = an incomplete install
     write_text(az / "retrohub-install.txt", "Azahar test");
-    i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").string());
-    CHECK(i.managed && i.exe == (az / "azahar.exe").string());
+    i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").u8string());
+    CHECK(i.managed && i.exe == (az / "azahar.exe").u8string());
 
     /* Dolphin: defaults once, user edits survive, per-launch ports follow the pads; old layout is tidied without touching saves */
     fs::path dd = dir / "dol";
     hubemu::DolphinPads none, two;
     two.xinput[1] = true;
-    hubemu::prepare_dolphin(dd.string(), none);
+    hubemu::prepare_dolphin(dd.u8string(), none);
     CHECK(fs::exists(dd / "portable.txt") && fs::exists(dd / "User" / "Config" / "GCPadNew.ini"));
     write_text(dd / "User" / "Config" / "GCPadNew.ini", "[GCPad1]\nButtons/A = custom\n");
     std::string di = read_text(dd / "User" / "Config" / "Dolphin.ini");
     write_text(dd / "User" / "Config" / "Dolphin.ini", hubui::ini_set(di, "Interface", "ConfirmStop", "True"));
-    hubemu::prepare_dolphin(dd.string(), two);
+    hubemu::prepare_dolphin(dd.u8string(), two);
     CHECK(read_text(dd / "User" / "Config" / "GCPadNew.ini").find("custom") != std::string::npos);
     std::string di2 = read_text(dd / "User" / "Config" / "Dolphin.ini");
     CHECK(di2.find("ConfirmStop = False") != std::string::npos && di2.find("SIDevice1 = 6") != std::string::npos);   // forced every launch: a "stop?" dialog would pop up over the game on Back+Start
@@ -637,7 +637,7 @@ static void test_prepare_and_find(const fs::path& dir) {
     CHECK(hubui::ini_get(di2, "Core", "SkipIPL") == "True");
     write_text(dd / "User" / "Config" / "Dolphin.ini", hub::realboot::dolphin_skip_ipl(di2, false));
     CHECK(hubui::ini_get(read_text(dd / "User" / "Config" / "Dolphin.ini"), "Core", "SkipIPL") == "False");
-    hubemu::prepare_dolphin(dd.string(), two);
+    hubemu::prepare_dolphin(dd.u8string(), two);
     CHECK(hubui::ini_get(read_text(dd / "User" / "Config" / "Dolphin.ini"), "Core", "SkipIPL") == "True");
     {   /* Speed row: Core EmulationSpeed back to 1.0 each launch, speed hotkeys in Hotkeys.ini, user's other hotkeys kept */
         CHECK(hubui::ini_get(read_text(dd / "User" / "Config" / "Dolphin.ini"), "Core", "EmulationSpeed") == "1.0");
@@ -691,7 +691,7 @@ static void test_prepare_and_find(const fs::path& dir) {
     write_text(od / "saves" / "gc" / "g" / "battery" / "GCI" / "x.gci", "card");
     write_text(dir / "oldexe" / "dolphin" / "Dolphin.exe", "x");
     write_text(dir / "oldexe" / "dolphin" / "portable.txt", "");
-    hubemu::dolphin_migrate_old(od.string(), (dir / "oldexe").string() + "\\", dd.string());
+    hubemu::dolphin_migrate_old(od.u8string(), (dir / "oldexe").u8string() + "\\", dd.u8string());
     CHECK(fs::exists(dd / "User" / "StateSaves" / "a.sav") && fs::exists(od / "dolphin-user.migrated") && !fs::exists(od / "dolphin-user"));
     CHECK(fs::exists(od / "saves" / "gc" / "g" / "battery" / "GCI" / "x.gci") && !fs::exists(dir / "oldexe" / "dolphin"));
 }
@@ -823,34 +823,34 @@ static void test_controls_emulators(const fs::path& dir) {
 
     fs::path d = dir / "regen";
     fs::path azd = d / "az", ced = d / "ce", dod = d / "dol";
-    hubemu::prepare_azahar(azd.string(), hubctl::default_profile("3ds"));
+    hubemu::prepare_azahar(azd.u8string(), hubctl::default_profile("3ds"));
     write_text(azd / "user" / "config" / "qt-config.ini", "[Controls]\nbutton_a = \"user-choice\"\n");
-    hubemu::prepare_azahar(azd.string(), hubctl::default_profile("3ds"));   // same profile: user edit stays
+    hubemu::prepare_azahar(azd.u8string(), hubctl::default_profile("3ds"));   // same profile: user edit stays
     CHECK(read_text(azd / "user" / "config" / "qt-config.ini").find("user-choice") != std::string::npos);
-    hubemu::prepare_azahar(azd.string(), ds);                               // profile changed: regenerated
+    hubemu::prepare_azahar(azd.u8string(), ds);                               // profile changed: regenerated
     CHECK(read_text(azd / "user" / "config" / "qt-config.ini").find("user-choice") == std::string::npos);
     write_text(azd / "user" / "config" / "qt-config.ini", "[Controls]\nbutton_a = \"user-choice\"\n");
-    hubemu::prepare_azahar(azd.string(), ds);                               // same changed profile again: stays
+    hubemu::prepare_azahar(azd.u8string(), ds);                               // same changed profile again: stays
     CHECK(read_text(azd / "user" / "config" / "qt-config.ini").find("user-choice") != std::string::npos);
     /* an install from an older RetroHub (marker without a hash) counts as the default profile */
     write_text(azd / "user" / "config" / "retrohub-pad.txt", "old marker\n");
-    hubemu::prepare_azahar(azd.string(), hubctl::default_profile("3ds"));
+    hubemu::prepare_azahar(azd.u8string(), hubctl::default_profile("3ds"));
     CHECK(read_text(azd / "user" / "config" / "qt-config.ini").find("user-choice") != std::string::npos);
 
-    hubemu::prepare_cemu_managed(ced.string(), hubctl::default_profile("wiiu"));
+    hubemu::prepare_cemu_managed(ced.u8string(), hubctl::default_profile("wiiu"));
     CHECK(read_text(ced / "portable" / "controllerProfiles" / "controller0.xml") == legacy::cemu());
     write_text(ced / "portable" / "controllerProfiles" / "controller0.xml", "user xml");
-    hubemu::prepare_cemu_managed(ced.string(), hubctl::default_profile("wiiu"));
+    hubemu::prepare_cemu_managed(ced.u8string(), hubctl::default_profile("wiiu"));
     CHECK(read_text(ced / "portable" / "controllerProfiles" / "controller0.xml") == "user xml");
-    hubemu::prepare_cemu_managed(ced.string(), wu);
+    hubemu::prepare_cemu_managed(ced.u8string(), wu);
     CHECK(read_text(ced / "portable" / "controllerProfiles" / "controller0.xml") == hubemu::cemu_gamepad_profile_xml(wu));
 
-    hubemu::prepare_dolphin(dod.string(), none, hubctl::default_profile("gc"));
+    hubemu::prepare_dolphin(dod.u8string(), none, hubctl::default_profile("gc"));
     CHECK(read_text(dod / "User" / "Config" / "GCPadNew.ini") == legacy::dolphin_pad(""));
     write_text(dod / "User" / "Config" / "GCPadNew.ini", "[GCPad1]\nButtons/A = custom\n");
-    hubemu::prepare_dolphin(dod.string(), none, hubctl::default_profile("gc"));
+    hubemu::prepare_dolphin(dod.u8string(), none, hubctl::default_profile("gc"));
     CHECK(read_text(dod / "User" / "Config" / "GCPadNew.ini").find("custom") != std::string::npos);
-    hubemu::prepare_dolphin(dod.string(), none, gc);
+    hubemu::prepare_dolphin(dod.u8string(), none, gc);
     CHECK(read_text(dod / "User" / "Config" / "GCPadNew.ini").find("custom") == std::string::npos);
 }
 
@@ -895,19 +895,19 @@ static void test_controls2_emulators(const fs::path& dir) {
     /* choosing another pad regenerates; the same choice keeps user edits */
     fs::path azd = dir / "pad_az";
     fs::path ini = azd / "user" / "config" / "qt-config.ini";
-    hubemu::prepare_azahar(azd.string(), p3, hubemu::AzPad());
+    hubemu::prepare_azahar(azd.u8string(), p3, hubemu::AzPad());
     write_text(ini, "[Controls]\nbutton_a = \"user-choice\"\n");
-    hubemu::prepare_azahar(azd.string(), p3, hubemu::AzPad());
+    hubemu::prepare_azahar(azd.u8string(), p3, hubemu::AzPad());
     CHECK(read_text(ini).find("user-choice") != std::string::npos);
-    hubemu::prepare_azahar(azd.string(), p3, az);
+    hubemu::prepare_azahar(azd.u8string(), p3, az);
     CHECK(read_text(ini).find("user-choice") == std::string::npos && read_text(ini).find("guid:guidD,port:1") != std::string::npos);
 
     if (const char* dump = std::getenv("RETROHUB_DUMP_DIR")) {   // QA aid: write the fake-pad configs (Xbox + DualSense + Xbox) for a readback launch
         hubemu::DolphinPads fk = hubemu::dolphin_pads_with(base, {xb, ds, bd}, {xb, ds, bd});
-        hubemu::prepare_dolphin((fs::path(dump) / "dolphin").string(), fk, hubctl::default_profile("gc"));
-        hubemu::prepare_cemu_managed((fs::path(dump) / "cemu").string(), hubctl::default_profile("wiiu"), hubemu::cemu_pads_with({xb, xb, xb}));
-        hubemu::prepare_cemu_managed((fs::path(dump) / "cemu_dsu").string(), hubctl::default_profile("wiiu"), hubemu::cemu_pads_with_dsu(hubemu::CemuPads(), 3));   // remote play: P1 local, P2-4 DSU
-        hubemu::prepare_azahar((fs::path(dump) / "azahar").string(), hubctl::default_profile("3ds"), az);
+        hubemu::prepare_dolphin((fs::path(dump) / "dolphin").u8string(), fk, hubctl::default_profile("gc"));
+        hubemu::prepare_cemu_managed((fs::path(dump) / "cemu").u8string(), hubctl::default_profile("wiiu"), hubemu::cemu_pads_with({xb, xb, xb}));
+        hubemu::prepare_cemu_managed((fs::path(dump) / "cemu_dsu").u8string(), hubctl::default_profile("wiiu"), hubemu::cemu_pads_with_dsu(hubemu::CemuPads(), 3));   // remote play: P1 local, P2-4 DSU
+        hubemu::prepare_azahar((fs::path(dump) / "azahar").u8string(), hubctl::default_profile("3ds"), az);
     }
     /* Cemu: players follow the port order's XInput pads; GamePad for player 1, Pro Controllers after */
     hubemu::CemuPads cp = hubemu::cemu_pads_with({ds, xb, bd});   // non-XInput skipped
@@ -928,26 +928,26 @@ static void test_controls2_emulators(const fs::path& dir) {
           pro.find("<display_name>Controller 2</display_name>") != std::string::npos);
     fs::path ced = dir / "pad_cemu";
     fs::path cdir = ced / "portable" / "controllerProfiles";
-    hubemu::prepare_cemu_managed(ced.string(), wup, hubemu::CemuPads());
+    hubemu::prepare_cemu_managed(ced.u8string(), wup, hubemu::CemuPads());
     CHECK(!fs::exists(cdir / "controller1.xml"));
-    hubemu::prepare_cemu_managed(ced.string(), wup, cp);
+    hubemu::prepare_cemu_managed(ced.u8string(), wup, cp);
     CHECK(read_text(cdir / "controller1.xml") == hubemu::cemu_pro_profile_xml(wup, 1, 1));
     CHECK(read_text(cdir / "controller0.xml") == hubemu::cemu_gamepad_profile_xml(wup, 0));
-    hubemu::prepare_cemu_managed(ced.string(), wup, hubemu::CemuPads());   // fewer pads: stale Pro file goes
+    hubemu::prepare_cemu_managed(ced.u8string(), wup, hubemu::CemuPads());   // fewer pads: stale Pro file goes
     CHECK(!fs::exists(cdir / "controller1.xml"));
     /* Remote play: player 1 local pad, players 2-4 = DSU slots 0-2 */
     {
         hubemu::CemuPads dp = hubemu::cemu_pads_with_dsu(hubemu::CemuPads(), 3);
-        hubemu::prepare_cemu_managed(ced.string(), wup, dp);
+        hubemu::prepare_cemu_managed(ced.u8string(), wup, dp);
         std::string c0 = read_text(cdir / "controller0.xml"), c1 = read_text(cdir / "controller1.xml"), c3 = read_text(cdir / "controller3.xml");
         CHECK(c0.find("<api>XInput</api>") != std::string::npos && c0.find("Wii U GamePad") != std::string::npos);
         CHECK(c1.find("<api>DSUController</api>") != std::string::npos && c1.find("<uuid>0</uuid>") != std::string::npos && c1.find("Wii U Pro Controller") != std::string::npos);
         CHECK(c3.find("<uuid>2</uuid>") != std::string::npos);
         CHECK(c1 == hubemu::cemu_pro_profile_xml_dsu(wup, 0, 1));
         CHECK(c1.find("<button>13</button>") != std::string::npos);   // Wii U A/B land on DSU face bits
-        hubemu::prepare_cemu_managed(ced.string(), wup, hubemu::cemu_pads_with_dsu(hubemu::CemuPads(), 1));
+        hubemu::prepare_cemu_managed(ced.u8string(), wup, hubemu::cemu_pads_with_dsu(hubemu::CemuPads(), 1));
         CHECK(fs::exists(cdir / "controller1.xml") && !fs::exists(cdir / "controller2.xml"));
-        hubemu::prepare_cemu_managed(ced.string(), wup, hubemu::CemuPads());
+        hubemu::prepare_cemu_managed(ced.u8string(), wup, hubemu::CemuPads());
         CHECK(!fs::exists(cdir / "controller1.xml"));
     }
     /* A user's own Cemu: backup once, write only when managing, restore, SDL pads */
@@ -956,33 +956,33 @@ static void test_controls2_emulators(const fs::path& dir) {
         fs::create_directories(ud / "controllerProfiles");
         write_text(ud / "controllerProfiles" / "controller0.xml", "users own");
         write_text(ud / "controllerProfiles" / "mine.xml", "keep");
-        hubemu::prepare_cemu_own(ud.string(), wup, hubemu::CemuPads(), false);   // setting OFF: nothing touched, no backup
+        hubemu::prepare_cemu_own(ud.u8string(), wup, hubemu::CemuPads(), false);   // setting OFF: nothing touched, no backup
         CHECK(read_text(ud / "controllerProfiles" / "controller0.xml") == "users own" && !fs::exists(ud / "controllerProfiles.retrohub-backup"));
-        hubemu::prepare_cemu_own(ud.string(), wup, hubemu::CemuPads(), true);
+        hubemu::prepare_cemu_own(ud.u8string(), wup, hubemu::CemuPads(), true);
         CHECK(read_text(ud / "controllerProfiles.retrohub-backup" / "controller0.xml") == "users own");
         CHECK(read_text(ud / "controllerProfiles.retrohub-backup" / "mine.xml") == "keep");
         CHECK(read_text(ud / "controllerProfiles" / "controller0.xml") == hubemu::cemu_gamepad_profile_xml(wup, 0));
         write_text(ud / "controllerProfiles" / "controller0.xml", "edited later");   // backup is once only; our marker keeps edits
-        hubemu::prepare_cemu_own(ud.string(), wup, hubemu::CemuPads(), true);
+        hubemu::prepare_cemu_own(ud.u8string(), wup, hubemu::CemuPads(), true);
         CHECK(read_text(ud / "controllerProfiles.retrohub-backup" / "controller0.xml") == "users own");
-        CHECK(hubemu::cemu_restore_controls(ud.string()));
+        CHECK(hubemu::cemu_restore_controls(ud.u8string()));
         CHECK(read_text(ud / "controllerProfiles" / "controller0.xml") == "users own" && read_text(ud / "controllerProfiles" / "mine.xml") == "keep" &&
               !fs::exists(ud / "controllerProfiles" / "retrohub-pad.txt"));
-        CHECK(!hubemu::cemu_restore_controls((dir / "no_such_cemu").string()));
+        CHECK(!hubemu::cemu_restore_controls((dir / "no_such_cemu").u8string()));
         /* no profiles at all: an empty backup restores to none */
         fs::path ud2 = dir / "own_cemu_data2";
-        hubemu::prepare_cemu_own(ud2.string(), wup, hubemu::CemuPads(), true);
+        hubemu::prepare_cemu_own(ud2.u8string(), wup, hubemu::CemuPads(), true);
         CHECK(fs::is_directory(ud2 / "controllerProfiles.retrohub-backup") && fs::exists(ud2 / "controllerProfiles" / "controller0.xml"));
-        hubemu::cemu_restore_controls(ud2.string());
+        hubemu::cemu_restore_controls(ud2.u8string());
         CHECK(!fs::exists(ud2 / "controllerProfiles" / "controller0.xml"));
         /* data dir: portable\ folder, else settings.xml beside the exe, else %APPDATA%\Cemu */
         fs::path ex = dir / "own_cemu_exe";
         fs::create_directories(ex);
-        CHECK(hubemu::cemu_user_data_dir(ex.string(), "C:\\AD") == "C:\\AD\\Cemu");
+        CHECK(hubemu::cemu_user_data_dir(ex.u8string(), "C:\\AD") == "C:\\AD\\Cemu");
         write_text(ex / "settings.xml", "<content/>");
-        CHECK(fs::path(hubemu::cemu_user_data_dir(ex.string(), "C:\\AD")) == ex);
+        CHECK(fs::u8path(hubemu::cemu_user_data_dir(ex.u8string(), "C:\\AD")) == ex);
         fs::create_directories(ex / "portable");
-        CHECK(fs::path(hubemu::cemu_user_data_dir(ex.string(), "C:\\AD")) == ex / "portable");
+        CHECK(fs::u8path(hubemu::cemu_user_data_dir(ex.u8string(), "C:\\AD")) == ex / "portable");
         /* SDL: Cemu uuid = "<index>_<guid>", index among same-GUID pads */
         PadDesc s1{"DualSense", "guidDS", "guidDS", false}, s2{"DualSense", "guidDS", "guidDS#2", false};
         hubemu::CemuPads sp = hubemu::cemu_pads_with_sdl({xb, s2, s1}, {s1, s2, xb});
@@ -992,7 +992,7 @@ static void test_controls2_emulators(const fs::path& dir) {
               (hubemu::cemu_pro_profile_xml(wup, 1, 1).find("<mapping>1</mapping>\n\t\t\t\t<button>12</button>") != std::string::npos
                    ? sx.find("<mapping>1</mapping>\n\t\t\t\t<button>0</button>") : sx.find("<mapping>1</mapping>\n\t\t\t\t<button>1</button>")) != std::string::npos);
         fs::path ud3 = dir / "own_cemu_data3";
-        hubemu::prepare_cemu_own(ud3.string(), wup, sp, true);
+        hubemu::prepare_cemu_own(ud3.u8string(), wup, sp, true);
         CHECK(read_text(ud3 / "controllerProfiles" / "controller1.xml") == hubemu::cemu_pro_profile_xml_sdl(wup, "1_guidDS", 1));
         CHECK(read_text(ud3 / "controllerProfiles" / "controller0.xml").find("<api>XInput</api>") != std::string::npos);
     }
@@ -1003,14 +1003,14 @@ static void test_controls2_emulators(const fs::path& dir) {
     fs::path dod = dir / "pad_dol";
     fs::path gcp = dod / "User" / "Config" / "GCPadNew.ini";
     hubctl::Profile gcd = hubctl::default_profile("gc");
-    hubemu::prepare_dolphin(dod.string(), base, gcd);
+    hubemu::prepare_dolphin(dod.u8string(), base, gcd);
     write_text(gcp, "[GCPad1]\nButtons/A = user\n");
-    hubemu::prepare_dolphin(dod.string(), base, gcd);
+    hubemu::prepare_dolphin(dod.u8string(), base, gcd);
     CHECK(read_text(gcp).find("Buttons/A = user") != std::string::npos);
-    hubemu::prepare_dolphin(dod.string(), bdp, gcd);
+    hubemu::prepare_dolphin(dod.u8string(), bdp, gcd);
     CHECK(read_text(gcp).find("Device = SDL/0/8BitDo Pro 2") != std::string::npos);
     write_text(gcp, "[GCPad1]\nButtons/A = user\n");
-    hubemu::prepare_dolphin(dod.string(), bdp, gcd);
+    hubemu::prepare_dolphin(dod.u8string(), bdp, gcd);
     CHECK(read_text(gcp).find("Buttons/A = user") != std::string::npos);
 }
 
@@ -1022,7 +1022,7 @@ static void test_ppsspp_pin_and_config(const fs::path& d) {
     CHECK(std::string(r.sha256) == "a60f04ebdb0b5f1655422bd7f88349a46999b17ad5115d6ddb290c3934bd5163");
     CHECK(std::wstring(r.host) == L"www.ppsspp.org" && std::wstring(r.exe) == L"PPSSPPWindows64.exe");
     CHECK(kind_for(hub::System::PSP) == Kind::Ppsspp && std::string(name(Kind::Ppsspp)) == "PPSSPP");
-    CHECK(fs::path(managed_dir(Kind::Ppsspp, (d / "root").string())).filename() == "ppsspp");
+    CHECK(fs::path(managed_dir(Kind::Ppsspp, (d / "root").u8string())).filename() == "ppsspp");
     hub::gs::Values v = hub::gs::defaults_for(hub::System::PSP);
     std::string ini = ppsspp_ini_launch(ppsspp_ini_defaults(""), v);
     CHECK(ini.find("FullScreen = True") != std::string::npos && ini.find("CheckForNewVersion = False") != std::string::npos);
@@ -1049,13 +1049,13 @@ static std::shared_ptr<Rel> make_rel(const fs::path& zip, const std::string& ver
     fs::remove(zip, ec);
     mz_zip_archive z;
     std::memset(&z, 0, sizeof z);
-    bool ok = mz_zip_writer_init_file(&z, zip.string().c_str(), 0) != 0;
+    bool ok = mz_zip_writer_init_file(&z, zip.u8string().c_str(), 0) != 0;
     for (const auto& f : files) ok = mz_zip_writer_add_mem(&z, f.first.c_str(), f.second.data(), f.second.size(), MZ_DEFAULT_COMPRESSION) && ok;
     ok = mz_zip_writer_finalize_archive(&z) && ok;
     mz_zip_writer_end(&z);
     CHECK(ok);
     rel->size = fs::file_size(zip, ec);
-    rel->sha = hubemu::sha256_file(zip.string());
+    rel->sha = hubemu::sha256_file(zip.u8string());
     rel->r = {rel->version.c_str(), L"example.invalid", L"/test/lichii-windows-x86_64.zip", rel->size, rel->sha.c_str(), L"lichii.exe", "GPL-3.0"};
     return rel;
 }
@@ -1066,7 +1066,7 @@ static Files snapshot(const fs::path& d) {
     std::error_code ec;
     if (!fs::exists(d, ec)) return m;
     for (fs::recursive_directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec))
-        if (it->is_regular_file(ec)) m[fs::relative(it->path(), d, ec).generic_string()] = read_text(it->path());
+        if (it->is_regular_file(ec)) m[fs::relative(it->path(), d, ec).generic_u8string()] = read_text(it->path());
     return m;
 }
 }   // namespace upg
@@ -1075,7 +1075,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
     using namespace upg;
     std::error_code ec;
     fs::remove_all(root, ec);
-    const fs::path dir = fs::u8path(hubemu::managed_dir(kind, root.string()));
+    const fs::path dir = fs::u8path(hubemu::managed_dir(kind, root.u8string()));
     const fs::path user = dir / "user";
 
     auto v1 = make_rel(root / "zips" / "v1.zip", "build-88", {{"lichii.exe", "EXE-1"}, {"Qt6Core.dll", "qt-1"}, {"old_only.dll", "gone-soon"},
@@ -1113,11 +1113,11 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
     };
     hk.running = [&](const std::string&) { return is_running; };
     auto use = [&](const std::shared_ptr<Rel>& r) { cur = &r->r; hk.release = cur; hubemu::set_install_test_hooks(&hk); };
-    auto run = [&](std::string* err) { return hubemu::install_blocking(kind, root.string(), err, nullptr); };
+    auto run = [&](std::string* err) { return hubemu::install_blocking(kind, root.u8string(), err, nullptr); };
     auto marker_has = [&](const std::shared_ptr<Rel>& r) { return read_text(dir / "retrohub-install.txt").find("sha256 " + r->sha) != std::string::npos; };
     auto scratch_gone = [&]() { return !fs::exists(dir / "_old") && !fs::exists(dir / "_extract") && !fs::exists(dir / "retrohub-upgrade.txt"); };
     auto playable = [&](const char* exe_text) {
-        hubemu::Install in = hubemu::find(kind, "", "", root.string());
+        hubemu::Install in = hubemu::find(kind, "", "", root.u8string());
         return !in.exe.empty() && in.managed && read_text(fs::u8path(in.exe)) == exe_text;
     };
 
@@ -1139,12 +1139,12 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
     // ---- 1. the marker matches the pin: nothing to do (no download, nothing touched)
     fetches = 0;
     CHECK(run(&err) && fetches == 0);
-    CHECK(!hubemu::find(kind, "", "", root.string()).outdated);
+    CHECK(!hubemu::find(kind, "", "", root.u8string()).outdated);
 
     // ---- 2. a newer pin: the install is outdated but still playable, and the next run upgrades it
     use(v2);
     {
-        hubemu::Install in = hubemu::find(kind, "", "", root.string());
+        hubemu::Install in = hubemu::find(kind, "", "", root.u8string());
         CHECK(!in.exe.empty() && in.outdated && in.how.find("update available") != std::string::npos);
     }
     fetches = 0;
@@ -1156,7 +1156,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
     CHECK(!fs::exists(dir / "lichii.pdb") && !fs::exists(dir / "eden-cli.pdb") && !fs::exists(dir / "vc_redist.x64.exe"));
     CHECK(!fs::exists(dir / "lichii-updater.exe") && read_text(dir / "qt.conf") == "[Paths]\nPlugins=plugins\n");   // the updater is gone after the upgrade too; qt.conf installs like any other file
     CHECK(marker_has(v2) && !marker_has(v1) && scratch_gone());
-    CHECK(!hubemu::find(kind, "", "", root.string()).outdated && playable("EXE-2"));
+    CHECK(!hubemu::find(kind, "", "", root.u8string()).outdated && playable("EXE-2"));
     fetches = 0;
     CHECK(run(&err) && fetches == 0);   // and now it is current
 
@@ -1166,7 +1166,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
     err.clear();
     CHECK(!run(&err) && !err.empty());   // download fails
     CHECK(playable("EXE-2") && marker_has(v2) && snapshot(user) == data && scratch_gone());
-    CHECK(hubemu::find(kind, "", "", root.string()).outdated);   // and it will be offered again
+    CHECK(hubemu::find(kind, "", "", root.u8string()).outdated);   // and it will be offered again
     offline = false;
     corrupt_for = v3->zip;
     err.clear();
@@ -1212,28 +1212,28 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
         const Files before = snapshot(dir);
         fs::create_directories(dir / "_old", ec);
         for (auto& c : fs::directory_iterator(dir, ec)) {
-            const std::string n = c.path().filename().string();
+            const std::string n = c.path().filename().u8string();
             if (n == "user" || n == "_old") continue;
             fs::rename(c.path(), dir / "_old" / n, ec);
         }
         write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\nphase 2\n");   // every old file parked, the new ones coming in
         write_text(dir / "fourth.dll", "half-written");
         write_text(dir / "_extract" / "junk.bin", "junk");
-        CHECK(hubemu::find(kind, "", "", root.string()).exe.empty());   // right now it does not look installed
-        hubemu::recover_interrupted(kind, root.string());   // what the next start does
+        CHECK(hubemu::find(kind, "", "", root.u8string()).exe.empty());   // right now it does not look installed
+        hubemu::recover_interrupted(kind, root.u8string());   // what the next start does
         CHECK(snapshot(dir) == before);   // exactly the v3 install again, user\ included
         CHECK(playable("EXE-3") && marker_has(v3) && scratch_gone());
         {   // a crash while still parking (phase 1): some old files moved, the rest never did, and none of them may be lost
             fs::create_directories(dir / "_old", ec);
             fs::rename(dir / "lichii.exe", dir / "_old" / "lichii.exe", ec);
             write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\nphase 1\n");
-            hubemu::recover_interrupted(kind, root.string());
+            hubemu::recover_interrupted(kind, root.u8string());
             CHECK(snapshot(dir) == before && playable("EXE-3") && scratch_gone());
         }
         // the same crash, found by the next install job instead of the start-up check: it recovers, then upgrades
         fs::create_directories(dir / "_old", ec);
         for (auto& c : fs::directory_iterator(dir, ec)) {
-            const std::string n = c.path().filename().string();
+            const std::string n = c.path().filename().u8string();
             if (n == "user" || n == "_old") continue;
             fs::rename(c.path(), dir / "_old" / n, ec);
         }
@@ -1249,7 +1249,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
         write_text(dir / "_old" / "lichii.exe", "EXE-3");
         write_text(dir / "_extract" / "junk.bin", "junk");
         write_text(dir / "retrohub-upgrade.txt", "to build-97\nsha256 " + v4->sha + "\n");
-        hubemu::recover_interrupted(kind, root.string());
+        hubemu::recover_interrupted(kind, root.u8string());
         CHECK(playable("EXE-4") && marker_has(v4) && scratch_gone() && snapshot(user) == data);
     }
 
@@ -1263,7 +1263,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
         err.clear();
         CHECK(!run(&err));   // even a failed first install keeps the player's data
         CHECK(snapshot(user) == data && !fs::exists(dir / "stray.dll") && !fs::exists(dir / "_extract") && !fs::exists(dir / "lichii.exe"));
-        CHECK(hubemu::find(kind, "", "", root.string()).exe.empty());
+        CHECK(hubemu::find(kind, "", "", root.u8string()).exe.empty());
         offline = false;
         CHECK(run(&err) && playable("EXE-4") && marker_has(v4) && snapshot(user) == data && scratch_gone());
     }
@@ -1273,14 +1273,14 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
         fs::create_directories(dir / "_old", ec);
         write_text(dir / "retrohub-upgrade.txt", "");
         write_text(dir / "retrohub-upgrade.txt.tmp", "to build-98\nsha");
-        hubemu::recover_interrupted(kind, root.string());
+        hubemu::recover_interrupted(kind, root.u8string());
         CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone() && !fs::exists(dir / "retrohub-upgrade.txt.tmp"));
         // no phase line, and the new build's lichii.exe already clashes with the parked old one: the old one comes back over it
         fs::create_directories(dir / "_old", ec);
         fs::rename(dir / "lichii.exe", dir / "_old" / "lichii.exe", ec);
         write_text(dir / "lichii.exe", "EXE-NEW");
         write_text(dir / "retrohub-upgrade.txt", "to build-98\nsha256 0000\n");
-        hubemu::recover_interrupted(kind, root.string());
+        hubemu::recover_interrupted(kind, root.u8string());
         CHECK(snapshot(dir) == before && playable("EXE-4") && scratch_gone());
     }
 
@@ -1289,7 +1289,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
         const Files before = snapshot(dir);
         fs::create_directories(dir / "_old", ec);
         for (auto& c : fs::directory_iterator(dir, ec)) {
-            const std::string n = c.path().filename().string();
+            const std::string n = c.path().filename().u8string();
             if (n == "user" || n == "_old") continue;
             fs::rename(c.path(), dir / "_old" / n, ec);
         }
@@ -1312,7 +1312,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
     auto park_all = [&]() {
         fs::create_directories(dir / "_old", ec);
         for (auto& c : fs::directory_iterator(dir, ec)) {
-            const std::string n = c.path().filename().string();
+            const std::string n = c.path().filename().u8string();
             if (n == "user" || n == "_old") continue;
             fs::rename(c.path(), dir / "_old" / n, ec);
         }
@@ -1336,7 +1336,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
         CHECK(!r && err.find("could not be finished") != std::string::npos && fetches == 0);
         CHECK(!fs::exists(dir / "fresh.dll") && fs::exists(dir / "_old" / "lichii.exe") && fs::exists(dir / "_old" / "retrohub-install.txt"));   // new file gone, old ones still parked
         CHECK(read_text(dir / "retrohub-upgrade.txt").find("phase 2") != std::string::npos && snapshot(user) == data);
-        CHECK(hubemu::find(kind, "", "", root.string()).exe.empty());
+        CHECK(hubemu::find(kind, "", "", root.u8string()).exe.empty());
         fetches = 0;
         CHECK(run(&err) && fetches == 0);
         CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone());
@@ -1369,9 +1369,9 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
         err.clear();
         const bool r = run(&err);
         CHECK(!r && fs::exists(dir / "lichii.exe") && fs::exists(dir / "retrohub-install.txt") && fs::exists(dir / "_old" / "fourth.dll"));
-        CHECK(hubemu::find(kind, "", "", root.string()).exe.empty());   // not playable while the journal is there
+        CHECK(hubemu::find(kind, "", "", root.u8string()).exe.empty());   // not playable while the journal is there
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
-        hubemu::recover_interrupted(kind, root.string());   // the next start finishes it
+        hubemu::recover_interrupted(kind, root.u8string());   // the next start finishes it
         CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone());
     }
     hubemu::set_install_test_hooks(nullptr);
@@ -1385,8 +1385,8 @@ static void test_fritchii_install(const fs::path& root) {
     fs::remove_all(root, ec);
     const hubemu::Kind K = hubemu::Kind::Fritchii;
     CHECK(std::string(hubemu::name(K)) == "Fritchii" && hubemu::is_nx(K) && hubemu::is_nx(hubemu::Kind::Lichii) && !hubemu::is_nx(hubemu::Kind::Cemu));
-    CHECK(hubemu::managed_dir(K, root.string()) != hubemu::managed_dir(hubemu::Kind::Lichii, root.string()));
-    CHECK(fs::u8path(hubemu::managed_dir(K, root.string())).filename() == "fritchii");
+    CHECK(hubemu::managed_dir(K, root.u8string()) != hubemu::managed_dir(hubemu::Kind::Lichii, root.u8string()));
+    CHECK(fs::u8path(hubemu::managed_dir(K, root.u8string())).filename() == "fritchii");
     CHECK(std::wstring(hubemu::release(K).exe) == L"lichii.exe" && std::string(hubemu::release(K).license) == "GPL-3.0" && std::string(hubemu::release(K).version) == "v5.7 r2");
     // the v5.7 pin is real: RetroHub's own local build of Fritchii v5.7 (emulators.cpp, fritchii_pin)
     {
@@ -1404,8 +1404,8 @@ static void test_fritchii_install(const fs::path& root) {
         hubemu::set_install_test_hooks(&hp);
         CHECK(hubemu::release_is_placeholder(K));
         std::string err;
-        CHECK(!hubemu::install_blocking(K, root.string(), &err, nullptr) && err.find("not published") != std::string::npos);
-        CHECK(hubemu::find(K, "", "", root.string()).exe.empty());
+        CHECK(!hubemu::install_blocking(K, root.u8string(), &err, nullptr) && err.find("not published") != std::string::npos);
+        CHECK(hubemu::find(K, "", "", root.u8string()).exe.empty());
         hubemu::set_install_test_hooks(nullptr);
     }
     auto v1 = make_rel(root / "zips" / "f1.zip", "v4.1", {{"lichii.exe", "FEXE-1"}, {"eden-cli.exe", "cli"}, {"lichii.pdb", "pdb"}, {"vc_redist.x64.exe", "vc"}, {"Qt6Core.dll", "qt"}});
@@ -1417,25 +1417,25 @@ static void test_fritchii_install(const fs::path& root) {
     hubemu::set_install_test_hooks(&hk);
     CHECK(!hubemu::release_is_placeholder(K));   // a real (test) pin
     std::string err;
-    CHECK(hubemu::install_blocking(K, root.string(), &err, nullptr));
-    const fs::path dir = fs::u8path(hubemu::managed_dir(K, root.string()));
+    CHECK(hubemu::install_blocking(K, root.u8string(), &err, nullptr));
+    const fs::path dir = fs::u8path(hubemu::managed_dir(K, root.u8string()));
     CHECK(read_text(dir / "lichii.exe") == "FEXE-1" && fs::exists(dir / "eden-cli.exe") && fs::is_directory(dir / "user"));
     CHECK(!fs::exists(dir / "lichii.pdb") && !fs::exists(dir / "vc_redist.x64.exe"));            // deleted like Lichii's
-    CHECK(!fs::exists(dir / "update-staging") && hubemu::update_leftovers(K, dir.string()).empty());   // the installer never leaves updater files
-    CHECK(!fs::exists(fs::u8path(hubemu::managed_dir(hubemu::Kind::Lichii, root.string()))));    // and never touches Lichii's folder
-    CHECK(hubemu::find(K, "", "", root.string()).exe == (dir / "lichii.exe").string() && !hubemu::find(K, "", "", root.string()).outdated);
+    CHECK(!fs::exists(dir / "update-staging") && hubemu::update_leftovers(K, dir.u8string()).empty());   // the installer never leaves updater files
+    CHECK(!fs::exists(fs::u8path(hubemu::managed_dir(hubemu::Kind::Lichii, root.u8string()))));    // and never touches Lichii's folder
+    CHECK(hubemu::find(K, "", "", root.u8string()).exe == (dir / "lichii.exe").u8string() && !hubemu::find(K, "", "", root.u8string()).outdated);
     write_text(dir / "user" / "keys" / "prod.keys", "FRITCHII-KEYS");
     // Fritchii's own updater was cut short: update-staging beside the exe. The install counts as outdated (Play offers the reinstall) and the reinstall clears it.
     fs::create_directories(dir / "update-staging" / "x", ec);
     write_text(dir / "update-staging" / "x" / "half.dll", "half");
     write_text(dir / "update-journal.json", "{}");
-    CHECK(hubemu::update_leftovers(K, dir.string()) != "");
-    CHECK(hubemu::find(K, "", "", root.string()).outdated);
-    CHECK(hubemu::install_blocking(K, root.string(), &err, nullptr));   // same pin, but the leftovers force the reinstall
-    CHECK(hubemu::update_leftovers(K, dir.string()).empty() && !hubemu::find(K, "", "", root.string()).outdated);
+    CHECK(hubemu::update_leftovers(K, dir.u8string()) != "");
+    CHECK(hubemu::find(K, "", "", root.u8string()).outdated);
+    CHECK(hubemu::install_blocking(K, root.u8string(), &err, nullptr));   // same pin, but the leftovers force the reinstall
+    CHECK(hubemu::update_leftovers(K, dir.u8string()).empty() && !hubemu::find(K, "", "", root.u8string()).outdated);
     CHECK(read_text(dir / "lichii.exe") == "FEXE-1" && read_text(dir / "user" / "keys" / "prod.keys") == "FRITCHII-KEYS");   // data kept
     // Lichii's check is unchanged: a folder named update-staging beside a Lichii install means nothing
-    CHECK(hubemu::update_leftovers(hubemu::Kind::Lichii, dir.string()).empty());
+    CHECK(hubemu::update_leftovers(hubemu::Kind::Lichii, dir.u8string()).empty());
     hubemu::set_install_test_hooks(nullptr);
     fs::remove_all(root, ec);
 }
@@ -1454,7 +1454,7 @@ static void test_install_robustness(const fs::path& root) {
     std::error_code ec;
     fs::remove_all(root, ec);
     const hubemu::Kind K = hubemu::Kind::Lichii;
-    const fs::path dir = fs::u8path(hubemu::managed_dir(K, root.string()));
+    const fs::path dir = fs::u8path(hubemu::managed_dir(K, root.u8string()));
     const fs::path dls = root / "_downloads";
     const fs::path part = dls / "lichii-windows-x86_64.zip.part";
     auto v1 = make_rel(root / "zips" / "r1.zip", "build-r1", {{"lichii.exe", "EXE-R1"}, {"Qt6Core.dll", pseudo_random_bytes(300000)}, {"old_only.dll", "old"}});
@@ -1477,14 +1477,14 @@ static void test_install_robustness(const fs::path& root) {
     hk.serve = [&](const hubemu::Release& r, uint64_t off, Reply* o) { offsets.push_back(off); return script(off, blob[r.sha256], o); };
     hubemu::set_install_test_hooks(&hk);
     auto use = [&](const std::shared_ptr<Rel>& r) { cur = &r->r; hk.release = cur; };
-    auto run = [&](std::string* e) { e->clear(); return hubemu::install_blocking(K, root.string(), e, nullptr); };
+    auto run = [&](std::string* e) { e->clear(); return hubemu::install_blocking(K, root.u8string(), e, nullptr); };
     auto reset = [&]() { std::error_code e2; fs::remove_all(dir, e2); fs::remove_all(dls, e2); offsets.clear(); hk.write_fault = nullptr; hk.free_space = nullptr; };
     auto installed = [&](const char* exe) { return read_text(dir / "lichii.exe") == exe && fs::exists(dir / "retrohub-install.txt"); };
     auto pin_of = [](const std::shared_ptr<Rel>& r) { return r->sha + " " + std::to_string((unsigned long long)r->size) + "\n"; };
     auto put_part = [&](const std::string& bytes, const std::string& pin = std::string()) {   // a partial file plus its pin sidecar (default: v1's pin)
         fs::create_directories(dls, ec);
         write_file(part, Bytes(bytes.begin(), bytes.end()));
-        if (pin != "none") write_text(fs::path(part.string() + ".pin"), pin.empty() ? pin_of(v1) : pin);
+        if (pin != "none") write_text(fs::u8path(part.u8string() + ".pin"),pin.empty() ? pin_of(v1) : pin);
     };
     const std::vector<uint64_t> zero = {0}, zero_half = {0, half}, half_zero = {half, 0}, only_half = {half};
     std::string err;
@@ -1538,7 +1538,7 @@ static void test_install_robustness(const fs::path& root) {
     CHECK(run(&err) && installed("EXE-R1") && offsets == zero);
     reset();
     put_part(z1.substr(0, half), "none");
-    CHECK(run(&err) && installed("EXE-R1") && offsets == zero && !fs::exists(part.string() + ".pin"));
+    CHECK(run(&err) && installed("EXE-R1") && offsets == zero && !fs::exists(part.u8string() + ".pin"));
 
     // ---- 416: the server refuses the range: start over
     reset();
@@ -1646,7 +1646,7 @@ static void test_install_robustness(const fs::path& root) {
     // ---- a failed 7z unpack says what tar said (Dolphin ships as .7z)
     {
         const std::string junk = pseudo_random_bytes(5000);
-        const std::string jpath = (root / "zips" / "junk.7z").string();
+        const std::string jpath = (root / "zips" / "junk.7z").u8string();
         write_file(fs::u8path(jpath), Bytes(junk.begin(), junk.end()));
         const std::string jsha = hubemu::sha256_file(jpath);
         const hubemu::Release r7 = {"2509", L"example.invalid", L"/test/dolphin.7z", (uint64_t)junk.size(), jsha.c_str(), L"Dolphin.exe", "GPL-2.0+"};
@@ -1656,11 +1656,11 @@ static void test_install_robustness(const fs::path& root) {
         h7.serve = [&](const hubemu::Release&, uint64_t, Reply* o) { o->status = 200; o->body = junk; return true; };
         hubemu::set_install_test_hooks(&h7);
         std::string e7;
-        const bool r = hubemu::install_blocking(hubemu::Kind::Dolphin, root.string(), &e7, nullptr);
+        const bool r = hubemu::install_blocking(hubemu::Kind::Dolphin, root.u8string(), &e7, nullptr);
         const size_t at = e7.find("tar exit");
         if (r || at == std::string::npos || e7.find(": ", at) == std::string::npos) std::printf("tar error text was: %s\n", e7.c_str());
         CHECK(!r && at != std::string::npos && e7.find(": ", at) != std::string::npos && e7.find("tar exit 1)") == std::string::npos);
-        CHECK(!fs::exists(fs::u8path(hubemu::managed_dir(hubemu::Kind::Dolphin, root.string())) / "Dolphin.exe") && !fs::exists(dls / "list.txt") && !fs::exists(dls / "list.txt.err"));
+        CHECK(!fs::exists(fs::u8path(hubemu::managed_dir(hubemu::Kind::Dolphin, root.u8string())) / "Dolphin.exe") && !fs::exists(dls / "list.txt") && !fs::exists(dls / "list.txt.err"));
         hubemu::set_install_test_hooks(&hk);
     }
     hubemu::set_install_test_hooks(nullptr);
@@ -1671,9 +1671,9 @@ static void test_cleanup_leftovers(const fs::path& root) {
     using namespace upg;
     std::error_code ec;
     fs::remove_all(root, ec);
-    hubemu::set_cleanup_test_root(root.string());
+    hubemu::set_cleanup_test_root(root.u8string());
     auto age = [](const fs::path& p, int hours) { std::error_code e; fs::last_write_time(p, fs::file_time_type::clock::now() - std::chrono::hours(hours), e); };
-    auto D = [&](hubemu::Kind k) { return fs::u8path(hubemu::managed_dir(k, root.string())); };
+    auto D = [&](hubemu::Kind k) { return fs::u8path(hubemu::managed_dir(k, root.u8string())); };
     const fs::path dl = root / "_downloads";
     write_text(dl / "a.zip.part", "x");
     write_text(dl / "list.txt", "z");
@@ -1715,7 +1715,7 @@ static void test_cleanup_leftovers(const fs::path& root) {
         std::error_code e;
         fs::create_directory_symlink(outside, lnk, e);
         if (!e) return true;
-        const std::string cmd = "cmd /c mklink /J \"" + lnk.string() + "\" \"" + outside.string() + "\" >nul 2>&1";   // a junction needs no privilege
+        const std::string cmd = "cmd /c mklink /J \"" + lnk.u8string() + "\" \"" + outside.u8string() + "\" >nul 2>&1";   // a junction needs no privilege
         std::system(cmd.c_str());
         return fs::exists(lnk / "precious.txt", e);
     }();
@@ -1724,17 +1724,17 @@ static void test_cleanup_leftovers(const fs::path& root) {
     write_text(root / "stranger" / "_old" / "mine.txt", "mine");
     age(root / "stranger" / "_old", 99);
 
-    CHECK(hubemu::cleanup_leftovers((root / "no_such_root").string()) == 0);
+    CHECK(hubemu::cleanup_leftovers((root / "no_such_root").u8string()) == 0);
     {   // wrong roots are refused outright: nothing is deleted
         write_text(root / "emulators" / "lichii" / "_old" / "q.dll", "q");
         age(root / "emulators" / "lichii" / "_old", 5);
         CHECK(hubemu::cleanup_leftovers("") == 0 && hubemu::cleanup_leftovers("emulators") == 0 && hubemu::cleanup_leftovers("C:\\") == 0 && hubemu::cleanup_leftovers("C:") == 0);
-        CHECK(hubemu::cleanup_leftovers((root / "emulators").string()) == 0);   // right leaf, wrong parent (not the hub data dir)
-        CHECK(hubemu::cleanup_leftovers((fs::path("relative") / "emulators").string()) == 0);
+        CHECK(hubemu::cleanup_leftovers((root / "emulators").u8string()) == 0);   // right leaf, wrong parent (not the hub data dir)
+        CHECK(hubemu::cleanup_leftovers((fs::path("relative") / "emulators").u8string()) == 0);
         CHECK(fs::exists(root / "emulators" / "lichii" / "_old" / "q.dll") && fs::exists(dl / "a.zip.part"));
         fs::remove_all(root / "emulators", ec);
     }
-    const int n = hubemu::cleanup_leftovers(root.string());
+    const int n = hubemu::cleanup_leftovers(root.u8string());
     CHECK(n == (linked ? 4 : 5));   // two old downloads + Lichii's _old and _extract (+ Dolphin's _old when no link could be made)
     CHECK(!fs::exists(dl / "a.zip.part") && !fs::exists(dl / "list.txt") && fs::exists(dl / "fresh.zip"));
     CHECK(!fs::exists(D(hubemu::Kind::Lichii) / "_old") && !fs::exists(D(hubemu::Kind::Lichii) / "_extract"));
@@ -1746,7 +1746,7 @@ static void test_cleanup_leftovers(const fs::path& root) {
     CHECK(fs::exists(D(hubemu::Kind::Pcsx2) / "other" / "keep.txt") && fs::exists(root / "stranger" / "_old" / "mine.txt"));
     if (linked) CHECK(fs::exists(D(hubemu::Kind::Dolphin) / "_old" / "a.dll") && fs::exists(outside / "precious.txt"));
     else std::printf("(symlink check skipped: no privilege to create one)\n");
-    CHECK(hubemu::cleanup_leftovers(root.string()) == 0);   // nothing more to do
+    CHECK(hubemu::cleanup_leftovers(root.u8string()) == 0);   // nothing more to do
 
     // while an install job runs the pass does nothing at all; afterwards it cleans up
     write_text(dl / "old2.part", "x");
@@ -1760,14 +1760,14 @@ static void test_cleanup_leftovers(const fs::path& root) {
     hubemu::set_install_test_hooks(&hk);
     int during = -1, calls = 0;
     std::string err;
-    const bool ok = hubemu::install_blocking(hubemu::Kind::Lichii, root.string(), &err, [&](int, uint64_t, uint64_t) {
-        if (++calls == 3) during = hubemu::cleanup_leftovers(root.string());   // (this thread, about half a second in: the job thread holds the lock and sits in the slow fetch)
+    const bool ok = hubemu::install_blocking(hubemu::Kind::Lichii, root.u8string(), &err, [&](int, uint64_t, uint64_t) {
+        if (++calls == 3) during = hubemu::cleanup_leftovers(root.u8string());   // (this thread, about half a second in: the job thread holds the lock and sits in the slow fetch)
     });
     hubemu::set_install_test_hooks(nullptr);
     CHECK(ok);
     CHECK(during == 0);
     CHECK(fs::exists(dl / "old2.part"));
-    CHECK(hubemu::cleanup_leftovers(root.string()) >= 1 && !fs::exists(dl / "old2.part"));
+    CHECK(hubemu::cleanup_leftovers(root.u8string()) >= 1 && !fs::exists(dl / "old2.part"));
     hubemu::cleanup_leftovers_async("relative");   // the background pass joins cleanly (here it refuses the root at once)
     hubemu::cleanup_leftovers_stop();
     hubemu::cleanup_leftovers_stop();

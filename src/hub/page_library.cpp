@@ -1,4 +1,5 @@
 #include "app.h"
+#include "winutil.h"
 #include "launch_guard_logic.h"
 #include "wave3_hooks.h"
 #include "libview_ui.h"
@@ -804,7 +805,7 @@ static std::vector<std::string> wiiu_info_compute(const hub::GameEntry& e, const
     if (!inst.exe.empty()) {
         if (inst.managed) { user_data = inst.dir + "\\portable"; mlc = user_data + "\\mlc01"; }
         else {
-            const char* ad = std::getenv("APPDATA");
+            const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str();
             hub::CemuDirs d = hub::cemu_dirs_for(inst.dir, ad ? ad : "", fp);
             user_data = d.user_data;
             mlc = d.mlc;
@@ -1123,7 +1124,7 @@ void draw_details_modal() {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
         std::string ud;
         hubemu::Install ki = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, e.path);
-        if (!ki.exe.empty()) { const char* ad = std::getenv("APPDATA"); ud = ki.managed ? ki.dir + "\\portable" : hub::cemu_dirs_for(ki.dir, ad ? ad : "", hubemu::wiiu_probe()).user_data; }
+        if (!ki.exe.empty()) { const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str(); ud = ki.managed ? ki.dir + "\\portable" : hub::cemu_dirs_for(ki.dir, ad ? ad : "", hubemu::wiiu_probe()).user_data; }
         std::string why = hub::wiiu_keys_message(hub::wiiu_keys_check(ud, ki.dir, hubemu::wiiu_probe()), "wud");
         ImGui::TextWrapped("%s", why.empty() ? "Disc images (.wud/.wux) are decrypted with the disc keys in Cemu's keys.txt (found). A .wua archive needs no keys." : why.c_str());
         ImGui::PopStyleColor();

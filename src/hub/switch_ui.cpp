@@ -1,4 +1,5 @@
 #include "app.h"
+#include "winutil.h"
 
 #include "lichii.h"
 #include "nx_runner.h"
@@ -36,7 +37,7 @@ void refresh(Look& L, bool force = false) {
     L.at = ImGui::GetTime();
     L.inst = hubemu::find(L.kind, "", "");
     L.st = L.inst.dir.empty() ? hubemu::NxSetup{} : hubemu::lichii_setup_status(L.inst.dir);
-    const char* ad = std::getenv("APPDATA");
+    const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str();
     L.sources = hubemu::lichii_find_sources(ad ? ad : "", A.st.rom_folders);
     if (L.kind == hubemu::Kind::Fritchii) {   // Fritchii has its own user folder: the Lichii install is one more place its keys and firmware can come from (copied, only read)
         const hubemu::Install li = hubemu::find(hubemu::Kind::Lichii, "", "");
