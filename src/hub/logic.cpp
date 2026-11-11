@@ -269,7 +269,7 @@ bool settings_from_json(const std::string& text, Settings* out) {
 bool load_settings(const std::string& path, Settings* out) {
     std::string text;
     const durable::ReadResult r = durable::read_file_utf8_migrating(path, &text);
-    if (r == durable::ReadResult::NotFound) return false;
+    if (r == durable::ReadResult::NotFound || r == durable::ReadResult::Unreadable) return false;   // Unreadable: saves to this path are refused (durable guard)
     if (!settings_from_json(text, out)) return false;
     if (r == durable::ReadResult::Legacy) save_settings(path, *out);
     return true;

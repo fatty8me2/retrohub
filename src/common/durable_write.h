@@ -30,12 +30,13 @@ std::wstring utf8_to_wide(const std::string& utf8);
 std::wstring legacy_ansi_to_wide(const std::string& utf8);
 bool commit_replace_utf8(const std::string& tmp, const std::string& dst, int budget_ms = kRetryShortMs);
 
-enum class ReadResult { NotFound, Primary, Legacy };
+enum class ReadResult { NotFound, Primary, Legacy, Unreadable };
 /* Read a whole file by UTF-8 path. If it does not exist there, fall back to the legacy (ANSI-misinterpreted) location, which is where
  * older builds kept it for players with non-ASCII paths. Returns Legacy so the caller can re-save to the correct path; the legacy
- * file is never touched. */
+ * file is never touched. Unreadable: the file EXISTS at the correct path but could not be read (locked, access denied) after a short
+ * retry; the legacy location is NOT consulted and the caller must not overwrite the real file with defaults. */
 ReadResult read_file_utf8_migrating(const std::string& path, std::string* bytes);
-/* Write `bytes` to "<path>.tmp" (wide path, flushed) then commit_replace. Failure leaves the previous file untouched and removes the
+/* Write `bytes` to "<path>.tmp" (wide path, flushed) then commit_replace. Refused (false) for a path whose last read was Unreadable. Failure leaves the previous file untouched and removes the
  * temp file (only if this call created it). */
 bool write_file_atomic_utf8(const std::string& path, const std::string& bytes, int budget_ms = kRetryShortMs);
 

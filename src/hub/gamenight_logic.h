@@ -220,7 +220,7 @@ inline bool save(const std::string& path, const Plans& p);
 inline bool load(const std::string& path, Plans* out) {
     std::string text;
     const durable::ReadResult r = durable::read_file_utf8_migrating(path, &text);
-    if (r == durable::ReadResult::NotFound) return false;
+    if (r == durable::ReadResult::NotFound || r == durable::ReadResult::Unreadable) return false;   // Unreadable: saves to this path are refused (durable guard)
     if (!from_json(text, out)) return false;
     if (r == durable::ReadResult::Legacy) save(path, *out);
     return true;

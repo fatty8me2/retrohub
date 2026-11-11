@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <mutex>
+#include <set>
 #include <system_error>
 
 namespace durable {
@@ -162,10 +164,28 @@ static bool slurp_wide(const std::wstring& w, std::string* out) {
     return true;
 }
 
+/* Paths whose last read found an existing but unreadable file: writes to them are refused for the rest of the session, so a caller
+ * running on in-memory defaults can never replace the real file. */
+static std::mutex g_guard_mu;
+static std::set<std::wstring>& guarded() { static std::set<std::wstring> s; return s; }
+static void guard_set(const std::wstring& p, bool on) { std::lock_guard<std::mutex> l(g_guard_mu); if (on) guarded().insert(p); else guarded().erase(p); }
+static bool guard_has(const std::wstring& p) { std::lock_guard<std::mutex> l(g_guard_mu); return guarded().count(p) != 0; }
+
+static bool missing_err(DWORD e) { return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND || e == ERROR_INVALID_NAME; }
+
 ReadResult read_file_utf8_migrating(const std::string& path, std::string* bytes) {
     bytes->clear();
     const std::wstring good = utf8_to_wide(path);
-    if (slurp_wide(good, bytes)) return ReadResult::Primary;
+    const int attempts = attempts_for(kRetryShortMs);
+    for (int i = 0; i < attempts; ++i) {
+        if (slurp_wide(good, bytes)) { guard_set(good, false); return ReadResult::Primary; }
+        bytes->clear();
+        DWORD a = GetFileAttributesW(lp(good).c_str());
+        if (a == INVALID_FILE_ATTRIBUTES && missing_err(GetLastError())) break;   // really absent: legacy fallback below
+        if (i + 1 == attempts) { guard_set(good, true); return ReadResult::Unreadable; }   // exists but locked / denied: never fall back
+        Sleep(kWaitMs);
+    }
+    guard_set(good, false);
     const std::wstring old = legacy_ansi_to_wide(path);
     if (old != good && !old.empty() && slurp_wide(old, bytes)) return ReadResult::Legacy;
     bytes->clear();
@@ -175,6 +195,7 @@ ReadResult read_file_utf8_migrating(const std::string& path, std::string* bytes)
 bool write_file_atomic_utf8(const std::string& path, const std::string& bytes, int budget_ms) {
     const std::string tmp = path + ".tmp";
     const std::wstring wtmp = utf8_to_wide(tmp);
+    if (guard_has(utf8_to_wide(path))) { SetLastError(ERROR_ACCESS_DENIED); return false; }   // the real file was unreadable at load
     {
         std::ofstream f(std::filesystem::path(wtmp), std::ios::binary | std::ios::trunc);
         if (!f) return false;
