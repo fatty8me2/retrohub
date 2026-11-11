@@ -4,6 +4,7 @@
 #include "updater.h"
 #include "games.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -753,14 +754,79 @@ StagedInfo scan_staged(const std::string& staged_dir) {
     return s;
 }
 
+/* Regular files under dir: {relative path with '/', absolute path, size}, sorted by relative path. false when the walk failed. */
+struct StagedWalkEntry { std::string rel; std::filesystem::path abs; long long size = 0; };
+static bool walk_staged(const std::string& dir, std::vector<StagedWalkEntry>* out) {
+    std::error_code ec;
+    const std::filesystem::path base = P(dir);
+    for (std::filesystem::recursive_directory_iterator it(base, std::filesystem::directory_options::skip_permission_denied, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        if (!it->is_regular_file(e2)) continue;
+        StagedWalkEntry w;
+        w.abs = it->path();
+        w.rel = U8(std::filesystem::relative(w.abs, base, e2).generic_wstring());
+        if (e2 || w.rel.empty()) return false;
+        w.size = (long long)it->file_size(e2);
+        if (e2) return false;
+        out->push_back(std::move(w));
+    }
+    if (ec) return false;
+    std::sort(out->begin(), out->end(), [](const StagedWalkEntry& a, const StagedWalkEntry& b) { return a.rel < b.rel; });
+    return true;
+}
+
+bool hash_staged(const std::string& dir, std::vector<StagedFile>* out, const std::atomic<bool>* cancel) {
+    std::vector<StagedWalkEntry> walk;
+    if (!walk_staged(dir, &walk)) return false;
+    std::vector<StagedFile> r;
+    for (const StagedWalkEntry& w : walk) {
+        if (cancel && cancel->load()) return false;
+        StagedFile f;
+        f.path = w.rel; f.size = w.size; f.sha256 = sha256_file(U8(w.abs.wstring()));
+        if (f.sha256.empty()) return false;
+        r.push_back(std::move(f));
+    }
+    if (out) *out = std::move(r);
+    return true;
+}
+
+bool verify_staged_list(const std::string& dir, const std::vector<StagedFile>& list, const std::atomic<bool>* cancel) {
+    if (list.empty()) return false;
+    std::vector<StagedWalkEntry> walk;
+    if (!walk_staged(dir, &walk) || walk.size() != list.size()) return false;   // an extra or a missing file
+    std::map<std::string, const StagedFile*> want;
+    for (const StagedFile& f : list) if (!want.emplace(f.path, &f).second) return false;   // the same path twice: not something we wrote
+    for (const StagedWalkEntry& w : walk) {   // cheap pass first: names and sizes
+        auto it = want.find(w.rel);
+        if (it == want.end() || it->second->size != w.size || !is_hex64(it->second->sha256)) return false;
+    }
+    for (const StagedWalkEntry& w : walk) {   // then the contents
+        if (cancel && cancel->load()) return false;
+        if (sha256_file(U8(w.abs.wstring())) != lower(want[w.rel]->sha256)) return false;
+    }
+    return true;
+}
+
 std::string staged_manifest_json(const StagedInfo& s) {
     JV o = json::make_object();
-    o.o.push_back({"v", json::make_int(1)});
+    o.o.push_back({"v", json::make_int(s.list.empty() ? 1 : 2)});
     o.o.push_back({"version", json::make_string(s.version)});
     o.o.push_back({"files", json::make_int(s.files)});
     o.o.push_back({"bytes", json::make_int(s.bytes)});
     if (s.hub_only) o.o.push_back({"payload", json::make_string("hub")});   // absent => full (older manifests)
     if (s.hub_only && !s.smash_sha256.empty()) o.o.push_back({"smash_sha256", json::make_string(s.smash_sha256)});
+    if (!s.list.empty()) {   // "list": [{"p": path, "n": size, "h": sha256}, ...]
+        JV arr = json::make_array();
+        for (const StagedFile& f : s.list) {
+            JV e = json::make_object();
+            e.o.push_back({"p", json::make_string(f.path)});
+            e.o.push_back({"n", json::make_int(f.size)});
+            e.o.push_back({"h", json::make_string(f.sha256)});
+            arr.a.push_back(std::move(e));
+        }
+        o.o.push_back({"list", std::move(arr)});
+    }
     return json::stringify(o) + "\n";
 }
 
@@ -771,12 +837,22 @@ bool parse_staged_manifest(const std::string& text, StagedInfo* out) {
     s.version = v.str("version"); s.files = v.i64("files"); s.bytes = v.i64("bytes");
     s.hub_only = v.str("payload") == "hub";
     s.smash_sha256 = v.str("smash_sha256");
+    if (const JV* l = v.get("list")) {
+        if (l->type != JV::Array) return false;
+        for (const JV& e : l->a) {
+            StagedFile f;
+            f.path = e.str("p"); f.size = e.i64("n", -1); f.sha256 = e.str("h");
+            if (f.path.empty() || f.size < 0 || !is_hex64(f.sha256)) return false;
+            s.list.push_back(std::move(f));
+        }
+    }
     if (s.version.empty() || s.files <= 0 || s.bytes < 0) return false;
     if (out) *out = s;
     return true;
 }
 
-bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only, std::string* smash_sha256) {
+bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only, std::string* smash_sha256,
+                     const std::atomic<bool>* cancel) {
     std::ifstream in(P(updates_dir + "\\staged.json"), std::ios::binary);
     if (!in || version.empty()) return false;
     std::stringstream ss; ss << in.rdbuf();
@@ -789,14 +865,20 @@ bool staged_reusable(const std::string& updates_dir, const std::string& version,
     }
     StagedInfo now = scan_staged(staged);
     if (now.files != m.files || now.bytes != m.bytes) return false;
+    /* Counts and byte totals prove little (a same-size file would pass): every file must match the SHA-256 taken when it was unpacked.
+     * A manifest with no list (an older RetroHub wrote it) cannot be verified: it is not trusted. */
+    if (m.list.empty() || (long long)m.list.size() != m.files || !verify_staged_list(staged, m.list, cancel)) return false;
     if (m.hub_only && !is_hex64(m.smash_sha256)) return false;   // no hash to re-check the installed Smash Classic with: fetch it again
     if (hub_only) *hub_only = m.hub_only;
     if (smash_sha256) *smash_sha256 = m.smash_sha256;
     return true;   // anything missing or changed since it was unpacked: download again
 }
 
-bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only, const std::string& smash_sha256) {
+bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only, const std::string& smash_sha256,
+                           const std::atomic<bool>* cancel) {
     StagedInfo s = scan_staged(updates_dir + "\\staged");
+    if (!hash_staged(updates_dir + "\\staged", &s.list, cancel)) return false;
+    s.files = (long long)s.list.size();
     s.version = version;
     s.hub_only = hub_only;
     s.smash_sha256 = hub_only ? smash_sha256 : std::string();
@@ -960,13 +1042,18 @@ void start_update() {
         };
         bool hubOnly = false;
         std::string smashHash;   // hub-only: the BattleShip.exe hash the signed marker named (re-checked by the applier before it touches a file)
-        if (detail::staged_reusable(updatesDir, version, &hubOnly, &smashHash)) {
+        if (detail::staged_reusable(updatesDir, version, &hubOnly, &smashHash, &s_quit)) {
             /* An earlier try (a postponed or failed install, or RetroHub closed while the update waited for a game) already unpacked this
              * exact release: nothing to download. */
             ulog("reusing the unpacked update %s from updates\\staged (no download)", version.c_str());
             set_status("Preparing...");
             s_progress.store(1.0f);
         } else {
+            if (s_quit.load()) { fail("RetroHub is closing, so the update was stopped."); return; }
+            /* An unpacked folder that is not trusted (another release, an older manifest with no per-file list, a changed or missing file) is
+             * discarded before anything new is fetched; it also frees its disk space. */
+            rm_file(updatesDir + "\\staged.json");
+            { std::error_code de; std::filesystem::remove_all(P(staged), de); }
             /* A partial update.zip from an earlier try is NOT deleted here: download_verified continues it when it is the same release
              * (and deletes it otherwise). */
             /* Which payload: needs SHA256SUMS.txt (the hub-only marker lives there), so fetch it first. Without one the full zip is the
@@ -1025,7 +1112,7 @@ void start_update() {
                     return;
                 }
             }
-            detail::write_staged_manifest(updatesDir, version, hubOnly, smashHash);   // the unpacked files are kept for a retry until an install succeeds
+            detail::write_staged_manifest(updatesDir, version, hubOnly, smashHash, &s_quit);   // the unpacked files are kept for a retry until an install succeeds
         }
 
         if (s_quit.load()) { fail("RetroHub is closing, so the update was stopped."); return; }   // the unpacked files stay for the next run

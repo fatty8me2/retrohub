@@ -220,20 +220,29 @@ inline bool check_retry_due(bool checked, unsigned long long last_fail_ms, unsig
 }
 
 /* ---- staged files kept for a retry ("updates\staged.json" beside "updates\staged\") ---- */
+struct StagedFile { std::string path; long long size = 0; std::string sha256; };   // path: relative to the staged dir, '/' separators
 struct StagedInfo {
     std::string version;
     long long files = 0, bytes = 0;
     bool hub_only = false;   // unpacked from RetroHub-windows.zip (no Smash Classic files); manifests without "payload" are full
     std::string smash_sha256; // hub-only: the BattleShip.exe hash the (signed) marker named; the applier re-checks the installed exe against it
+    std::vector<StagedFile> list;   // every unpacked file with its SHA-256, taken right after the unpack ("list" in staged.json). A manifest without it
+                                    // (written by RetroHub 1.41.0 or older) is not trusted for reuse: the folder is discarded and downloaded again.
 };
+/* Every regular file under staged_dir with its size and SHA-256, sorted by path. false when a file cannot be read or *cancel became true. */
+bool hash_staged(const std::string& staged_dir, std::vector<StagedFile>* out, const std::atomic<bool>* cancel = nullptr);
+/* The folder holds EXACTLY these files (no extra, none missing) and every size and SHA-256 matches. An empty list never matches. */
+bool verify_staged_list(const std::string& staged_dir, const std::vector<StagedFile>& list, const std::atomic<bool>* cancel = nullptr);
 StagedInfo scan_staged(const std::string& staged_dir);                       // counts the regular files under the dir
 std::string staged_manifest_json(const StagedInfo& s);
 bool parse_staged_manifest(const std::string& text, StagedInfo* out);
-/* The manifest names `version`, matches what is on disk, and the required exes are there (RetroHub.exe, plus BattleShip.exe for a
+/* The manifest names `version`, its per-file SHA-256 list matches what is on disk exactly, and the required exes are there (RetroHub.exe, plus BattleShip.exe for a
  * full payload): the download can be skipped. *hub_only (optional) says which kind is staged. */
-bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only = nullptr, std::string* smash_sha256 = nullptr);
+bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only = nullptr, std::string* smash_sha256 = nullptr,
+                    const std::atomic<bool>* cancel = nullptr);
 /* A hub-only manifest without a valid smash_sha256 is not reusable (the hand-off could not re-check the installed Smash Classic). */
-bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only = false, const std::string& smash_sha256 = std::string());
+bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only = false, const std::string& smash_sha256 = std::string(),
+                           const std::atomic<bool>* cancel = nullptr);   // hashes every file: the (large) cost of making a staged folder trustworthy
 }
 
 } // namespace hubupdate
