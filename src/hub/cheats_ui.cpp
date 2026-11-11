@@ -3,6 +3,8 @@
 #include "launch_guard_logic.h"
 #include "cheats_game.h"
 #include "qm_logic.h"
+#include "cheat_view_logic.h"
+#include "glyph_logic.h"
 
 #include <xinput.h>
 
@@ -230,6 +232,36 @@ void value_commit(const hub::GameEntry& e) {
     g_val_open = false;
 }
 
+/* What the list shows (display only; the store and the runner still see every row). Rebuilt by the panel when the rows change. */
+std::map<std::string, std::string> g_disp_label;   // cheat id -> name to show (a version suffix when two different codes share a name)
+std::set<std::string> g_disp_hidden;               // cheat ids that repeat another row exactly
+bool g_disp_type = false;                          // the list mixes code types, so each row says which
+
+void build_display(const std::vector<cheatstore::Row>& rows) {
+    g_disp_label.clear();
+    g_disp_hidden.clear();
+    std::vector<hubcheatview::In> in;
+    std::vector<int> back;
+    for (size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].custom) continue;   // the player's own codes always show (they have a Remove button)
+        hubcheatview::In r;
+        r.desc = rows[i].cheat.desc;
+        r.codes = rows[i].cheat.codes;
+        r.enabled = rows[i].cheat.enabled;
+        r.master = hub::cheats_is_master_desc(rows[i].cheat.desc);
+        r.format = (int)rows[i].cheat.format;
+        in.push_back(std::move(r));
+        back.push_back((int)i);
+    }
+    std::vector<bool> kept(in.size(), false);
+    for (auto& o : hubcheatview::dedupe(in)) {
+        kept[(size_t)o.src] = true;
+        g_disp_label[rows[(size_t)back[(size_t)o.src]].cheat.id] = o.label;
+    }
+    for (size_t i = 0; i < in.size(); ++i) if (!kept[i]) g_disp_hidden.insert(rows[(size_t)back[i]].cheat.id);
+    g_disp_type = hubcheatview::show_code_type(in);
+}
+
 const char* fmt_label(cheats::Format f) {
     switch (f) {
         case cheats::Format::GameShark: return "GameShark";
@@ -268,15 +300,19 @@ bool cheat_row(const cheatstore::Row& r, bool enabled, bool* removed, bool* acti
     // text
     float tx = p0.x + sp(2.f), tw = s0.x - tx - sp(1.5f) - (act_w > 0 ? act_w + sp(1.f) : 0.f);
     ImFont* bf = ui::F.bold;
-    std::string t = ui::ellipsize(bf, bf->FontSize, r.cheat.desc, tw);
-    dl->AddText(bf, bf->FontSize, ImVec2(tx, p0.y + sp(1.1f)), ui::TEXT, t.c_str());
-    char sub[96];
-    std::snprintf(sub, sizeof sub, "%s  -  %d line%s", fmt_label(r.cheat.format), (int)r.cheat.codes.size(), r.cheat.codes.size() == 1 ? "" : "s");
-    if (r.spec.valid) {
-        std::string vt = std::string(sub) + "  -  Value: " + (r.value_set ? value_text(r) : "not set yet");
-        std::snprintf(sub, sizeof sub, "%s", vt.c_str());
+    auto lab = g_disp_label.find(r.cheat.id);
+    std::string t = ui::ellipsize(bf, bf->FontSize, lab != g_disp_label.end() ? lab->second : r.cheat.desc, tw);
+    std::string sub;   // only what helps the player choose: no line counts, the code type only when the list mixes types
+    auto add = [&](const std::string& part) { if (!part.empty()) sub += (sub.empty() ? "" : "  -  ") + part; };
+    if (r.custom) add("Your code");
+    if (!r.custom && hub::cheats_is_master_desc(r.cheat.desc)) add(hubcheatview::master_note());
+    if (g_disp_type || r.custom) add(fmt_label(r.cheat.format));
+    if (r.spec.valid) add(std::string("Value: ") + (r.value_set ? value_text(r) : "not set yet"));
+    if (sub.empty()) dl->AddText(bf, bf->FontSize, ImVec2(tx, p0.y + (h - bf->FontSize) * 0.5f), ui::TEXT, t.c_str());
+    else {
+        dl->AddText(bf, bf->FontSize, ImVec2(tx, p0.y + sp(1.1f)), ui::TEXT, t.c_str());
+        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.1f) + bf->FontSize + sp(0.4f)), ui::TEXT2, ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, sub, tw).c_str());
     }
-    dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(1.1f) + bf->FontSize + sp(0.4f)), ui::TEXT2, r.custom ? (std::string("Your code  -  ") + sub).c_str() : sub);
     {
         float bx = s0.x - act_w - sp(1.f);
         if (edit) {   // value cheats: change the number
@@ -583,6 +619,7 @@ void draw_cheats_modal() {
     if (on_n) pill((std::to_string(on_n) + " on").c_str(), ui::GOOD);
     ImGui::SameLine(0, sp(1.5f));
     ImGui::TextDisabled("%s", e.title.c_str());
+    ImGui::Dummy(ImVec2(0, sp(0.75f)));
 
     if (locked_guest) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
@@ -603,7 +640,7 @@ void draw_cheats_modal() {
     } else if (e.system == hub::System::GC) {
         ImGui::TextDisabled("GameCube cheats are loaded by Dolphin when the game starts. Gecko and Action Replay codes both work.");
     } else {
-        ImGui::TextDisabled("In a game, hold View and press Y to open this again.");
+        if (A.pad_mode) ImGui::TextDisabled("In a game, hold %s and press %s to open this again.", hubglyph::label(ui::pad_kind, "View"), hubglyph::label(ui::pad_kind, "Y"));
     }
 
     // save safety
@@ -756,7 +793,7 @@ void draw_cheats_modal() {
         static int q_rev = -1;
         static std::string q_key;
         static std::vector<cheatstore::Row> shown;
-        if (q_last != g_search || q_rev != g_rev || q_key != e.key) { shown = cheatstore::filter_rows(rows, g_search); q_last = g_search; q_rev = g_rev; q_key = e.key; }
+        if (q_last != g_search || q_rev != g_rev || q_key != e.key) { build_display(rows); shown = cheatstore::filter_rows(rows, g_search); shown.erase(std::remove_if(shown.begin(), shown.end(), [](const cheatstore::Row& r) { return g_disp_hidden.count(r.cheat.id) > 0; }), shown.end()); q_last = g_search; q_rev = g_rev; q_key = e.key; }
         ImGui::BeginChild("##cheat_list", ImVec2(0, ImGui::GetContentRegionAvail().y - foot_h), ImGuiChildFlags_NavFlattened);
         if (rows.empty()) {
             text_wrapped_disabled("No ready-made cheats for this game yet. Use \"Add custom code\" to type or paste your own.");
@@ -792,10 +829,10 @@ void draw_cheats_modal() {
                 if (it.row < 0) {
                     ImVec2 p = ImGui::GetCursorScreenPos();
                     ImGui::PushFont(ui::F.h2);
-                    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + sp(3.f)));
+                    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + sp(3.5f)));
                     ImGui::TextUnformatted(searching && it.group == 1 ? "Matches" : titles[it.group]);
                     ImGui::PopFont();
-                    ImGui::SameLine(0, sp(1.f));
+                    ImGui::SameLine(0, sp(1.5f));
                     ImGui::TextDisabled("%d", it.count);
                     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + row_h));
                     ImGui::Dummy(ImVec2(0, 0));

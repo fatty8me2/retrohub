@@ -441,9 +441,9 @@ void page_settings() {
     int nt = ui::segmented("settabs", labels, hubui::ST_Count, A.st.settings_tab);
     if (nt != A.st.settings_tab) { A.st.settings_tab = nt; mark_dirty(); }
     {   // the hint hides when the window is too narrow for it (200% UI size) instead of being cut off
-        const char* hint = "LB / RB switch tabs";
+        const std::string hint = A.pad_mode ? std::string(hubglyph::label(ui::pad_kind, "LB")) + " / " + hubglyph::label(ui::pad_kind, "RB") + " switch tabs" : std::string();   // a pad hint only while a pad is in use
         ImGui::SameLine(0, sp(2.f));
-        if (ImGui::GetCursorPosX() + ImGui::CalcTextSize(hint).x <= ImGui::GetWindowContentRegionMax().x) ImGui::TextDisabled("%s", hint);
+        if (!hint.empty() && ImGui::GetCursorPosX() + ImGui::CalcTextSize(hint.c_str()).x <= ImGui::GetWindowContentRegionMax().x) ImGui::TextDisabled("%s", hint.c_str());
         else ImGui::NewLine();
     }
     ImGui::Dummy(ImVec2(0, sp(1.f)));

@@ -214,6 +214,8 @@ add_executable(hub_party_test test_party.cpp)
 target_link_libraries(hub_party_test PRIVATE hublogic)
 add_executable(hub_bracket_test test_bracket.cpp)
 target_link_libraries(hub_bracket_test PRIVATE hublogic)
+add_executable(hub_cheat_view_test test_cheat_view.cpp)
+target_link_libraries(hub_cheat_view_test PRIVATE hublogic)
 add_executable(hub_hack_test test_hack.cpp hack_core.cpp)
 target_link_libraries(hub_hack_test PRIVATE hublogic hubcommon)
 
