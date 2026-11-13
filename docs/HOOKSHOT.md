@@ -20,14 +20,34 @@ Code: `src/hub/hookshot.*` (what is built: paths, stamp, `ready()`), `src/hub/ho
 
 ## The audit (data/hookshot/SOURCE.md)
 
-RetroHub ships the Hookshot source, unmodified, as `data\hookshot\hookshot-src-137c423.zip` (`git archive` of commit
-`137c423589f178bb4274e339b17b4dfd466435e9`, sha256 `afd262616752aca42317fc2f53dbb1de3c9a12a1207b4d3b98c548ace0f228ba`, checked
-before it is unpacked). It was audited on 2026-11-07, all 912 files:
+RetroHub ships the Hookshot source, unmodified, as `data\hookshot\hookshot-src-8ef8461.zip` (`git archive` of commit
+`8ef84611049f4fc31835a0b12793cf074ed49c3c`, release **v2.1.0**, sha256 `05ab70bf02640f35ef22fd670200d3f3eb0187eef31efe1f84778a0a12d283d5`,
+checked before it is unpacked).
 
-- no network code and no telemetry;
-- no process launching beyond the compiler and linker during the build;
-- no registry, startup or security changes;
-- no obfuscated or hidden code; the vendored Opus 1.5.2 and zstd 1.5.7 match upstream.
+**First audit, 2026-11-07, 137c423 (all 912 files): clean.** No network code and no telemetry; no process launching beyond the compiler
+and linker during the build; no registry, startup or security changes; no obfuscated or hidden code; the vendored Opus 1.5.2 and zstd
+1.5.7 match upstream.
+
+**Second audit, 2026-11-12, the diff 137c423 to v2.1.0 (1751 commits, 1023 files, +263k lines): clean with notes.** No malware
+indicators (no obfuscation, registry writes, persistence, hooks, prebuilt binaries or build-time downloads). The vendored Dear ImGui
+1.92.9b, zstd 1.5.7, FidelityFX SDK 1.1.4 and API 2.4.0 and Libertinus 7.051 are byte-identical to upstream. The notes, and what RetroHub does about them:
+
+- **A start-up update check** (`host\hos_update.c`): WinHTTP to `api.github.com`, then a top-most message box when a newer release exists.
+  It only runs for a folder holding `hookshot_version.txt`, which a build from this source never gets, and RetroHub also sets
+  `HOOKSHOT_NO_UPDATE_CHECK=1` for the build and at every launch.
+- **A Discord status** (local pipe only, on by default): RetroHub sets `HOS_DISCORD=0` at every launch.
+- **A microphone input** for the ocarina's mic mode: opens the default recording device only when the game itself asks; the audio stays in
+  the game's memory. Accepted.
+- **Optional extras never requested:** the NVIDIA DLSS SDK download (`--fetch-ngx-sdk --accept-nvidia-license`) and AMD FSR (`--fsr`).
+  At run time the game would load `nvngx_dlss.dll` / `amd_fidelityfx_loader_vk.dll` only if a player put them in its folders.
+- **Build step added by the author:** `make_game.py` runs the new `hookshot.exe --prepare-shaders` (no window) as its last step, so the
+  first launch no longer shows a shader console; and `stop_stray_compilers` (PowerShell process list, `taskkill /PID` of earlier builds
+  that name the same work folder). Both stay inside RetroHub's job and kit.
+- **Four community pipeline-state lists** (`assets\pipeline_states\contrib\*.bin.xz`): data merged into the game's shader seed, parsed with checks.
+- The author's builder GUI, installers and updater are not used.
+
+A build made from the previous audited source (137c423) keeps working: the game's card says a newer Hookshot is available and offers
+*Rebuild*; nothing is replaced until the player asks and the new build has succeeded. The full audit is in the RetroHub notes of 2026-11-12.
 
 It writes beside its exe only: `user\` (saves), `language.txt`, `hookshot_options.ini`, the shader and pipeline caches
 (`hookshot_*.bin`, `mkw_vk_pipelines.bin`) and `hookshot_log.txt`. If no AV1 video decoder is installed it shows a top-most message
@@ -68,14 +88,13 @@ downloaded once while writing this and matched Eden's pins byte for byte. SDL2.d
 `src\third_party\sdl2\SDL2.dll` on every build). The Hookshot source is the audited zip above. `WGPU_NATIVE` points at a folder that
 does not exist, so the build uses the Vulkan back end only.
 
-### RetroHub's one addition to the source
+### No changes to the source (since v2.1.0)
 
-`data\hookshot
-x_webgpu_absent.c` is copied to `<kit>\src\host
-x_webgpu_absent.c` after the source is unpacked (`build.py`
-compiles every `host\*.c`). It holds the Vulkan-only build's placeholders for the WebGPU fallback (`wgr_start`, `wgr_nvn_*`,
-`rx_request_frame_dump` and so on): if `hookshot_vk.dll` can't start, the game logs why and stops instead of falling back. No other
-Hookshot file is changed.
+RetroHub adds nothing to the Hookshot source any more. Up to 137c423 it had to copy a placeholder file for the WebGPU fallback; since
+v2.1.0 the source ships `hostx_nowgpu.c` itself, and `nx2uild.py` compiles it whenever `WGPU_NATIVE` has no `webgpu.h` (the
+Vulkan-only build: if `hookshot_vk.dll` can't start, the game logs why and stops instead of falling back). The only file RetroHub puts
+into the unpacked source is its own `SDL2.dll` (the source's `third_party\sdl2` carries no SDL binaries; the game prefers `SDL3.dll` and
+falls back to a real `SDL2.dll`, which is what it gets).
 
 ### How the LLVM archive is unpacked
 
@@ -100,7 +119,7 @@ All of it under `<data>\emulators\` (`<data>` is RetroHub's `userdata` folder):
 | `hookshot\` | The built game: `hookshot.exe`, `hookshot_vk.dll`, `SDL2.dll`, `romfs\`, `user\` (the saves), caches, `retrohub_hookshot.json` (the stamp) | about 25 GB |
 | `hookshot-kit\` | The build tools, kept after a build so a rebuild is quick | about 1.1 GB |
 | `hookshot-kit\downloads\` | The pinned archives (283 MB) | |
-| `hookshot-kit\src\` | The Hookshot source, unpacked (17 MB) | |
+| `hookshot-kit\src\` | The Hookshot source, unpacked (about 60 MB) | |
 | `hookshot-kit\python\` | The private Python and its packages (173 MB) | |
 | `hookshot-kit\llvm\` | The compiler subset (592 MB) | |
 | `hookshot-kit\cpm\` | The header packages (45 MB) | |

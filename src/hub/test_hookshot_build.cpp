@@ -146,6 +146,8 @@ static void test_pins() {
 #ifdef HOOKSHOT_DATA_DIR
     const fs::path data = HOOKSHOT_DATA_DIR;
     CHECK_EQ(hash_file_hex(HashAlg::Sha256, (data / kSourceZipName).u8string()), std::string(kSourceZipSha256));
+    CHECK(!fs::exists(data / "rx_webgpu_absent.c"));   // v2.1.0 ships host/rx_nowgpu.c itself; the old placeholder would clash with it
+    CHECK(!fs::exists(data / "hookshot-src-137c423.zip"));
     // requirements.txt: every package pinned with at least one hash, nothing else installed
     const std::string req = slurp(data / "requirements.txt");
     for (const char* name : {"capstone==5.0.9", "lz4==4.4.5", "numpy==2.5.4", "unicorn==2.1.4", "zstandard==0.25.0"}) CHECK(req.find(name) != std::string::npos);

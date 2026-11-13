@@ -8,8 +8,9 @@
  *   - Vulkan-Headers v1.4.345, SPIRV-Headers vulkan-sdk-1.4.341.0, VulkanMemoryAllocator v3.3.0 (the tags and SHA-512s
  *     Eden's cpmfile.json pins), laid out as the CPM cache nx2/build.py reads (RX_CPM)
  * SDL2.dll is RetroHub's own. The Hookshot source is the audited commit (hookshot::kSourceCommit) shipped in RetroHub's
- * package as data\hookshot\hookshot-src-137c423.zip (sha256 compiled in). Hookshot's own release zip / prebuilt tools and the
- * prebuilt wgpu-native are NEVER used (WGPU_NATIVE points at an empty folder: Vulkan back end only).
+ * package as data\hookshot\hookshot-src-8ef8461.zip (Hookshot v2.1.0, sha256 compiled in). Hookshot's own release zip / prebuilt tools and the
+ * prebuilt wgpu-native are NEVER used (WGPU_NATIVE points at an empty folder: the source's own host/rx_nowgpu.c stands in, Vulkan back end only).
+ * Its update check, Discord status and NVIDIA/FSR options are all off (HOOKSHOT_NO_UPDATE_CHECK=1, HOS_DISCORD=0, no --fetch-ngx-sdk / --fsr).
  * Visual Studio's C++ build tools + a Windows SDK must already be installed: Microsoft does not allow bundling them.
  *
  * The build: nx2/make_game.py --nup <file> (or --romfs/--exefs) --out <staging> --work <kit>\work --language <code>,
@@ -143,8 +144,8 @@ struct Pin {
     const char* what;        // for the card: "Python 3.13.17"
 };
 const std::vector<Pin>& pins();                    // python, llvm, then the three cpm header packages
-constexpr const char* kSourceZipName = "hookshot-src-137c423.zip";
-constexpr const char* kSourceZipSha256 = "afd262616752aca42317fc2f53dbb1de3c9a12a1207b4d3b98c548ace0f228ba";
+constexpr const char* kSourceZipName = "hookshot-src-8ef8461.zip";
+constexpr const char* kSourceZipSha256 = "05ab70bf02640f35ef22fd670200d3f3eb0187eef31efe1f84778a0a12d283d5";
 
 /* ---- the swap (pure file work; unit-tested with temp folders) ---- */
 /* Puts `staging` in place of `game`: first MOVES game\user (the saves) and the cache files (hookshot_*.bin, mkw_vk_pipelines.bin,
@@ -175,7 +176,7 @@ int run_command(const std::string& exe, const std::vector<std::string>& args, co
 /* ---- the kit stage on its own (also what the manual smoke test calls) ---- */
 struct KitIO {
     std::string kit;                                   // kit folder to fill
-    std::string data;                                  // folder holding hookshot-src-137c423.zip, unpack_tar.py, requirements.txt
+    std::string data;                                  // folder holding hookshot-src-8ef8461.zip, unpack_tar.py, requirements.txt
     std::string sdl2_dll;                              // RetroHub's SDL2.dll
     const std::atomic<bool>* cancel = nullptr;
     const std::atomic<bool>* pause = nullptr;

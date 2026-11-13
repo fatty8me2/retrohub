@@ -87,10 +87,12 @@ bool ready(std::string* why, const std::string& dir_in) {
     if (!fs::is_directory(d / "romfs", ec)) return miss("the build is incomplete (the game's romfs folder is missing)");
     Stamp s;
     if (!read_stamp(S(d), &s)) return miss("the build was not made by RetroHub (no build stamp)");
-    if (s.commit != kSourceCommit) return miss("the build is from another Hookshot version: rebuild it");
+    if (s.commit != kSourceCommit && s.commit != kPreviousAuditedCommit) return miss("the build is from another Hookshot version: rebuild it");
     if (why) why->clear();
     return true;
 }
+
+bool is_older_audited(const Stamp& s) { return s.commit == kPreviousAuditedCommit; }
 
 bool use_for(const hub::GameEntry& e, const Values& v) {
     if (!supports(e)) return false;
