@@ -354,7 +354,7 @@ into `<data>\emulators\fritchii`, with its own `user\` folder, and runs it throu
 
 - **Version.** The pin is **v5.8.4** (`retrohub-fritchii-v5.8.4` on `fatty8me2/Fritchii`, commit a44f3bd on `retrohub/msvc`): RetroHub's own build of Frizti's tagged source plus build-only commits
   (MSVC warning flags; Windows only; no `-DLICHII_BUILD_TAG`), so the binary is named and versioned like Frizti's release, "Fritchii v5.8.4". v5.7 and later were built LOCALLY on the owner's PC
-  (VS 2026 / MSVC 14.50, Qt 6.8.3; branch `retrohub/msvc`) because GitHub paused Actions on the fork; there is no workflow run for them. v5.6 was skipped. v5.8.4 (2026-11-12) is Frizti's tag `fritchii-v5.8.4` plus the same three build-only commits (the `kit` is `fb\next-version.ps1`).
+  (VS 2026 / MSVC 14.50, Qt 6.8.3; branch `retrohub/msvc`) because GitHub paused Actions on the fork; there is no workflow run for them. v5.6 was skipped. v5.8.4 is Frizti's tag `fritchii-v5.8.4` (published upstream 2026-11-11) plus the same three build-only commits; RetroHub's build and this pin date from 2026-11-12 (built with the staged script `fb\next-version.ps1`).
   The third build-only commit exists because the first v5.7 build crashed in `BlitConstantsPass` while preparing shaders: MSVC 14.50 indexed a jump table with a 64-bit load of a 32-bit
   `IR::Value` immediate. It stores narrow immediates through the 64-bit union member (upstream has not touched `value.cpp`, so it still applies).
   The "Convert to NX" tool is not in this build (the prebuilt nxformat zip no longer matched the SHA-256 pinned in Fritchii's `CMakeModules/NxFormat.cmake`, so configure skipped it);
@@ -369,7 +369,7 @@ into `<data>\emulators\fritchii`, with its own `user\` folder, and runs it throu
 - **v5.8 profile folder (portable only).** v5.8 moved the non-portable profile from `%APPDATA%\eden` to `%APPDATA%\fritchii` and opens a modal "copy your old data" dialog on a first non-portable launch.
   RetroHub never meets either: the install always has its own `user\` folder (`prepare_lichii` creates it before every launch), and with a `user\` folder beside `lichii.exe` Fritchii runs portable
   (`IsPortableMode()`), which never imports, never asks, never touches `%APPDATA%\fritchii` and shows "Copy Data" as an information box only. Do not move the Fritchii data out of `user\`. The only %APPDATA% reads left are
-  the optional `nx2_switches.txt` files (RetroHub never writes one). The Saves window's `nand\user\save-backups` and `save-import` folders sit beside `nand\user\save`, outside every folder the save sync maps (`nx_save_map`; tested).
+  the optional `nx2_switches.txt` files (RetroHub never writes one). The Saves window's `nand\user\save-backups` and `save-import` folders sit beside `nand\user\save`, outside every folder the save sync maps (`nx_save_map`); `hub_nx_runner_test` creates both folders and checks that a sync of the mapped folders never copies from them.
 - **What's new.** Fritchii opens a one-time What's new window (after the game stops) while `[UI] fritchii_whats_new_seen` differs from its build version; RetroHub writes
   the pinned build's version (`kFritchiiWhatsNewSeen` in `lichii.h`, "v5.8.4") on every launch. Change it with every pin.
 - **Default for Ocarina of Time.** Ocarina of Time (Switch 2, `0400486024DEC000`) plays with Fritchii by default. The rule is one pure function, `hubemu::nx_emulator_for` (`nx_runner.cpp`):
@@ -383,7 +383,7 @@ into `<data>\emulators\fritchii`, with its own `user\` folder, and runs it throu
 - **NVIDIA.** Since v5.5 Fritchii sets `__GL_SHADER_DISK_CACHE_SIZE` (10 GiB) and `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1` in its own process environment (only if not set
   already; nothing is written to the driver or the registry), so the prepared shaders stay in the driver's cache; RetroHub never sets a smaller value. On older drivers the
   NVIDIA Control Panel's Shader Cache Size (Manage 3D settings) can still be set to Unlimited.
-- **Ocarina of Time options (`switch.oot_high_refresh`, `switch.oot_refresh_cap`, `switch.oot_aa`; per game, Settings > Switch).** They map to Fritchii v5.7's `[Renderer]` keys
+- **Ocarina of Time options (`switch.oot_high_refresh`, `switch.oot_refresh_cap`, `switch.oot_aa`; per game, Settings > Switch).** They map to Fritchii v5.8.4's `[Renderer]` keys (same keys and enum values as v5.7)
   `oot_high_refresh` (bool: the experimental "High refresh rate" patch that keeps the game at normal speed above 60 fps; off in Fritchii), `oot_high_refresh_cap` (enum `OotRefreshCap`
   Display 0, 90 1, 120 2, 144 3, 165 4; never faster than the screen) and `oot_anti_aliasing` (enum `OotAntiAliasing` Game 0, No sharpening 1, FSR 3.1 2, FSR 4 3; FSR 4 is shown as "AMD FSR 4 (AMD GPUs only, otherwise FSR 3.1)" because it needs AMD's runtime and
   falls back to 3.1). Every one defaults to `default` = "Fritchii's setting": nothing is written for a key that is not in the ini, so a player who never touches them gets exactly the ini RetroHub wrote before. Other values are
