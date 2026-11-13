@@ -662,6 +662,8 @@ static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const st
     }
     std::vector<std::pair<std::string, std::string>> env;
     if (hub::gs::is_fullscreen(gs_values_for(e))) env.push_back({"HOS_FULLSCREEN", "1"});
+    env.push_back({"HOOKSHOT_NO_UPDATE_CHECK", "1"});   // Hookshot v2.1.0 would ask GitHub for a newer release and could open a top-most box: never over a game
+    env.push_back({"HOS_DISCORD", "0"});                // and would set a Discord status by default
     RunInfo r = ri;
     auto jr = std::make_shared<hubjournal::Entry>();   // the pending-session journal: replayed at the next hub start when the hub is closed during play
     jr->emu_kind = 100;   // (not a hubemu::Kind: Hookshot has its own)

@@ -48,7 +48,7 @@ function New-Copy([string]$tag, [bool]$ready, [string]$gameSettingsJson = "") {
         $h = Join-Path $ud "emulators\hookshot"
         New-Item -ItemType Directory -Force (Join-Path $h "romfs") | Out-Null
         foreach ($f in "hookshot.exe", "hookshot_vk.dll", "SDL2.dll") { [IO.File]::WriteAllBytes((Join-Path $h $f), [byte[]]@()) }
-        [IO.File]::WriteAllText((Join-Path $h "retrohub_hookshot.json"), '{"commit":"137c423589f178bb4274e339b17b4dfd466435e9","game_build":"e0f3ccfa","built":1794066770,"source":"x","size":1}')
+        [IO.File]::WriteAllText((Join-Path $h "retrohub_hookshot.json"), '{"commit":"8ef84611049f4fc31835a0b12793cf074ed49c3c","game_build":"e0f3ccfa","built":1794066770,"source":"x","size":1}')
     }
     if ($gameSettingsJson) {
         New-Item -ItemType Directory -Force (Join-Path $vault "_settings") | Out-Null

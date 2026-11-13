@@ -27,6 +27,7 @@ struct View {
     hs::BuildStatus st;
     hs::Requirements req;
     int64_t built = 0;
+    bool older = false;          // the build is from the previous audited Hookshot: a newer one can be built (never forced)
     bool use_hookshot = false;   // Play starts Hookshot (this game's switch.runner is "hookshot")
     std::string runner = "lichii";   // the game's switch.runner: lichii | fritchii | hookshot
     int64_t kit_bytes = -1;
@@ -158,6 +159,7 @@ View make_view(const hub::GameEntry& e) {
     if (s_ready) {
         v.mode = Mode::Ready;
         v.built = s_stamp.built;
+        v.older = hs::is_older_audited(s_stamp);
         const hs::Values gv = gs_values_for(e);
         const auto rit = gv.find(hs::kRunnerSetting);
         if (rit != gv.end() && rit->second == "hookshot") v.runner = "hookshot";
@@ -331,6 +333,7 @@ void draw_ready(const hub::GameEntry& e, const View& v) {
     wrapped(v.use_hookshot ? "Hookshot is experimental. Switch back to Lichii if it misbehaves." : "The native Hookshot version is built and ready.", ui::TEXT3);
     const std::string d = date_text(v.built);
     if (!d.empty()) wrapped("Built on " + d + ".", ui::TEXT3);
+    if (v.older) wrapped(std::string("A newer Hookshot (") + hs::kSourceVersion + ") is available. This build keeps working; Rebuild makes the newer one from your game file and replaces this one only when it succeeds. Your saves are kept.", ui::TEXT2);
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     if (!HU.confirm_rebuild) {
         if (ui::button("Rebuild", ImVec2(0, sp(4.f)), false, true, ui::Icon::Refresh)) {

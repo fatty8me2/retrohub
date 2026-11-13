@@ -105,6 +105,15 @@ int main() {
         CHECK(!hookshot::ready(&why, U8(tmp / "r6")) && why.find("rebuild") != std::string::npos);
         make_build(tmp / "ok", true, true, true, true, hookshot::kSourceCommit);
         CHECK(hookshot::ready(&why, U8(tmp / "ok")) && why.empty());
+        // a build from the previous audited source (137c423) still plays; the card offers the newer one as a rebuild (never forced)
+        make_build(tmp / "old", true, true, true, true, hookshot::kPreviousAuditedCommit);
+        CHECK(hookshot::ready(&why, U8(tmp / "old")) && why.empty());
+        {
+            hookshot::Stamp so, sn;
+            CHECK(hookshot::read_stamp(U8(tmp / "old"), &so) && hookshot::is_older_audited(so));
+            CHECK(hookshot::read_stamp(U8(tmp / "ok"), &sn) && !hookshot::is_older_audited(sn));
+            CHECK(std::string(hookshot::kSourceCommit) != hookshot::kPreviousAuditedCommit);
+        }
     }
 
     // ---- use_for(): ready() looks at game_dir(), so put a good build there for this part

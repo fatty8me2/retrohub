@@ -856,6 +856,24 @@ bool game_process_name(const std::wstring& exe_w) {
     return false;
 }
 
+/* QA harness only: RETROHUB_QA_IGNORE_TEST_PROCS=1 makes the pause ignore game processes that run from a RetroHub worktree (...\wt\...) or a
+ * Temp folder, i.e. other agents' headless tests. Never set in a normal run, so the owner's real games always pause the build. */
+bool qa_ignore_test_processes() {
+    static const bool on = [] { char b[8] = {}; return GetEnvironmentVariableA("RETROHUB_QA_IGNORE_TEST_PROCS", b, sizeof b) && b[0] == '1'; }();
+    return on;
+}
+bool is_test_process(DWORD pid) {
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return false;
+    wchar_t buf[MAX_PATH * 2] = {};
+    DWORD n = (DWORD)(sizeof buf / sizeof buf[0]);
+    const bool ok = QueryFullProcessImageNameW(h, 0, buf, &n) != 0;
+    CloseHandle(h);
+    if (!ok) return false;
+    const std::string p = lower(winutil::to_utf8(buf));
+    return p.find("\\smashclassicport\\wt\\") != std::string::npos || p.find("\\appdata\\local\\temp\\") != std::string::npos;
+}
+
 bool known_game_running() {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return false;
@@ -865,6 +883,7 @@ bool known_game_running() {
     const HANDLE job = g_job.load();
     for (BOOL ok = Process32FirstW(snap, &pe); ok && !found; ok = Process32NextW(snap, &pe)) {
         if (!game_process_name(pe.szExeFile)) continue;
+        if (qa_ignore_test_processes() && is_test_process(pe.th32ProcessID)) continue;   // QA runs only (see below)
         if (job) {   // never one of the build's own processes
             if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID)) {
                 BOOL in = FALSE;
@@ -1088,11 +1107,10 @@ struct Kit {
             if (!is_file(d / "nx2" / "make_game.py")) return fail("The Hookshot source is incomplete.");
             write_marker(d, want);
         }
-        // RetroHub's one addition to the source: placeholders for the WebGPU fallback (Vulkan-only build); build.py compiles every host\*.c
+        // No WebGPU fallback: since v2.1.0 the source's own host/rx_nowgpu.c stands in when WGPU_NATIVE has no webgpu.h (build.py), so the
+        // 137c423-era placeholder is gone (it would clash with it). A leftover copy from an older kit is removed.
         std::error_code ec;
-        fs::create_directories(d / "host", ec);
-        fs::copy_file(P(io.data) / "rx_webgpu_absent.c", d / "host" / "rx_webgpu_absent.c", fs::copy_options::overwrite_existing, ec);
-        if (ec) return fail("Could not add RetroHub's rx_webgpu_absent.c to the source (" + ec.message() + ").");
+        fs::remove(d / "host" / "rx_webgpu_absent.c", ec);
         // RetroHub's own SDL2.dll (every build, so it follows RetroHub's updates)
         fs::create_directories(d / "third_party" / "sdl2", ec);
         fs::copy_file(P(io.sdl2_dll), d / "third_party" / "sdl2" / "SDL2.dll", fs::copy_options::overwrite_existing, ec);
@@ -1539,6 +1557,7 @@ void run_build(std::string game_path, std::string key, std::string language) {
                {L"EMSDK", W(S(P(kit) / "no-emsdk"))},
                {L"RX_CPM", W(S(P(kit) / "cpm"))},
                {L"WGPU_NATIVE", W(S(P(kit) / "no-wgpu"))},
+               {L"HOOKSHOT_NO_UPDATE_CHECK", L"1"},   // (v2.1.0 asks GitHub for a newer release at start: never from a game RetroHub built)
                {L"RX_JOBS", W(std::to_string(jobs))}};
     RunCtl ctl{&g().cancel, &g().pause};
     bool check_ok = false;

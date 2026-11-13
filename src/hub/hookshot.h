@@ -20,7 +20,10 @@ namespace hookshot {
 
 constexpr uint64_t kTitleId = 0x0400486024DEC000ull;   // program id: the only game Hookshot runs
 constexpr const char* kGameBuild = "e0f3ccfa";            // the game build it supports (update v131072); others fail the check
-constexpr const char* kSourceCommit = "137c423589f178bb4274e339b17b4dfd466435e9";   // the audited source RetroHub builds
+constexpr const char* kSourceCommit = "8ef84611049f4fc31835a0b12793cf074ed49c3c";   // the audited source RetroHub builds (Hookshot v2.1.0)
+constexpr const char* kSourceVersion = "v2.1.0";
+/* The previously audited source (2026-11-07). A build made from it keeps working (ready() accepts it) and the card offers a rebuild: never forced. */
+constexpr const char* kPreviousAuditedCommit = "137c423589f178bb4274e339b17b4dfd466435e9";
 /* host/nn_applet.c: the fixed user id {0x1, 0x5a3c9e1f0b7d2468}; host/nn_fs.c names the save folder high word first.
  * The game's own save files sit in it unwrapped: the same bytes Lichii keeps under nand/user/save/0../<uuid>/<TID>. */
 constexpr const char* kSaveRel = "save/5a3c9e1f0b7d24680000000000000001";   // relative to user_dir()
@@ -44,8 +47,10 @@ bool read_stamp(const std::string& dir, Stamp* out);
 bool write_stamp(const std::string& dir, const Stamp& s);
 
 /* Ready to play from `dir` (default game_dir()): hookshot.exe, hookshot_vk.dll, SDL2.dll and romfs\ exist and the stamp
- * names kSourceCommit. why (optional): what is missing, in plain words. */
+ * names kSourceCommit or kPreviousAuditedCommit. why (optional): what is missing, in plain words. */
 bool ready(std::string* why = nullptr, const std::string& dir = std::string());
+/* A build that is ready() but made from the previous audited source (kPreviousAuditedCommit): the card offers the newer Hookshot as a rebuild. */
+bool is_older_audited(const Stamp& s);
 
 /* Setting "switch.runner" (game_settings.cpp, Visual, shown only for games where supports() is true): "lichii" (default) = the emulator,
  * "hookshot" = Hookshot once it is built (an old v1.37.0 "auto" is dropped on load and means Lichii). Never read by online / sync code: Hookshot is offline only. */
