@@ -237,7 +237,7 @@ int main() {
         {   // every launch writes check_for_updates=false (even if the player switched it on); the pin marks the pinned build's What's new as seen
             const std::string l = lichii_ini_launch("[UI]\ncheck_for_updates\\default=false\ncheck_for_updates=true\n", hub::gs::Values{}, false, &nx_skip_keys(Kind::Fritchii));
             CHECK(l.find("check_for_updates=false") != std::string::npos && l.find("check_for_updates=true") == std::string::npos);
-            CHECK(q.find("fritchii_whats_new_seen=v5.7") != std::string::npos && fritchii_ini_pin(q) == q);
+            CHECK(q.find("fritchii_whats_new_seen=v5.8.4") != std::string::npos && fritchii_ini_pin(q) == q);
         }
         {   // the recipe's dynamic state: EDS2 and dynamic vertex input, whatever the player set in Fritchii's own menus
             const std::string d = fritchii_ini_pin("[Renderer]\ndyna_state\\default=false\ndyna_state=0\nvertex_input_dynamic_state\\default=false\nvertex_input_dynamic_state=false\n");
@@ -267,6 +267,15 @@ int main() {
         const std::string after = rd(inst / "user" / "config" / "frizti.ini");
         CHECK(after.find("global.") == std::string::npos && after.find("game.x.y=1") != std::string::npos && after.find("revision=999") != std::string::npos);
         CHECK(!fs::exists(inst / "nx2_switches.txt") && !fs::exists(inst / "user" / "nx2_switches.txt"));   // RetroHub never writes one
+        {   // Fritchii v5.8: portable mode (a user folder beside lichii.exe) never imports and never uses %APPDATA%\fritchii; RetroHub's files stay inside the install
+            CHECK(fs::is_directory(inst / "user"));                       // the folder that makes the build portable (prepare_lichii creates it before every launch)
+            CHECK(!fs::exists(inst / "user" / "fritchii.migration") && !fs::exists(inst.parent_path() / "fritchii.migration"));
+            // the save sync maps the title's save folders only: v5.8's Saves window keeps save-backups and save-import beside nand\user\save, never inside a mapped folder
+            const hubemu::NxSaveMap nm = hubemu::nx_save_map(U8(inst), 0x0400486024DEC000ull, U8(tmp / "pin" / "vault"), false, true);
+            CHECK(!nm.rels.empty());
+            for (const auto& r : nm.rels) CHECK(r.rfind("nand/user/save/", 0) == 0 && r.find("save-backups") == std::string::npos && r.find("save-import") == std::string::npos);
+            for (const auto& r : nm.vault_rels) CHECK(r.find("save-backups") == std::string::npos && r.find("save-import") == std::string::npos);
+        }
         // the skip list: a key named there is not written by lichii_ini_launch; the others are
         hub::gs::Values v;
         std::vector<std::string> skip = {"Renderer.use_vsync"};
