@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.44.2",
+      "date": "2026-11-12",
+      "title": "Hookshot v2.1.0",
+      "new": [],
+      "improved": [
+        "Hookshot, the experimental native version of Ocarina of Time, is updated to v2.1.0. RetroHub still builds it on your PC from audited source, and it stays optional: Fritchii remains the default",
+        "If you built Hookshot before, its card on the game page offers a rebuild. Your current build keeps working until the new one is ready, and your saves are kept"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.44.1",
       "date": "2026-11-12",
       "title": "Fritchii v5.8.4",
