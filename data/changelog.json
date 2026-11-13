@@ -1,6 +1,18 @@
 {
   "versions": [
     {
+      "version": "1.44.1",
+      "date": "2026-11-12",
+      "title": "Fritchii v5.8.4",
+      "new": [
+        "Ocarina of Time plays with Fritchii v5.8.4, Frizti's newest version, built by RetroHub from his published source"
+      ],
+      "improved": [
+        "The first start after this update shows Preparing shaders once more (about 20 minutes). Your shader cache, settings and saves carry over"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.44.0",
       "date": "2026-11-11",
       "title": "Clearer online rooms, comfort options, safer saves after a hub close",

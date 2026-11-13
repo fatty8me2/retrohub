@@ -352,22 +352,26 @@ The vault side never contains the user uuid (`SaveSession::vault_rels`), so any 
 Fritchii is Frizti's Ocarina-of-Time fork of Lichii. RetroHub downloads it itself (one pinned build, `fritchii_pin` in `src/hub/emulators.cpp`: version, path, size, SHA-256)
 into `<data>\emulators\fritchii`, with its own `user\` folder, and runs it through the same code as Lichii (keys, firmware, controls, saves, hang watch).
 
-- **Version.** The pin is **v5.7 r2** (`retrohub-fritchii-v5.7-r2` on `fatty8me2/Fritchii`): RetroHub's own build of Frizti's tagged source plus build-only commits
-  (MSVC warning flags; Windows only; no `-DLICHII_BUILD_TAG`), so the binary is named and versioned like Frizti's release, "Fritchii v5.7". v5.7 was built LOCALLY on the owner's PC
-  (2026-11-10, VS 2026 / MSVC 14.50, Qt 6.8.3; branch `retrohub/msvc`, r2 commit f411b88; the first v5.7 build, 6b21f52, crashed) because GitHub paused Actions on the fork; there is no workflow run for it. v5.6 was skipped.
-  r2 replaces the first v5.7 build, which crashed in `BlitConstantsPass` while preparing shaders: MSVC 14.50 indexed a jump table with a 64-bit load of a 32-bit
-  `IR::Value` immediate. Commit f411b88 stores narrow immediates through the 64-bit union member; the binary still reports "v5.7", so preparation resumes.
+- **Version.** The pin is **v5.8.4** (`retrohub-fritchii-v5.8.4` on `fatty8me2/Fritchii`, commit a44f3bd on `retrohub/msvc`): RetroHub's own build of Frizti's tagged source plus build-only commits
+  (MSVC warning flags; Windows only; no `-DLICHII_BUILD_TAG`), so the binary is named and versioned like Frizti's release, "Fritchii v5.8.4". v5.7 and later were built LOCALLY on the owner's PC
+  (VS 2026 / MSVC 14.50, Qt 6.8.3; branch `retrohub/msvc`) because GitHub paused Actions on the fork; there is no workflow run for them. v5.6 was skipped. v5.8.4 is Frizti's tag `fritchii-v5.8.4` (published upstream 2026-11-11) plus the same three build-only commits; RetroHub's build and this pin date from 2026-11-12 (built with the staged script `fb\next-version.ps1`).
+  The third build-only commit exists because the first v5.7 build crashed in `BlitConstantsPass` while preparing shaders: MSVC 14.50 indexed a jump table with a 64-bit load of a 32-bit
+  `IR::Value` immediate. It stores narrow immediates through the 64-bit union member (upstream has not touched `value.cpp`, so it still applies).
   The "Convert to NX" tool is not in this build (the prebuilt nxformat zip no longer matched the SHA-256 pinned in Fritchii's `CMakeModules/NxFormat.cmake`, so configure skipped it);
   loading `.nx` games is unaffected. The zip carries the Visual C++ 14.50 runtime DLLs app-local (MSVC 14.50 is newer than the runtime many PCs have) and no `.pdb` files or `vc_redist.x64.exe`. Builds before v5.5 passed
   `-DLICHII_BUILD_TAG=build-N`, which names the binary "Lichii build-N" (`CMakeModules/GenerateSCMRev.cmake`) and turns off every `FritchiiUi::Enabled()` path,
   the Preparing shaders screen included: v5's preparation then ran on idle threads beside the game, which cost about 15 fps in Ocarina of Time until it finished.
   A pin whose size and SHA-256 are zero (`release_is_placeholder()`) downloads nothing; Ocarina of Time then keeps playing with Lichii unless Fritchii is already installed.
-- **Upgrading (from v4.1, v5 or v5.5).** Like Lichii's in-place upgrade: `install_core` replaces the program files and keeps `user\` (keys, saves, settings, shader cache).
-  The first start after an update to a build that reports a new version (v4.1, v5 or v5.5 to v5.7) shows the full Preparing shaders screen once (Fritchii's "prepared" stamp includes the version the build reports). r2 still reports "v5.7", so going from the first v5.7 build to r2 resumes preparation instead. v5.7 keeps shader cache v54 and the
-  recipe format; its tuned-settings revision is 7 (RetroHub's revision pin 999 still holds it off); its new built-in switches (`EDEN_NX2_JIT_WARM`, `EDEN_NX2_TC_CEILING_MIB`,
+- **Upgrading (from v4.1, v5, v5.5 or v5.7).** Like Lichii's in-place upgrade: `install_core` replaces the program files and keeps `user\` (keys, saves, settings, shader cache).
+  The first start after an update to v5.8.4 shows the full Preparing shaders screen once: since v5.8 the "prepared" stamp holds a hash of the shader and pipeline sources (`Nx2ShaderStamp.cmake`) instead of the release version, so a 5.7 stamp never matches; later releases that change no shader source skip it. v5.8.4 keeps shader cache v54 (same file names, same `user\cache\shader` folder) and the
+  recipe format; its tuned-settings revision is 12 (RetroHub's revision pin 999 in `user\config\qt-config.ini` and `frizti.ini` still holds it off); its new built-in switches (`EDEN_NX2_JIT_WARM`, `EDEN_NX2_TC_CEILING_MIB`,
   `EDEN_NX2_READ_THROTTLE`, async GPU read-back) do not conflict with what RetroHub sets.
+- **v5.8 profile folder (portable only).** v5.8 moved the non-portable profile from `%APPDATA%\eden` to `%APPDATA%\fritchii` and opens a modal "copy your old data" dialog on a first non-portable launch.
+  RetroHub never meets either: the install always has its own `user\` folder (`prepare_lichii` creates it before every launch), and with a `user\` folder beside `lichii.exe` Fritchii runs portable
+  (`IsPortableMode()`), which never imports, never asks, never touches `%APPDATA%\fritchii` and shows "Copy Data" as an information box only. Do not move the Fritchii data out of `user\`. The only %APPDATA% reads left are
+  the optional `nx2_switches.txt` files (RetroHub never writes one). The Saves window's `nand\user\save-backups` and `save-import` folders sit beside `nand\user\save`, outside every folder the save sync maps (`nx_save_map`); `hub_nx_runner_test` creates both folders and checks that a sync of the mapped folders never copies from them.
 - **What's new.** Fritchii opens a one-time What's new window (after the game stops) while `[UI] fritchii_whats_new_seen` differs from its build version; RetroHub writes
-  the pinned build's version (`kFritchiiWhatsNewSeen` in `lichii.h`, "v5.7") on every launch. Change it with every pin.
+  the pinned build's version (`kFritchiiWhatsNewSeen` in `lichii.h`, "v5.8.4") on every launch. Change it with every pin.
 - **Default for Ocarina of Time.** Ocarina of Time (Switch 2, `0400486024DEC000`) plays with Fritchii by default. The rule is one pure function, `hubemu::nx_emulator_for` (`nx_runner.cpp`):
   no `switch.runner` choice for the game or for Switch as a whole (`Store::source` is 0) means Fritchii for that title only; any explicit choice (even `lichii`) wins. Other Switch games stay on
   Lichii. Online and room launches always use Lichii. If Fritchii is not installed, Play shows the usual download prompt. Hookshot is still opt-in and is decided first.
@@ -379,7 +383,7 @@ into `<data>\emulators\fritchii`, with its own `user\` folder, and runs it throu
 - **NVIDIA.** Since v5.5 Fritchii sets `__GL_SHADER_DISK_CACHE_SIZE` (10 GiB) and `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1` in its own process environment (only if not set
   already; nothing is written to the driver or the registry), so the prepared shaders stay in the driver's cache; RetroHub never sets a smaller value. On older drivers the
   NVIDIA Control Panel's Shader Cache Size (Manage 3D settings) can still be set to Unlimited.
-- **Ocarina of Time options (`switch.oot_high_refresh`, `switch.oot_refresh_cap`, `switch.oot_aa`; per game, Settings > Switch).** They map to Fritchii v5.7's `[Renderer]` keys
+- **Ocarina of Time options (`switch.oot_high_refresh`, `switch.oot_refresh_cap`, `switch.oot_aa`; per game, Settings > Switch).** They map to Fritchii v5.8.4's `[Renderer]` keys (same keys and enum values as v5.7)
   `oot_high_refresh` (bool: the experimental "High refresh rate" patch that keeps the game at normal speed above 60 fps; off in Fritchii), `oot_high_refresh_cap` (enum `OotRefreshCap`
   Display 0, 90 1, 120 2, 144 3, 165 4; never faster than the screen) and `oot_anti_aliasing` (enum `OotAntiAliasing` Game 0, No sharpening 1, FSR 3.1 2, FSR 4 3; FSR 4 is shown as "AMD FSR 4 (AMD GPUs only, otherwise FSR 3.1)" because it needs AMD's runtime and
   falls back to 3.1). Every one defaults to `default` = "Fritchii's setting": nothing is written for a key that is not in the ini, so a player who never touches them gets exactly the ini RetroHub wrote before. Other values are

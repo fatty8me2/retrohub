@@ -99,7 +99,19 @@ static const InstallTestHooks* g_test_hooks = nullptr;
 void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
 
 /* ======================================================================================================================================================
- * FRITCHII PIN (v5.7). The one place the Fritchii download is defined: kPath, kSize, kSha256 (kVersion is the text the marker, Settings and the dialogs show).
+ * FRITCHII PIN (v5.8.4). The one place the Fritchii download is defined: kPath, kSize, kSha256 (kVersion is the text the marker, Settings and the dialogs show).
+ * v5.8.4 (2026-11-12): Frizti's tag fritchii-v5.8.4 (4f5c531, published 2026-11-11) + the same three build-only commits, rebuilt on retrohub/msvc (a44f3bd07 = the tag + e16517c warning flags + 9269078 no
+ * build tag + a44f3bd the IR::Value MSVC 14.50 fix; value.cpp is untouched upstream, so the fix still applies), built locally with MSVC 14.50.35717 / Qt 6.8.3 in 12.5 minutes. Zip: 50 entries,
+ * 66,372,119 bytes, SHA-256 3b359e27ef2eed69a1ce620e65d051f4c533613fb688ec2ea1692035108f6523 (fork pre-release retrohub-fritchii-v5.8.4), Defender clean; the binary reports "Fritchii" / "v5.8.4".
+ * Recipe unchanged (CRC c6fe674c, 1,821,351 bytes, same as Frizti's v5.8.4 zip). Source audit v5.7..v5.8.4: clean with notes. What 5.8 changes for RetroHub:
+ *  - The profile folder moved from %APPDATA%\eden to %APPDATA%\fritchii, and a first launch of a NON-portable build opens a modal import dialog. RetroHub always runs Fritchii portable (the install's own
+ *    user\ folder exists before every launch: prepare_lichii creates it), and portable mode never imports, never asks and never reads or writes %APPDATA%\fritchii (path_util.cpp Reinitialize,
+ *    NeedsLegacyProfileImport / TakeProfileImportRequest return early when IsPortableMode). The tuned-settings pin (frizti_settings_revision=999 in qt-config.ini + revision=999 in frizti.ini, both under user\config)
+ *    still wins over the new revision 12; the shader cache stays in user\cache\shader (file names unchanged, cache version still v54), but "Preparing shaders" runs ONCE more, because the prepared stamp now holds
+ *    a hash of the shader sources instead of the release version.
+ *  - Help > Copy Data does nothing in portable mode (an information box). The Saves window writes nand\user\save-backups and nand\user\save-import beside nand\user\save, which RetroHub's save sync never maps.
+ *  - The binary still reads %APPDATA%\fritchii\nx2_switches.txt (then %APPDATA%\eden\...) even when portable; both are absent on a PC that never ran an installed Eden/Fritchii, and RetroHub never writes one.
+ * Earlier pins follow (v5.7 and its r2 are described in the next paragraphs):
  * Provenance: built LOCALLY on the owner's PC on 2026-11-10 (Visual Studio 2026, MSVC 14.50, Qt 6.8.3 msvc2022_64, the same configure line as the release-binaries
  * workflow's Windows job), because GitHub paused Actions on the fork ("Workflows are not currently being run on this fork due to the scale of GitHub Actions usage");
  * the owner chose a local build, so no workflow run exists for it. Source: fatty8me2/Fritchii branch retrohub/msvc (the one long-lived build branch from now on),
@@ -131,10 +143,10 @@ void set_install_test_hooks(const InstallTestHooks* h) { g_test_hooks = h; }
  * SHA-256 068fb4c66b2e32447ac7690393039043854de4b189aa7e95b34c4bf0d2a4080e.)
  * ====================================================================================================================================================== */
 namespace fritchii_pin {
-static const char* const kVersion = "v5.7 r2";
-static const wchar_t* const kPath = L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5.7-r2/Fritchii-v5.7-RetroHub-r2-windows-x64.zip";
-static const uint64_t kSize = 66270333ull;
-static const char* const kSha256 = "1afa2247a5f4a5528db1ab97bc41b796a8773dfd9fc740ff59fc2296e7b61264";
+static const char* const kVersion = "v5.8.4";
+static const wchar_t* const kPath = L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5.8.4/Fritchii-v5.8.4-RetroHub-windows-x64.zip";
+static const uint64_t kSize = 66372119ull;
+static const char* const kSha256 = "3b359e27ef2eed69a1ce620e65d051f4c533613fb688ec2ea1692035108f6523";
 }   // namespace fritchii_pin
 
 const Release& release(Kind k) {
@@ -181,7 +193,7 @@ const Release& release(Kind k) {
     static const Release li = {
         "build 130", L"github.com", L"/zortos293/Lichii/releases/download/build-130/lichii-windows-x86_64.zip",
         89253414ull, "f09893b3041596662d762959a103ae4af40d479631309fff9990bcc288078eed", L"lichii.exe", "GPL-3.0"};
-    /* Fritchii (GPL-3.0): Frizti's Ocarina-of-Time fork of Lichii, built by us (v5.7 r2 locally, earlier pins on GitHub Actions; github.com/fatty8me2/Fritchii). Same exe name (lichii.exe at the ROOT
+    /* Fritchii (GPL-3.0): Frizti's Ocarina-of-Time fork of Lichii, built by us (v5.8.4 locally, earlier pins on GitHub Actions; github.com/fatty8me2/Fritchii). Same exe name (lichii.exe at the ROOT
      * of the zip, plus eden-cli.exe), same portable `user` folder, same qt-config.ini and save layout as Lichii. It lives in its OWN folder (userdata\emulators\fritchii)
      * with its OWN user\, never linked to Lichii's. The values come from the one block fritchii_pin below. */
     static const Release fr = {fritchii_pin::kVersion, L"github.com", fritchii_pin::kPath, fritchii_pin::kSize, fritchii_pin::kSha256, L"lichii.exe", "GPL-3.0"};

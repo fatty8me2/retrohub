@@ -178,7 +178,7 @@ std::vector<Option> build() {
     // v1.37.0 stored "auto" (= Hookshot); it is no longer a choice, so loading / merging / resolving drops it and the default (Lichii) applies.
     v.push_back(mk("switch.runner", "Plays with", "Emulation", SWITCH, K::Choice, S::Visual, "lichii",
                    {{"lichii", "Lichii (emulator)"}, {"fritchii", "Fritchii (made for Ocarina of Time)"}, {"hookshot", "Hookshot (native)"}}));
-    // Fritchii v5.7 Ocarina of Time options (hubemu::fritchii_oot_keys, lichii.cpp): written to Fritchii's qt-config.ini [Renderer] before launch, only for a value the player chose.
+    // Fritchii v5.8.4 Ocarina of Time options (keys and enum values unchanged since v5.7) (hubemu::fritchii_oot_keys, lichii.cpp): written to Fritchii's qt-config.ini [Renderer] before launch, only for a value the player chose.
     // "default" writes nothing, so Fritchii keeps its own value (a key an earlier launch wrote gets "key\default=true", so Fritchii's own value applies again). Shown only for Ocarina of Time played with Fritchii (settings_games_ui.cpp).
     // Help text: "Above 60 fps at normal game speed. Experimental: some scenes may misbehave. The cap never goes above your screen's refresh rate." (Option has no help field; see docs/EMULATORS.md.)
     v.push_back(mk("switch.oot_high_refresh", "High refresh rate (experimental)", "Video", SWITCH, K::Choice, S::Visual, "default",
