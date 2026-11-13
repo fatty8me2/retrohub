@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "emu_saves.h"
 #include "lichii.h"
 
 namespace fs = std::filesystem;
@@ -237,7 +238,7 @@ int main() {
         {   // every launch writes check_for_updates=false (even if the player switched it on); the pin marks the pinned build's What's new as seen
             const std::string l = lichii_ini_launch("[UI]\ncheck_for_updates\\default=false\ncheck_for_updates=true\n", hub::gs::Values{}, false, &nx_skip_keys(Kind::Fritchii));
             CHECK(l.find("check_for_updates=false") != std::string::npos && l.find("check_for_updates=true") == std::string::npos);
-            CHECK(q.find("fritchii_whats_new_seen=v5.7") != std::string::npos && fritchii_ini_pin(q) == q);
+            CHECK(q.find("fritchii_whats_new_seen=v5.8.4") != std::string::npos && fritchii_ini_pin(q) == q);
         }
         {   // the recipe's dynamic state: EDS2 and dynamic vertex input, whatever the player set in Fritchii's own menus
             const std::string d = fritchii_ini_pin("[Renderer]\ndyna_state\\default=false\ndyna_state=0\nvertex_input_dynamic_state\\default=false\nvertex_input_dynamic_state=false\n");
@@ -267,6 +268,30 @@ int main() {
         const std::string after = rd(inst / "user" / "config" / "frizti.ini");
         CHECK(after.find("global.") == std::string::npos && after.find("game.x.y=1") != std::string::npos && after.find("revision=999") != std::string::npos);
         CHECK(!fs::exists(inst / "nx2_switches.txt") && !fs::exists(inst / "user" / "nx2_switches.txt"));   // RetroHub never writes one
+        {   // Fritchii v5.8: the profile moved to %APPDATA%\fritchii, but a user folder beside lichii.exe keeps it portable; RetroHub's files stay inside the install
+            CHECK(fs::is_directory(inst / "user"));                       // the folder that makes the build portable (prepare_lichii creates it before every launch)
+            // v5.8's Saves window writes nand\user\save-backups and nand\user\save-import BESIDE nand\user\save. They must neither be mapped nor reach the vault.
+            const fs::path nu = inst / "user" / "nand" / "user";
+            const hubemu::NxSaveMap nm = hubemu::nx_save_map(U8(inst), 0x0400486024DEC000ull, U8(tmp / "pin" / "vault"), false, true);
+            CHECK(!nm.rels.empty() && nm.rels.size() == nm.vault_rels.size());
+            for (const auto& r : nm.rels) CHECK(r.rfind("nand/user/save/", 0) == 0);
+            wr(nu / "save-backups" / "2026-11-12_01-00-00" / "0400486024DEC000" / "backup.bin", "backup");
+            wr(nu / "save-import" / "import.bin", "import");
+            for (const auto& r : nm.rels) wr(inst / "user" / fs::u8path(r) / "file0.sav", "save");
+            const fs::path vault = tmp / "pin" / "sync_vault", bk = tmp / "pin" / "sync_backup";
+            for (size_t k = 0; k < nm.rels.size(); ++k) {   // the emulator -> vault direction, exactly the mapped folders
+                const auto rep = hub::sync_tree_newest(U8(inst / "user" / fs::u8path(nm.rels[k])), U8(vault / fs::u8path(nm.vault_rels[k])), U8(bk), "t");
+                CHECK(rep.ok && rep.copied == 1);
+            }
+            int files = 0;
+            for (const auto& e : fs::recursive_directory_iterator(vault)) {
+                if (!e.is_regular_file()) continue;
+                ++files;
+                const std::string name = U8(e.path());
+                CHECK(name.find("save-backups") == std::string::npos && name.find("save-import") == std::string::npos && name.find("backup.bin") == std::string::npos && name.find("import.bin") == std::string::npos);
+            }
+            CHECK(files == (int)nm.rels.size());                          // only the mapped saves arrived
+        }
         // the skip list: a key named there is not written by lichii_ini_launch; the others are
         hub::gs::Values v;
         std::vector<std::string> skip = {"Renderer.use_vsync"};
