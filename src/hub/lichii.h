@@ -1,5 +1,5 @@
 #pragma once
-/* Nintendo Switch / Switch 2 via Lichii (github.com/zortos293/Lichii, an Eden fork; Kind::Lichii in emulators.h, pinned to build 130, release tag build-130).
+/* Nintendo Switch / Switch 2 via Lichii (github.com/zortos293/Lichii, an Eden fork; Kind::Lichii in emulators.h, pinned to build 177, release tag build-177).
  * RetroHub's own portable download only: a `user` folder beside lichii.exe makes it portable (Lichii common/fs/fs_paths.h PORTABLE_DIR),
  * so a player's own Eden/yuzu/Ryujinx install is NEVER written to. UI-free; see docs/EMULATORS.md (Switch).
  *
@@ -73,7 +73,10 @@ std::string lichii_ini_defaults(const std::string& ini);
  * presented frames, generated ones included: 30 real + 30 generated), "lichii" = untouched);
  * [UI] fullscreen; [System] current_user=0. */
 /* skip_keys: "Section.key" names the caller does not want written (Fritchii resets its own tuned graphics keys at every start: nx_runner.h kFritchiiSkipKeys). nullptr = write all (Lichii). */
-std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, bool fullscreen, const std::vector<std::string>* skip_keys = nullptr);
+/* Lichii only (skip_keys == nullptr; Fritchii v5.8.4 has neither key and prepares shaders itself), on EVERY launch: [Renderer] build_all_cached_shaders (true when
+ * lichii_preload_all, else false: Lichii keeps the key, so "recent" must reset a stale true), [UI] show_whats_new=false and whats_new_version=1 (build 150+: keeps Lichii's
+ * What's New window from opening over the game). ram_bytes 0 = physical_ram_bytes(); tests pass a value. */
+std::string lichii_ini_launch(const std::string& ini, const hub::gs::Values& v, bool fullscreen, const std::vector<std::string>* skip_keys = nullptr, uint64_t ram_bytes = 0);
 /* Fritchii only (nx_runner.h): [Renderer] frizti_settings_revision=999 (+ the \default=false twin), oot_fps_asked=true, dyna_state=2 (EDS2) and
  * vertex_input_dynamic_state=true (what Fritchii's shader recipe is recorded with), [UI] fritchii_whats_new_seen. Fritchii reapplies 15 "tuned" graphics keys at start
  * from its own settings revision; a revision above its own (3 in v4.1) means "already applied", so RetroHub's values stay what Lichii would get. Pure. */
@@ -146,15 +149,17 @@ bool lichii_pad_select(const std::vector<PadDesc>& by_port, const std::vector<Pa
 
 /* Creates user\ (portable), writes the defaults once, the per-launch values, controls and the profile. Returns "" or an error. */
 std::string prepare_lichii(const std::string& install_dir, const hubctl::Profile& profile, const std::string& sdl_guid, int port,
-                           const hub::gs::Values& v, bool fullscreen, const SdlBinds* binds = nullptr, const std::vector<std::string>* skip_keys = nullptr);
+                           const hub::gs::Values& v, bool fullscreen, const SdlBinds* binds = nullptr, const std::vector<std::string>* skip_keys = nullptr, uint64_t ram_bytes = 0);
 /* Environment variables added to Lichii's own (the child inherits RetroHub's environment plus these; launch.cpp spawn()).
- * switch.preload_shaders: "all" -> EDEN_NX2_PRELOAD_ALL_PIPELINES=1 (Lichii builds every cached pipeline at start, ~0.45 MB driver memory each, unchanged in build 130; the 9000-frame eviction is skipped then);
- * "auto" -> the same when physical_ram_bytes >= 60 GiB (a PC sold as 64 GB reports ~63.7 GiB); "recent" (the default since 1.40.4; also missing / unknown)
- * -> nothing. Pure.
+ * Only EDEN_NX2_NO_REACTIVE comes from here now; EDEN_NX2_PRELOAD_ALL_PIPELINES is gone (Lichii build 160 removed it, see lichii_preload_all).
  * switch.fast_reads: anything but "off" -> EDEN_NX2_NO_REACTIVE=1 (lichii_fast_reads). */
+/* switch.preload_shaders ("Shaders at start"): true for "all", and for "auto" when ram >= 60 GiB (a PC sold as 64 GB reports ~63.7 GiB); "recent" (the default since 1.40.4,
+ * also missing / unknown) -> false. true becomes [Renderer] build_all_cached_shaders=true in lichii_ini_launch (Lichii builds every cached pipeline at load, ~0.45 MB driver
+ * memory each, capped by Lichii at a quarter of RAM). Pure; the ini writer, the headless trace and the tests all use it. */
+bool lichii_preload_all(const hub::gs::Values& v, uint64_t ram);
 std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t physical_ram_bytes);
 /* switch.fast_reads ("Faster GPU reads"): anything but "off" (missing counts as on) -> EDEN_NX2_NO_REACTIVE=1 (Lichii build 125+ drops its read traps on Switch 2
- * programs, still read in build 130; stale reads are possible but rare). One helper for every Lichii-family launch: lichii_env (Lichii) and nx_env (Fritchii) both call it. */
+ * programs, still read in build 177 (and since build 125); stale reads are possible but rare). One helper for every Lichii-family launch: lichii_env (Lichii) and nx_env (Fritchii) both call it. */
 bool lichii_fast_reads(const hub::gs::Values& v);
 uint64_t physical_ram_bytes();   // GlobalMemoryStatusEx ullTotalPhys; 0 when unknown
 /* [-f] -u 0 -g "<game>" */

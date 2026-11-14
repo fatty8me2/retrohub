@@ -211,6 +211,11 @@ static void test_roundtrip_and_corrupt() {
     CHECK(k.title == j.title && k.pid == 4242 && k.created == j.created && k.attempts == 2 && k.nx_title_id == j.nx_title_id && k.cemu_tid == 5);
     CHECK(k.game_path == j.game_path);
     CHECK(k.sess.rels == j.sess.rels && k.sess.battery == j.sess.battery && k.sess.active && k.revert_profile && k.revert_own_settings && k.emu_kind == 7);
+    for (int kind : {100, 101}) {   // Hookshot / Longshot native builds (hookshot::info(f).journal_kind)
+        hubjournal::Entry jn = j, kn;
+        jn.emu_kind = kind;
+        CHECK(hubjournal::parse(hubjournal::serialize(jn), &kn) && kn.emu_kind == kind && kn.sess.rels == j.sess.rels);
+    }
     const std::string good = hubjournal::serialize(j);
     hubjournal::Entry x;
     CHECK(!hubjournal::parse("", &x) && !hubjournal::parse("garbage\n", &x));

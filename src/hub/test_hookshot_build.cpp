@@ -4,7 +4,8 @@
  *   hub_hookshot_build_test                      runs everything
  *   hub_hookshot_build_test --kit <data> <sdl2> <temp-kit-folder>
  *        MANUAL smoke test: runs kit_prepare() for real (downloads ~290 MB, verifies, unpacks) into the given folder. <data> = the
- *        folder with hookshot-src-137c423.zip, unpack_tar.py and requirements.txt. Never run by ctest. */
+ *        folder with hookshot-src-8ef8461.zip, longshot-src-5c1f00d.zip, unpack_tar.py and requirements.txt (set HOOKSHOT_SMOKE_FLAVOR=longshot for Longshot).
+ *        Never run by ctest. */
 #include <windows.h>
 
 #include <cstdio>
@@ -148,6 +149,20 @@ static void test_pins() {
     CHECK_EQ(hash_file_hex(HashAlg::Sha256, (data / kSourceZipName).u8string()), std::string(kSourceZipSha256));
     CHECK(!fs::exists(data / "rx_webgpu_absent.c"));   // v2.1.0 ships host/rx_nowgpu.c itself; the old placeholder would clash with it
     CHECK(!fs::exists(data / "hookshot-src-137c423.zip"));
+    // both flavors: the archive RetroHub ships hashes to the value compiled into info(); the two are different archives
+    for (Flavor f : kFlavors) {
+        const FlavorInfo& fi = info(f);
+        CHECK_EQ(hash_file_hex(HashAlg::Sha256, (data / fi.source_zip).u8string()), std::string(fi.source_zip_sha256));
+        CHECK_EQ(std::string(fi.source_zip_sha256).size(), (size_t)64);
+    }
+    CHECK_EQ(std::string(info(Flavor::Hookshot).source_zip), std::string(kSourceZipName));
+    CHECK_EQ(std::string(info(Flavor::Hookshot).source_zip_sha256), std::string(kSourceZipSha256));
+    CHECK_EQ(std::string(info(Flavor::Longshot).source_zip), std::string("longshot-src-5c1f00d.zip"));
+    CHECK_EQ(std::string(info(Flavor::Longshot).source_zip_sha256), std::string("ec0aaa4590c1e28de932d429074d8171c340447ef227a9686aceb0e6ccc072ee"));
+    CHECK(std::string(info(Flavor::Hookshot).source_zip) != info(Flavor::Longshot).source_zip);
+    CHECK(std::string(info(Flavor::Hookshot).source_zip_sha256) != info(Flavor::Longshot).source_zip_sha256);
+    CHECK(std::string(info(Flavor::Longshot).source_commit).compare(0, 7, "5c1f00d") == 0);   // the zip name carries the commit
+    CHECK(std::string(info(Flavor::Hookshot).source_commit).compare(0, 7, "8ef8461") == 0);
     // requirements.txt: every package pinned with at least one hash, nothing else installed
     const std::string req = slurp(data / "requirements.txt");
     for (const char* name : {"capstone==5.0.9", "lz4==4.4.5", "numpy==2.5.4", "unicorn==2.1.4", "zstandard==0.25.0"}) CHECK(req.find(name) != std::string::npos);
@@ -595,6 +610,7 @@ static void test_unpack_selftest() {
 /* ---- manual smoke test ---- */
 static int smoke_kit(const std::string& data, const std::string& sdl, const std::string& kit) {
     KitIO io;
+    io.flavor = (std::getenv("HOOKSHOT_SMOKE_FLAVOR") && std::string(std::getenv("HOOKSHOT_SMOKE_FLAVOR")) == "longshot") ? Flavor::Longshot : Flavor::Hookshot;
     io.kit = kit;
     io.data = data;
     io.sdl2_dll = sdl;

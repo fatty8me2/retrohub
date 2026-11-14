@@ -1,6 +1,23 @@
 {
   "versions": [
     {
+      "version": "1.45.0",
+      "date": "2026-11-14",
+      "title": "Lichii build 177, Longshot, Hookshot fix",
+      "new": [
+        "Longshot is a fourth way to play Ocarina of Time (Switch 2), next to Lichii, Fritchii and Hookshot. Like Hookshot, RetroHub builds it on your PC from your own game and audited source: start the build from the game's page (About, at the bottom), then pick it under Settings > Plays with",
+        "The game's page now always says which version will start when you press Play"
+      ],
+      "improved": [
+        "Lichii is updated to build 177. Donkey Kong Bananza runs faster and no longer crashes when started after another game. Ocarina of Time loses the boiling noise and the white flashes. Low memory no longer closes the game without a word, and a forced stop no longer hangs",
+        "The first start after updating Lichii is slower once. Your shader cache, settings and saves carry over",
+        "Lichii's own What's New window never opens over a game"
+      ],
+      "fixed": [
+        "Choosing Hookshot or Longshot when it is not built on this PC no longer quietly starts Lichii. RetroHub now says so and offers to open the game's page, play with Lichii this once, or cancel"
+      ]
+    },
+    {
       "version": "1.44.2",
       "date": "2026-11-12",
       "title": "Hookshot v2.1.0",

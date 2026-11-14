@@ -7,8 +7,11 @@ for the player with one button on the game's page; once it exists, the card offe
 Plays with), which sets `switch.runner` = `hookshot` for that game. Play then starts Hookshot; the same button (or the setting)
 goes back to Lichii. v1.37.0 made Hookshot the default (`auto`); `auto` is no longer a choice and is read as Lichii.
 
+A second native build, **Longshot**, is made the same way and has its own section below ("Longshot"). Everything on this page applies to both unless
+that section says otherwise.
+
 Code: `src/hub/hookshot.*` (what is built: paths, stamp, `ready()`), `src/hub/hookshot_build.*` (the build pipeline),
-`src/hub/hookshot_ui.*` (the card on the game page). Tests: `hub_hookshot_build_test`.
+`src/hub/hookshot_ui.*` (the card on the game page). Tests: `hub_hookshot_test`, `hub_hookshot_build_test`, `hub_hookshot_saves_qa` (`qa\hookshot_saves.ps1`).
 
 ## What RetroHub shares, and what it never does
 
@@ -165,12 +168,72 @@ that holds saves is refused. If RetroHub is closed in the middle of the swap, th
 The saves themselves are in `user\save\5a3c9e1f0b7d24680000000000000001\`, the game's own raw files; the launch code syncs them with
 the vault folder Lichii uses (`<vault>\switch\<key>\battery\save\0400486024DEC000\`).
 
+## Longshot
+
+**What it is.** Longshot (https://github.com/madebyjordan/Longshot, GPL-3.0-or-later) is a fork of Hookshot v2.0.5 (`232eecbd`) that only
+merges changes its author has played. RetroHub builds it from the player's own game file, exactly like Hookshot, and plays it the
+same way. The version RetroHub knows is **v1.0.0**, commit `5c1f00dd444e735bf27b73b2f91c0617f930ddac`.
+
+**Source.** RetroHub ships it unmodified as `data\hookshot\longshot-src-5c1f00d.zip` (`git archive` of that commit, sha256
+`ec0aaa4590c1e28de932d429074d8171c340447ef227a9686aceb0e6ccc072ee`, checked before it is unpacked). Audit, 2026-11-14, in two parts:
+Hookshot 137c423 to v2.0.5 (`232eecbd`): clean with notes. v2.0.5 to Longshot v1.0.0: clean with notes. The only network code in the game
+is the start-up update check, which Longshot points at `madebyjordan/longshot`; RetroHub keeps it off. The shipped
+`lists\pipeline_states.bin` is data. See `data/hookshot/SOURCE.md`.
+
+**Setting.** `switch.runner` = `longshot` ("Longshot (native)"). Hookshot and Longshot are two separate choices: choosing one never
+starts the other. Offline only, like Hookshot.
+
+**Where it lives.** One shared kit, one folder per flavor:
+
+| Folder | What |
+| --- | --- |
+| `<data>\emulators\longshot\` | The built game (same files as Hookshot's, including `hookshot.exe`), `user\` (the saves) and the stamp `retrohub_hookshot.json` |
+| `<data>\emulators\longshot.staging\` | The build's output, while it runs |
+| `<data>\emulators\hookshot-kit\src-longshot\` | The Longshot source, unpacked |
+| `<data>\emulators\hookshot-kit\work-longshot\` | The build's working files |
+| `<data>\emulators\hookshot-kit\{downloads,python,llvm,cpm,logs}` | Shared with Hookshot: downloaded once |
+
+Hookshot keeps the folder names it always had (`hookshot\`, `src\`, `work\`). Only one build runs at a time, whichever flavor. The stamp
+names the source commit, so a Hookshot build is never accepted as Longshot and the other way round. Longshot has no older audited
+source, so it never shows "newer version" for its own builds.
+
+**Saves.** The same mapping as Hookshot: `<longshot>\user\save\5a3c9e1f0b7d24680000000000000001` is synced with
+`<vault>\switch\<key>\battery\save\0400486024DEC000`, newest wins, with the usual `_conflicts` backups. Longshot has its own "last
+agreed" manifest (`.sync\emu-switch-<game>-longshot.json`). So a save made with Lichii, Hookshot or Longshot reaches the other two on
+the next start, on any PC. The save session journal records Hookshot as kind 100 and Longshot as kind 101.
+
+**What differs from Hookshot (found by the build study).**
+
+- No post-build shader step. Hookshot v2.1.0 runs `hookshot.exe --prepare-shaders` as the last build step; Longshot v1.0.0 does not.
+  Its shaders are prepared at the first start, inside the game window, so the first launch takes longer.
+- No Discord code at all, so `HOS_DISCORD` has no effect.
+- The update check is off twice: RetroHub sets `HOOKSHOT_NO_UPDATE_CHECK=1`, and the check only runs for a folder holding
+  `hookshot_version.txt`, which RetroHub never writes (it removes a stray one from the source and from the staging folder).
+- RetroHub also sets `HOOKSHOT_NO_AV1_NOTICE=1` and `RX_VK_NO_MESH_WARNING=1` at every launch of either flavor, so the game opens no
+  top-most box of its own. The AV1 check is still RetroHub's.
+- Longshot v1.0.0 has no stand-in for damaged `.zs` textures, which newer Hookshot has. A game copy with damaged files (for example
+  the Water Temple walls) may therefore show them wrong in Longshot.
+- The `Longshot.exe` launcher and Longshot Builder are never used. RetroHub runs `nx2\make_game.py` itself and starts `hookshot.exe`.
+
+## Play when the chosen build is missing
+
+`hookshot::decide` is the one decision for Play, the card and the settings page. For this game it gives one of three answers:
+
+- **Emulator:** "Plays with" is Lichii, Fritchii, unset or the old `auto`. The emulator decides (`nx_runner.h`).
+- **Native:** the chosen flavor is built and ready. Play starts it.
+- **Native, not built:** the player chose Hookshot or Longshot, but that build is missing or was made from another source. Play never
+  starts an emulator by itself. It shows a prompt with three buttons: *Open the game's page* (to build it), *Play with Lichii this
+  time* (one launch only; the setting stays) and *Cancel*.
+
+Choosing Hookshot while only Longshot is built asks about Hookshot, and the other way round. Before this change a missing Hookshot
+quietly started Lichii.
+
 ## Removing it
 
 - **Remove build tools (frees N GB)** on the game's card deletes `hookshot-kit\` (the game and its saves stay). Rebuilding downloads
   the tools again.
 - To remove the built game, delete `<data>\emulators\hookshot\` yourself. Its `user\` folder holds the Hookshot-side saves: the
-  vault copy is the safe one, but copy `user\` away first if you are unsure. Play then falls back to Lichii.
+  vault copy is the safe one, but copy `user\` away first if you are unsure. If "Plays with" still says Hookshot, Play then asks what to do (see "Play when the chosen build is missing"); it never starts an emulator on its own.
 
 ## Troubleshooting
 

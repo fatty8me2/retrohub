@@ -1105,10 +1105,14 @@ bool switch_ready_or_ask(const hub::GameEntry& e, const std::string& install_dir
 void switch_setup_ask_shot();      // switch_ui.cpp: the prompt without a game (screenshots)
 void draw_switch_dialogs();        // switch_ui.cpp
 void hookshot_av1_ask(const hub::GameEntry& e);   // hookshot_run_ui.cpp: "movies need Microsoft's AV1 Video Extension" prompt before Hookshot starts
+void hookshot_missing_ask_shot(int flavor);        // same prompt as hookshot_missing_ask, without a game (screenshots)
 void hookshot_av1_ask_shot();                      // same, without a game (screenshots)
+void hookshot_lichii_once_clear();                 // the pending launch was cancelled (save_jobs.cpp, the cloud check): drop the one-shot
 bool hookshot_lichii_once_consume(const std::string& key);   // one-shot: "Play with Lichii this time" was chosen for this game
 void draw_hookshot_run_dialogs();
-bool hookshot_running();                           // launch.cpp: the running game is Hookshot (no emulator)
+bool hookshot_running();                           // launch.cpp: the running game is a native build, Hookshot or Longshot (no emulator)
+const char* hookshot_running_name();               // "Hookshot" | "Longshot" while hookshot_running()
+void hookshot_missing_ask(const hub::GameEntry& e, int flavor, const std::string& why);   // hookshot_run_ui.cpp: Play chose a native build (hookshot::Flavor) that is not built on this PC
 void switch_settings_ui();         // switch_ui.cpp: Settings > Playing block (Lichii, keys, firmware)
 namespace hubemu { struct SdlBinds; }
 bool lichii_pad_for(const hubctl::Profile& prof, std::string* guid, int* port, hubemu::SdlBinds* binds);   // page_controllers.cpp: player 1's pad + raw SDL binds

@@ -424,7 +424,7 @@ bool derive(const Entry& e, const Config& cfg, Entry* out, std::string* why) {
     }
     std::string root;
     const hub::System sys = hub::system_from_short(e.system_short);
-    if (e.emu_kind == 100) root = dir;                               // Hookshot: its user folder
+    if (e.emu_kind == 100 || e.emu_kind == 101) root = dir;         // Hookshot / Longshot: its user folder
     else if (sys == hub::System::N3DS) root = hub::n3ds_sd_root(join_path(dir, "user"));
     else if (sys == hub::System::WiiU) {
         root = managed ? join_path(join_path(dir, "portable"), "mlc01") : hub::cemu_dirs_for(dir, cfg.appdata, hubemu::wiiu_probe()).mlc;

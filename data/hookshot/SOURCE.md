@@ -15,3 +15,17 @@
 
 The archive holds no game data, keys or executables. RetroHub builds the game from it on the player's own PC, from the
 player's own copy of the game, and never shares what it builds.
+
+## Longshot
+
+`longshot-src-5c1f00d.zip` is `git archive --format=zip` of https://github.com/madebyjordan/Longshot at commit
+`5c1f00dd444e735bf27b73b2f91c0617f930ddac` (tag v1.0.0), unmodified. Longshot is a fork of Hookshot v2.0.5 (`232eecbd`).
+
+- sha256 `ec0aaa4590c1e28de932d429074d8171c340447ef227a9686aceb0e6ccc072ee`. RetroHub checks this hash before it unpacks the archive.
+- License: GPL-3.0-or-later (`LICENSE` inside the archive), with the same bundled third-party notices as Hookshot.
+- Audited by RetroHub on 2026-11-14 in two parts. Hookshot 137c423 to v2.0.5 (`232eecbd`): CLEAN WITH NOTES. v2.0.5 to Longshot v1.0.0: CLEAN
+  WITH NOTES. Notes: the only network code in the game is the start-up update check, now pointed at `madebyjordan/longshot`, which RetroHub
+  keeps off (`HOOKSHOT_NO_UPDATE_CHECK=1`, and no `hookshot_version.txt` is ever written); the shipped `lists/pipeline_states.bin` is data.
+- Built into its own folders (`<kit>\src-longshot`, `<kit>\work-longshot`, `<data>\emulators\longshot`). See `docs/HOOKSHOT.md`, "Longshot".
+
+Same as above: the archive holds no game data, keys or executables.

@@ -168,6 +168,8 @@ void shot_init_ui() {
         else if (m == "ps2bios") ps2_bios_ask("");
         else if (m == "switchkeys") switch_setup_ask_shot();
         else if (m == "hookshotav1") hookshot_av1_ask_shot();
+        else if (m == "hookshotmissing") hookshot_missing_ask_shot(0);   // Play chose a native build that is not built here
+        else if (m == "longshotmissing") hookshot_missing_ask_shot(1);
         else if (m == "missingrom") missing_rom_ask_shot();
         else if (m == "hidden") hidden_games_open_shot();
         else if (m == "ps1bios") ps1_bios_ask_shot();

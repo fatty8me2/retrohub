@@ -33,12 +33,12 @@ function New-Copy([string]$tag, [bool]$lichii, [bool]$fritchii, [string]$gameSet
     $hubText = [IO.File]::ReadAllText($hubPath)
     $hubText = [regex]::Replace($hubText, '"vault_dir"\s*:\s*"[^"]*"', ('"vault_dir": "' + $vault.Replace('\', '\') + '"'))
     [IO.File]::WriteAllText($hubPath, $hubText, (New-Object System.Text.UTF8Encoding $false))
-    $lsha = "f09893b3041596662d762959a103ae4af40d479631309fff9990bcc288078eed"   # Lichii build 130's pin: a current install
+    $lsha = "e6ac8c09ddd00cb64e539f2a85f9f9f32d579c772b3619aed0d4d3910a93e833"   # Lichii build 177's pin: a current install
     if ($lichii) {
         $l = Join-Path $ud "emulators\lichii"
         New-Item -ItemType Directory -Force $l | Out-Null
         [IO.File]::WriteAllBytes((Join-Path $l "lichii.exe"), [byte[]]@(0x4D, 0x5A))
-        [IO.File]::WriteAllText((Join-Path $l "retrohub-install.txt"), "Lichii build 130`nsha256 $lsha`n", (New-Object System.Text.UTF8Encoding $false))
+        [IO.File]::WriteAllText((Join-Path $l "retrohub-install.txt"), "Lichii build 177`nsha256 $lsha`n", (New-Object System.Text.UTF8Encoding $false))
     }
     if ($fritchii) {
         $f = Join-Path $ud "emulators\fritchii"

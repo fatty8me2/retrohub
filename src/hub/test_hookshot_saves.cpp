@@ -1,5 +1,6 @@
 // QA harness (agent/hs-qa-saves): the Hookshot save path against Lichii through ONE vault folder.
-// Scenario: PC A plays with Lichii -> PC A plays with Hookshot -> PC B plays with Lichii, then edge cases (empty vault with a
+// Scenario: PC A plays with Lichii -> PC A plays with Hookshot -> PC B plays with Lichii, then a three-way Lichii -> Hookshot -> Longshot -> Lichii run
+// through one vault, two PCs (A plays Longshot, B plays Hookshot), then edge cases (empty vault with a
 // populated Hookshot folder, a vault file newer than Hookshot's, read-only files on either side).
 // Only temp dirs are written. The real save files are READ from the backup folder (argv[1]) and copied; that folder is
 // checked byte-for-byte before and after. hookshot::user_dir() is exe_dir\userdata\emulators\hookshot\user, so run this
@@ -121,6 +122,7 @@ struct Vault {
     fs::path root, battery, tid, conflicts, syncdir;
     fs::path lichii_manifest() const { return syncdir / "emu-switch-switch_0400486024dec000.json"; }
     fs::path hookshot_manifest() const { return syncdir / "emu-switch-switch_0400486024dec000-hookshot.json"; }
+    fs::path longshot_manifest() const { return syncdir / "emu-switch-switch_0400486024dec000-longshot.json"; }
 };
 static Vault make_vault(const fs::path& root) {
     Vault v;
@@ -133,6 +135,8 @@ static Vault make_vault(const fs::path& root) {
 }
 static fs::path hookshot_user() { return fs::u8path(hookshot::user_dir()); }
 static fs::path hookshot_save() { return hookshot_user() / hookshot::kSaveRel; }
+static fs::path longshot_user() { return fs::u8path(hookshot::user_dir(hookshot::Flavor::Longshot)); }
+static fs::path longshot_save() { return longshot_user() / hookshot::kSaveRel; }
 
 static int count_backups_named(const fs::path& dir, const std::string& prefix, const std::string& content) {
     int n = 0;
@@ -158,6 +162,7 @@ int main(int argc, char** argv) {
     fs::remove_all(root, ec);
     fs::create_directories(root);
     fs::remove_all(fs::u8path(hookshot::game_dir()), ec);   // QA data folder only (under this exe's userdata)
+    fs::remove_all(fs::u8path(hookshot::game_dir(hookshot::Flavor::Longshot)), ec);
 
     const std::vector<std::string> files = real_files(real);
     CHECK(files.size() == 14);
@@ -337,11 +342,123 @@ int main(int argc, char** argv) {
         set_readonly(VE.tid / "slot_00" / "progress.sav", false);
     }
 
+    // ---- Three-way: Lichii -> Hookshot -> Longshot -> Lichii through ONE vault
+    {
+        const Vault V3 = make_vault(root / "three" / "vault");
+        const fs::path pc = root / "three" / "lichii";
+        auto nap = [] { std::this_thread::sleep_for(std::chrono::milliseconds(60)); };
+        fs::remove_all(hookshot_user(), ec);
+        fs::remove_all(longshot_user(), ec);
+
+        hubemu::SaveSession l1 = hubemu::begin_session(e, lichii_at(pc), U8(V3.battery), "", 0);
+        CHECK(l1.active && l1.error.empty());
+        copy_real(real, files, fs::u8path(l1.emu_root) / fs::u8path(l1.rels[0]));
+        hubemu::end_session(l1);
+        CHECK(l1.error.empty());
+        for (const auto& rel : files) CHECK(rd(V3.tid / fs::u8path(rel)) == rd(real / fs::u8path(rel)));
+
+        // Hookshot receives Lichii's save, plays slot_02
+        hubemu::SaveSession h = hookshot::begin_save_session(e, U8(V3.battery), hookshot::Flavor::Hookshot);
+        CHECK(h.active && h.error.empty());
+        for (const auto& rel : files) CHECK(rd(hookshot_save() / fs::u8path(rel)) == rd(real / fs::u8path(rel)));
+        nap();
+        wr(hookshot_save() / "slot_02" / "progress.sav", "THREEWAY-HOOKSHOT");
+        set_mtime(hookshot_save() / "slot_02" / "progress.sav", fs::file_time_type::clock::now());
+        hubemu::end_session(h);
+        CHECK(h.error.empty() && rd(V3.tid / "slot_02" / "progress.sav") == "THREEWAY-HOOKSHOT");
+
+        // Longshot (fresh folder) receives what Hookshot played, plays slot_02 again
+        hubemu::SaveSession ls = hookshot::begin_save_session(e, U8(V3.battery), hookshot::Flavor::Longshot);
+        CHECK(ls.active && ls.error.empty());
+        CHECK(fs::u8path(ls.emu_root) == longshot_user() && fs::u8path(ls.manifest_path) == V3.longshot_manifest());
+        for (const auto& rel : files)
+            CHECK(rd(longshot_save() / fs::u8path(rel)) == (is_progress_slot2(rel) ? std::string("THREEWAY-HOOKSHOT") : rd(real / fs::u8path(rel))));
+        nap();
+        wr(longshot_save() / "slot_02" / "progress.sav", "THREEWAY-LONGSHOT");
+        set_mtime(longshot_save() / "slot_02" / "progress.sav", fs::file_time_type::clock::now());
+        hubemu::end_session(ls);
+        CHECK(ls.error.empty() && rd(V3.tid / "slot_02" / "progress.sav") == "THREEWAY-LONGSHOT");
+        CHECK(rd(hookshot_save() / "slot_02" / "progress.sav") == "THREEWAY-HOOKSHOT");   // Hookshot's own folder keeps its copy until it next starts
+
+        // Lichii comes back: its NAND holds the older real file, the vault the Longshot one
+        hubemu::SaveSession l2 = hubemu::begin_session(e, lichii_at(pc), U8(V3.battery), "", 0);
+        CHECK(l2.active && l2.error.empty());
+        const fs::path nand = fs::u8path(l2.emu_root) / fs::u8path(l2.rels[0]);
+        for (const auto& rel : files) CHECK(rd(nand / fs::u8path(rel)) == (is_progress_slot2(rel) ? std::string("THREEWAY-LONGSHOT") : rd(real / fs::u8path(rel))));
+        hubemu::end_session(l2);
+        CHECK(l2.error.empty());
+        // and Hookshot picks the Longshot save up again too (round trip back)
+        hubemu::SaveSession h2b = hookshot::begin_save_session(e, U8(V3.battery), hookshot::Flavor::Hookshot);
+        CHECK(h2b.active && rd(hookshot_save() / "slot_02" / "progress.sav") == "THREEWAY-LONGSHOT");
+        hubemu::end_session(h2b);
+
+        // three manifests, three files; the older vault copies are backed up in _conflicts; nothing deleted
+        CHECK(fs::exists(V3.lichii_manifest()) && fs::exists(V3.hookshot_manifest()) && fs::exists(V3.longshot_manifest()));
+        CHECK(V3.longshot_manifest() != V3.hookshot_manifest() && V3.longshot_manifest() != V3.lichii_manifest());
+        CHECK(has_text(rd(V3.longshot_manifest()), "save/0400486024DEC000/slot_02\\progress.sav"));
+        CHECK(count_backups_named(V3.conflicts, "progress.sav.local.", "THREEWAY-HOOKSHOT") >= 1);
+        CHECK(!fs::exists(V3.battery / "save" / "5a3c9e1f0b7d24680000000000000001"));
+        check_no_tmp(root / "three", "three-way");
+    }
+
+    // ---- Two PCs: PC A plays Longshot, PC B plays Hookshot, same vault (synced folder)
+    {
+        const Vault V4 = make_vault(root / "twopc" / "vault");
+        const fs::path pcA2 = root / "twopc" / "A-lichii";
+        auto nap = [] { std::this_thread::sleep_for(std::chrono::milliseconds(60)); };
+        // the vault starts with the real save (put there by Lichii on PC A, earlier)
+        hubemu::SaveSession l0 = hubemu::begin_session(e, lichii_at(pcA2), U8(V4.battery), "", 0);
+        copy_real(real, files, fs::u8path(l0.emu_root) / fs::u8path(l0.rels[0]));
+        hubemu::end_session(l0);
+        CHECK(l0.error.empty());
+
+        // PC A: Longshot only
+        fs::remove_all(hookshot_user(), ec);
+        fs::remove_all(longshot_user(), ec);
+        hubemu::SaveSession a = hookshot::begin_save_session(e, U8(V4.battery), hookshot::Flavor::Longshot);
+        CHECK(a.active && a.error.empty());
+        for (const auto& rel : files) CHECK(rd(longshot_save() / fs::u8path(rel)) == rd(real / fs::u8path(rel)));
+        nap();
+        wr(longshot_save() / "slot_01" / "progress.sav", "PC-A-LONGSHOT");
+        set_mtime(longshot_save() / "slot_01" / "progress.sav", fs::file_time_type::clock::now());
+        hubemu::end_session(a);
+        CHECK(a.error.empty() && rd(V4.tid / "slot_01" / "progress.sav") == "PC-A-LONGSHOT");
+
+
+        // PC B: a different PC, no Longshot folder, Hookshot only
+        fs::remove_all(longshot_user(), ec);
+        fs::remove_all(hookshot_user(), ec);
+        hubemu::SaveSession b = hookshot::begin_save_session(e, U8(V4.battery), hookshot::Flavor::Hookshot);
+        CHECK(b.active && b.error.empty());
+        CHECK(!fs::exists(longshot_save()));                                         // PC B never made a Longshot folder
+        CHECK(rd(hookshot_save() / "slot_01" / "progress.sav") == "PC-A-LONGSHOT");   // PC A's Longshot progress arrives in PC B's Hookshot
+        nap();
+        wr(hookshot_save() / "slot_00" / "progress.sav", "PC-B-HOOKSHOT");
+        set_mtime(hookshot_save() / "slot_00" / "progress.sav", fs::file_time_type::clock::now());
+        hubemu::end_session(b);
+        CHECK(b.error.empty() && rd(V4.tid / "slot_00" / "progress.sav") == "PC-B-HOOKSHOT");
+
+        // PC A again: its own Longshot folder (restore it) picks up PC B's Hookshot progress and keeps its own
+        fs::remove_all(hookshot_user(), ec);
+        wr(longshot_save() / "slot_01" / "progress.sav", "PC-A-LONGSHOT");   // PC A kept only what it played
+        hubemu::SaveSession a2 = hookshot::begin_save_session(e, U8(V4.battery), hookshot::Flavor::Longshot);
+        CHECK(a2.active && a2.error.empty());
+        CHECK(rd(longshot_save() / "slot_00" / "progress.sav") == "PC-B-HOOKSHOT");
+        CHECK(rd(longshot_save() / "slot_01" / "progress.sav") == "PC-A-LONGSHOT");
+        hubemu::end_session(a2);
+        CHECK(a2.error.empty());
+        CHECK(rd(V4.tid / "slot_00" / "progress.sav") == "PC-B-HOOKSHOT" && rd(V4.tid / "slot_01" / "progress.sav") == "PC-A-LONGSHOT");
+        CHECK(!fs::exists(hookshot_save()));   // PC A never made a Hookshot folder again
+        check_no_tmp(root / "twopc", "two PCs");
+    }
+
     // ---- clean up: only this run's temp folders and this exe's QA data folder
     clear_readonly_tree(root);
     clear_readonly_tree(hookshot_user());
+    clear_readonly_tree(longshot_user());
     fs::remove_all(root, ec);
     fs::remove_all(fs::u8path(hookshot::game_dir()), ec);
+    fs::remove_all(fs::u8path(hookshot::game_dir(hookshot::Flavor::Longshot)), ec);
 
     std::printf("hookshot saves QA: %d checks passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

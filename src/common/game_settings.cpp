@@ -155,29 +155,29 @@ std::vector<Option> build() {
     // DMA Unsafe added nothing on top of Low, so only this is exposed. "lichii" leaves whatever is set inside Lichii.
     v.push_back(mk("switch.gpu_accuracy", "GPU accuracy", "Video", SWITCH, K::Choice, S::Visual, "low",
                    {{"low", "Low (faster)"}, {"high", "High (more accurate, slower)"}, {"lichii", "Use Lichii's setting"}}));
-    // (Build 130: same variables and behaviour; its cache is now lichii-cache.v2.bin + .driver.bin per title, an old vulkan.fork-v5x.bin is converted once.)
+    // (Since build 130 the cache is lichii-cache.v2.bin + .driver.bin per title, an old vulkan.fork-v5x.bin is converted once; build 177 reuses it as is.)
     // Lichii builds only the cached shaders recent sessions used at start (at most 3000 without a used-list); the rest are built in the background or
-    // when first needed, which hitches. "all" sets EDEN_NX2_PRELOAD_ALL_PIPELINES=1 (hubemu::lichii_env): every cached shader is built at start (about
+    // when first needed, which hitches. "all" writes [Renderer] build_all_cached_shaders=true into Lichii's qt-config.ini (hubemu::lichii_ini_launch; build 160 removed the EDEN_NX2_PRELOAD_ALL_PIPELINES variable; Lichii caps it at a quarter of RAM): every cached shader is built at start (about
     // 0.45 MB of driver memory each, ~19 GB for a 43k cache). "auto" does that on PCs with 60 GiB or more of RAM (a "64 GB" PC reports ~63.7 GiB);
     // until 1.40.3 it was 30 GiB, which on a 32 GB PC meant ~19 GB of driver memory and, after a Lichii update, ~27 minutes before the first frame.
     // Help text: "All loads every shader Lichii has cached when the game starts: a longer start and more memory, fewer hitches. Auto does this on PCs with
-    // 64 GB of RAM or more." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Read by the launch only, never written to Lichii's ini.
+    // 64 GB of RAM or more." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Lichii only: Fritchii v5.8.4 prepares shaders itself and gets no key. The key is written on every launch (true or false), so "recent" resets a stale true.
     // Default "recent" since 1.40.4 (the owner's call: a full preload of a big cache took minutes and filled a 32 GB PC's memory); "auto" stays a choice.
     v.push_back(mk("switch.preload_shaders", "Shaders at start", "Video", SWITCH, K::Choice, S::Visual, "recent",
                    {{"auto", "Auto"}, {"all", "All cached shaders"}, {"recent", "Recently used"}}));
-    // "Faster GPU reads" (default on): sets EDEN_NX2_NO_REACTIVE=1 for every Lichii-family launch (hubemu::lichii_fast_reads, lichii.cpp). Lichii build 125+ (still read in build 130) drops
+    // "Faster GPU reads" (default on): sets EDEN_NX2_NO_REACTIVE=1 for every Lichii-family launch (hubemu::lichii_fast_reads, lichii.cpp). Lichii build 125+ (still read in build 177) drops
     // its read traps on Switch 2 programs, so a CPU read of GPU-written memory no longer waits for the whole GPU (Ocarina of Time fell from ~60 to ~17 fps in
     // places; upstream Lichii issues #944 and #416). Rarely a CPU read can see stale data. Lichii's own use_reactive_flushing is left alone.
     // Help text: "Lichii skips waiting for the GPU when a game reads back graphics memory. Much faster in parts of Ocarina of Time. Rarely a small glitch: turn
     // it off if something looks wrong." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Read by the launch only, never written to Lichii's ini.
     v.push_back(mk("switch.fast_reads", "Faster GPU reads", "Video", SWITCH, K::Choice, S::Visual, "on",
                    {{"on", "On"}, {"off", "Off"}}));
-    // Which program plays a Switch game: Lichii (default), Fritchii (Frizti's Ocarina-of-Time fork of Lichii, opt-in, RetroHub's own download) or Hookshot (experimental native
-    // PC build RetroHub makes from the player's own Ocarina of Time; that game only, falls back to Lichii otherwise).
+    // Which program plays a Switch game: Lichii (default), Fritchii (Frizti's Ocarina-of-Time fork of Lichii, opt-in, RetroHub's own download), Hookshot or Longshot (experimental native
+    // PC builds RetroHub makes from the player's own Ocarina of Time; that game only). A chosen native build that is not built never falls back quietly: Play asks (build it / Lichii this time).
     // Shown ONLY for that game (settings_games_ui.cpp); offline only, ignored by online / sync code.
     // v1.37.0 stored "auto" (= Hookshot); it is no longer a choice, so loading / merging / resolving drops it and the default (Lichii) applies.
     v.push_back(mk("switch.runner", "Plays with", "Emulation", SWITCH, K::Choice, S::Visual, "lichii",
-                   {{"lichii", "Lichii (emulator)"}, {"fritchii", "Fritchii (made for Ocarina of Time)"}, {"hookshot", "Hookshot (native)"}}));
+                   {{"lichii", "Lichii (emulator)"}, {"fritchii", "Fritchii (made for Ocarina of Time)"}, {"hookshot", "Hookshot (native)"}, {"longshot", "Longshot (native)"}}));
     // Fritchii v5.8.4 Ocarina of Time options (keys and enum values unchanged since v5.7) (hubemu::fritchii_oot_keys, lichii.cpp): written to Fritchii's qt-config.ini [Renderer] before launch, only for a value the player chose.
     // "default" writes nothing, so Fritchii keeps its own value (a key an earlier launch wrote gets "key\default=true", so Fritchii's own value applies again). Shown only for Ocarina of Time played with Fritchii (settings_games_ui.cpp).
     // Help text: "Above 60 fps at normal game speed. Experimental: some scenes may misbehave. The cap never goes above your screen's refresh rate." (Option has no help field; see docs/EMULATORS.md.)
