@@ -311,10 +311,12 @@ void pad_exit_watch() {
 
 /* Lichii builds 88-95 (build 88 release notes, known issue; still unfixed in build 95; not known for builds 125 and 130, so the watch stays on): a fence-worker shutdown race can leave lichii.exe waiting after its window closed. The session
  * (save copy-back, vault sync) waits for the whole job, so once the game had a window and every window of the job has been gone for 15 s,
- * the job is ended, but only after the process also stopped using the CPU AND the disk for 10 s (build 130 drains its shader cache, may compact a multi-GB cache log and
+ * the job is ended, but only after the process also stopped using the CPU AND the disk for 10 s (since build 130 Lichii drains its shader cache, may compact a multi-GB cache log and
  * store a driver blob at exit: disk-bound work that barely uses the CPU must not be cut off). Only RetroHub's own Lichii runs in that job (Kind::Lichii is never a user's install); by handle, never by image name. */
-static bool g_hookshot_run = false;   // the running game is Hookshot (set by launch_hookshot)
+static bool g_hookshot_run = false;   // the running game is a native build, Hookshot or Longshot (set by launch_hookshot)
+static std::string g_native_name;      // "Hookshot" | "Longshot": which one
 bool hookshot_running() { return g_hookshot_run && A.proc; }
+const char* hookshot_running_name() { return g_native_name.empty() ? "Hookshot" : g_native_name.c_str(); }
 static bool g_fritchii_run = false;   // the running Switch game is Fritchii (set at spawn)
 bool fritchii_running() { return g_fritchii_run && A.proc; }
 
@@ -329,7 +331,7 @@ void lichii_hang_watch() {
         FILETIME c, x, k, u;   // total CPU time (100 ns units) of the game process; a failed read counts as 0
         if (GetProcessTimes(A.proc, &c, &x, &k, &u))
             cpu = (((ULONGLONG)k.dwHighDateTime << 32) | k.dwLowDateTime) + (((ULONGLONG)u.dwHighDateTime << 32) | u.dwLowDateTime);
-        IO_COUNTERS ic;   // bytes read + written so far (disk-bound work, e.g. Lichii build 130's shader-cache writer / log compaction, uses little CPU)
+        IO_COUNTERS ic;   // bytes read + written so far (disk-bound work, e.g. Lichii's shader-cache writer (since build 130) / log compaction, uses little CPU)
         if (GetProcessIoCounters(A.proc, &ic)) io = ic.ReadTransferCount + ic.WriteTransferCount;
     }
     if (watch.tick(now, window, cpu, io) != hubhang::Verdict::End) return;
@@ -639,52 +641,58 @@ std::string launch_path_for(const hub::GameEntry& e) {
     return e.path;
 }
 
-/* Hookshot (hookshot.h): the native Ocarina of Time build plays instead of Lichii. Offline only; its save sits in the same vault folder Lichii uses. */
-static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery) {
-    const std::string exe = hookshot::exe_path();
+/* Hookshot / Longshot (hookshot.h): the native Ocarina of Time build the player chose plays instead of Lichii. Offline only; its save sits in the same vault folder Lichii uses. */
+static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, hookshot::Flavor fl) {
+    const hookshot::FlavorInfo& fi = hookshot::info(fl);
+    const std::string name = fi.name;
+    const std::string exe = hookshot::exe_path(fl);
     if (g_headless) {
-        shot_trace("external", "hookshot ready | " + exe);
+        shot_trace("external", std::string(fi.id) + " ready | " + exe);
         set_notice("Headless test run: launch skipped.");
         return;
     }
-    if (hookshot::swap_in_progress()) { set_notice("Hookshot is being updated: try again in a moment.", 8.0); return; }
-    if (hubemu::is_running(exe)) { set_notice("Hookshot is already running. Close it first, then start the game from RetroHub.", 10.0); return; }
+    if (hookshot::swap_in_progress() && hookshot::build_status().flavor == fl) { set_notice(name + " is being updated: try again in a moment.", 8.0); return; }   // (the other flavor's swap never touches this one's folder)
+    if (hubemu::is_running(exe)) { set_notice(name + " is already running. Close it first, then start the game from RetroHub.", 10.0); return; }
     if (!hookshot::av1_decoder_present(true)) { hookshot_av1_ask(e); return; }   // Hookshot would open a top-most box over the game: ask here instead
     /* One lock for launching and replaying a leftover session (session_journal.h): held until the spawn has returned and the journal is written.
      * A replay is copying a save tree right now: say so instead of freezing the frame. */
     std::unique_lock<std::mutex> session_guard(hubjournal::session_lock(), std::try_to_lock);
     if (!session_guard.owns_lock()) { set_notice("Still saving your last game. Try again in a moment."); return; }
-    auto sess = std::make_shared<hubemu::SaveSession>(hookshot::begin_save_session(e, battery));
-    autotest_log("external: hookshot save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
+    auto sess = std::make_shared<hubemu::SaveSession>(hookshot::begin_save_session(e, battery, fl));
+    autotest_log("external: " + std::string(fi.id) + " save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
     if (!sess->error.empty()) {   // the vault -> Hookshot copy failed: starting would play an older or missing save (and end_session must not run)
-        set_notice("Couldn't copy your save into Hookshot (" + sess->error + "). The game was not started, so nothing changes.", 15.0);
+        set_notice("Couldn't copy your save into " + name + " (" + sess->error + "). The game was not started, so nothing changes.", 15.0);
         return;
     }
     std::vector<std::pair<std::string, std::string>> env;
     if (hub::gs::is_fullscreen(gs_values_for(e))) env.push_back({"HOS_FULLSCREEN", "1"});
     env.push_back({"HOOKSHOT_NO_UPDATE_CHECK", "1"});   // Hookshot v2.1.0 would ask GitHub for a newer release and could open a top-most box: never over a game
     env.push_back({"HOS_DISCORD", "0"});                // and would set a Discord status by default
+    env.push_back({"HOOKSHOT_NO_AV1_NOTICE", "1"});     // RetroHub asked about the AV1 decoder itself (above); the game's own box stays shut
+    env.push_back({"RX_VK_NO_MESH_WARNING", "1"});      // the builder already checked the graphics card: no top-most warning box
     RunInfo r = ri;
     auto jr = std::make_shared<hubjournal::Entry>();   // the pending-session journal: replayed at the next hub start when the hub is closed during play
-    jr->emu_kind = 100;   // (not a hubemu::Kind: Hookshot has its own)
+    jr->emu_kind = fi.journal_kind;   // (not a hubemu::Kind: 100 Hookshot, 101 Longshot)
     jr->emu_exe = exe;
-    jr->inst_dir = hookshot::user_dir();
+    jr->inst_dir = hookshot::user_dir(fl);
     jr->system_short = hub::system_short(e.system);
     jr->game_key = e.key;
     jr->title = e.title;
     jr->sess = *sess;
     const std::string jdir = journal_dir();
     if (sess->active) hubjournal::begin(jdir, *jr);
-    r.after_exit = [sess, jr, jdir]() {   // Hookshot's save folder -> vault
+    r.after_exit = [sess, jr, jdir, name]() {   // Hookshot's save folder -> vault
         hubjournal::finish(*sess, *jr, jdir);
         autotest_log("end_session: " + sess->summary + (sess->error.empty() ? "" : " ERROR " + sess->error));
-        if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (Hookshot's copy is untouched)", ui::WARN, 15.0);
+        if (!sess->error.empty()) push_toast("Could not copy the save into the vault: " + sess->error + " (" + name + "'s copy is untouched)", ui::WARN, 15.0);
     };
     autotest_log("external: starting " + exe);
     if (sess->active) g_journal_next = jr;
-    const bool started = spawn(exe, "", hookshot::game_dir(), env, r);
+    std::string cwd = dir_of(exe);   // the program's own folder (Longshot's sits in bin\)
+    while (!cwd.empty() && (cwd.back() == '\\' || cwd.back() == '/')) cwd.pop_back();
+    const bool started = spawn(exe, "", cwd, env, r);
     g_journal_next.reset();
-    if (started) g_hookshot_run = true;
+    if (started) { g_hookshot_run = true; g_native_name = name; }
     else { autotest_log("external: spawn failed"); hubjournal::abort_unspawned(*jr, jdir, false); }
 }
 
@@ -692,7 +700,20 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     if (launch_blocked("launch_external")) return;
     hubemu::Kind kind = hubemu::kind_for(e.system);
     if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot_lichii_once_consume(e.key)) { /* "Play with Lichii this time": skip Hookshot once */ }
-    else if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room && hookshot::use_for(e, gs_values_for(e))) { launch_hookshot(e, ri, battery); return; }   // before any Lichii-only step: works without Lichii, keys or firmware
+    else if (kind == hubemu::Kind::Lichii && !ri.online && !ri.room) {   // before any Lichii-only step: a native build works without Lichii, keys or firmware
+        const hookshot::Decision d = hookshot::decide(e, gs_values_for(e));
+        if (d.choice == hookshot::Choice::Native) { launch_hookshot(e, ri, battery, d.flavor); return; }
+        if (d.choice == hookshot::Choice::NativeNotBuilt && hookshot::swap_in_progress() && hookshot::build_status().flavor == d.flavor) {   // its own rebuild is being put in place this moment (the folder is renamed for an instant): not "not built"
+            set_notice(std::string(hookshot::info(d.flavor).name) + " is being updated: try again in a moment.", 8.0);
+            return;
+        }
+        if (d.choice == hookshot::Choice::NativeNotBuilt) {   // the player chose Hookshot / Longshot and it is not on this PC: say so. Never quietly start an emulator instead.
+            if (g_headless) { shot_trace("external", std::string(hookshot::info(d.flavor).id) + " not built | " + d.why); set_notice("Headless test run: launch skipped."); return; }
+            autotest_log("external: " + std::string(hookshot::info(d.flavor).id) + " chosen but not ready: " + d.why);
+            hookshot_missing_ask(e, (int)d.flavor, d.why);
+            return;
+        }
+    }
     if (kind == hubemu::Kind::Lichii) kind = nx_planned_emulator(e, ri.online || ri.room);   // switch.runner (Ocarina of Time defaults to Fritchii unless chosen), offline only like Hookshot: the same code path as Lichii, with Fritchii's own install folder
     hubemu::Bios ps2_bios;
     if (kind == hubemu::Kind::Pcsx2) {   // no BIOS: say so before anything is unpacked, downloaded or started
@@ -745,10 +766,11 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
                          : hubemu::is_nx(kind) ? hubemu::lichii_args(g0, fs0) : hubemu::cemu_args(g0, fs0);
         if (hubemu::is_nx(kind)) { hubemu::NxSetup ns = hubemu::lichii_setup_status(inst.dir); a0 += std::string(" | keys ") + (ns.prod_keys ? "yes" : "no") + " firmware " + (ns.firmware ? "yes" : "no"); }
         if (hubemu::is_nx(kind)) {
-            bool pre = false, upd = false, fast = false;
-            for (const auto& kv : hubemu::nx_env(kind, gv, hubemu::physical_ram_bytes())) { if (kv.first == "EDEN_NX2_PRELOAD_ALL_PIPELINES") pre = true; if (kv.first == "EDEN_UPDATE_URL") upd = true; if (kv.first == "EDEN_NX2_NO_REACTIVE") fast = true; }
+            bool upd = false, fast = false;
+            for (const auto& kv : hubemu::nx_env(kind, gv, hubemu::physical_ram_bytes())) { if (kv.first == "EDEN_UPDATE_URL") upd = true; if (kv.first == "EDEN_NX2_NO_REACTIVE") fast = true; }
+            const bool pre = kind != hubemu::Kind::Fritchii && hubemu::lichii_preload_all(gv, hubemu::physical_ram_bytes());   // Lichii: the ini key [Renderer] build_all_cached_shaders (lichii_ini_launch); Fritchii prepares shaders itself and gets no key
             a0 += std::string(" | preload all shaders ") + (pre ? "yes" : "no") + " | fast GPU reads " + (fast ? "yes" : "no");
-            std::string line = std::string(kind == hubemu::Kind::Fritchii ? "fritchii" : "lichii") + ": EDEN_NX2_PRELOAD_ALL_PIPELINES " + (pre ? "set" : "not set") + ", EDEN_NX2_NO_REACTIVE " + (fast ? "set" : "not set");
+            std::string line = std::string(kind == hubemu::Kind::Fritchii ? "fritchii" : "lichii") + ": build_all_cached_shaders " + (kind == hubemu::Kind::Fritchii ? "not written" : pre ? "true" : "false") + ", EDEN_NX2_NO_REACTIVE " + (fast ? "set" : "not set");
             if (kind == hubemu::Kind::Fritchii) line += std::string(", EDEN_UPDATE_URL ") + (upd ? "pinned" : "missing") + ", leftover update files: " + (hubemu::update_leftovers(kind, inst.dir).empty() ? "none" : hubemu::update_leftovers(kind, inst.dir));
             autotest_log(line);
         }

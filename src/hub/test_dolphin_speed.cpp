@@ -45,7 +45,7 @@ int main() {
     CHECK(dolphin_speed_start() && dolphin_speed_running() && dolphin_speed_start());
     WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
     SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons((u_short)hubds::kPort); inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+    sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons((u_short)hubds::active_port()); inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
     DWORD to = 20; setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&to, sizeof to);
     auto reg = dsu::build_data_request(0xC11E, hubds::kSlot);
     sendto(s, (const char*)reg.data(), (int)reg.size(), 0, (sockaddr*)&a, sizeof a);

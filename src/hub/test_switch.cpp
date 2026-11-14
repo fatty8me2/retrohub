@@ -74,7 +74,7 @@ static void test_ini() {
     hub::gs::Values v = hub::gs::defaults_for(hub::System::Switch);
     std::string l = lichii_ini_launch("", v, true);
     CHECK(has(l, "resolution_setup=3\n") && has(l, "frame_gen=false\n") && !has(l, "frame_gen_type"));
-    CHECK(has(l, "use_vsync=2\n") && has(l, "[UI]\nfullscreen\\default=false\nfullscreen=true\n") && has(l, "[System]\ncurrent_user\\default=false\ncurrent_user=0\n"));
+    CHECK(has(l, "use_vsync=2\n") && has(l, "[UI]\n") && has(l, "\nfullscreen\\default=false\nfullscreen=true\n") && has(l, "[System]\ncurrent_user\\default=false\ncurrent_user=0\n"));
     v["switch.res"] = "6"; v["switch.framegen"] = "3"; v["switch.vsync"] = "mailbox";
     std::string l2 = lichii_ini_launch(l, v, false);
     CHECK(has(l2, "resolution_setup=6\n") && has(l2, "frame_gen=true\n") && has(l2, "frame_gen_type=1\n") && has(l2, "frame_gen_multiplier=3\n"));
@@ -537,12 +537,7 @@ static int test_download(const std::string& root) {
 
 static void test_env() {
     const uint64_t G = 1024ull * 1024 * 1024;
-    auto set = [](const hub::gs::Values& v, uint64_t ram) {
-        auto e = hubemu::lichii_env(v, ram);
-        bool pre = false;
-        for (auto& kv : e) if (kv.first == "EDEN_NX2_PRELOAD_ALL_PIPELINES" && kv.second == "1") pre = true;
-        return pre;
-    };
+    auto set = [](const hub::gs::Values& v, uint64_t ram) { return hubemu::lichii_preload_all(v, ram); };   // the one helper behind the ini key, the trace and these tests
     hub::gs::Values v = hub::gs::defaults_for(hub::System::Switch);
     const hub::gs::Option* o = hub::gs::find_option("switch.preload_shaders");
     CHECK(o && o->def == "recent" && o->choices.size() == 3);   // 1.40.4: "Recently used" is the default
@@ -557,16 +552,57 @@ static void test_env() {
     v["switch.preload_shaders"] = "all";
     CHECK(set(v, 8 * G));
     v["switch.preload_shaders"] = "recent";
-    {   // "recent": no preload var (the fast-reads var is separate)
-        auto e = hubemu::lichii_env(v, 64 * G);
-        bool pre = false;
-        for (auto& kv : e) if (kv.first == "EDEN_NX2_PRELOAD_ALL_PIPELINES") pre = true;
-        CHECK(!pre);
+    {   // build 160 removed EDEN_NX2_PRELOAD_ALL_PIPELINES: no mode sets it any more (the fast-reads var is separate and unchanged)
+        for (const char* m : {"all", "auto", "recent", "bogus"}) {
+            v["switch.preload_shaders"] = m;
+            auto e = hubemu::lichii_env(v, 64 * G);
+            bool pre = false, nr = false;
+            for (auto& kv : e) { if (kv.first == "EDEN_NX2_PRELOAD_ALL_PIPELINES") pre = true; if (kv.first == "EDEN_NX2_NO_REACTIVE" && kv.second == "1") nr = true; }
+            CHECK(!pre && nr && e.size() == 1);
+        }
+        v["switch.preload_shaders"] = "recent";
     }
     CHECK(!set(hub::gs::Values{}, 64 * G));   // missing = the default "recent"
     CHECK(!set(hub::gs::Values{}, 8 * G));
     v["switch.preload_shaders"] = "bogus";
     CHECK(!set(v, 64 * G) && !set(v, 8 * G));   // unknown preloads nothing
+    {   // the ini text lichii_ini_launch writes for Lichii (skip_keys == nullptr) on every launch: [Renderer] build_all_cached_shaders
+        auto has = [](const std::string& t, const char* s) { return t.find(s) != std::string::npos; };
+        auto ini = [&](const char* mode, uint64_t ram, const std::string& in = "") {
+            hub::gs::Values w;
+            if (mode) w["switch.preload_shaders"] = mode;
+            return hubemu::lichii_ini_launch(in, w, false, nullptr, ram);
+        };
+        const char* kT = "build_all_cached_shaders=true";
+        const char* kF = "build_all_cached_shaders=false";
+        CHECK(has(ini("all", 8 * G), kT) && !has(ini("all", 8 * G), kF));
+        CHECK(has(ini("all", 8 * G), "build_all_cached_shaders\\default=false"));   // the companion line, like use_asynchronous_shaders
+        CHECK(has(ini("auto", 64 * G), kT) && has(ini("auto", 128 * G), kT));
+        CHECK(has(ini("auto", 32 * G), kF) && !has(ini("auto", 32 * G), kT) && has(ini("auto", 16 * G), kF));
+        CHECK(has(ini("recent", 128 * G), kF) && !has(ini("recent", 128 * G), kT));
+        CHECK(has(ini(nullptr, 128 * G), kF) && has(ini("bogus", 128 * G), kF));   // missing / unknown = the default "recent"
+        const std::string stale = "[Renderer]\nbuild_all_cached_shaders\\default=false\nbuild_all_cached_shaders=true\n";   // an earlier "all" run left this behind
+        const std::string reset = ini("recent", 64 * G, stale);
+        CHECK(has(reset, kF) && !has(reset, kT));   // "recent" resets a stale true
+        CHECK(has(ini("all", 8 * G, reset), kT) && !has(ini("all", 8 * G, reset), kF));
+        // Fritchii (its launch passes nx_skip_keys, never nullptr): no build_all_cached_shaders, no What's New keys, whatever the mode
+        const std::vector<std::string>& skip = hubemu::nx_skip_keys(hubemu::Kind::Fritchii);
+        for (const char* m : {"all", "auto", "recent"}) {
+            hub::gs::Values w;
+            w["switch.preload_shaders"] = m;
+            const std::string f = hubemu::lichii_ini_launch("", w, false, &skip, 64 * G);
+            CHECK(!has(f, "build_all_cached_shaders") && !has(f, "show_whats_new") && !has(f, "whats_new_version"));
+            CHECK(has(f, "check_for_updates=false"));   // the shared update-check guard is unchanged
+        }
+        // What's New: written for Lichii on every launch, also over a value Lichii (or the player) set back
+        const std::string a = ini("recent", 8 * G);
+        CHECK(has(a, "show_whats_new=false") && has(a, "whats_new_version=1") && !has(a, "show_whats_new=true"));
+        const std::string old = "[UI]\nshow_whats_new\\default=true\nshow_whats_new=true\nwhats_new_version\\default=true\nwhats_new_version=0\n";
+        const std::string b = ini("recent", 8 * G, old);
+        CHECK(has(b, "show_whats_new=false") && !has(b, "show_whats_new=true") && has(b, "whats_new_version=1") && !has(b, "whats_new_version=0"));
+        CHECK(has(ini("all", 8 * G, b), "show_whats_new=false") && has(ini("all", 8 * G, b), "whats_new_version=1"));   // again on the next launch
+        CHECK(!has(a, "show_low_ram_warning"));   // Lichii's own low-RAM warning is left alone
+    }
 }
 
 /* switch.fast_reads: default on, global + per game, and EDEN_NX2_NO_REACTIVE in the launch environment. */
@@ -590,7 +626,7 @@ static void test_fast_reads() {
         CHECK(st.set_game(g, hub::System::Switch, "switch.fast_reads", "off"));
         CHECK(!hask(hubemu::lichii_env(st.resolve(hub::System::Switch, g), 32 * G), "EDEN_NX2_NO_REACTIVE"));
         CHECK(st.set_system(hub::System::Switch, "switch.preload_shaders", "all"));   // (the default "recent" preloads nothing)
-        CHECK(hask(hubemu::lichii_env(st.resolve(hub::System::Switch, g), 64 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+        CHECK(hubemu::lichii_preload_all(st.resolve(hub::System::Switch, g), 64 * G) && !hask(hubemu::lichii_env(st.resolve(hub::System::Switch, g), 64 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
         CHECK(has(hubemu::lichii_env(st.resolve(hub::System::Switch, other), 32 * G), "EDEN_NX2_NO_REACTIVE", "1"));
         CHECK(!st.set_game(g, hub::System::Switch, "switch.fast_reads", "bogus"));
     }
@@ -615,8 +651,24 @@ static void test_repair_setting() {
 /* switch.runner: three choices, per-game overrides, and what Fritchii gets in its environment. */
 static void test_runner() {
     const hub::gs::Option* o = hub::gs::find_option("switch.runner");
-    CHECK(o && o->def == "lichii" && o->choices.size() == 3);
+    CHECK(o && o->def == "lichii" && o->choices.size() == 4);
     CHECK(o && o->choices[1].value == "fritchii" && o->choices[1].label == "Fritchii (made for Ocarina of Time)" && o->choices[0].label == "Lichii (emulator)" && o->choices[2].label == "Hookshot (native)");
+    CHECK(o && o->choices.size() == 4 && o->choices[3].value == "longshot" && o->choices[3].label == "Longshot (native)");
+    {   // "longshot" is a valid stored choice: it survives set / resolve / JSON round trip
+        hub::gs::Store ls;
+        const std::string g = "switch:0400486024dec000";
+        CHECK(ls.set_game(g, hub::System::Switch, "switch.runner", "longshot"));
+        CHECK(ls.resolve(hub::System::Switch, g)["switch.runner"] == "longshot");
+        CHECK(ls.source(hub::System::Switch, g, "switch.runner") == 2);
+        hub::gs::Store ls2;
+        CHECK(ls2.from_json(ls.to_json()));
+        CHECK(ls2.resolve(hub::System::Switch, g)["switch.runner"] == "longshot");
+        CHECK(ls.set_system(hub::System::Switch, "switch.runner", "longshot"));
+        CHECK(ls.resolve(hub::System::Switch, "switch:0100abcd12340000")["switch.runner"] == "longshot");
+        hub::gs::Store ls3;
+        CHECK(ls3.from_json("{\"version\":\"1\",\"systems\":{},\"games\":{\"switch:0400486024dec000\":{\"switch.runner\":\"longshot\"}}}"));
+        CHECK(ls3.resolve(hub::System::Switch, g)["switch.runner"] == "longshot");
+    }
     const std::string oot = "switch:0400486024dec000", other = "switch:0100abcd12340000";
     hub::gs::Store st;
     CHECK(st.resolve(hub::System::Switch, oot)["switch.runner"] == "lichii");   // Lichii stays the default

@@ -169,6 +169,7 @@ static void gate_handle_result() {
     if (const int why = A.cloud_gate.abort_why.exchange(0)) {   // cancelled / timed out while waiting: no launch, back to Idle
         A.cloud_gate.phase = CloudGate::Idle;
         A.cloud_gate.proceed = nullptr;
+        hookshot_lichii_once_clear();   // this launch is off: its "Play with Lichii this time" goes with it
         A.cloud_gate.res = PrelaunchResult();
         if (why == 2) push_toast("Still saving your last session, try again in a moment.", ui::WARN, 6.0);
         return;
@@ -214,6 +215,7 @@ void cloud_gate_choose_lease(hub::saves::LeaseChoice c) {
         hub::saves::cloud_resolve_lease(A.cloud_gate.game, c);
         A.cloud_gate.phase = CloudGate::Idle;
         A.cloud_gate.proceed = nullptr;
+        hookshot_lichii_once_clear();   // cancelled: no launch, so no one-shot left for a later Play
         return;
     }
     hub::saves::GameId id = A.cloud_gate.game;

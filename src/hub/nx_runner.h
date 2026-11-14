@@ -5,8 +5,9 @@
  * profiles, controls, hang watch) with its own install folder <data>\emulators\fritchii and its OWN `user\` folder. Nothing is linked into Lichii's folder
  * (no junctions, no symlinks): everything shared is COPIED, and every copy that could replace data is backed up first.
  *
- * Setting "switch.runner" (game_settings.cpp): "lichii" (default) | "fritchii" | "hookshot". Hookshot is decided first (hookshot::use_for); this header decides
- * between the two emulators. */
+ * Setting "switch.runner" (game_settings.cpp): "lichii" (default) | "fritchii" | "hookshot" | "longshot". The two native builds are decided first
+ * (hookshot::decide: Native, or NativeNotBuilt, which asks the player and never starts an emulator by itself); this header decides between the two
+ * emulators. nx_runner_value maps both native values to NxRunner::Hookshot; nx_emulator_for gives Lichii for them ("Play with Lichii this time"). */
 #include <atomic>
 #include <cstdint>
 #include <functional>

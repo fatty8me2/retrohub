@@ -26,6 +26,8 @@
 #include <string>
 #include <vector>
 
+#include "hookshot.h"   // Flavor
+
 namespace hub { struct GameEntry; }
 
 namespace hookshot {
@@ -57,6 +59,7 @@ struct BuildStatus {
     std::string log_path;          // the full build log
     int64_t started_unix = 0;
     bool paused_for_game = false;  // suspended because a game is running
+    Flavor flavor = Flavor::Hookshot;   // which build this is about (the one running, or the last one that ran)
 };
 
 /* Quick checks only (no download, no build). Safe on the UI thread? NO: vswhere + Vulkan probe take ~1 s; call from a
@@ -66,8 +69,10 @@ Requirements requirements_cached();          // last result ("" problem + vs_cpp
 void refresh_requirements_async(const hub::GameEntry& e);
 bool requirements_busy();                    // a refresh_requirements_async() is still running
 
-/* The whole pipeline on a background thread (one at a time). false + err when it cannot start. */
-bool start_build(const hub::GameEntry& e, const std::string& language, std::string* err);
+/* The whole pipeline on a background thread (ONE at a time, whatever the flavor: build_status().flavor says which). false + err when it cannot start.
+ * Hookshot and Longshot share the tools (<kit>\python, llvm, cpm, downloads); each has its own source and work folders (<kit>\src, <kit>\work for
+ * Hookshot; <kit>\src-longshot, <kit>\work-longshot), its own staging folder (<emulators>\<id>.staging) and its own game folder (game_dir(f)). */
+bool start_build(const hub::GameEntry& e, const std::string& language, std::string* err, Flavor f = Flavor::Hookshot);
 void cancel_build();
 bool build_running();
 BuildStatus build_status();                  // thread-safe snapshot
@@ -175,6 +180,7 @@ int run_command(const std::string& exe, const std::vector<std::string>& args, co
 
 /* ---- the kit stage on its own (also what the manual smoke test calls) ---- */
 struct KitIO {
+    Flavor flavor = Flavor::Hookshot;                  // which source to unpack (info(flavor).source_zip into <kit>\src or <kit>\src-longshot)
     std::string kit;                                   // kit folder to fill
     std::string data;                                  // folder holding hookshot-src-8ef8461.zip, unpack_tar.py, requirements.txt
     std::string sdl2_dll;                              // RetroHub's SDL2.dll

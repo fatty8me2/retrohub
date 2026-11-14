@@ -121,6 +121,11 @@ int main() {
         v["switch.runner"] = "hookshot";
         CHECK(nx_runner_value(v) == NxRunner::Hookshot);
         CHECK(!fritchii_selected(sw, v));
+        v["switch.runner"] = "longshot";                                // native too: hookshot::decide tells the two apart
+        CHECK(nx_runner_value(v) == NxRunner::Hookshot);
+        CHECK(!fritchii_selected(sw, v));
+        v["switch.runner"] = "Longshot";                                // exact match only
+        CHECK(nx_runner_value(v) == NxRunner::Lichii);
         v["switch.runner"] = "auto";                                    // the old v1.37.0 value
         CHECK(nx_runner_value(v) == NxRunner::Lichii);
         v["switch.runner"] = "FRITCHII";                                // exact match only
@@ -169,6 +174,14 @@ int main() {
         hub::gs::Values hs;
         hs["switch.runner"] = "hookshot";
         CHECK(nx_emulator_for(oot, hs, false, 2, on) == Kind::Lichii);                        // Hookshot is decided before this (launch.cpp)
+        hub::gs::Values ls;
+        ls["switch.runner"] = "longshot";
+        CHECK(nx_emulator_for(oot, ls, false, 2, on) == Kind::Lichii);                        // "Play with Lichii this time" for a chosen Longshot
+        CHECK(nx_emulator_for(oot, ls, false, 1, on) == Kind::Lichii);
+        CHECK(nx_emulator_for(oot, ls, false, 0, on) == Kind::Lichii);                        // never the Fritchii default for a native choice
+        CHECK(nx_emulator_for(oot, hs, false, 0, on) == Kind::Lichii);
+        CHECK(nx_emulator_for(oot, ls, true, 2, on) == Kind::Lichii);                         // online: Lichii
+        CHECK(!fritchii_selected(oot, ls));
         // through the real settings store
         hub::gs::Store st;
         const std::string k = oot.key;
@@ -189,15 +202,16 @@ int main() {
         v["switch.preload_shaders"] = "auto";
         // Lichii: exactly lichii_env
         CHECK(nx_env(Kind::Lichii, v, 32 * GiB) == lichii_env(v, 32 * GiB));
-        CHECK(has(nx_env(Kind::Lichii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"));
-        CHECK(!has(nx_env(Kind::Lichii, v, 32 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // auto: a "32 GB" PC builds only recent shaders at start
+        // build 160 removed EDEN_NX2_PRELOAD_ALL_PIPELINES: Lichii's "Shaders at start" is the ini key build_all_cached_shaders (lichii_ini_launch), decided by lichii_preload_all
+        CHECK(lichii_preload_all(v, 64 * GiB) && !has(nx_env(Kind::Lichii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+        CHECK(!lichii_preload_all(v, 32 * GiB) && !has(nx_env(Kind::Lichii, v, 32 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // auto: a "32 GB" PC builds only recent shaders at start
         CHECK(nx_env(Kind::Lichii, v, 16 * GiB).size() == 1 && has(nx_env(Kind::Lichii, v, 16 * GiB), "EDEN_NX2_NO_REACTIVE", "1"));   // only the fast-reads var
         CHECK(has(nx_env(Kind::Fritchii, v, 16 * GiB), "EDEN_NX2_NO_REACTIVE", "1"));
         {
             hub::gs::Values off = v;
             off["switch.fast_reads"] = "off";
             CHECK(nx_env(Kind::Lichii, off, 16 * GiB).empty());
-            CHECK(!has(nx_env(Kind::Fritchii, off, 16 * GiB), "EDEN_NX2_NO_REACTIVE") && has(nx_env(Kind::Lichii, off, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"));
+            CHECK(!has(nx_env(Kind::Fritchii, off, 16 * GiB), "EDEN_NX2_NO_REACTIVE") && lichii_preload_all(off, 64 * GiB) && !has(nx_env(Kind::Lichii, off, 64 * GiB), "EDEN_NX2_NO_REACTIVE"));   // fast reads off: no env var for either; preloading is the ini key
         }
         CHECK(!has(nx_env(Kind::Lichii, v, 32 * GiB), "EDEN_UPDATE_URL"));
         // Fritchii: "auto" never preloads (29k pipelines = ~13 GB), "all" does, "recent" does not; the updater URL is always pinned
@@ -205,7 +219,7 @@ int main() {
         CHECK(has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_UPDATE_URL", "http://127.0.0.1:9/x"));
         v["switch.preload_shaders"] = "all";
         CHECK(!has(nx_env(Kind::Fritchii, v, 8 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES") && !has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // v5 prepares shaders itself
-        CHECK(has(nx_env(Kind::Lichii, v, 8 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"));   // Lichii keeps its behaviour
+        CHECK(lichii_preload_all(v, 8 * GiB) && !has(nx_env(Kind::Lichii, v, 8 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // Lichii preloads through the ini key
         v["switch.preload_shaders"] = "recent";
         CHECK(!has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
         CHECK(has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_UPDATE_URL"));
@@ -224,6 +238,13 @@ int main() {
             CHECK(!has(e2, "FRITCHII_CLASSIC_UI") && !has(e2, "EDEN_NX2_PRECOMPILE") && !has(e2, "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
         }
         CHECK(nx_skip_keys(Kind::Lichii).empty());
+        {   // Fritchii is told apart from Lichii by skip_keys != nullptr: its ini never gets the Lichii-only keys, and the headless trace helper says "not written" for it
+            hub::gs::Values w;
+            w["switch.preload_shaders"] = "all";
+            const std::string f = lichii_ini_launch("", w, false, &nx_skip_keys(Kind::Fritchii), 64 * GiB), l = lichii_ini_launch("", w, false, nullptr, 64 * GiB);
+            CHECK(f.find("build_all_cached_shaders") == std::string::npos && f.find("whats_new") == std::string::npos);
+            CHECK(l.find("build_all_cached_shaders=true") != std::string::npos && l.find("show_whats_new=false") != std::string::npos);
+        }
     }
 
     // ---- qt-config pin and frizti.ini

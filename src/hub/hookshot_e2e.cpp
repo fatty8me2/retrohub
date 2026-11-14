@@ -1,5 +1,5 @@
 // QA-only console harness (NOT an add_test): runs the real Hookshot build pipeline end to end on a game file.
-// Usage: hub_hookshot_e2e <game file> [language]. data_dir() is <exe dir>\userdata, so run it from an isolated copy.
+// Usage: hub_hookshot_e2e <game file> [language] [hookshot|longshot]. data_dir() is <exe dir>\userdata, so run it from an isolated copy.
 #include <windows.h>
 #include "games.h"
 #include "hookshot.h"
@@ -25,8 +25,11 @@ static const char* state_name(hookshot::BuildState s) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) { std::printf("usage: hub_hookshot_e2e <game file> [language]\n"); return 2; }
+    if (argc < 2) { std::printf("usage: hub_hookshot_e2e <game file> [language] [hookshot|longshot]\n"); return 2; }
     std::string lang = argc >= 3 ? argv[2] : "en-US";
+    hookshot::Flavor fl = hookshot::Flavor::Hookshot;
+    if (argc >= 4 && !hookshot::flavor_from_id(argv[3], &fl)) { std::printf("unknown flavor '%s' (hookshot or longshot)\n", argv[3]); return 2; }
+    std::printf("flavor: %s %s (%s)\n", hookshot::info(fl).name, hookshot::info(fl).source_version, hookshot::info(fl).source_commit);
     hub::GameEntry e;
     e.system = hub::System::Switch;
     e.key = "switch:0400486024dec000";
@@ -41,7 +44,7 @@ int main(int argc, char** argv) {
     std::fflush(stdout);
 
     std::string err;
-    if (!hookshot::start_build(e, lang, &err)) { std::printf("start_build failed: %s\n", err.c_str()); return 1; }
+    if (!hookshot::start_build(e, lang, &err, fl)) { std::printf("start_build failed: %s\n", err.c_str()); return 1; }
     auto t0 = std::chrono::steady_clock::now(), last_print = t0;
     std::string prev;
     hookshot::BuildStatus st;
@@ -65,16 +68,16 @@ int main(int argc, char** argv) {
             break;
     }
     std::string why;
-    bool ok = hookshot::ready(&why);
+    bool ok = hookshot::ready(&why, std::string(), fl);
     hookshot::Stamp stamp;
-    bool has_stamp = hookshot::read_stamp(hookshot::game_dir(), &stamp);
+    bool has_stamp = hookshot::read_stamp(hookshot::game_dir(fl), &stamp);
     std::printf("final state=%s error='%s' log=%s\n", state_name(st.state), st.error.c_str(), st.log_path.c_str());
     std::printf("ready=%d why='%s'\n", ok, why.c_str());
     if (has_stamp) std::printf("stamp: commit=%s game_build=%s built=%lld size=%llu source=%s\n", stamp.commit.c_str(), stamp.game_build.c_str(),
                                (long long)stamp.built, (unsigned long long)stamp.size, stamp.source.c_str());
     else std::printf("stamp: none\n");
     std::error_code ec;
-    for (auto& d : fs::directory_iterator(hookshot::game_dir(), ec)) std::printf("  %s%s\n", d.path().filename().string().c_str(), d.is_directory() ? "\\" : "");
+    for (auto& d : fs::directory_iterator(hookshot::game_dir(fl), ec)) std::printf("  %s%s\n", d.path().filename().string().c_str(), d.is_directory() ? "\\" : "");
     std::fflush(stdout);
     return (st.state == hookshot::BuildState::Done && ok) ? 0 : 1;
 }

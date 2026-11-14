@@ -497,7 +497,7 @@ std::string ext_emu_name(const hub::GameEntry* e) {
         case hub::System::N3DS: return "Azahar";
         case hub::System::PS2: return "PCSX2";
         case hub::System::PSP: return "PPSSPP";
-        case hub::System::Switch: return hookshot_running() ? "Hookshot" : fritchii_running() ? "Fritchii" : "Lichii";
+        case hub::System::Switch: return hookshot_running() ? hookshot_running_name() : fritchii_running() ? "Fritchii" : "Lichii";
         default: return "this emulator";
     }
 }

@@ -7,10 +7,11 @@
 #   -Out       PNGs, plus <shot>.trace.txt (HUB_SHOT_TRACE) and <shot>.autotest.log where the run wrote them (default: qa_out\hookshot-ui).
 # States: "notbuilt" = the real library, no Hookshot build. "ready" = the same copy plus a FAKE build in userdata\emulators\hookshot
 #   (empty hookshot.exe, hookshot_vk.dll, SDL2.dll, an empty romfs\ and a stamp naming hookshot::kSourceCommit). Nothing is ever started.
+# Fake card shots "fake-<mode>-<size>" for every HUB_SHOT_HOOKSHOT mode (see hookshot_ui.h), Hookshot and Longshot.
 # The shots: card and settings in both states; the Wii U game's settings (no "Plays with" for other games); the headless Play path
 #   (not built, built with runner=hookshot, built with runner=lichii, built with the old runner=auto = Lichii); the AV1 prompt at 1600x1000 (only that size).
 param([string]$DataFrom = "C:\Users\fatty\Desktop\smashClassic\userdata", [string]$Build = "", [string]$Out = "",
-      [string[]]$Sizes = @("1280x800", "1600x1000"), [int]$Secs = 12, [int]$Scroll = 30)
+      [string[]]$Sizes = @("1280x800", "1600x1000"), [int]$Secs = 12, [int]$Scroll = 30, [string[]]$OnlyFake = @())
 $ErrorActionPreference = "Stop"
 $OOT = "switch:0400486024dec000"
 $WIIU = "wiiu:0005000010145c00"
@@ -62,7 +63,8 @@ function Invoke-Run([string]$run, [hashtable]$extra, [int]$timeoutSec = 150) {
     $bmp = Join-Path $run "shot.bmp"
     Remove-Item -LiteralPath $bmp, (Join-Path $run "shot_trace.txt") -ErrorAction SilentlyContinue
     # HUB_SHOT_VAULT: headless runs ignore hub.json's vault_dir (main.cpp), so the copy's vault is named here
-    $set = @{ RETROHUB_NO_SHELL = "1"; SSB64_MUTE = "1"; RETRORUN_MUTE = "1"; N64RUN_MUTE = "1"; RETROHUB_QA = "1"; HUB_SCREENSHOT = $bmp; HUB_SHOT_TRACE = (Join-Path $run "shot_trace.txt"); HUB_SHOT_SECS = "$Secs"; HUB_SHOT_VAULT = (Join-Path $run "userdata\vault") }
+    # HUB_SHOT_FAKE_LIB=1 + HUB_SHOT_SWITCH=2: the fake library always seeds Ocarina of Time (the real library_cache of -DataFrom has no such game)
+    $set = @{ RETROHUB_NO_SHELL = "1"; SSB64_MUTE = "1"; RETRORUN_MUTE = "1"; N64RUN_MUTE = "1"; RETROHUB_QA = "1"; HUB_SCREENSHOT = $bmp; HUB_SHOT_TRACE = (Join-Path $run "shot_trace.txt"); HUB_SHOT_SECS = "$Secs"; HUB_SHOT_VAULT = (Join-Path $run "userdata\vault"); HUB_SHOT_FAKE_LIB = "1"; HUB_SHOT_SWITCH = "2" }
     foreach ($k in $extra.Keys) { $set[$k] = [string]$extra[$k] }
     try {
         foreach ($k in $set.Keys) { Set-Item -Path "env:$k" -Value $set[$k] }
@@ -111,7 +113,7 @@ try {
     $lichii = New-Copy "lc" $true $lichiiJson; $copies += $lichii
     Write-Host "copies: $notbuilt | $ready | $lichii | $auto"
 
-    foreach ($s in $Sizes) {
+    if (-not $OnlyFake) { foreach ($s in $Sizes) {
         Shot "card-notbuilt" $notbuilt $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "0" }
         Shot "settings-notbuilt" $notbuilt $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "3" }
         Shot "card-ready" $ready $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "0" }
@@ -120,10 +122,26 @@ try {
         Shot "settings-ready-auto" $auto $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "3" }
         Shot "settings-ready-lichii" $lichii $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "3" }
         Shot "settings-wiiu-notbuilt" $notbuilt $s @{ HUB_SHOT_DETAILS = $WIIU; HUB_SHOT_TAB = "3" }
+    } }
+
+    # the fake card states (HUB_SHOT_HOOKSHOT, headless only; no real build needed): the old Hookshot ones and the Longshot ones.
+    # Scrolling is off: the fake mode brings the card to the top itself. The card is taller than the page (the "which version plays" part, then
+    # one section per flavor), so each mode is shot three times: HUB_SHOT_HOOKSHOT_AT = which | hookshot | longshot puts that part at the top.
+    $fakeModes = "idle", "problems", "building", "paused", "done", "done_on", "done_fritchii", "failed",
+                 "ls_idle", "ls_building", "ls_done", "ls_done_on", "both_done", "ls_missing"
+    if ($OnlyFake) { $fakeModes = @($OnlyFake | ForEach-Object { $_ -split ',' }) }   # -OnlyFake ls_done,both_done: just those card states (a quick rerun)
+    foreach ($s in $Sizes) {
+        foreach ($m in $fakeModes) {
+            foreach ($at in "which", "hookshot", "longshot") {
+                $sv = $Scroll; $Scroll = 0
+                try { Shot ("fake-" + $m + "-" + $at) $notbuilt $s @{ HUB_SHOT_HOOKSHOT = $m; HUB_SHOT_HOOKSHOT_AT = $at } } finally { $Scroll = $sv }
+            }
+        }
     }
 
     # headless Play: RETROHUB_AUTOTEST=play presses the Play button's code path (play_entry -> launch_external) for Ocarina.
     # Headless launches are skipped; the trace line says which path was chosen.
+    if ($OnlyFake) { return }
     $playEnv = @{ RETROHUB_AUTOTEST = "play"; RETROHUB_AUTOTEST_GAME = $OOT; HUB_SHOT_SECS = "25"; HUB_SHOT_SIZE = $Sizes[0] }
     foreach ($pair in @(@("play-notbuilt", $notbuilt), @("play-ready", $ready), @("play-ready-lichii", $lichii), @("play-ready-auto", $auto))) {
         Invoke-Run $pair[1] $playEnv

@@ -8,7 +8,7 @@ Consoles: NES, SNES, N64, GB / GBC / GBA, DS, 3DS, GameCube, Wii U, PS1, PS2, PS
 - **N64 games** run through mupen64plus, embedded in our own runner (`n64run.exe`), with lockstep input netplay over our own transport.
 - **NES, SNES, GB, GBC, GBA, DS and PS1** run through libretro cores in our own runner (`retrorun.exe`), with lockstep or rollback netplay.
 - **GameCube, Wii U, 3DS, PS2, PSP and Switch** run in external emulators that RetroHub installs and configures (Dolphin, Cemu, Azahar, PCSX2, PPSSPP, Lichii). See `docs/EMULATORS.md`.
-- **Switch runners:** Lichii is the default. Fritchii and Hookshot are opt-in, per game. See "Switch runners" below.
+- **Switch runners:** Lichii is the default. Fritchii, Hookshot and Longshot are opt-in, per game. See "Switch runners" below.
 
 Users supply their own ROMs. Nothing copyrighted is shipped.
 
@@ -506,14 +506,15 @@ External emulator like PCSX2: `System::PSP`, `hubemu::Kind::Ppsspp` (pinned 1.20
 (`SaveSession::psp_disc_id`). Offline only. Full description: `docs/EMULATORS.md` ("PlayStation Portable"). Tests: `hub_psp_test`, `qa/psp_play.ps1` (hidden desktop), `qa/psp_shots.ps1`.
 
 ## Switch runners (`nx_runner.*`, `lichii.*`, `hookshot*.*`)
-Three programs can play a Switch game. The per-game setting `switch.runner` picks one (`lichii` | `fritchii` | `hookshot`; anything else, including the old `auto`, reads as Lichii).
+Four programs can play a Switch game. The per-game setting `switch.runner` picks one (`lichii` | `fritchii` | `hookshot` | `longshot`; anything else, including the old `auto`, reads as Lichii).
 - **Lichii** is the default. RetroHub installs, upgrades and configures it (`lichii.cpp`, `emulators.cpp`).
 - **Fritchii** is opt-in. It is Frizti's Ocarina of Time fork of Lichii, built from source (v5.8.4, commit a44f3bd, is a local build because GitHub Actions is paused on the fork; earlier pins were GitHub Actions builds) in `fatty8me2/Fritchii` and pinned by size and hash in `emulators.cpp`.
   - It runs through all of Lichii's code, but has its own install folder (`<data>\emulators\fritchii`) and its own `user\` folder.
   - Nothing is linked between the two folders. Anything shared is copied, and anything that could replace data is backed up first.
   - Offline only: an online or room launch always gets Lichii (`nx_emulator_for`).
-- **Hookshot** is opt-in. It is a native Windows build of Ocarina of Time (Switch 2), made on the player's PC from their own copy of the game by static recompilation (`hookshot_build.*`). No emulator. `launch.cpp` checks it before the two emulators (`hookshot::use_for`). Offline only. Full notes: `docs/HOOKSHOT.md`.
-- Tests: `hub_nx_runner_test`, `hub_hookshot_build_test`.
+- **Hookshot** is opt-in. It is a native Windows build of Ocarina of Time (Switch 2), made on the player's PC from their own copy of the game by static recompilation (`hookshot_build.*`). No emulator. `launch.cpp` checks it before the two emulators (`hookshot::decide`). Offline only. Full notes: `docs/HOOKSHOT.md`.
+- **Longshot** is a second native build of the same game (a fork of Hookshot), made the same way into its own folder, with the same save mapping. A chosen native build that is not built does not fall back to an emulator: Play asks (open the game's page / Play with Lichii this time / Cancel). See `docs/HOOKSHOT.md`.
+- Tests: `hub_nx_runner_test`, `hub_hookshot_test`, `hub_hookshot_build_test`.
 
 ## All Games layouts (`libview_ui.cpp`, `libview_logic.h`)
 - **Six layouts** (`LibLayout` in `libview_logic.h`), switched by the icon cells next to the Sort chip (saved: `Settings::lib_layout` grid | list | compact | showcase | shelf | cases; the default is Cases):

@@ -3,7 +3,9 @@
 #   2. the Switch "Game defaults" area in Settings > Video & Games (settings:2), scrolled in steps
 #   3. the per-game Settings tab with a stored "all" value (combo shows "All cached shaders")
 #   4. the headless Play path (RETROHUB_AUTOTEST=play) for that game with a fake Lichii install: stored auto, all, recent.
-#      The trace line "... | preload all shaders yes|no" is copied to <shot>.trace.txt. Auto is yes on a PC with 30 GiB or more of RAM.
+#      The trace line "... | preload all shaders yes|no" is copied to <shot>.trace.txt. Auto is yes on a PC with 60 GiB or more of RAM.
+#      The autotest log line "lichii: build_all_cached_shaders true|false, EDEN_NX2_NO_REACTIVE set|not set" names the fact written to Lichii's qt-config.ini
+#      (the old env var EDEN_NX2_PRELOAD_ALL_PIPELINES is gone since Lichii build 160).
 # Every run is hidden, muted, no network (HUB_SCREENSHOT mode) and killed by PID if it overruns. Nothing is written to -DataFrom.
 # Nothing is started: the fake Lichii is a 2-byte MZ file, and a headless launch is skipped before anything spawns.
 # Usage: qa\preload_shaders_shots.ps1 [-DataFrom <userdata dir>] [-Build <bin\Release>] [-Out <dir>] [-Sizes 1280x800,1600x1000] [-Secs 12]
@@ -12,7 +14,7 @@ param([string]$DataFrom = "C:\Users\fatty\Desktop\smashClassic\userdata", [strin
 $ErrorActionPreference = "Stop"
 $OOT = "switch:0400486024dec000"
 # the pinned Lichii build (emulators.cpp, Kind::Lichii): a marker naming it and its sha256 means "not outdated"
-$LICHII_SHA = "f09893b3041596662d762959a103ae4af40d479631309fff9990bcc288078eed"
+$LICHII_SHA = "e6ac8c09ddd00cb64e539f2a85f9f9f32d579c772b3619aed0d4d3910a93e833"
 $root = Split-Path $PSScriptRoot -Parent
 if (-not $Build) { $Build = Join-Path $root "build\bin\Release" }
 if (-not (Test-Path (Join-Path $Build "RetroHub.exe"))) { throw "no RetroHub.exe in $Build" }
@@ -44,7 +46,7 @@ function New-Copy([string]$tag, [string]$gameSettingsJson = "") {
     $l = Join-Path $ud "emulators\lichii"
     New-Item -ItemType Directory -Force $l | Out-Null
     [IO.File]::WriteAllBytes((Join-Path $l "lichii.exe"), [byte[]]@(0x4D, 0x5A))
-    [IO.File]::WriteAllText((Join-Path $l "retrohub-install.txt"), "Lichii build 130`nsha256 $LICHII_SHA`n", (New-Object System.Text.UTF8Encoding $false))
+    [IO.File]::WriteAllText((Join-Path $l "retrohub-install.txt"), "Lichii build 177`nsha256 $LICHII_SHA`n", (New-Object System.Text.UTF8Encoding $false))
     if ($gameSettingsJson) {
         New-Item -ItemType Directory -Force (Join-Path $vault "_settings") | Out-Null
         [IO.File]::WriteAllText((Join-Path $vault "_settings\game_settings.json"), $gameSettingsJson, (New-Object System.Text.UTF8Encoding $false))
@@ -121,7 +123,7 @@ try {
     }
 
     # 4. headless Play: RETROHUB_AUTOTEST=play presses the Play code path (play_entry -> launch_external) for Ocarina.
-    # Headless launches are skipped; the trace line "external ... | preload all shaders yes|no" says what the launch would set.
+    # Headless launches are skipped; the trace line "external ... | preload all shaders yes|no" says what the launch would write ([Renderer] build_all_cached_shaders).
     $playEnv = @{ RETROHUB_AUTOTEST = "play"; RETROHUB_AUTOTEST_GAME = $OOT; HUB_SHOT_SECS = "25"; HUB_SHOT_SIZE = $Sizes[0] }
     foreach ($pair in @(@("play-auto", $auto), @("play-all", $all), @("play-recent", $recent))) {
         Invoke-Run $pair[1] $playEnv

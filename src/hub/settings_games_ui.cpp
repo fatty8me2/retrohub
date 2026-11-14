@@ -122,6 +122,19 @@ void options_grouped(const std::string& console, const std::string& game_key, in
                 }
                 ImGui::PopID();
             }
+            if (level == 2 && o->key == hookshot::kRunnerSetting) {   // chosen, but that native build is not on this PC: say it here, not only at Play
+                if (const hub::GameEntry* ge = find_entry(game_key)) {
+                    static double at = -100.0; static std::string for_key, note;   // decide() touches the disk: every 2 s, not every frame
+                    const auto rv = v.find(o->key);
+                    const std::string want_key = game_key + "|" + (rv != v.end() ? rv->second : std::string());
+                    if (ImGui::GetTime() - at > 2.0 || ImGui::GetTime() < at || for_key != want_key) {
+                        at = ImGui::GetTime(); for_key = want_key;
+                        const hookshot::Decision d = hookshot::decide(*ge, v);
+                        note = d.choice == hookshot::Choice::NativeNotBuilt ? std::string(hookshot::info(d.flavor).name) + " is not built on this PC yet. Build it on this game's About tab; until then Play asks what to do." : std::string();
+                    }
+                    if (!note.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN); ImGui::PushTextWrapPos(0.f); ImGui::TextUnformatted(note.c_str()); ImGui::PopTextWrapPos(); ImGui::PopStyleColor(); }
+                }
+            }
         }
     }
     if (!opts.empty()) {   // say what is missing instead of silently leaving it out

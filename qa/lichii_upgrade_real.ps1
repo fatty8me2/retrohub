@@ -1,6 +1,7 @@
 # Real Lichii install / upgrade QA (downloads the pinned build from github.com/zortos293/Lichii; launches nothing, opens no window).
 # Runs RetroHub's own job through hub_lichii_upgrade_qa.exe on COPIES of a build-88 install and checks four scenarios:
-#   1. upgrade 88 -> the pinned build 130 (user\ byte-identical, program files match the pinned-build reference, no scratch left)
+#   1. upgrade 88 -> the pinned build 177 (user\ byte-identical, program files match the pinned-build reference, no scratch left, and no nxformat.dll left
+#      over: build 130 shipped one, build 177 links nxformat statically; the bench copy gets a stand-in nxformat.dll to play the build 130 leftover)
 #   2. second run is a no-op (no download, nothing changes)
 #   3. fresh install into an empty root
 #   4. forced failure (<root>\_downloads is a FILE) keeps the old build and user\ intact
@@ -8,14 +9,16 @@
 #   powershell -NoProfile -File qa\lichii_upgrade_real.ps1 -Bench <copy-of-a-build-88-lichii-folder> -Rx <pinned-build-reference-folder> -Work <fresh-folder>
 # -Bench is only read (copied). -Work must be a new folder and must not be under the user's real data folder.
 param(
-    [string]$Tool = (Join-Path $PSScriptRoot '..\build\bin\Release\hub_lichii_upgrade_qa.exe'),
+    [string]$Tool = '',
     [Parameter(Mandatory = $true)][string]$Bench,
     [Parameter(Mandatory = $true)][string]$Rx,
     [Parameter(Mandatory = $true)][string]$Work
 )
 $ErrorActionPreference = 'Continue'
+# (default computed here: $PSScriptRoot can be empty when the param default is evaluated under -File on PS 5.1)
+if (-not $Tool) { $Tool = Join-Path (Split-Path -Parent $PSCommandPath) '..\build\bin\Release\hub_lichii_upgrade_qa.exe' }
 $Sha88 = '3405860a13f7b0729548ddb9402a355f4cfb1cd6a6d705fb8ea26f88879b0407'
-$ShaPin = 'f09893b3041596662d762959a103ae4af40d479631309fff9990bcc288078eed'   # build 130
+$ShaPin = 'e6ac8c09ddd00cb64e539f2a85f9f9f32d579c772b3619aed0d4d3910a93e833'   # build 177
 $Excluded = @('lichii.pdb', 'eden-cli.pdb', 'vc_redist.x64.exe', 'lichii-updater.exe')
 
 if ($Work -match 'smashClassic\\userdata') { Write-Error 'Refusing: -Work is under the real user data folder.'; exit 2 }
@@ -77,12 +80,14 @@ function New-Root88([string]$name) {
     New-Item -ItemType Directory -Force -Path $root | Out-Null
     Copy-Item -LiteralPath $Bench -Destination (Join-Path $root 'lichii') -Recurse -Force
     Set-Content -LiteralPath (Join-Path $root 'lichii\retrohub-install.txt') -Value "Lichii build-88`nsha256 $Sha88" -Encoding ascii
+    # stand-in for what build 125-130 left beside lichii.exe: build 177 has no nxformat.dll (linked statically), so an upgrade must not leave this one behind
+    Set-Content -LiteralPath (Join-Path $root 'lichii\nxformat.dll') -Value 'stale nxformat from an older build' -Encoding ascii
     return $root
 }
 
 Log "== Lichii real upgrade QA $(Get-Date -Format s) =="
 # ---- Scenario 1
-Log '== Scenario 1: upgrade 88 -> 130'
+Log '== Scenario 1: upgrade 88 -> the pinned build 177'
 $r1 = New-Root88 's1'
 $lic1 = Join-Path $r1 'lichii'
 $userBefore = Snap $lic1 'user'
@@ -93,13 +98,14 @@ Check ($c -eq 0) 'exit 0'
 $txt = Get-Content (Join-Path $Work 's1_tool.txt') -Raw
 Check ($txt -match 'after: .*outdated=0') 'after shows outdated=0'
 $marker = Get-Content -LiteralPath (Join-Path $lic1 'retrohub-install.txt')
-Check (($marker -join "`n") -match "sha256 $ShaPin" -and ($marker -join "`n") -match 'build 130') 'marker has the pinned sha256 and mentions build 130'
+Check (($marker -join "`n") -match "sha256 $ShaPin" -and ($marker -join "`n") -match 'build 177') 'marker has the pinned sha256 and mentions build 177'
 $userAfter = Snap $lic1 'user'
+Check (-not (Test-Path -LiteralPath (Join-Path $lic1 'nxformat.dll'))) 'no stale nxformat.dll left after the upgrade (build 177 links it statically)'
 Check (($userBefore -join "`n") -eq ($userAfter -join "`n")) "user\ byte-identical ($($userBefore.Count) files, none missing or added)"
 Check-Rx $lic1
 Check-Clean $r1 $lic1
 $gone = @($progBefore | Where-Object { $_ -ne 'retrohub-install.txt' -and -not (Test-Path -LiteralPath (Join-Path $Rx $_)) -and (Test-Path -LiteralPath (Join-Path $lic1 $_)) })
-Check ($gone.Count -eq 0) 'build-88 program files not in build 130 are gone'
+Check ($gone.Count -eq 0) 'build-88 program files not in the pinned build 177 are gone'
 
 # ---- Scenario 2: second run on the same root
 Log '== Scenario 2: second run is a no-op'

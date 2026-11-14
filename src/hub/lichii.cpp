@@ -478,7 +478,7 @@ std::vector<std::string> fritchii_oot_default_keys(const hub::gs::Values& v) {
     return out;
 }
 
-std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, bool fullscreen, const std::vector<std::string>* skip_keys) {
+std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, bool fullscreen, const std::vector<std::string>* skip_keys, uint64_t ram_bytes) {
     auto skipped = [&](const char* sec, const char* key) { if (!skip_keys) return false; const std::string id = std::string(sec) + "." + key; for (const auto& k : *skip_keys) if (k == id) return true; return false; };
     auto put = [&](std::string& t, const char* sec, const char* key, const std::string& val) { if (!skipped(sec, key)) t = ini_put(t, sec, key, val); };
     auto get = [&](const char* k, const char* def) { auto i = v.find(k); return i == v.end() || i->second.empty() ? std::string(def) : i->second; };
@@ -512,6 +512,13 @@ std::string lichii_ini_launch(const std::string& in, const hub::gs::Values& v, b
     {   // a setting back on "Fritchii's setting": if an earlier launch wrote the key, tell Fritchii to use its own default again (nothing is written for a key that is not there)
         for (const auto& kv : fritchii_oot_keys(v)) put(t, "Renderer", kv.first.c_str(), kv.second);
         for (const auto& k : fritchii_oot_default_keys(v)) if (!skipped("Renderer", k.c_str())) t = ini_put(t, "Renderer", k, "", true);
+    }
+    if (!skip_keys) {   // Lichii only (Fritchii passes nx_skip_keys; v5.8.4 predates both keys and prepares shaders itself)
+        // Build 160 replaced EDEN_NX2_PRELOAD_ALL_PIPELINES by this key. Written on EVERY launch: Lichii keeps it, so "recent" has to reset a stale true.
+        put(t, "Renderer", "build_all_cached_shaders", lichii_preload_all(v, ram_bytes ? ram_bytes : physical_ram_bytes()) ? "true" : "false");
+        // Build 150+: a first start would force the "Lichii Dark" theme (whats_new_version below 1) and open a modal What's New window shortly after start, over the game.
+        put(t, "UI", "show_whats_new", "false");
+        put(t, "UI", "whats_new_version", "1");
     }
     put(t, "UI", "fullscreen", fullscreen ? "true" : "false");
     put(t, "System", "current_user", "0");
@@ -744,7 +751,7 @@ std::string lichii_controls_ini(const std::string& in, const hubctl::Profile& pr
 /* ------------------------------------------------------------------ prepare + args */
 
 std::string prepare_lichii(const std::string& install, const hubctl::Profile& prof, const std::string& guid, int port, const hub::gs::Values& v,
-                           bool fullscreen, const SdlBinds* binds, const std::vector<std::string>* skip_keys) {
+                           bool fullscreen, const SdlBinds* binds, const std::vector<std::string>* skip_keys, uint64_t ram_bytes) {
     std::error_code ec;
     fs::create_directories(P(lichii_user_dir(install)), ec);
     if (!is_dir(lichii_user_dir(install))) return "could not create Lichii's user folder";
@@ -752,7 +759,7 @@ std::string prepare_lichii(const std::string& install, const hubctl::Profile& pr
     std::string t = read_text(ini);
     const bool first = read_text(marker).empty();
     if (first) t = lichii_ini_defaults(t);
-    t = lichii_ini_launch(t, v, fullscreen, skip_keys);
+    t = lichii_ini_launch(t, v, fullscreen, skip_keys, ram_bytes);
     std::string g = guid;
     int pt = port;
     const SdlBinds* b = binds;
@@ -789,19 +796,21 @@ bool lichii_fast_reads(const hub::gs::Values& v) {
     return it == v.end() || it->second != "off";   // missing / unknown counts as on
 }
 
-std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t ram) {
-    // Both variables are still read by Lichii build 130 and behave as before. Build 130 also releases all-zero guest pages (about 6 GB less RAM), which does not
-    // change the driver-memory cost below. Its shader cache is now "v2" (lichii-cache.v2.bin + .driver.bin; an old vulkan.fork-v5x.bin is converted once). Without a
-    // used-list "recent" still builds at most 3000 pipelines; the 9000-frame eviction is still hard-coded and is still skipped when PRELOAD_ALL is set.
-    std::vector<std::pair<std::string, std::string>> env;
-    if (lichii_fast_reads(v)) env.push_back({"EDEN_NX2_NO_REACTIVE", "1"});
+bool lichii_preload_all(const hub::gs::Values& v, uint64_t ram) {
     auto it = v.find("switch.preload_shaders");
     const std::string m = it == v.end() ? "recent" : it->second;   // the default since 1.40.4; an unknown value preloads nothing either
     const uint64_t kGiB = 1024ull * 1024 * 1024;
     // "auto" preloads everything only with 60 GiB+ of RAM (a "64 GB" PC). It used to be 30 GiB, but a cache of 43k pipelines needs ~19 GB of
     // driver memory, and after a Lichii update every pipeline is compiled again first: a 32 GB PC sat 27 minutes before the first frame on build 125.
-    const bool all = m == "all" || (m == "auto" && ram >= 60 * kGiB);
-    if (all) env.push_back({"EDEN_NX2_PRELOAD_ALL_PIPELINES", "1"});
+    return m == "all" || (m == "auto" && ram >= 60 * kGiB);
+}
+
+std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t ram) {
+    // EDEN_NX2_NO_REACTIVE is still read by build 177. EDEN_NX2_PRELOAD_ALL_PIPELINES is gone (removed in build 160): "Shaders at start" is the ini key
+    // [Renderer] build_all_cached_shaders now, written by lichii_ini_launch from lichii_preload_all. `ram` is kept so callers (nx_env) need no change.
+    (void)ram;
+    std::vector<std::pair<std::string, std::string>> env;
+    if (lichii_fast_reads(v)) env.push_back({"EDEN_NX2_NO_REACTIVE", "1"});
     return env;
 }
 

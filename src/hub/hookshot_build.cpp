@@ -66,8 +66,10 @@ static std::string data_dir_clean() {
     return d;
 }
 static std::string emu_root() { return S(P(data_dir_clean()) / "emulators"); }
-static std::string staging_dir() { return S(P(emu_root()) / "hookshot.staging"); }
-static std::string old_dir() { return S(P(emu_root()) / "hookshot.old"); }
+static std::string staging_dir(Flavor f) { return S(P(emu_root()) / (std::string(info(f).id) + ".staging")); }
+static std::string old_dir(Flavor f) { return S(P(emu_root()) / (std::string(info(f).id) + ".old")); }
+/* Hookshot keeps the folder names it always had; every other flavor gets its own source and work folders in the shared kit. */
+static std::string kit_sub(Flavor f, const char* base) { return f == Flavor::Hookshot ? std::string(base) : std::string(base) + "-" + info(f).id; }
 static std::string stamp_for_folder() {
     char b[32];
     std::time_t t = std::time(nullptr);
@@ -1094,17 +1096,19 @@ struct Kit {
     }
 
     bool step_src() {
-        say("kit-src", "Unpacking the Hookshot source", 0.f);
-        const std::string zip = S(P(io.data) / kSourceZipName);
+        const FlavorInfo& fi = info(io.flavor);
+        const std::string name = fi.name, unpacking = "Unpacking the " + name + " source";
+        say("kit-src", unpacking, 0.f);
+        const std::string zip = S(P(io.data) / fi.source_zip);
         const std::string sha = hash_file_hex(HashAlg::Sha256, zip);
-        if (sha != kSourceZipSha256) return fail("RetroHub's copy of the Hookshot source is missing or damaged. Reinstall RetroHub.");
-        const fs::path d = dir("src");
+        if (sha != fi.source_zip_sha256) return fail("RetroHub's copy of the " + name + " source is missing or damaged. Reinstall RetroHub.");
+        const fs::path d = dir(kit_sub(io.flavor, "src").c_str());
         const std::string want = "src " + sha;
         if (!marker_is(d, want)) {
             wipe(d);
             std::string e;
-            if (!unzip_prefix(zip, S(d), "", io.cancel, [&](float f) { say("kit-src", "Unpacking the Hookshot source", f); }, &e)) return fail(e == "cancelled" ? e : "Could not unpack the Hookshot source: " + e);
-            if (!is_file(d / "nx2" / "make_game.py")) return fail("The Hookshot source is incomplete.");
+            if (!unzip_prefix(zip, S(d), "", io.cancel, [&](float f) { say("kit-src", unpacking, f); }, &e)) return fail(e == "cancelled" ? e : "Could not unpack the " + name + " source: " + e);
+            if (!is_file(d / "nx2" / "make_game.py")) return fail("The " + name + " source is incomplete.");
             write_marker(d, want);
         }
         // No WebGPU fallback: since v2.1.0 the source's own host/rx_nowgpu.c stands in when WGPU_NATIVE has no webgpu.h (build.py), so the
@@ -1115,7 +1119,11 @@ struct Kit {
         fs::create_directories(d / "third_party" / "sdl2", ec);
         fs::copy_file(P(io.sdl2_dll), d / "third_party" / "sdl2" / "SDL2.dll", fs::copy_options::overwrite_existing, ec);
         if (ec) return fail("Could not copy SDL2.dll from RetroHub (" + ec.message() + ").");
-        say("kit-src", "Unpacking the Hookshot source", 1.f);
+        // Never a version file in the source root: make_game.py would copy it into the game as hookshot_version.txt, which arms the game's own update check
+        // (a top-most box over the game). Neither audited source has one; a stray one goes.
+        fs::remove(d / "version.txt", ec);
+        fs::remove(d / "VERSION", ec);
+        say("kit-src", unpacking, 1.f);
         return true;
     }
 
@@ -1460,13 +1468,14 @@ std::wstring current_path_env() {
     return n < b.size() ? std::wstring(b.data(), n) : std::wstring();
 }
 
-void run_build(std::string game_path, std::string key, std::string language) {
+void run_build(std::string game_path, std::string key, std::string language, Flavor fl) {
     (void)key;
+    const FlavorInfo& fi = info(fl);
     const std::string kit = kit_dir();
-    const std::string staging = staging_dir();
-    const std::string game = hookshot::game_dir();
-    const std::string old = old_dir();
-    const std::string work = S(P(kit) / "work");
+    const std::string staging = staging_dir(fl);
+    const std::string game = hookshot::game_dir(fl);
+    const std::string old = old_dir(fl);
+    const std::string work = S(P(kit) / kit_sub(fl, "work"));
     Monitor mon;
     auto stop_monitor = [&] { mon.halt(); };
     auto cancelled = [&] { return g().cancel.load(); };
@@ -1499,7 +1508,7 @@ void run_build(std::string game_path, std::string key, std::string language) {
         g().log.open(P(log_path), std::ios::binary | std::ios::trunc);
     }
     { std::lock_guard<std::mutex> lk(g().mu); g().st.log_path = log_path; }
-    log_line(std::string("RetroHub Hookshot build, source ") + kSourceCommit + ", language " + language);
+    log_line(std::string("RetroHub ") + fi.name + " build, source " + fi.source_commit + " (" + fi.source_version + "), language " + language);
     log_line("game: " + game_path);
 
     // 0. an earlier swap that was cut short
@@ -1526,6 +1535,7 @@ void run_build(std::string game_path, std::string key, std::string language) {
     set_state(BuildState::Downloading, "kit-src", "Getting the build tools ready");
     KitIO io;
     io.kit = kit;
+    io.flavor = fl;
     io.data = hub::exe_dir() + "data/hookshot";
     io.sdl2_dll = hub::exe_dir() + "SDL2.dll";
     io.cancel = &g().cancel;
@@ -1547,7 +1557,7 @@ void run_build(std::string game_path, std::string key, std::string language) {
     // 3. the check
     set_state(BuildState::Checking, "check", "Checking the game file");
     const std::string py = S(P(kit) / "python" / "python.exe");
-    const std::string srcdir = S(P(kit) / "src");
+    const std::string srcdir = S(P(kit) / kit_sub(fl, "src"));
     EnvEdit env;
     env.drop_prefix = {L"PYTHON", L"PIP_"};
     const int jobs = jobs_for(total_phys_bytes(), (int)std::max(1u, std::thread::hardware_concurrency()));
@@ -1628,22 +1638,23 @@ void run_build(std::string game_path, std::string key, std::string language) {
         fs::copy_file(P(io.sdl2_dll), P(staging) / "SDL2.dll", fs::copy_options::overwrite_existing, e2);
     }
     hookshot::Stamp stamp;
-    stamp.commit = kSourceCommit;
+    stamp.commit = fi.source_commit;
     stamp.game_build = kGameBuild;
     stamp.source = game_path;
     stamp.built = (int64_t)std::time(nullptr);
     stamp.size = src.kind == GameSource::Nup ? (uint64_t)fs::file_size(P(src.nup), ec) : 0;
     if (!hookshot::write_stamp(staging, stamp)) return bail("Could not write the build's stamp file.");
     std::string why;
-    if (!hookshot::ready(&why, staging)) return bail("The build finished but is incomplete: " + why + ".");
+    { std::error_code e3; fs::remove(P(staging) / "hookshot_version.txt", e3); }   // (never: it arms the game's own update check, see step_src)
+    if (!hookshot::ready(&why, staging, fl)) return bail("The build finished but is incomplete: " + why + ".");
     // The old build's hookshot.exe cannot be moved while it runs, and a launch must not start into the middle of the swap:
     // refuse launches, then wait (cancellable) until no process runs from game_dir()\hookshot.exe.
     g().swapping = true;
     struct SwapFlag { ~SwapFlag() { g().swapping = false; } } swap_flag;
-    if (exe_running_from(hookshot::exe_path())) {
+    if (exe_running_from(hookshot::exe_path(fl))) {
         set_state(BuildState::Building, "swap", "Waiting for the game to close");
         log_line("swap: waiting for hookshot.exe to close");
-        while (exe_running_from(hookshot::exe_path())) {
+        while (exe_running_from(hookshot::exe_path(fl))) {
             for (int i = 0; i < 20; ++i) {   // polls every 2 s, looks at cancel every 100 ms
                 if (cancelled()) return was_cancelled();
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1665,7 +1676,7 @@ void run_build(std::string game_path, std::string key, std::string language) {
 
 }   // namespace
 
-bool start_build(const hub::GameEntry& e, const std::string& language, std::string* err) {
+bool start_build(const hub::GameEntry& e, const std::string& language, std::string* err, Flavor fl) {
     auto fail = [&](const std::string& m) { if (err) *err = m; return false; };
     if (!supports(e)) return fail("This game can't be built.");
     if (!language_valid(language)) return fail("Unknown language.");
@@ -1684,11 +1695,12 @@ bool start_build(const hub::GameEntry& e, const std::string& language, std::stri
         g().st.stage_id = "prepare";
         g().st.stage = "Starting";
         g().st.started_unix = (int64_t)std::time(nullptr);
+        g().st.flavor = fl;
     }
     const std::string path = e.path, key = e.key;
-    g().th = std::thread([path, key, language] {
+    g().th = std::thread([path, key, language, fl] {
         try {
-            run_build(path, key, language);
+            run_build(path, key, language, fl);
         } catch (const std::exception& ex) {
             finish(BuildState::Failed, std::string("The build stopped unexpectedly: ") + ex.what());
         } catch (...) {
