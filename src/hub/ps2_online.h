@@ -22,7 +22,7 @@ inline std::string online_block_reason(const OnlineState& s) {
         if (!s.download_error.empty()) return "The PlayStation 2 online core could not be downloaded: " + s.download_error + ". Check your connection; RetroHub retries shortly.";
         return "Getting the PlayStation 2 online core (a one-time download of about 3.6 MB)...";
     }
-    if (!s.bios_found) return "Your PC has no PlayStation 2 BIOS (scph*.bin) - add it in Settings > Playing. Everyone in the room needs the same BIOS file.";
+    if (!s.bios_found) return "Your PC has no PlayStation 2 BIOS (scph*.bin) - add it in Settings > Video & Games. Everyone in the room needs the same BIOS file.";
     if (s.needs_unpack) return "Unpacking " + s.title + " (needed for PlayStation 2 online)...";
     return "";
 }
@@ -44,7 +44,7 @@ inline const char* staged_bios_dir_rel() { return "pcsx2\\bios"; }
 /* Exit codes of retrorun's PS2 setup check (src/retrorun/main.cpp) -> text for the player. */
 inline const char* setup_mismatch_text(unsigned long code) {
     switch (code) {
-        case 9: return "Your PlayStation 2 BIOS file differs from another player's. Everyone in the room needs the same BIOS file (the same scph*.bin) - compare them in Settings > Playing.";
+        case 9: return "Your PlayStation 2 BIOS file differs from another player's. Everyone in the room needs the same BIOS file (the same scph*.bin) - compare them in Settings > Video & Games.";
         case 10: return "Your game disc differs from another player's. Everyone needs the same disc image of the same game (same region and version).";
         case 11: return "Your PlayStation 2 emulator core or its options differ from another player's. Update RetroHub on every PC and try again.";
         default: return "";

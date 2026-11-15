@@ -3,6 +3,9 @@
 
 #include "lichii.h"
 #include "nx_runner.h"
+#include "option_rows.h"
+
+#include <algorithm>
 
 /* ---------- Nintendo Switch / Switch 2 (Lichii): the keys + firmware prompt before a game starts, and the Settings block.
  * RetroHub never ships or downloads keys or firmware: the player copies their own (dumped from a console they own) from a file / folder they
@@ -158,7 +161,7 @@ void draw_switch_dialogs() {
     ImGui::EndPopup();
 }
 
-/* Settings > Playing: Fritchii (opt-in) and which program Switch games play with. */
+/* Settings > Video & Games: Fritchii (opt-in) and which program Switch games play with. */
 static void fritchii_settings_ui() {
     using hubemu::Kind;
     refresh(look_of(Kind::Fritchii));   // (sets LOOK_F.kind)
@@ -202,24 +205,30 @@ static void fritchii_settings_ui() {
     const hub::gs::Values rv = GSTORE.resolve(hub::System::Switch, "");
     auto it = rv.find(hubemu::kRunnerKey);
     const std::string cur = it == rv.end() ? "lichii" : it->second;
+    const bool chosen = GSTORE.source(hub::System::Switch, "", hubemu::kRunnerKey) != 0;   // false = the built-in default (nx_emulator_for's runner_source 0)
+    const bool fr_default = !chosen && hubemu::nx_fritchii_obtainable(hubemu::release_is_placeholder(Kind::Fritchii), !fr.exe.empty());   // Ocarina of Time then plays with Fritchii
     const hub::gs::Option* o = hub::gs::find_option(hubemu::kRunnerKey);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Switch and Switch 2 games play with");
     ImGui::SameLine();
-    std::string shown = cur;
-    if (o) for (const auto& c : o->choices) if (c.value == cur) shown = c.label;
-    ImGui::SetNextItemWidth(260 * S);
+    std::string label = cur;
+    if (o) for (const auto& c : o->choices) if (c.value == cur) label = c.label;
+    const std::string shown = hubui::switch_wide_runner_preview(label, chosen, fr_default);   // what Play starts: with nothing chosen that is Fritchii for Ocarina of Time
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x, std::max(260 * S, ImGui::CalcTextSize(shown.c_str()).x + ImGui::GetFrameHeight() + style.FramePadding.x * 2)));
     if (o && ImGui::BeginCombo("##nxrunner", shown.c_str())) {
         for (const auto& c : o->choices) {
-            if (ImGui::Selectable(c.label.c_str(), c.value == cur) && c.value != cur) gs_set_system_value(hub::System::Switch, hubemu::kRunnerKey, c.value);
-            if (c.value == cur) ImGui::SetItemDefaultFocus();
+            const bool sel = chosen && c.value == cur;   // nothing is ticked while nothing is chosen, so picking Lichii then is stored too (Ocarina of Time follows it)
+            if (ImGui::Selectable(c.label.c_str(), sel) && !sel) gs_set_system_value(hub::System::Switch, hubemu::kRunnerKey, c.value);
+            if (sel) ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
     }
-    text_wrapped_disabled("Ocarina of Time plays with Fritchii unless you pick a program for it. Hookshot only plays Ocarina of Time (once built on its game page). Fritchii needs to be installed; until then Play offers to download it.");
+    text_wrapped_disabled(fr_default ? "Ocarina of Time plays with Fritchii unless you pick a program for it. Hookshot only plays Ocarina of Time (once built on its game page). Fritchii needs to be installed; until then Play offers to download it."
+                                     : "A game can still have its own choice on its Settings tab. Hookshot only plays Ocarina of Time (once built on its game page).");
 }
 
-/* Settings > Playing (emulators list). */
+/* Settings > Video & Games (emulators list). */
 void switch_settings_ui() {
     refresh(LOOK_L);
     Look& LOOK = LOOK_L;

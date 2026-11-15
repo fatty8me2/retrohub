@@ -520,7 +520,7 @@ void hookshot_ui_tick() {
             const hub::GameEntry* ge = find_entry(HU.last_key.empty() ? std::string("switch:0400486024dec000") : HU.last_key);
             const hs::Decision d = ge && hs::supports(*ge) ? hs::decide(*ge, gs_values_for(*ge)) : hs::Decision();
             if (ge && d.choice == hs::Choice::Native && d.flavor == st.flavor) push_toast(name + " is built. Play now starts " + name + ".", ui::GOOD, 12.0);
-            else push_toast(name + " is built. To play with it, open the game's page and choose \"Play with " + name + " instead\" (or Settings > Plays with). Play keeps using the current version until then.", ui::GOOD, 12.0);
+            else push_toast(name + " is built. To play with it, open the game's page and choose \"Play with " + name + " instead\" (or Plays with on its Settings tab). Play keeps using the current version until then.", ui::GOOD, 12.0);
         } else if (st.state == hs::BuildState::Failed) push_toast("The " + name + " build stopped. Open the game's page to see why.", ui::BAD, 12.0);
         HU.was_running = false;
         HU.req_asked = false;

@@ -109,6 +109,12 @@ add_executable(hub_libcompact_test test_libcompact.cpp)
 target_include_directories(hub_libcompact_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hub_libcompact_test PRIVATE cxx_std_17)
 
+# Game option rows (option_rows.h): label / control widths, heading order, the "Plays with" value shown; plus the option table's headings and help texts.
+add_executable(hub_option_rows_test test_option_rows.cpp)
+target_include_directories(hub_option_rows_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hub_option_rows_test PRIVATE hubcommon)
+target_compile_features(hub_option_rows_test PRIVATE cxx_std_17)
+
 # Home scrolling: wheel axis routing + eased page spring (pure header).
 add_executable(hub_homescroll_test test_homescroll.cpp)
 target_include_directories(hub_homescroll_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

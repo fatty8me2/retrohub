@@ -386,7 +386,7 @@ std::string rom_message(const RomPick& p) {
     if (p.state == RomState::WrongRevision)
         return "Kanto Together needs the original Pokemon FireRed (USA) version 1.0 (SHA-1 " + std::string(kBaseSha1) +
                "). The FireRed in your library is a different revision" + (p.seen_sha1.empty() ? "" : " (" + p.seen_sha1 + ")") + ".";
-    return "Kanto Together needs your own Pokemon FireRed (USA) 1.0 ROM. Add it to a RetroHub ROM folder (Settings > ROM folders).";
+    return "Kanto Together needs your own Pokemon FireRed (USA) 1.0 ROM. Add it to a RetroHub ROM folder (Settings > General > ROM folders).";
 }
 
 std::string reason_for(RomState s) { return s == RomState::WrongRevision ? "wrong_rom" : "no_rom"; }

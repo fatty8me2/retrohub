@@ -837,7 +837,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         hubctl::Profile pw = controls_profile("wiiu", e.key);
         hubemu::prepare_cemu_own(hubemu::cemu_user_data_dir(inst.dir, ad ? ad : ""), pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw), true);
     } else if (ri.dsu_players > 0) {
-        set_notice("Remote play needs RetroHub to manage Cemu's controls (Settings > Wii U) - the guests' controllers won't reach the game otherwise.", 15.0);
+        set_notice("Remote play needs RetroHub to manage Cemu's controls (Controllers page, Let RetroHub manage Wii U controls) - the guests' controllers won't reach the game otherwise.", 15.0);
     }
     hub::gs::Values gsv = gs_values_for(e);
     bool fs = hub::gs::is_fullscreen(gsv);

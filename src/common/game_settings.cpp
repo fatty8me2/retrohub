@@ -47,6 +47,8 @@ Option mk(const char* key, const char* label, const char* group, unsigned sys, K
 std::vector<Option> build() {
     using S = Scope; using K = Kind;
     std::vector<Option> v;
+    // help(): the one-sentence tip for the option just added (shown on hover and controller focus). Plain words, what the player will notice.
+    auto help = [&v](const char* t) { v.back().help = t; };
     v.push_back(mk("fullscreen", "Fullscreen", "Video", ALL, K::Bool, S::Visual, "false"));
     v.push_back(mk("volume", "Volume", "Audio", ALL, K::Choice, S::Visual, "100",
                    {{"0", "0% (silent)"}, {"10", "10%"}, {"20", "20%"}, {"30", "30%"}, {"40", "40%"}, {"50", "50%"}, {"60", "60%"},
@@ -60,40 +62,52 @@ std::vector<Option> build() {
                     {"widescreen", "Widescreen (adjust to window)"}}));
     v.push_back(mk("n64.aa", "Anti-aliasing (MSAA)", "Video", N64, K::Choice, S::Visual, "0",
                    {{"0", "Off"}, {"2", "2x"}, {"4", "4x"}, {"8", "8x"}, {"16", "16x"}}));
+    help("Smooths jagged edges; higher values need a stronger graphics card.");
     v.push_back(mk("n64.fxaa", "FXAA", "Video", N64, K::Bool, S::Visual, "false"));
+    help("Smooths jagged edges on any graphics card, but the picture gets a little softer.");
     v.push_back(mk("n64.texfilter", "Texture filtering", "Video", N64, K::Choice, S::Visual, "3point",
                    {{"3point", "3-point (N64 look)"}, {"bilinear", "Bilinear"}}));
+    help("3-point blends textures like a real N64, while Bilinear looks a little smoother.");
     v.push_back(mk("n64.texpack", "Texture pack folder", "Video", N64, K::Text, S::Visual, ""));
     // Framebuffer emulation changes what lands in RDRAM (and the lockstep hash): locked online.
     v.push_back(mk("n64.fb_emulation", "Framebuffer emulation", "Advanced", N64, K::Choice, S::Locked, "default",
                    {{"default", "Default"}, {"on", "On"}, {"off", "Off"}}));
+    help("Needed for effects that reuse the picture, such as some pause screens and motion blur.");
     v.push_back(mk("n64.copy_color", "Copy color buffer to RDRAM", "Advanced", N64, K::Choice, S::Locked, "default",
                    {{"default", "Default"}, {"off", "Off"}, {"sync", "Synchronous"}, {"async", "Asynchronous"}}));
+    help("Lets a game read back its own picture, which a few games need for effects such as pause screen backgrounds.");
     v.push_back(mk("n64.copy_depth", "Copy depth buffer to RDRAM", "Advanced", N64, K::Choice, S::Locked, "default",
                    {{"default", "Default"}, {"off", "Off"}, {"sw", "Software"}, {"fast", "Fast"}}));
+    help("Lets a game see what is in front of what, which a few games need for effects such as sun glare.");
 
     // ---- Game Boy / GBC / GBA / DS (retrorun)
     v.push_back(mk("scale.filter", "Screen scaling", "Video", GB | GBA | NDS | PS1 | NES | SNES, K::Choice, S::Visual, "auto",
                    {{"auto", "Automatic"}, {"nearest", "Sharp pixels"}, {"linear", "Smooth"}}));
     v.push_back(mk("scale.integer", "Integer scaling", "Video", GB | GBA | NES | SNES, K::Bool, S::Visual, "true"));
+    help("Enlarges the picture only by whole steps so every pixel is the same size, which can leave a border around it.");
     v.push_back(mk("fx.filter", "Screen filter", "Video", GB | GBA | NDS | PS1 | NES | SNES, K::Choice, S::Visual, "off",
                    {{"off", "Off"}, {"crt", "CRT"}, {"lcd", "LCD grid"}, {"dmg", "Game Boy green"}, {"sharp", "Sharp bilinear"}}));
     v.push_back(mk("fx.bezel", "Console frame (bezel)", "Video", GB | GBA | NDS | PS1 | NES | SNES, K::Bool, S::Visual, "false"));
     // Offline only (retrorun refuses both online). Auto run-ahead = 1 frame on NES/SNES/GB/GBC/GBA; rewind is automatic per system.
-    v.push_back(mk("play.runahead", "Run-ahead (less input lag)", "Video", GB | GBA | NES | SNES | NDS | PS1, K::Choice, S::Visual, "off",
+    // Group "Emulation" (shown under Gameplay): only the heading changed (it was "Video"); the keys and stored values are the same.
+    v.push_back(mk("play.runahead", "Run-ahead (less input lag)", "Emulation", GB | GBA | NES | SNES | NDS | PS1, K::Choice, S::Visual, "off",
                    {{"off", "Off"}, {"1", "1 frame"}, {"2", "2 frames"}, {"auto", "Auto"}}));
-    v.push_back(mk("play.rewind", "Rewind (offline only)", "Video", GB | GBA | NES | SNES | NDS | PS1, K::Choice, S::Visual, "auto",
+    help("Makes the game answer your buttons a frame or two sooner, using more of your PC; offline only.");
+    v.push_back(mk("play.rewind", "Rewind (offline only)", "Emulation", GB | GBA | NES | SNES | NDS | PS1, K::Choice, S::Visual, "auto",
                    {{"auto", "Automatic"}, {"off", "Off"}}));
     v.push_back(mk("gb.color", "Color correction", "Color", GB | GBA, K::Choice, S::Visual, "auto",
                    {{"auto", "Core default"}, {"off", "Off"}, {"on", "On"}}));
+    help("Shows softer, less vivid colors, like the console's own screen.");
     v.push_back(mk("ds.layout", "Screen layout", "Video", NDS, K::Choice, S::Visual, "top-bottom",
                    {{"top-bottom", "Top / bottom"}, {"left-right", "Side by side"},
                     {"largescreen-top", "Large top screen"}, {"hybrid-top", "Hybrid"}}));
     // ---- NES (Nestopia UE) / SNES (Snes9x) through retrorun. Region changes the frame rate and timing: synced online.
     v.push_back(mk("nes.region", "Video standard", "Emulation", NES, K::Choice, S::Sync, "auto",
                    {{"auto", "Automatic (from the game)"}, {"ntsc", "NTSC (60 Hz)"}, {"pal", "PAL (50 Hz)"}}));
+    help("NTSC runs at 60 frames a second and PAL at 50, and Automatic uses the one the game was made for.");
     v.push_back(mk("snes.region", "Video standard", "Emulation", SNES, K::Choice, S::Sync, "auto",
                    {{"auto", "Automatic (from the game)"}, {"ntsc", "NTSC (60 Hz)"}, {"pal", "PAL (50 Hz)"}}));
+    help("NTSC runs at 60 frames a second and PAL at 50, and Automatic uses the one the game was made for.");
     v.push_back(mk("snes.multitap", "Multitap (3-4 players)", "Controls", SNES, K::Choice, S::Sync, "auto",
                    {{"auto", "Automatic (3+ controllers)"}, {"off", "Off"}, {"on", "On"}}));
     // ---- PlayStation (retrorun + Beetle PSX, software renderer)
@@ -122,11 +136,13 @@ std::vector<Option> build() {
     v.push_back(mk("wiiu.cpu_mode", "CPU mode", "Emulation", WIIU, K::Choice, S::Visual, "game",
                    {{"game", "Cemu's profile for this game"}, {"single-interp", "Single-core interpreter"}, {"single-rec", "Single-core recompiler"},
                     {"dual-rec", "Dual-core recompiler"}, {"triple-rec", "Triple-core recompiler"}}));
+    help("How Cemu runs the console's processor: more cores run faster, but a few games only work on one core.");
     // ---- PlayStation 2 (PCSX2)
     v.push_back(mk("ps2.res", "Internal resolution", "Video", PS2, K::Choice, S::Visual, "2",
                    {{"1", "1x native"}, {"2", "2x"}, {"3", "3x"}, {"4", "4x"}, {"6", "6x"}, {"8", "8x"}}));
     v.push_back(mk("ps2.renderer", "Graphics API", "Video", PS2, K::Choice, S::Visual, "auto",
                    {{"auto", "Automatic"}, {"vulkan", "Vulkan"}, {"dx12", "Direct3D 12"}, {"dx11", "Direct3D 11"}}));
+    help("How PCSX2 talks to your graphics card; if a game looks wrong or crashes, try another one.");
     v.push_back(mk("ps2.widescreen", "Widescreen patches", "Video", PS2, K::Bool, S::Visual, "false"));
     // ---- PlayStation Portable (PPSSPP): InternalResolution of ppsspp.ini ([Graphics], 1 = 1x PSP screen)
     v.push_back(mk("psp.res", "Internal resolution", "Video", PSP, K::Choice, S::Visual, "2",
@@ -137,6 +153,7 @@ std::vector<Option> build() {
     // Lichii build 88 FSR3 frame generation (off by default in Lichii): a 30 fps game shown at 60 (2x) or more.
     v.push_back(mk("switch.framegen", "Frame generation (FSR3)", "Video", SWITCH, K::Choice, S::Visual, "off",
                    {{"off", "Off"}, {"2", "2x (30 to 60 fps)"}, {"3", "3x"}, {"4", "4x"}}));
+    help("Adds in-between frames so a 30 fps game looks like 60 or more, with small glitches around fast motion; Fritchii does not use it.");
     // Lichii frame pacing (frame_pacing_mode): a game running between 30 and 60 fps is shown unevenly on a 60 / 120 Hz screen (each
     // frame held for 3 or 4 refreshes), which reads as micro-stutter; a steady 30 is perfectly even, and "Smooth 60" doubles that
     // steady 30 with FSR3 frame generation (it overrides the frame generation setting above; it keeps the game at 30 real frames even
@@ -144,45 +161,53 @@ std::vector<Option> build() {
     v.push_back(mk("switch.pacing", "Frame pacing", "Video", SWITCH, K::Choice, S::Visual, "lichii",
                    {{"lichii", "Use Lichii's setting"}, {"auto", "As fast as it runs"}, {"30", "Steady 30 fps"}, {"60", "Steady 60 fps"},
                     {"smooth60", "Smooth 60 (steady 30 + frame generation)"}}));
+    help("A steady 30 or 60 shows every frame for the same time, which removes the small stutter of a game that swings between the two.");
     v.push_back(mk("switch.vsync", "VSync", "Video", SWITCH, K::Choice, S::Visual, "fifo",
                    {{"fifo", "On (FIFO)"}, {"mailbox", "Mailbox (low latency)"}, {"off", "Off (may tear)"}}));
+    help("On waits for your screen so the picture never tears, Mailbox reacts a little faster, and Off is fastest but the picture may tear.");
     // use_asynchronous_shaders: a shader the game has not used before is built in the background instead of freezing the game (less stutter
     // the first time a place or effect shows up; the thing may appear a few frames late). "lichii" leaves whatever is set inside Lichii.
     v.push_back(mk("switch.async_shaders", "Asynchronous shaders (less stutter)", "Video", SWITCH, K::Choice, S::Visual, "on",
                    {{"on", "On"}, {"off", "Off"}, {"lichii", "Use Lichii's setting"}}));
+    help("Prepares new effects in the background so the game stutters less, though an effect can show up a moment late.");
     // gpu_accuracy (Lichii: Low 0 / High 1, its default High). Measured 2026-11-06 on Ocarina of Time (Switch 2), i9-14900K + RTX 3090 Ti,
     // Kokiri Forest gameplay: High ~30 fps, Low ~40 fps. CPU accuracy Unsafe, CPU clock Boost, fence Immediate, reactive flushing off and
     // DMA Unsafe added nothing on top of Low, so only this is exposed. "lichii" leaves whatever is set inside Lichii.
     v.push_back(mk("switch.gpu_accuracy", "GPU accuracy", "Video", SWITCH, K::Choice, S::Visual, "low",
                    {{"low", "Low (faster)"}, {"high", "High (more accurate, slower)"}, {"lichii", "Use Lichii's setting"}}));
+    help("Low is faster, while High draws some effects more correctly but can cost a lot of speed.");
     // (Since build 130 the cache is lichii-cache.v2.bin + .driver.bin per title, an old vulkan.fork-v5x.bin is converted once; build 177 reuses it as is.)
     // Lichii builds only the cached shaders recent sessions used at start (at most 3000 without a used-list); the rest are built in the background or
     // when first needed, which hitches. "all" writes [Renderer] build_all_cached_shaders=true into Lichii's qt-config.ini (hubemu::lichii_ini_launch; build 160 removed the EDEN_NX2_PRELOAD_ALL_PIPELINES variable; Lichii caps it at a quarter of RAM): every cached shader is built at start (about
     // 0.45 MB of driver memory each, ~19 GB for a 43k cache). "auto" does that on PCs with 60 GiB or more of RAM (a "64 GB" PC reports ~63.7 GiB);
     // until 1.40.3 it was 30 GiB, which on a 32 GB PC meant ~19 GB of driver memory and, after a Lichii update, ~27 minutes before the first frame.
-    // Help text: "All loads every shader Lichii has cached when the game starts: a longer start and more memory, fewer hitches. Auto does this on PCs with
-    // 64 GB of RAM or more." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Lichii only: Fritchii v5.8.4 prepares shaders itself and gets no key. The key is written on every launch (true or false), so "recent" resets a stale true.
+    // Longer help (docs/EMULATORS.md): "All loads every shader Lichii has cached when the game starts: a longer start and more memory, fewer hitches. Auto does this on PCs with
+    // 64 GB of RAM or more." Lichii only: Fritchii v5.8.4 prepares shaders itself and gets no key. The key is written on every launch (true or false), so "recent" resets a stale true.
     // Default "recent" since 1.40.4 (the owner's call: a full preload of a big cache took minutes and filled a 32 GB PC's memory); "auto" stays a choice.
     v.push_back(mk("switch.preload_shaders", "Shaders at start", "Video", SWITCH, K::Choice, S::Visual, "recent",
                    {{"auto", "Auto"}, {"all", "All cached shaders"}, {"recent", "Recently used"}}));
+    help("All gets every saved shader ready when the game starts, for fewer hitches but a longer start and more memory, and Auto does this on PCs with 64 GB of RAM or more.");
     // "Faster GPU reads" (default on): sets EDEN_NX2_NO_REACTIVE=1 for every Lichii-family launch (hubemu::lichii_fast_reads, lichii.cpp). Lichii build 125+ (still read in build 177) drops
     // its read traps on Switch 2 programs, so a CPU read of GPU-written memory no longer waits for the whole GPU (Ocarina of Time fell from ~60 to ~17 fps in
     // places; upstream Lichii issues #944 and #416). Rarely a CPU read can see stale data. Lichii's own use_reactive_flushing is left alone.
-    // Help text: "Lichii skips waiting for the GPU when a game reads back graphics memory. Much faster in parts of Ocarina of Time. Rarely a small glitch: turn
-    // it off if something looks wrong." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Read by the launch only, never written to Lichii's ini.
+    // Longer help (docs/EMULATORS.md): "Lichii skips waiting for the GPU when a game reads back graphics memory. Much faster in parts of Ocarina of Time. Rarely a small glitch: turn
+    // it off if something looks wrong." Read by the launch only, never written to Lichii's ini.
     v.push_back(mk("switch.fast_reads", "Faster GPU reads", "Video", SWITCH, K::Choice, S::Visual, "on",
                    {{"on", "On"}, {"off", "Off"}}));
+    help("Much faster in parts of some games such as Ocarina of Time, with a rare small glitch, so turn it off if something looks wrong.");
     // "Frames ahead": EDEN_NX2_FRAMES_AHEAD for the launch (hubemu::lichii_frames_ahead, lichii.cpp). Lichii (Switch 2 programs) lets the CPU run this many frames ahead of the GPU; Lichii's own per-title
     // default is 0 for Donkey Kong Bananza (about 30 fps) and 1 for Ocarina of Time; Lichii issue #1419 measured 1 taking Bananza to about 60 fps (GPU fence Default; RetroHub never writes a fence key).
     // "auto" = 1 for Bananza (040074A01BF12000), and for every other game the variable is NOT set (Lichii keeps its per-title default). 0 / 1 / 2 are sent as chosen.
     v.push_back(mk("switch.frames_ahead", "Frames ahead (smoother on some games)", "Video", SWITCH, K::Choice, S::Visual, "auto",
                    {{"auto", "Auto"}, {"0", "0"}, {"1", "1"}, {"2", "2"}}));
+    help("A higher number can make some games run smoother, and Auto uses a known good value for each game.");
     // Which program plays a Switch game: Lichii (default), Fritchii (Frizti's Ocarina-of-Time fork of Lichii, opt-in, RetroHub's own download), Hookshot or Longshot (experimental native
     // PC builds RetroHub makes from the player's own Ocarina of Time; that game only). A chosen native build that is not built never falls back quietly: Play asks (build it / Lichii this time).
     // Shown ONLY for that game (settings_games_ui.cpp); offline only, ignored by online / sync code.
     // v1.37.0 stored "auto" (= Hookshot); it is no longer a choice, so loading / merging / resolving drops it and the default (Lichii) applies.
     v.push_back(mk("switch.runner", "Plays with", "Emulation", SWITCH, K::Choice, S::Visual, "lichii",
                    {{"lichii", "Lichii (emulator)"}, {"fritchii", "Fritchii (made for Ocarina of Time)"}, {"hookshot", "Hookshot (native)"}, {"longshot", "Longshot (native)"}}));
+    help("Which program runs the game: Lichii is the usual emulator, Fritchii is made for Ocarina of Time, and Hookshot and Longshot are PC versions built from your own copy.");
     // Fritchii v5.8.4 Ocarina of Time options (keys and enum values unchanged since v5.7) (hubemu::fritchii_oot_keys, lichii.cpp): written to Fritchii's qt-config.ini [Renderer] before launch, only for a value the player chose.
     // "default" writes nothing, so Fritchii keeps its own value (a key an earlier launch wrote gets "key\default=true", so Fritchii's own value applies again). Shown only for Ocarina of Time played with Fritchii (settings_games_ui.cpp).
     // Help text: "Above 60 fps at normal game speed. Experimental: some scenes may misbehave. The cap never goes above your screen's refresh rate." (Option has no help field; see docs/EMULATORS.md.)

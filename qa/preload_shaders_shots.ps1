@@ -113,10 +113,10 @@ try {
         foreach ($t in 0, 1, 2, 3, 4) {
             Shot "game-settings-auto-scroll$t" $auto $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "3" } $t
         }
-        # 2. Switch "Game defaults" in Settings > Video & Games (settings:2). HUB_SHOT_GS_SYS=12 selects Switch in the defaults combo
-        # (index into the sysl list in settings_games_ui.cpp); the page is scrolled to the defaults area.
+        # 2. Switch "Game defaults" in Settings > Video & Games (settings:2). HUB_SHOT_GS_SYS=switch selects Switch in the defaults combo
+        # (a console id of the sysl list in settings_games_ui.cpp, or its index); the page is scrolled to the defaults area.
         foreach ($t in 0, 28, 40, 60) {
-            Shot "settings-defaults-switch-scroll$t" $auto $s @{ HUB_SHOT_PAGE = "settings:2"; HUB_SHOT_GS_SYS = "12" } $t
+            Shot "settings-defaults-switch-scroll$t" $auto $s @{ HUB_SHOT_PAGE = "settings:2"; HUB_SHOT_GS_SYS = "switch" } $t
         }
         # 3. a stored "all" value: the combo shows "All cached shaders"
         Shot "game-settings-all" $all $s @{ HUB_SHOT_DETAILS = $OOT; HUB_SHOT_TAB = "3" } 3

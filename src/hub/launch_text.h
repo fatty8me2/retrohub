@@ -86,7 +86,9 @@ inline const char* online_unavailable_wire() { return "Online play is not availa
 inline std::string remote_play_failed_wire(unsigned long err) { return "Could not start remote play (streamrun error " + std::to_string(err) + ")."; }
 inline const char* remote_play_missing_wire() { return "Remote play isn't installed (streamrun.exe is missing) - update RetroHub."; }
 inline const char* ps1_core_missing_wire() { return "The PlayStation emulator core (beetle_psx_libretro.dll) was not found in the cores folder."; }
-inline const char* ps1_bios_missing_wire() { return "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Playing."; }
+inline const char* ps1_bios_missing_wire() { return "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Video & Games."; }
+/* The same text as sent by RetroHub 1.45 and older (it named a "Playing" Settings tab that no longer exists); still recognised when a guest sends it. */
+inline const char* ps1_bios_missing_wire_old() { return "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Playing."; }
 
 inline bool starts_with(const std::string& s, const char* p) { return s.rfind(p, 0) == 0; }
 inline bool ends_with(const std::string& s, const std::string& p) { return s.size() >= p.size() && s.compare(s.size() - p.size(), p.size(), p) == 0; }
@@ -113,7 +115,7 @@ inline std::string host_view_of_guest_fail(const std::string& name_in, const std
         return cant + "RetroHub on " + name + "'s PC is missing a file it needs.";
     if (raw == start_failed_wire()) return cant + "the game didn't open on " + name + "'s PC.";
     if (raw == ps1_core_missing_wire()) return cant + "the PlayStation online files are missing on " + name + "'s PC.";
-    if (raw == ps1_bios_missing_wire()) return cant + name + "'s PC has no PlayStation BIOS set up.";
+    if (raw == ps1_bios_missing_wire() || raw == ps1_bios_missing_wire_old()) return cant + name + "'s PC has no PlayStation BIOS set up.";
     if (starts_with(raw, "A GameCube session is still open on this PC")) return cant + "a GameCube game is still open on " + name + "'s PC.";
     if (starts_with(raw, "The host's ") && ends_with(raw, "ask them to update RetroHub."))
         return cant + "RetroHub on " + name + "'s PC can't read this launch. Updating RetroHub may help.";

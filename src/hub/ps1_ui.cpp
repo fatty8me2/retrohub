@@ -197,7 +197,7 @@ std::string ps1_online_block() {
     at = now;
     cached.clear();
     if (find_core("beetle_psx").empty()) cached = hublaunch::ps1_files_missing_text();
-    else if (find_all().empty() && !A.st.ps1_openbios) cached = std::string("This PC has no PlayStation BIOS (scph5501.bin). Add one, or turn on OpenBIOS, in Settings > Playing. ") + hublaunch::ps1_bios_own_text() + " Everyone in the room needs the same setup.";
+    else if (find_all().empty() && !A.st.ps1_openbios) cached = std::string("This PC has no PlayStation BIOS (scph5501.bin). Add one, or turn on OpenBIOS, in Settings > Video & Games. ") + hublaunch::ps1_bios_own_text() + " Everyone in the room needs the same setup.";
     return cached;
 }
 
@@ -209,7 +209,7 @@ bool ps1_online_args(const hub::GameEntry& e, const std::string& net, const std:
     std::vector<hub::ps1::BiosFound> bios = find_all();
     std::string sysdir = staging_dir();
     if (bios.empty() && !A.st.ps1_openbios) {
-        *err = std::string("PlayStation online needs a BIOS file (scph5501.bin) on every PC, or OpenBIOS on every PC. Set it up in Settings > Playing. ") + hublaunch::ps1_bios_own_text();   // launch_online sends the older wording (hublaunch::wire_for)
+        *err = std::string("PlayStation online needs a BIOS file (scph5501.bin) on every PC, or OpenBIOS on every PC. Set it up in Settings > Video & Games. ") + hublaunch::ps1_bios_own_text();   // launch_online sends the older wording (hublaunch::wire_for)
         return false;
     }
     if (!bios.empty()) hub::ps1::stage_bios(bios, sysdir);

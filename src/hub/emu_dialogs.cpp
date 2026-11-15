@@ -69,7 +69,7 @@ void draw_emulator_dialogs() {
             if (EMU.state == hubemu::Installer::Asking) {
                 if (back) EMU.state = hubemu::Installer::Idle;
                 if (hubemu::release_is_placeholder(EMU.kind)) {   // Fritchii before its release is pinned: nothing to download yet
-                    ImGui::TextWrapped("%s isn't available yet. Pick Lichii in Settings > Switch to play now.", nm.c_str());
+                    ImGui::TextWrapped("%s isn't available yet. To play now, pick Lichii under Plays with on the game's Settings tab, or in Settings > Video & Games.", nm.c_str());
                     ImGui::Dummy(ImVec2(0, 8 * S));
                     if (button("Close", ImVec2(160 * S, 44 * S), true)) EMU.state = hubemu::Installer::Idle;
                     ImGui::SetItemDefaultFocus();

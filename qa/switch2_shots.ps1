@@ -109,7 +109,7 @@ try {
         Shot "game-page-switch2" $run $s (M @{ HUB_SHOT_DETAILS = $OOTKEY; HUB_SHOT_TAB = "0" }) 12
         Shot "game-page-switch2-settings" $run $s (M @{ HUB_SHOT_DETAILS = $OOTKEY; HUB_SHOT_TAB = "3" }) 12
         Shot "game-page-switch" $run $s (M @{ HUB_SHOT_DETAILS = "switch:01007ef00011e000"; HUB_SHOT_TAB = "0" }) 12
-        foreach ($t in 12, 16, 20, 24) { Shot "settings-game-defaults-switch2-scroll$t" $run $s (M @{ HUB_SHOT_PAGE = "settings:2"; HUB_SHOT_GS_SYS = "13" }) $t }
+        foreach ($t in 12, 16, 20, 24) { Shot "settings-game-defaults-switch2-scroll$t" $run $s (M @{ HUB_SHOT_PAGE = "settings:2"; HUB_SHOT_GS_SYS = "switch2" }) $t }
         Shot "controllers-switch2" $run $s (M @{ HUB_SHOT_CTL_SYS = "switch2"; HUB_SHOT_FAKE_PADS = "1" })
         Shot "controllers-switch" $run $s (M @{ HUB_SHOT_CTL_SYS = "switch"; HUB_SHOT_FAKE_PADS = "1" })
     }
