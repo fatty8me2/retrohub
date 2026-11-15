@@ -61,6 +61,12 @@ const std::vector<std::string>& nx_skip_keys(Kind k) {
     return none;
 }
 
+uint64_t nx_title_id_of_key(const std::string& key) {
+    const size_t n = 7 + 16;   // "switch:" + 16 hex digits
+    if (key.size() < n || (key.size() > n && key[n] != '-' && key[n] != '_')) return 0;
+    return title_id_from_key(key.substr(0, n));
+}
+
 std::vector<std::pair<std::string, std::string>> nx_env(Kind k, const hub::gs::Values& v, uint64_t ram, uint64_t title_id) {
     if (k != Kind::Fritchii) return lichii_env(v, ram, title_id);   // Lichii: exactly as before
     std::vector<std::pair<std::string, std::string>> env;

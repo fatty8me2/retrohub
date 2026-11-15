@@ -555,7 +555,7 @@ static void test_env() {
     {   // build 160 removed EDEN_NX2_PRELOAD_ALL_PIPELINES: no mode sets it any more (the fast-reads var is separate and unchanged)
         for (const char* m : {"all", "auto", "recent", "bogus"}) {
             v["switch.preload_shaders"] = m;
-            auto e = hubemu::lichii_env(v, 64 * G);
+            auto e = hubemu::lichii_env(v, 64 * G, 0);
             bool pre = false, nr = false;
             for (auto& kv : e) { if (kv.first == "EDEN_NX2_PRELOAD_ALL_PIPELINES") pre = true; if (kv.first == "EDEN_NX2_NO_REACTIVE" && kv.second == "1") nr = true; }
             CHECK(!pre && nr && e.size() == 1);
@@ -614,20 +614,20 @@ static void test_fast_reads() {
     CHECK(o && o->def == "on" && o->label == "Faster GPU reads" && o->choices.size() == 2);
     hub::gs::Values v = hub::gs::defaults_for(hub::System::Switch);
     CHECK(v["switch.fast_reads"] == "on");
-    CHECK(has(hubemu::lichii_env(v, 8 * G), "EDEN_NX2_NO_REACTIVE", "1"));
-    CHECK(has(hubemu::lichii_env(hub::gs::Values{}, 8 * G), "EDEN_NX2_NO_REACTIVE", "1"));   // missing counts as on
-    CHECK(has(hubemu::nx_env(hubemu::Kind::Fritchii, v, 8 * G), "EDEN_NX2_NO_REACTIVE", "1"));
+    CHECK(has(hubemu::lichii_env(v, 8 * G, 0), "EDEN_NX2_NO_REACTIVE", "1"));
+    CHECK(has(hubemu::lichii_env(hub::gs::Values{}, 8 * G, 0), "EDEN_NX2_NO_REACTIVE", "1"));   // missing counts as on
+    CHECK(has(hubemu::nx_env(hubemu::Kind::Fritchii, v, 8 * G, 0), "EDEN_NX2_NO_REACTIVE", "1"));
     v["switch.fast_reads"] = "off";
-    CHECK(!hask(hubemu::lichii_env(v, 8 * G), "EDEN_NX2_NO_REACTIVE") && !hask(hubemu::nx_env(hubemu::Kind::Fritchii, v, 8 * G), "EDEN_NX2_NO_REACTIVE"));
+    CHECK(!hask(hubemu::lichii_env(v, 8 * G, 0), "EDEN_NX2_NO_REACTIVE") && !hask(hubemu::nx_env(hubemu::Kind::Fritchii, v, 8 * G, 0), "EDEN_NX2_NO_REACTIVE"));
     {   // per game "off" beats a global "on"; the preload var is unaffected
         const std::string g = "switch:0400486024dec000", other = "switch:0100abcd12340000";
         hub::gs::Store st;
         CHECK(st.set_system(hub::System::Switch, "switch.fast_reads", "on"));
         CHECK(st.set_game(g, hub::System::Switch, "switch.fast_reads", "off"));
-        CHECK(!hask(hubemu::lichii_env(st.resolve(hub::System::Switch, g), 32 * G), "EDEN_NX2_NO_REACTIVE"));
+        CHECK(!hask(hubemu::lichii_env(st.resolve(hub::System::Switch, g), 32 * G, 0), "EDEN_NX2_NO_REACTIVE"));
         CHECK(st.set_system(hub::System::Switch, "switch.preload_shaders", "all"));   // (the default "recent" preloads nothing)
-        CHECK(hubemu::lichii_preload_all(st.resolve(hub::System::Switch, g), 64 * G) && !hask(hubemu::lichii_env(st.resolve(hub::System::Switch, g), 64 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
-        CHECK(has(hubemu::lichii_env(st.resolve(hub::System::Switch, other), 32 * G), "EDEN_NX2_NO_REACTIVE", "1"));
+        CHECK(hubemu::lichii_preload_all(st.resolve(hub::System::Switch, g), 64 * G) && !hask(hubemu::lichii_env(st.resolve(hub::System::Switch, g), 64 * G, 0), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+        CHECK(has(hubemu::lichii_env(st.resolve(hub::System::Switch, other), 32 * G, 0), "EDEN_NX2_NO_REACTIVE", "1"));
         CHECK(!st.set_game(g, hub::System::Switch, "switch.fast_reads", "bogus"));
     }
 }
@@ -693,12 +693,12 @@ static void test_runner() {
     hub::gs::Values v;
     v["switch.preload_shaders"] = "auto";
     const uint64_t G = 1ull << 30;
-    CHECK(hubemu::nx_env(hubemu::Kind::Lichii, v, 32 * G) == hubemu::lichii_env(v, 32 * G));
+    CHECK(hubemu::nx_env(hubemu::Kind::Lichii, v, 32 * G, 0) == hubemu::lichii_env(v, 32 * G, 0));
     auto envhas = [](const std::vector<std::pair<std::string, std::string>>& e2, const char* k) { for (auto& kv : e2) if (kv.first == k) return true; return false; };
-    CHECK(envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 32 * G), "EDEN_UPDATE_URL") && !envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 32 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+    CHECK(envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 32 * G, 0), "EDEN_UPDATE_URL") && !envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 32 * G, 0), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
     v["switch.preload_shaders"] = "all";
-    CHECK(!envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 8 * G), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // v5 prepares shaders itself
-    CHECK(!envhas(hubemu::nx_env(hubemu::Kind::Lichii, v, 8 * G), "EDEN_UPDATE_URL"));   // Lichii's environment never gets it
+    CHECK(!envhas(hubemu::nx_env(hubemu::Kind::Fritchii, v, 8 * G, 0), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // v5 prepares shaders itself
+    CHECK(!envhas(hubemu::nx_env(hubemu::Kind::Lichii, v, 8 * G, 0), "EDEN_UPDATE_URL"));   // Lichii's environment never gets it
 }
 
 int main(int argc, char** argv) {

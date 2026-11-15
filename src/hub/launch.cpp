@@ -767,10 +767,11 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         if (hubemu::is_nx(kind)) { hubemu::NxSetup ns = hubemu::lichii_setup_status(inst.dir); a0 += std::string(" | keys ") + (ns.prod_keys ? "yes" : "no") + " firmware " + (ns.firmware ? "yes" : "no"); }
         if (hubemu::is_nx(kind)) {
             bool upd = false, fast = false;
-            for (const auto& kv : hubemu::nx_env(kind, gv, hubemu::physical_ram_bytes(), hubemu::title_id_from_key(e.key))) { if (kv.first == "EDEN_UPDATE_URL") upd = true; if (kv.first == "EDEN_NX2_NO_REACTIVE") fast = true; }
+            std::string fa;
+            for (const auto& kv : hubemu::nx_env(kind, gv, hubemu::physical_ram_bytes(), hubemu::nx_title_id_of_key(e.key))) { if (kv.first == "EDEN_UPDATE_URL") upd = true; if (kv.first == "EDEN_NX2_NO_REACTIVE") fast = true; if (kv.first == "EDEN_NX2_FRAMES_AHEAD") fa = kv.second; }
             const bool pre = kind != hubemu::Kind::Fritchii && hubemu::lichii_preload_all(gv, hubemu::physical_ram_bytes());   // Lichii: the ini key [Renderer] build_all_cached_shaders (lichii_ini_launch); Fritchii prepares shaders itself and gets no key
-            a0 += std::string(" | preload all shaders ") + (pre ? "yes" : "no") + " | fast GPU reads " + (fast ? "yes" : "no");
-            std::string line = std::string(kind == hubemu::Kind::Fritchii ? "fritchii" : "lichii") + ": build_all_cached_shaders " + (kind == hubemu::Kind::Fritchii ? "not written" : pre ? "true" : "false") + ", EDEN_NX2_NO_REACTIVE " + (fast ? "set" : "not set");
+            a0 += std::string(" | preload all shaders ") + (pre ? "yes" : "no") + " | fast GPU reads " + (fast ? "yes" : "no") + " | frames ahead " + (fa.empty() ? "unset" : fa);
+            std::string line = std::string(kind == hubemu::Kind::Fritchii ? "fritchii" : "lichii") + ": build_all_cached_shaders " + (kind == hubemu::Kind::Fritchii ? "not written" : pre ? "true" : "false") + ", EDEN_NX2_NO_REACTIVE " + (fast ? "set" : "not set") + ", EDEN_NX2_FRAMES_AHEAD " + (fa.empty() ? "not set" : fa);
             if (kind == hubemu::Kind::Fritchii) line += std::string(", EDEN_UPDATE_URL ") + (upd ? "pinned" : "missing") + ", leftover update files: " + (hubemu::update_leftovers(kind, inst.dir).empty() ? "none" : hubemu::update_leftovers(kind, inst.dir));
             autotest_log(line);
         }
@@ -926,7 +927,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     };
     autotest_log("external: starting " + inst.exe + " " + args);
     std::vector<std::pair<std::string, std::string>> xenv;   // added to RetroHub's environment for the child (spawn)
-    if (hubemu::is_nx(kind)) { xenv = hubemu::nx_env(kind, gsv, hubemu::physical_ram_bytes(), hubemu::title_id_from_key(e.key)); autotest_log(std::string(hubemu::name(kind)) + ": " + std::to_string(xenv.size()) + " extra environment variable(s)"); }
+    if (hubemu::is_nx(kind)) { xenv = hubemu::nx_env(kind, gsv, hubemu::physical_ram_bytes(), hubemu::nx_title_id_of_key(e.key)); autotest_log(std::string(hubemu::name(kind)) + ": " + std::to_string(xenv.size()) + " extra environment variable(s)"); }
     if (journaled) g_journal_next = jr;
     const bool started = spawn(inst.exe, args, inst.dir, xenv, r);
     g_journal_next.reset();

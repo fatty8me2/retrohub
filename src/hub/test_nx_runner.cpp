@@ -201,18 +201,18 @@ int main() {
         hub::gs::Values v;
         v["switch.preload_shaders"] = "auto";
         // Lichii: exactly lichii_env
-        CHECK(nx_env(Kind::Lichii, v, 32 * GiB) == lichii_env(v, 32 * GiB));
+        CHECK(nx_env(Kind::Lichii, v, 32 * GiB, 0) == lichii_env(v, 32 * GiB, 0));
         // build 160 removed EDEN_NX2_PRELOAD_ALL_PIPELINES: Lichii's "Shaders at start" is the ini key build_all_cached_shaders (lichii_ini_launch), decided by lichii_preload_all
-        CHECK(lichii_preload_all(v, 64 * GiB) && !has(nx_env(Kind::Lichii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
-        CHECK(!lichii_preload_all(v, 32 * GiB) && !has(nx_env(Kind::Lichii, v, 32 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // auto: a "32 GB" PC builds only recent shaders at start
-        CHECK(nx_env(Kind::Lichii, v, 16 * GiB).size() == 1 && has(nx_env(Kind::Lichii, v, 16 * GiB), "EDEN_NX2_NO_REACTIVE", "1"));   // only the fast-reads var
-        CHECK(has(nx_env(Kind::Fritchii, v, 16 * GiB), "EDEN_NX2_NO_REACTIVE", "1"));
+        CHECK(lichii_preload_all(v, 64 * GiB) && !has(nx_env(Kind::Lichii, v, 64 * GiB, 0), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+        CHECK(!lichii_preload_all(v, 32 * GiB) && !has(nx_env(Kind::Lichii, v, 32 * GiB, 0), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // auto: a "32 GB" PC builds only recent shaders at start
+        CHECK(nx_env(Kind::Lichii, v, 16 * GiB, 0).size() == 1 && has(nx_env(Kind::Lichii, v, 16 * GiB, 0), "EDEN_NX2_NO_REACTIVE", "1"));   // only the fast-reads var
+        CHECK(has(nx_env(Kind::Fritchii, v, 16 * GiB, 0), "EDEN_NX2_NO_REACTIVE", "1"));
         {   // switch.frames_ahead: auto = 1 for Donkey Kong Bananza only; every other game leaves EDEN_NX2_FRAMES_AHEAD unset; explicit values are honoured
-            const uint64_t bananza = 0x040074A01BF12000ull, oot = 0x01006BB00C6F0000ull;
+            const uint64_t bananza = 0x040074A01BF12000ull, oot = kOotTitleId;
             hub::gs::Values fa = v;   // v has no switch.frames_ahead: missing counts as auto
             CHECK(lichii_frames_ahead(fa, bananza) == "1" && lichii_frames_ahead(fa, oot).empty() && lichii_frames_ahead(fa, 0).empty());
             CHECK(has(nx_env(Kind::Lichii, fa, 16 * GiB, bananza), "EDEN_NX2_FRAMES_AHEAD", "1") && has(nx_env(Kind::Fritchii, fa, 16 * GiB, bananza), "EDEN_NX2_FRAMES_AHEAD", "1"));
-            CHECK(!has(nx_env(Kind::Lichii, fa, 16 * GiB, oot), "EDEN_NX2_FRAMES_AHEAD") && !has(nx_env(Kind::Fritchii, fa, 16 * GiB, oot), "EDEN_NX2_FRAMES_AHEAD") && !has(nx_env(Kind::Lichii, fa, 16 * GiB), "EDEN_NX2_FRAMES_AHEAD"));
+            CHECK(!has(nx_env(Kind::Lichii, fa, 16 * GiB, oot), "EDEN_NX2_FRAMES_AHEAD") && !has(nx_env(Kind::Fritchii, fa, 16 * GiB, oot), "EDEN_NX2_FRAMES_AHEAD") && !has(nx_env(Kind::Lichii, fa, 16 * GiB, 0), "EDEN_NX2_FRAMES_AHEAD"));
             fa["switch.frames_ahead"] = "auto";
             CHECK(lichii_frames_ahead(fa, bananza) == "1" && lichii_frames_ahead(fa, oot).empty());
             fa["switch.frames_ahead"] = "0";
@@ -221,37 +221,47 @@ int main() {
             CHECK(has(nx_env(Kind::Lichii, fa, 16 * GiB, bananza), "EDEN_NX2_FRAMES_AHEAD", "2") && has(nx_env(Kind::Fritchii, fa, 16 * GiB, oot), "EDEN_NX2_FRAMES_AHEAD", "2"));
             fa["switch.frames_ahead"] = "junk";
             CHECK(lichii_frames_ahead(fa, bananza) == "1" && lichii_frames_ahead(fa, oot).empty());
+            // the real path: game key -> title id -> env (a second copy of a game has a "-x" / "_x" suffix)
+            auto fa_env = [&](const char* key, Kind k) { return nx_env(k, v, 16 * GiB, nx_title_id_of_key(key)); };
+            for (Kind k : {Kind::Lichii, Kind::Fritchii}) {
+                CHECK(has(fa_env("switch:040074a01bf12000", k), "EDEN_NX2_FRAMES_AHEAD", "1"));
+                CHECK(has(fa_env("switch:040074A01BF12000-2", k), "EDEN_NX2_FRAMES_AHEAD", "1"));
+                CHECK(has(fa_env("switch:040074a01bf12000_copy", k), "EDEN_NX2_FRAMES_AHEAD", "1"));
+                CHECK(!has(fa_env("switch:0400486024dec000", k), "EDEN_NX2_FRAMES_AHEAD") && !has(fa_env("switch:0400486024dec000-x", k), "EDEN_NX2_FRAMES_AHEAD"));
+                CHECK(!has(fa_env("switch:file-bananza", k), "EDEN_NX2_FRAMES_AHEAD") && !has(fa_env("switch:040074a01bf12000x", k), "EDEN_NX2_FRAMES_AHEAD"));
+            }
+            CHECK(nx_title_id_of_key("switch:040074a01bf12000-x") == bananza && nx_title_id_of_key("switch:040074a01bf12000") == bananza && nx_title_id_of_key("switch:040074a01bf1200") == 0);
             const hub::gs::Option* o = hub::gs::find_option("switch.frames_ahead");
             CHECK(o && o->def == "auto");
         }
         {
             hub::gs::Values off = v;
             off["switch.fast_reads"] = "off";
-            CHECK(nx_env(Kind::Lichii, off, 16 * GiB).empty());
-            CHECK(!has(nx_env(Kind::Fritchii, off, 16 * GiB), "EDEN_NX2_NO_REACTIVE") && lichii_preload_all(off, 64 * GiB) && !has(nx_env(Kind::Lichii, off, 64 * GiB), "EDEN_NX2_NO_REACTIVE"));   // fast reads off: no env var for either; preloading is the ini key
+            CHECK(nx_env(Kind::Lichii, off, 16 * GiB, 0).empty());
+            CHECK(!has(nx_env(Kind::Fritchii, off, 16 * GiB, 0), "EDEN_NX2_NO_REACTIVE") && lichii_preload_all(off, 64 * GiB) && !has(nx_env(Kind::Lichii, off, 64 * GiB, 0), "EDEN_NX2_NO_REACTIVE"));   // fast reads off: no env var for either; preloading is the ini key
         }
-        CHECK(!has(nx_env(Kind::Lichii, v, 32 * GiB), "EDEN_UPDATE_URL"));
+        CHECK(!has(nx_env(Kind::Lichii, v, 32 * GiB, 0), "EDEN_UPDATE_URL"));
         // Fritchii: "auto" never preloads (29k pipelines = ~13 GB), "all" does, "recent" does not; the updater URL is always pinned
-        CHECK(!has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
-        CHECK(has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_UPDATE_URL", "http://127.0.0.1:9/x"));
+        CHECK(!has(nx_env(Kind::Fritchii, v, 64 * GiB, 0), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+        CHECK(has(nx_env(Kind::Fritchii, v, 64 * GiB, 0), "EDEN_UPDATE_URL", "http://127.0.0.1:9/x"));
         v["switch.preload_shaders"] = "all";
-        CHECK(!has(nx_env(Kind::Fritchii, v, 8 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES") && !has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // v5 prepares shaders itself
-        CHECK(lichii_preload_all(v, 8 * GiB) && !has(nx_env(Kind::Lichii, v, 8 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // Lichii preloads through the ini key
+        CHECK(!has(nx_env(Kind::Fritchii, v, 8 * GiB, 0), "EDEN_NX2_PRELOAD_ALL_PIPELINES") && !has(nx_env(Kind::Fritchii, v, 64 * GiB, 0), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // v5 prepares shaders itself
+        CHECK(lichii_preload_all(v, 8 * GiB) && !has(nx_env(Kind::Lichii, v, 8 * GiB, 0), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // Lichii preloads through the ini key
         v["switch.preload_shaders"] = "recent";
-        CHECK(!has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
-        CHECK(has(nx_env(Kind::Fritchii, v, 64 * GiB), "EDEN_UPDATE_URL"));
-        CHECK(nx_env(Kind::Fritchii, hub::gs::Values{}, 0).size() == 2);   // no setting at all: the updater pin and fast reads (missing counts as on)
+        CHECK(!has(nx_env(Kind::Fritchii, v, 64 * GiB, 0), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
+        CHECK(has(nx_env(Kind::Fritchii, v, 64 * GiB, 0), "EDEN_UPDATE_URL"));
+        CHECK(nx_env(Kind::Fritchii, hub::gs::Values{}, 0, 0).size() == 2);   // no setting at all: the updater pin and fast reads (missing counts as on)
         // never these
         for (const char* mode : {"auto", "all", "recent"}) {
             v["switch.preload_shaders"] = mode;
             for (Kind k : {Kind::Lichii, Kind::Fritchii}) {
-                auto e = nx_env(k, v, 64 * GiB);
+                auto e = nx_env(k, v, 64 * GiB, 0);
                 CHECK(!has(e, "EDEN_NX2_DEBUG_SERVER") && !has(e, "EDEN_NX2_CRASH_DUMP"));
                 CHECK(!has(e, "FRITCHII_CLASSIC_UI") && !has(e, "EDEN_NX2_PRECOMPILE") && !has(e, "EDEN_NX2_PRECOMPILE_RECIPE"));   // would skip / break v5's shader preparation
             }
             hub::gs::Values off = v;
             off["switch.fast_reads"] = "off";
-            auto e2 = nx_env(Kind::Fritchii, off, 64 * GiB);
+            auto e2 = nx_env(Kind::Fritchii, off, 64 * GiB, 0);
             CHECK(!has(e2, "FRITCHII_CLASSIC_UI") && !has(e2, "EDEN_NX2_PRECOMPILE") && !has(e2, "EDEN_NX2_PRELOAD_ALL_PIPELINES"));
         }
         CHECK(nx_skip_keys(Kind::Lichii).empty());
