@@ -18,6 +18,7 @@
 #include "help_logic.h"
 #include "library_scan_info.h"
 #include "addgames.h"
+#include "game_page.h"
 
 /* help_ui.cpp: the scan result toast, the last result line and the scan caption's clock */
 const std::string& scan_last_line();
@@ -838,221 +839,10 @@ void all_games_view() {
     else if (selg) selected_bar_ghost(*selg);
 }
 
-/* ---------- Wii U details: updates / DLC, Cemu game profile, save accounts, key help ---------- */
-
-/* Disk-heavy (Cemu install probe, WUA directory, mlc01 save accounts): runs on a worker thread. */
-static std::vector<std::string> wiiu_info_compute(const hub::GameEntry& e, const std::string& cemu_exe) {
-    std::vector<std::string> s_lines;
-    hubemu::Install inst = hubemu::find(hubemu::Kind::Cemu, cemu_exe, e.path);
-    std::string game = launch_path_for(e);
-    if (e.issue == "extract" && game == e.path) game.clear();   // still packed: nothing to read yet
-    uint64_t tid = hubemu::title_id_from_key(e.key);
-    if (!tid && !game.empty()) tid = hubemu::wiiu_title_id_of_file(game);
-    hub::FsProbe fp = hubemu::wiiu_probe();
-    std::string user_data, mlc;
-    if (!inst.exe.empty()) {
-        if (inst.managed) { user_data = inst.dir + "\\portable"; mlc = user_data + "\\mlc01"; }
-        else {
-            const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str();
-            hub::CemuDirs d = hub::cemu_dirs_for(inst.dir, ad ? ad : "", fp);
-            user_data = d.user_data;
-            mlc = d.mlc;
-        }
-    }
-    if (tid) {
-        hub::WiiuAddons a = hub::wiiu_installed_addons(tid, mlc, fp);
-        if (!game.empty() && game.size() > 4) {
-            std::ifstream f(std::filesystem::u8path(game), std::ios::binary);
-            std::error_code ec;
-            uint64_t sz = std::filesystem::file_size(std::filesystem::u8path(game), ec);
-            if (f && !ec) {
-                hub::ReadAtFn rd = [&](uint64_t off, void* buf, size_t n) { f.clear(); f.seekg((std::streamoff)off); f.read((char*)buf, (std::streamsize)n); return f.gcount() == (std::streamsize)n; };
-                hub::wiiu_addons_from_wua(hub::wua_titles(rd, sz), &a);
-            }
-        }
-        s_lines.push_back("Updates and DLC: " + hub::wiiu_addons_text(a));
-        if (!mlc.empty()) {
-            auto rels = hub::wiiu_save_rels(tid);
-            std::vector<std::string> acc = hub::wiiu_save_accounts(mlc + "/" + rels[0]);
-            if (!acc.empty()) { std::string t = "Cemu save accounts:"; for (auto& x : acc) t += " " + x; s_lines.push_back(t); }
-        }
-        std::string prof = hubemu::cemu_profile_summary(inst.dir, user_data, tid);
-        if (!prof.empty()) s_lines.push_back("Cemu profile: " + prof);
-    }
-    return s_lines;
-}
-
-/* UI thread: returns the last finished result for this game (empty until the first scan lands) and
-   re-scans in the background at most every 4 s. */
-static std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
-    if (g_headless) return wiiu_info_compute(e, A.st.cemu_exe);   // screenshots stay deterministic
-    struct Bg { std::mutex mu; bool running = false; std::string key; std::vector<std::string> lines; };
-    static Bg* bg = new Bg();
-    static std::string s_key;
-    static double s_at = -100;
-    static std::vector<std::string> s_lines;
-    {
-        std::lock_guard<std::mutex> l(bg->mu);
-        if (bg->key == e.key) s_lines = bg->lines;   // only ever show a result computed for THIS game
-        else s_lines.clear();
-        if (s_key == e.key && bg->key == e.key && ImGui::GetTime() - s_at < 4.0) return s_lines;
-        if (bg->running) return s_lines;   // A's scan still running: B's starts on the first frame after it lands
-        bg->running = true;
-    }
-    s_key = e.key;
-    s_at = ImGui::GetTime();
-    std::thread([e, cemu = A.st.cemu_exe] {
-        if (g_io_shutdown) return;
-        std::vector<std::string> r = wiiu_info_compute(e, cemu);
-        if (g_io_shutdown) return;
-        std::lock_guard<std::mutex> l(bg->mu);
-        bg->key = e.key;
-        bg->lines = std::move(r);
-        bg->running = false;
-    }).detach();
-    return s_lines;
-}
-
-/* ---------- game page play time (Steam-style header line + stats strip) ---------- */
-
-/* local time minus UTC in seconds (same recipe as wrapped_ui.cpp) */
-static int pt_local_tz() {
-    std::time_t t = std::time(nullptr);
-    std::tm lt{}, gm{};
-    localtime_s(&lt, &t);
-    gmtime_s(&gm, &t);
-    int tz = (int)std::difftime(std::mktime(&lt), std::mktime(&gm));
-    if (lt.tm_isdst > 0) tz += 3600;
-    return tz;
-}
-
-/* Screenshot aid (HUB_SHOT_PLAYTIME=1, headless): deterministic sessions instead of the vault. This PC's sessions add up to exactly
- * the seeded total (lib_state.cpp), the newest starts at the seeded last-played time. */
-static std::vector<hub::saves::Session> pt_fake_sessions(const std::string& key, const hub::GameState& gs) {
-    std::vector<hub::saves::Session> v;
-    if (!gs.play_seconds || !gs.last_played) return v;
-    const int n = key == "fake:1" ? 30 : key == "fake:0" ? 8 : 3;
-    const int64_t T = (int64_t)gs.play_seconds, last = (int64_t)gs.last_played;
-    const int64_t gap = key == "fake:1" ? (int64_t)(5.5 * 86400) : key == "fake:0" ? 129600 : 86400;
-    int64_t left = T;
-    for (int j = 0; j < n; ++j) {
-        hub::saves::Session s;
-        s.system = "fake";
-        s.key = key;
-        s.start = last - (int64_t)j * gap;
-        s.secs = (j == n - 1) ? left : T / n;
-        left -= s.secs;
-        v.push_back(s);
-    }
-    if (key == "fake:0") {   // a second PC, about 3.1 hours
-        hub::saves::Session a, b;
-        a.system = b.system = "fake";
-        a.key = b.key = key;
-        a.device = b.device = "LAPTOP";
-        a.start = (int64_t)gs.last_played - 20 * 86400; a.secs = 5400;
-        b.start = (int64_t)gs.last_played - 30 * 86400; b.secs = 5760;
-        v.push_back(a);
-        v.push_back(b);
-    }
-    return v;
-}
-
-/* The shown game's numbers, cached: recomputed when the game changes, when library.json's numbers for it changed (a session just
- * ended), when the modal was closed in between, and otherwise every 30 s. Never reads files every frame. */
-static const hubui::pt::GameStats& pt_stats_for(const hub::GameEntry& e, const hub::GameState& gs, int64_t now) {
-    static struct {
-        std::string key;
-        unsigned long long ps = 0, lp = 0;
-        double at = -1e9;
-        int frame = -100;
-        bool ok = false;
-        hubui::pt::GameStats st;
-    } C;
-    const double t = ImGui::GetTime();
-    const int fr = ImGui::GetFrameCount();
-    if (!C.ok || C.key != e.key || C.ps != gs.play_seconds || C.lp != gs.last_played || t - C.at > 30.0 || fr - C.frame > 2) {
-        static const bool fake_on = g_headless && std::getenv("HUB_SHOT_PLAYTIME") != nullptr;
-        const bool fake = fake_on && e.key.compare(0, 5, "fake:") == 0;   // only the made-up games get made-up sessions
-        std::vector<hub::saves::Session> sessions = fake ? pt_fake_sessions(e.key, gs) : hub::saves::playlog_read_game(sys_short(e), e.key);
-        C.st = hubui::pt::game_stats(gs.play_seconds, gs.last_played, sessions, hub::saves::playlog_device(), now);
-        C.key = e.key;
-        C.ps = gs.play_seconds;
-        C.lp = gs.last_played;
-        C.at = t;
-        C.ok = true;
-    }
-    C.frame = fr;
-    return C.st;
-}
-
-/* shorten text with "..." until it is at most w wide in the current font (last resort only; UTF-8 safe) */
-static std::string pt_fit(const std::string& s, float w) { return ui::ellipsize(ImGui::GetFont(), ImGui::GetFontSize(), s, w); }
-
-/* The stats strip: one rounded panel, cells = small caption over a bold value, hairline separators; cells wrap greedily into rows
- * when they do not fit max_w. Draw-only (one Dummy reserves the space), no focusable items. */
-static void draw_playtime_strip(const std::vector<hubui::pt::Cell>& cells, float max_w) {
-    if (cells.empty()) return;
-    const float padx = sp(1.5f), pady = sp(0.9f), gap_y = sp(0.25f), rad = sp(1.25f);
-    float cap_h = 0.f, val_h = 0.f;
-    ImGui::PushFont(ui::F.cap); cap_h = ImGui::GetTextLineHeight(); ImGui::PopFont();
-    ImGui::PushFont(ui::F.bold); val_h = ImGui::GetTextLineHeight(); ImGui::PopFont();
-    struct Item { std::string label, cap, val; float w = 0.f; };
-    std::vector<Item> items;
-    bool has_other = false;
-    for (const hubui::pt::Cell& c : cells) {
-        Item it;
-        it.label = c.label;
-        it.cap = c.label;
-        for (char& ch : it.cap) ch = (char)std::toupper((unsigned char)ch);
-        it.val = c.value;
-        const float inner = std::max(sp(4.f), max_w - 2.f * padx);
-        ImGui::PushFont(ui::F.cap); it.cap = pt_fit(it.cap, inner); const float cw = ImGui::CalcTextSize(it.cap.c_str()).x; ImGui::PopFont();
-        ImGui::PushFont(ui::F.bold); it.val = pt_fit(it.val, inner); const float vw = ImGui::CalcTextSize(it.val.c_str()).x; ImGui::PopFont();
-        it.w = std::max(cw, vw) + 2.f * padx;
-        if (c.label.compare(0, 8, "Other PC") == 0) has_other = true;
-        items.push_back(it);
-    }
-    /* greedy rows */
-    std::vector<std::vector<size_t>> rows(1);
-    float used = 0.f, panel_w = 0.f;
-    for (size_t i = 0; i < items.size(); ++i) {
-        if (!rows.back().empty() && used + items[i].w > max_w) { rows.emplace_back(); used = 0.f; }
-        rows.back().push_back(i);
-        used += items[i].w;
-        panel_w = std::max(panel_w, used);
-    }
-    const float row_h = 2.f * pady + cap_h + gap_y + val_h;
-    const float panel_h = row_h * (float)rows.size();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 p0 = ImGui::GetCursorScreenPos();
-    const ImVec2 p1(p0.x + panel_w, p0.y + panel_h);
-    ImGui::Dummy(ImVec2(panel_w, panel_h));
-    dl->AddRectFilled(p0, p1, ui::PANEL2, rad);
-    dl->AddRect(p0, p1, ui::HAIRLINE, rad, 0, 1.f);
-    const bool hov_ok = ImGui::IsWindowHovered();
-    for (size_t r = 0; r < rows.size(); ++r) {
-        const float y = p0.y + row_h * (float)r;
-        if (r > 0) dl->AddLine(ImVec2(p0.x + 1.f, y), ImVec2(p1.x - 1.f, y), ui::HAIRLINE, 1.f);
-        float x = p0.x;
-        for (size_t k = 0; k < rows[r].size(); ++k) {
-            const Item& it = items[rows[r][k]];
-            if (k > 0) dl->AddLine(ImVec2(x, y + pady * 0.7f), ImVec2(x, y + row_h - pady * 0.7f), ui::HAIRLINE, 1.f);
-            ImGui::PushFont(ui::F.cap);
-            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(x + padx, y + pady), ui::TEXT3, it.cap.c_str());
-            ImGui::PopFont();
-            ImGui::PushFont(ui::F.bold);
-            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(x + padx, y + pady + cap_h + gap_y), ui::TEXT, it.val.c_str());
-            ImGui::PopFont();
-            if (has_other && hov_ok && it.label == "Play time" && ImGui::IsMouseHoveringRect(ImVec2(x, y), ImVec2(x + it.w, y + row_h)))
-                ImGui::SetTooltip("Every PC together: this PC plus the time your other PCs logged (their play logs sync with your saves).");
-            x += it.w;
-        }
-    }
-}
-
-/* ---------- details modal (Y / right-click / "...") ---------- */
+/* ---------- details modal (Y / right-click / "..."): one host of the game page (game_page.cpp) ---------- */
 
 std::string g_details_shown;
+static gamepage::State g_details_page;   // the modal's game page state: tab, description scroll hold, footer height, ...
 
 void draw_details_modal() {
     draw_ghost_modal();   // a friend's game you do not own (friend_games_ui.cpp)
@@ -1080,338 +870,43 @@ void draw_details_modal() {
     if (short_win) ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.75f)));
     const hub::GameEntry& e = *ep;
     g_details_shown = e.key;
-    const hub::GameState& gs = gstate(e.key);
-    const GameInfo* cat = catalog_for(e);
-    poll_save_info();
-    if (A.info_key != e.key || ImGui::GetTime() - A.info_at > 4.0) refresh_save_info_bg(e);
-    bool idle = hubui::launch_allowed(A.proc != nullptr, session_active()), native = is_native(e);
-    ImU32 c0, c1;
-    entry_colors(e, &c0, &c1);
+    gamepage::Host host;
+    host.close = [] { ImGui::CloseCurrentPopup(); };
+    gamepage::Ctx c = gamepage::begin(g_details_page, e, host, ImGui::IsWindowAppearing());
 
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 o = ImGui::GetCursorScreenPos();
-    float avail = ImGui::GetContentRegionAvail().x;
-    bool with_art = avail > sp(62.f);
-    float aw = with_art ? (io.DisplaySize.y < hubui::lc::kShortWindowPx ? sp(14.f) : sp(20.f)) : 0, ah = aw / kTileAspect;   // slimmer header on a short window
-    if (with_art) {
-        ArtRef art = art_for_entry(e);
-        TileSpec ts;
-        ts.title = e.title;
-        ts.c0 = c0;
-        ts.c1 = c1;
-        ImVec2 a0 = o, a1(o.x + aw, o.y + ah);
-        ui::shadow(dl, a0, a1, sp(1.75f), 1.2f);
-        if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, sp(1.75f));
-        else draw_no_art(dl, ts, a0, a1, sp(1.75f), 1.f);
-        dl->AddRect(a0, a1, ui::HAIRLINE, sp(1.75f), 0, 1.f);
-    }
-    float tx = with_art ? aw + sp(3.f) : 0;
-    ImGui::SetCursorScreenPos(ImVec2(o.x + tx, o.y));
-    ImGui::BeginGroup();
-    float tw = avail - tx;
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
-    ImGui::PushFont(ui::F.title);
-    ImGui::TextWrapped("%s", e.title.c_str());
-    ImGui::PopFont();
-    ImGui::PopTextWrapPos();
-    {   /* one short line of key facts */
-        const char* dot = "  \xC2\xB7  ";
-        std::string facts = hub::console_name(e);
-        if (native) facts += std::string(dot) + "Native port";
-        if (local_players_for(e) >= 2) facts += std::string(dot) + "1-" + std::to_string(local_players_for(e)) + " players";
-        if (supports_online(e)) facts += std::string(dot) + "Online";
-        if (cat && cat->year) facts += std::string(dot) + std::to_string(cat->year);
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
-        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-        ImGui::TextWrapped("%s", facts.c_str());
-        ImGui::PopStyleColor();
-        ImGui::PopTextWrapPos();
-        /* Steam-style play time: prominent header line, then (when played) the stats strip */
-        const int64_t pt_now = (int64_t)std::time(nullptr);
-        static int pt_tz = 0;
-        static double pt_tz_at = -1e9;
-        if (ImGui::GetTime() - pt_tz_at > 30.0) { pt_tz = pt_local_tz(); pt_tz_at = ImGui::GetTime(); }   // mktime twice: not every frame
-        const hubui::pt::GameStats& pst = pt_stats_for(e, gs, pt_now);
-        if (!pst.played()) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-            ImGui::TextUnformatted("Not played yet");
-            ImGui::PopStyleColor();
-        } else {
-            /* The stats strip below says it all (Play time, Last played, ...): no extra bold hours line above it. */
-            const std::vector<hubui::pt::Cell> cells = hubui::pt::strip_cells(pst, pt_now, pt_tz);
-            if (!cells.empty()) {
-                ImGui::Dummy(ImVec2(0, sp(0.75f)));
-                draw_playtime_strip(cells, tw);
-            }
-        }
-    }
-    ImGui::EndGroup();
-    if (with_art) ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(ah, ImGui::GetItemRectSize().y) + sp(1.f)));
-    {   /* short description (clamped, More expands); falls back to the built-in blurb when nothing loaded */
-        bool drew = gameinfo_ui_section(e, cat ? cat->title : std::string(), 1);
-        if (!drew && cat && !cat->blurb.empty()) {
-            ImGui::PushTextWrapPos(0.f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-            ImGui::TextWrapped("%s", cat->blurb.c_str());
-            ImGui::PopStyleColor();
-            ImGui::PopTextWrapPos();
-        }
-    }
-    if (e.issue == "extract" && !hub::extracted_3ds_path(e).empty()) {
-        text_wrapped_disabled("Unpacked and ready: Play starts at once.");
-    } else if (e.issue == "extract") {
-        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
-        ImGui::TextWrapped("Archived: %s cannot open %s files. Press Play to unpack it (about %.1f GB) into RetroHub's data folder - your archive stays untouched.",
-                           e.system == hub::System::PS2 ? "PCSX2" : e.system == hub::System::PSP ? "PPSSPP" : e.system == hub::System::GC ? "Dolphin" : "Azahar", e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::PSP ? "archive" : ".zip", unpacked_size(e) / 1073741824.0);
-        ImGui::PopStyleColor();
-    } else if (e.issue == "encrypted") {
-        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
-        ImGui::TextWrapped("This 3DS image is encrypted. Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder) to run it.");
-        ImGui::PopStyleColor();
-    } else if (e.issue == "keys") {
-        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
-        std::string ud;
-        hubemu::Install ki = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, e.path);
-        if (!ki.exe.empty()) { const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str(); ud = ki.managed ? ki.dir + "\\portable" : hub::cemu_dirs_for(ki.dir, ad ? ad : "", hubemu::wiiu_probe()).user_data; }
-        std::string why = hub::wiiu_keys_message(hub::wiiu_keys_check(ud, ki.dir, hubemu::wiiu_probe()), "wud");
-        ImGui::TextWrapped("%s", why.empty() ? "Disc images (.wud/.wux) are decrypted with the disc keys in Cemu's keys.txt (found). A .wua archive needs no keys." : why.c_str());
-        ImGui::PopStyleColor();
-    }
-    if (is_kanto(e)) {
-        text_wrapped_disabled("A friend's two-player co-op version of Pokemon FireRed. It is played online: press Play to set it up (once), then host or join a room and pick it. Needs your own Pokemon FireRed (USA) 1.0 in the library.");
-        if (button("How to play", ImVec2(sp(14.f), sp(4.f)))) kt_open_howto();
-    }
+    gamepage::draw_header(c);   // cover, title, facts, play time, description
+    gamepage::draw_notices(c);
     ImGui::Dummy(ImVec2(0, sp(1.f)));
 
     const float bh = sp(5.5f);
     const float bh2 = sp(4.5f);
-    /* Action rows: each button joins the row only if it fits the modal width, otherwise it wraps to the next line. */
-    const float row_gap = sp(1.5f), row_avail = ImGui::GetContentRegionAvail().x;
-    float row_used = 0.f;
-    bool row_started = false;
-    auto place = [&](float w) {   // call before each button in the row
-        if (!row_started) { row_started = true; row_used = w; return; }
-        if (row_used + row_gap + w <= row_avail) { ImGui::SameLine(0, row_gap); row_used += row_gap + w; }
-        else row_used = w;   // no SameLine: this button starts a new row
-    };
-    auto label_w = [&](const char* label, bool icon) {   // matches button(): text + icon + gap + 2.5sp padding each side
-        return ImGui::CalcTextSize(label).x + (icon ? sp(2.25f) + sp(1) : 0.f) + sp(5);
-    };
-    /* Reachability QA (qa/reach_matrix.ps1): every action reports whether it is offered; HUB_SHOT_ACT=<name> presses it once. */
-    static const char* act = std::getenv("HUB_SHOT_ACT");
-    static std::string act_done;
-    auto tr = [&](const char* name, const std::string& state) { shot_trace_once("act", e.key + " " + name + " " + state); };
-    auto forced = [&](const char* name) {
-        if (!act || std::strcmp(act, name) != 0 || act_done == e.key + name) return false;
-        act_done = e.key + name;
-        return true;
-    };
-    /* primary: Play (Resume when a resume point exists) + Play Online */
-    const bool resume = !native && A.info_auto_state && e.issue.empty();
-    const char* play_label = resume ? "Resume" : "Play";
-    place(sp(17.f));
-    tr("play", idle ? "enabled" : "disabled");
-    if (button(play_label, ImVec2(sp(17.f), bh), true, idle, ui::Icon::Play) || forced("play")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; play_entry_anim(c); }
-    if (!idle && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", hubui::launch_busy_reason(A.proc != nullptr));
-    ImGui::SetItemDefaultFocus();
-    if (!supports_online(e) && e.system == hub::System::GC) {
-        place(label_w("Online soon", true));
-        button("Online soon", ImVec2(0, bh), false, false, ui::Icon::Globe);
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Only GameCube games with a verified online setup can be played online");
-        tr("online", "explained:online-soon");
-    } else if (!supports_online(e)) {
-        place(label_w("Offline only", true));
-        button("Offline only", ImVec2(0, bh), false, false, ui::Icon::Globe);
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", e.system == hub::System::PSP ? "PSP games play offline only: PPSSPP has no online rooms in RetroHub" : e.system == hub::System::Switch ? "Switch games play offline only for now (Lichii is very experimental)"
-                              : !online_block_reason(e).empty() ? online_block_reason(e).c_str() : "Online play isn't available for this game");
-        tr("online", "explained:offline-only");
-    } else {
-        place(label_w("Play Online", true));
-        tr("online", idle ? "enabled" : "disabled");
-        if (button("Play Online", ImVec2(0, bh), false, idle, ui::Icon::Globe) || forced("online")) {
-            ImGui::CloseCurrentPopup();
-            A.pending_room_game = room_id(e);
-            shot_trace("play-online", "pending_room_game=" + A.pending_room_game);
-            if (!g_headless) enter_room(true, hubnet::new_room_code());
-        }
-        if (!idle && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", hubui::launch_busy_reason(A.proc != nullptr));
-    }
-    place(label_w("Close", true));
-    if (button("Close", ImVec2(0, bh), false, true, ui::Icon::Close)) ImGui::CloseCurrentPopup();
+    gamepage::draw_action_row(c, gamepage::primary_actions(c), bh);   // Play / Resume (default focus), Play Online, Close
     ImGui::Dummy(ImVec2(0, sp(1.f)));
 
-    /* tabs: only the ones that have something to show */
-    enum { TabAbout, TabSaves, TabShots, TabSettings };
-    static int tab = TabAbout;
-    static std::string tab_key;
-    if (tab_key != e.key || ImGui::IsWindowAppearing()) { tab_key = e.key; tab = TabAbout; if (const char* st = g_headless ? std::getenv("HUB_SHOT_TAB") : nullptr) tab = std::atoi(st); }   // HUB_SHOT_TAB=0..3 for screenshots
-    qm_seed_gallery(e);   // HUB_SHOT_GALLERY screenshot aid
-    const int nshots = shots_count(e);
-    const bool has_settings = gs_has_game_section(e);
-    struct TabDef { int id; std::string label; };
-    std::vector<TabDef> tabs;
-    tabs.push_back({TabAbout, "About"});
-    if (!native) tabs.push_back({TabSaves, "Saves"});
-    if (nshots > 0) tabs.push_back({TabShots, "Screenshots (" + std::to_string(nshots) + ")"});
-    if (has_settings) tabs.push_back({TabSettings, "Settings"});
-    int tab_shown = tab;   // what is drawn; `tab` keeps the request so a gallery that is seeded a frame later still lands on its tab
-    {
-        bool ok = false;
-        for (auto& t : tabs) ok |= t.id == tab;
-        if (!ok) {
-            if (g_headless && std::getenv("HUB_SHOT_TAB")) {   // the screenshot aid asked for a tab this game does not have: clamp to the nearest one that exists
-                tab_shown = tabs.back().id;
-                for (auto& t : tabs) if (t.id >= tab) { tab_shown = t.id; break; }
-            } else tab = tab_shown = TabAbout;
-        }
-    }
-    for (size_t i = 0; i < tabs.size(); ++i) {
-        float w = label_w(tabs[i].label.c_str(), false) - sp(1.5f);
-        if (i) ImGui::SameLine(0, sp(1.f));
-        ImGui::PushID((int)i);
-        if (button(tabs[i].label.c_str(), ImVec2(w, sp(4.f)), tab_shown == tabs[i].id)) tab = tab_shown = tabs[i].id;
-        ImGui::PopID();
-    }
+    gamepage::draw_tab_pills(c);   // only the tabs that have something to show
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     /* the content area keeps one height for every tab so the page does not jump; it scrolls inside if needed */
     /* The footer (secondary actions, wraps to several rows) keeps its measured height from the last frame; the body takes what is left of the
      * window's maximum height and scrolls inside it, so nothing is ever hidden behind the buttons. */
-    static float footer_h = 0.f;
-    const float footer_est = footer_h > 0.f ? footer_h : bh2 * 2.f + sp(1.5f);
+    const float footer_est = g_details_page.footer_h > 0.f ? g_details_page.footer_h : bh2 * 2.f + sp(1.5f);
     float room = hubui::lc::body_room(win_max_h, ImGui::GetCursorPosY(), footer_est + sp(1.f), win_pad, sp(6.f));
     float tabh = std::min(sp(36.f), room);
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, std::min(tabh, sp(15.f))), ImVec2(FLT_MAX, tabh));
     ImGui::BeginChild("##tabbody", ImVec2(0, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AutoResizeY);
-    if (tab_shown == TabAbout) {
-        dumpwarn_details_section(e);   // first: a copy that looks incomplete must be seen without scrolling
-        nuprepair_details_section(e);   // a damaged .nup copy RetroHub fills in at launch
-        gameinfo_ui_section(e, cat ? cat->title : std::string(), 2);
-        achievements_ui_section(e);   // RetroAchievements progress (only when signed in)
-        if (e.system == hub::System::WiiU) {
-            for (const std::string& l : wiiu_info_lines(e)) ImGui::TextDisabled("%s", l.c_str());
-            ImGui::TextDisabled("GamePad screen: hold View + RB, or Game menu > Swap GamePad / TV screen (Cemu: Ctrl+Tab).");
-        }
-        { std::string fl = fr_playtime_line(e.key); if (!fl.empty()) ImGui::TextDisabled("Friends: %s", fl.c_str()); }
-        if (native) ImGui::TextDisabled("Smash Classic keeps its own saves.");
-        if (local_players_for(e) >= 2) {   // offline local multiplayer: who holds which port before Play
-            ImGui::Dummy(ImVec2(0, sp(0.5f)));
-            if (draw_players_strip(local_players_for(e))) { ImGui::CloseCurrentPopup(); open_port_assign(); }
-        }
-        dupes_details_section(e);
-        hack_details_section(e);   // Versions row (Original + hacks) and Remove hack
-        progress_details_section(e);   // Wave 3: completion + notes
-        transferpak_details_section(e);
-        gba_link_details_section(e);
-        palpark_details_section(e);
-        verify_details_section(e);
-        hookshot_details_section(e);   // Ocarina of Time (Switch 2) only: build the native version
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        if (gamepack_owns(e)) {   // installed from a shared pack: its folder (full path on hover) + Uninstall; the archive file name inside is not interesting
-            const std::string ft = hubgp::installed_folder_title(e.path, hubgp::pack_root());
-            const std::string full = hubgp::install_dir(sys_short(e), ft);
-            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
-            ImGui::TextUnformatted(ui::ellipsize(ui::F.cap, ImGui::GetFontSize(), "Installed in " + sys_short(e) + "\\" + ft + "  (RetroHub games folder)", ImGui::GetContentRegionAvail().x).c_str());
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", full.c_str());
-            ImGui::Dummy(ImVec2(0, sp(0.5f)));
-            if (gamepack_uninstall_ui(e, sp(5.f))) ImGui::CloseCurrentPopup();
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
-            ImGui::PushTextWrapPos(0.f);
-            ImGui::TextWrapped("%s", e.path.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::PopStyleColor();
-        }
-    } else if (tab_shown == TabSaves) {
-        std::string sv;
-        if (A.info_battery_files > 0) sv = "Save data: " + std::to_string(A.info_battery_files) + " file(s), " + size_text(A.info_battery_bytes);
-        if (A.info_state_files > 0 || A.info_auto_state) {
-            if (!sv.empty()) sv += "   ";
-            sv += std::to_string(A.info_state_files) + " save state(s)" + (A.info_auto_state ? " + resume point" : "");
-        }
-        if (sv.empty()) sv = "No save data yet.";
-        ImGui::TextUnformatted(sv.c_str());
-        cloud_ui_game_line(e);
-        history_ui_details_section(e);
-        resume_details_section(e);   // Wave 3 R1
-        draw_state_strip(e);
-    } else if (tab_shown == TabShots) {
-        shots_gallery(e);
-    } else if (tab_shown == TabSettings) {
-        gs_draw_game_section(e);
-    }
+    gamepage::draw_tab_body(c);
     ImGui::EndChild();
     ImGui::Dummy(ImVec2(0, sp(1.f)));
 
     /* secondary actions */
     const float footer_y0 = ImGui::GetCursorPosY();
-    row_started = false;
-    const char* fav_label = gs.favorite ? "Unfavorite" : "Favorite";
-    place(label_w(fav_label, true));
-    tr("favorite", "enabled");
-    if (button(fav_label, ImVec2(0, bh2), false, true, gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star) || forced("favorite")) {
-        const bool was_fav = gs.favorite;
-        toggle_favorite(e.key);
-        shot_trace("favorite", e.key + " was=" + (was_fav ? "1" : "0") + " now=" + (gstate(e.key).favorite ? "1" : "0"));
+    if (gamepage::draw_action_row(c, gamepage::secondary_actions(c), bh2) == gamepage::Row::Gone) {   // Hide game: e is gone from the library
+        A.show_details = false;
+        ImGui::CloseCurrentPopup();
+        if (short_win) ImGui::PopStyleVar();
+        ImGui::EndPopup();
+        return;   // nothing after this touches the (now removed) entry
     }
-    if (!native) {
-        place(label_w("Save folder", true));
-        tr("savefolder", "enabled");
-        if (button("Save folder", ImVec2(0, bh2), false, true, ui::Icon::Folder) || forced("savefolder")) {
-            std::string sd = hub::saves::game_dir(sys_short(e), e.key);
-            shot_trace("savefolder", sd);
-            if (!g_headless) open_in_explorer(sd);
-        }
-    } else {
-        tr("savefolder", "hidden:native-keeps-own-saves");
-        place(label_w("Find Smash 64 game", false));
-        locate_smash(button("Find Smash 64 game", ImVec2(0, bh2)));
-    }
-    const bool cheats_na = !cheats_supported(e) && !is_native(e) && !is_kanto(e);   // GC / 3DS / Wii U / PS2: shown disabled, with the reason
-    tr("cheats", cheats_supported(e) ? "enabled" : cheats_na ? "explained:unavailable" : "hidden");
-    if (cheats_na) {
-        place(label_w("Cheats", true));
-        button("Cheats", ImVec2(0, bh2), false, false, ui::Icon::Bolt);
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Cheats aren't available for %s yet", hub::console_name(e));
-    }
-    if (cheats_supported(e)) {
-        int cn = cheats_enabled_count(e);
-        std::string cl = cn ? "Cheats (" + std::to_string(cn) + ")" : std::string("Cheats");
-        place(label_w(cl.c_str(), true));
-        if (button(cl.c_str(), ImVec2(0, bh2), cn > 0, true, ui::Icon::Bolt) || forced("cheats")) { ImGui::CloseCurrentPopup(); hub::GameEntry c = e; cheats_open(c); shot_trace("cheats", "opened " + e.key); }
-    }
-    tr("controls", hubctl::console_key(e).empty() ? "hidden" : "enabled:" + hubctl::console_key(e));
-    tr("settings", hub::gs::options_for(e.system).empty() ? "none" : "options=" + std::to_string(hub::gs::options_for(e.system).size()));
-    if (!hubctl::console_key(e).empty()) {
-        place(label_w("Controls", true));
-        if (button("Controls", ImVec2(0, bh2), false, true, ui::Icon::Gamepad) || forced("controls")) { ImGui::CloseCurrentPopup(); open_controls_for(e); shot_trace("controls", "tab-for " + hubctl::console_key(e) + " game=" + CTL_game_for_trace()); }
-    }
-    tr("desktop", "enabled");
-    place(label_w("Add to desktop", true));
-    if (button("Add to desktop", ImVec2(0, bh2), false, true, ui::Icon::Star) || forced("desktop")) { add_game_shortcut(e); shot_trace("desktop", e.key); }
-    place(label_w("Customize", true));   // rename / cover / reset (customize_ui.cpp)
-    if (button("Customize", ImVec2(0, bh2), false, true, ui::Icon::Gear)) custom_open_customize(e.key);
-    place(label_w("Add to shelf...", true));
-    if (button("Add to shelf...", ImVec2(0, bh2), false, true, ui::Icon::Plus)) custom_open_picker(e.key, true);
-    if (hack_can_add(e)) {   // ROM hacks and translations (hack_ui.cpp): pick a patch file, RetroHub finds the base game and adds a new entry
-        place(label_w("Add hack or translation", true));
-        if (button("Add hack or translation", ImVec2(0, bh2), false, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); hack_add_open(e); }
-    }
-    if (!native) {   // Hide game (library-12): one press, Undo card after; synced like the Hidden games list
-        place(label_w("Hide game", true));
-        if (button("Hide game", ImVec2(0, bh2), false, true, ui::Icon::Close)) {
-            const std::string hk = e.key;
-            hide_game_now(hk);   // e is gone from the library after this: nothing below may use it
-            A.show_details = false;
-            ImGui::CloseCurrentPopup();
-            if (short_win) ImGui::PopStyleVar();
-            ImGui::EndPopup();
-            return;   // nothing after this touches the (now removed) entry
-        }
-    }
-    footer_h = ImGui::GetCursorPosY() - footer_y0 + ImGui::GetStyle().ItemSpacing.y;
+    g_details_page.footer_h = ImGui::GetCursorPosY() - footer_y0 + ImGui::GetStyle().ItemSpacing.y;
     custom_draw(1);   // Customize / Add to shelf modals nest inside this one
     if (short_win) ImGui::PopStyleVar();
     ImGui::EndPopup();
