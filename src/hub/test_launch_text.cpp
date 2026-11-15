@@ -41,6 +41,7 @@ static void host_view() {
     CHECK(contains(host_view_of_guest_fail("Mia", start_failed_wire()), "didn't open on Mia's PC"));
     CHECK(contains(host_view_of_guest_fail("Mia", ps1_core_missing_wire()), "PlayStation online files"));
     CHECK(contains(host_view_of_guest_fail("Mia", ps1_bios_missing_wire()), "no PlayStation BIOS"));
+    CHECK(contains(host_view_of_guest_fail("Mia", ps1_bios_missing_wire_old()), "no PlayStation BIOS"));   // a guest on RetroHub 1.45 or older
     CHECK(contains(host_view_of_guest_fail("Mia", "A GameCube session is still open on this PC (Dolphin) - close it, then the host can start again."), "still open on Mia's PC"));
     CHECK(contains(host_view_of_guest_fail("Mia", "The host's GameCube launch is invalid - ask them to update RetroHub."), "can't read this launch"));
     // nothing guest-directed or technical survives in a mapped line
@@ -65,7 +66,7 @@ static void wording() {
     // what goes on the wire is the older wording for the texts that changed, and unchanged otherwise
     CHECK(wire_for(ps1_files_missing_text()) == ps1_core_missing_wire());
     CHECK(wire_for(remote_play_missing_text()) == remote_play_missing_wire());
-    CHECK(wire_for(std::string("PlayStation online needs a BIOS file (scph5501.bin) on every PC, or OpenBIOS on every PC. Set it up in Settings > Playing. ") + ps1_bios_own_text()) == ps1_bios_missing_wire());
+    CHECK(wire_for(std::string("PlayStation online needs a BIOS file (scph5501.bin) on every PC, or OpenBIOS on every PC. Set it up in Settings > Video & Games. ") + ps1_bios_own_text()) == ps1_bios_missing_wire());
     CHECK(wire_for("Unpacking X first - try again when it is done.") == "Unpacking X first - try again when it is done.");
     CHECK(core_missing_wire("mgba") == "Emulator core 'mgba' not found (cores folder).");
     CHECK(remote_play_failed_wire(5) == "Could not start remote play (streamrun error 5).");
@@ -83,9 +84,11 @@ static void sent_strings_pinned() {   // what goes to other players must stay by
     CHECK(remote_play_failed_wire(1225) == "Could not start remote play (streamrun error 1225).");
     CHECK(std::string(remote_play_missing_wire()) == "Remote play isn't installed (streamrun.exe is missing) - update RetroHub.");
     CHECK(std::string(ps1_core_missing_wire()) == "The PlayStation emulator core (beetle_psx_libretro.dll) was not found in the cores folder.");
-    CHECK(std::string(ps1_bios_missing_wire()) == "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Playing.");
-    // the shown PS1 BIOS text goes out as the old one; unchanged texts go out unchanged
-    CHECK(wire_for(std::string("PlayStation online needs a BIOS file (scph5501.bin) on every PC, or OpenBIOS on every PC. Set it up in Settings > Playing. ") + ps1_bios_own_text()) == ps1_bios_missing_wire());
+    // (v1.46: the PS1 BIOS line names the real Settings tab, Video & Games; the 1.45 wording is still recognised from older guests)
+    CHECK(std::string(ps1_bios_missing_wire()) == "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Video & Games.");
+    CHECK(std::string(ps1_bios_missing_wire_old()) == "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Playing.");
+    // the shown PS1 BIOS text goes out as the short one; unchanged texts go out unchanged
+    CHECK(wire_for(std::string("PlayStation online needs a BIOS file (scph5501.bin) on every PC, or OpenBIOS on every PC. Set it up in Settings > Video & Games. ") + ps1_bios_own_text()) == ps1_bios_missing_wire());
     CHECK(wire_for("RetroHub can't find the game file for X. Open it in your Library to point RetroHub at it again.") == "RetroHub can't find the game file for X. Open it in your Library to point RetroHub at it again.");
     CHECK(wire_for("The host started a game you don't have.") == "The host started a game you don't have.");
 }

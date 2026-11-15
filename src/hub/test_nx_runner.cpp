@@ -17,6 +17,7 @@
 
 #include "emu_saves.h"
 #include "lichii.h"
+#include "option_rows.h"
 
 namespace fs = std::filesystem;
 using namespace hubemu;
@@ -193,6 +194,27 @@ int main() {
         CHECK(st.set_game(k, hub::System::Switch, kRunnerKey, "lichii") && pick() == Kind::Lichii);
         st.clear_game_key(k, kRunnerKey);
         CHECK(pick() == Kind::Fritchii);
+        // the "Plays with" rows SHOW what Play starts (option_rows.h runner_shown on the same decision): the stored default reads "lichii",
+        // but nothing chosen means Fritchii for Ocarina of Time
+        auto shown = [&] {
+            const hub::gs::Values v = st.resolve(hub::System::Switch, k);
+            const auto i = v.find(kRunnerKey);
+            return hubui::runner_shown(i == v.end() ? std::string() : i->second, pick() == Kind::Fritchii);
+        };
+        CHECK(st.resolve(hub::System::Switch, k).at(kRunnerKey) == "lichii" && shown() == "fritchii");
+        CHECK(st.set_game(k, hub::System::Switch, kRunnerKey, "lichii") && shown() == "lichii");     // the player picked Lichii for the game
+        st.clear_game_key(k, kRunnerKey);
+        CHECK(st.set_system(hub::System::Switch, kRunnerKey, "lichii") && shown() == "lichii");     // ...or for every Switch game
+        st.clear_system_key(hub::System::Switch, kRunnerKey);
+        CHECK(st.set_game(k, hub::System::Switch, kRunnerKey, "longshot") && shown() == "longshot");   // a native build shows as chosen
+        st.clear_game_key(k, kRunnerKey);
+        CHECK(st.set_game(k, hub::System::Switch, kRunnerKey, "fritchii") && shown() == "fritchii");
+        st.clear_game_key(k, kRunnerKey);
+        CHECK(hubui::runner_shown("lichii", nx_emulator_for(other, lich, false, 0, on) == Kind::Fritchii) == "lichii");                     // another Switch game
+        CHECK(hubui::runner_shown("lichii", nx_emulator_for(oot, lich, false, 0, unpinned_not_installed) == Kind::Fritchii) == "lichii");   // no Fritchii to be had
+        // the Switch-wide combo: names Fritchii for Ocarina of Time exactly while that default applies
+        CHECK(hubui::switch_wide_runner_preview("Lichii (emulator)", st.source(hub::System::Switch, "", kRunnerKey) != 0, true).find("Fritchii") != std::string::npos);
+        CHECK(hubui::switch_wide_runner_preview("Lichii (emulator)", true, true) == "Lichii (emulator)");
     }
 
     // ---- environment

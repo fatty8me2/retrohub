@@ -9,7 +9,7 @@ struct Faq { const char* q; const char* a; };
 const Faq kFaq[] = {
     {"Why is a game greyed out?",
      "A greyed-out game is one a friend has that you do not. Only its name is shared, never the game file. Put your own copy in one of your game folders "
-     "(Settings > General > Add games) and it becomes a normal tile. Turn friends' games off under Settings > Online or with the Friends' games chip."},
+     "(Settings > General > ROM folders) and it becomes a normal tile. Turn friends' games off under Settings > Online or with the Friends' games chip."},
     {"My game is missing from the library",
      "RetroHub looks in the folders listed under Settings > General. Add the folder, then press Rescan (or press Ctrl+K and type rescan). Zipped and 7z games are unpacked automatically. "
      "Find my games can search your PC for game files."},

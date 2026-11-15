@@ -422,7 +422,7 @@ void wizard_window() {
             ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
             if (ImGui::Checkbox("Automatically add people I play with as friends", &A.st.auto_friend)) { mark_dirty(); fr_set_auto_friend(A.st.auto_friend); }
             ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
-            text_wrapped_disabled("You can change this any time in Settings. Run this setup again from Settings > Run setup again.");
+            text_wrapped_disabled("You can change this any time in Settings. Run this setup again from Settings > General > Run setup again.");
             break;
         }
     }

@@ -48,7 +48,7 @@ static void draw_missing_dialog() {
     if (ui::modal_back()) MISS.open = false;
     ImGui::TextWrapped("This game is set to play with %s, but %s is not ready here (%s).", MISS.name.c_str(), MISS.name.c_str(), MISS.why.c_str());
     ImGui::Dummy(ImVec2(0, 2 * S));
-    text_wrapped_disabled("Build it from the game's page (About, at the bottom), or play with Lichii this time. To change it for good, use Settings > Plays with on the game's page.");
+    text_wrapped_disabled("Build it from the game's page (About, at the bottom), or play with Lichii this time. To change it for good, use Plays with on the Settings tab of the game's page.");
     ImGui::Dummy(ImVec2(0, 8 * S));
     if (!MISS.focused) { ImGui::SetKeyboardFocusHere(0); MISS.focused = true; }   // a pad lands on the first button
     if (button("Open the game's page", ImVec2(300 * S, 44 * S), true)) {

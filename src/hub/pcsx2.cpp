@@ -160,7 +160,7 @@ std::vector<std::string> pcsx2_bios_search_dirs(const std::string& chosen, const
 
 const char* pcsx2_bios_missing_text() {
     return "PlayStation 2 games need a PS2 BIOS (a file like scph39001.bin from your own console). Put it in a BIOS folder next to your games, "
-           "or choose the folder in Settings > PlayStation 2.";
+           "or choose the folder in Settings > Video & Games.";
 }
 
 /* ------------------------------------------------------------------ pads */

@@ -37,12 +37,13 @@ struct Choice { std::string value, label; };
 struct Option {
     std::string key;      // "n64.res"; common keys have no prefix ("fullscreen")
     std::string label;    // UI text
-    std::string group;    // UI section: "Video", "Color", "Emulation", ...
+    std::string group;    // UI section: "Video", "Color", "Emulation", ... (display only; option_rows.h maps it to the heading)
     unsigned systems = 0; // sys_bit() mask of systems it applies to
     Kind kind = Kind::Choice;
     Scope scope = Scope::Visual;
     std::string def;      // default value ("true"/"false" for Bool)
     std::vector<Choice> choices;   // Kind::Choice only
+    std::string help;     // optional: one plain sentence on what the player will notice ("" = none); UI only, never stored or synced
 };
 
 using Values = std::map<std::string, std::string>;
