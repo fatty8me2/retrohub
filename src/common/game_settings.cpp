@@ -172,6 +172,11 @@ std::vector<Option> build() {
     // it off if something looks wrong." (Option has no help field, so it lives here and in docs/EMULATORS.md.) Read by the launch only, never written to Lichii's ini.
     v.push_back(mk("switch.fast_reads", "Faster GPU reads", "Video", SWITCH, K::Choice, S::Visual, "on",
                    {{"on", "On"}, {"off", "Off"}}));
+    // "Frames ahead": EDEN_NX2_FRAMES_AHEAD for the launch (hubemu::lichii_frames_ahead, lichii.cpp). Lichii (Switch 2 programs) lets the CPU run this many frames ahead of the GPU; Lichii's own per-title
+    // default is 0 for Donkey Kong Bananza (about 30 fps) and 1 for Ocarina of Time; Lichii issue #1419 measured 1 taking Bananza to about 60 fps (GPU fence Default; RetroHub never writes a fence key).
+    // "auto" = 1 for Bananza (040074A01BF12000), and for every other game the variable is NOT set (Lichii keeps its per-title default). 0 / 1 / 2 are sent as chosen.
+    v.push_back(mk("switch.frames_ahead", "Frames ahead (smoother on some games)", "Video", SWITCH, K::Choice, S::Visual, "auto",
+                   {{"auto", "Auto"}, {"0", "0"}, {"1", "1"}, {"2", "2"}}));
     // Which program plays a Switch game: Lichii (default), Fritchii (Frizti's Ocarina-of-Time fork of Lichii, opt-in, RetroHub's own download), Hookshot or Longshot (experimental native
     // PC builds RetroHub makes from the player's own Ocarina of Time; that game only). A chosen native build that is not built never falls back quietly: Play asks (build it / Lichii this time).
     // Shown ONLY for that game (settings_games_ui.cpp); offline only, ignored by online / sync code.

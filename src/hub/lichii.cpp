@@ -805,12 +805,21 @@ bool lichii_preload_all(const hub::gs::Values& v, uint64_t ram) {
     return m == "all" || (m == "auto" && ram >= 60 * kGiB);
 }
 
-std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t ram) {
+std::string lichii_frames_ahead(const hub::gs::Values& v, uint64_t title_id) {
+    auto it = v.find("switch.frames_ahead");
+    const std::string m = it == v.end() ? "auto" : it->second;
+    if (m == "0" || m == "1" || m == "2") return m;
+    return title_id == 0x040074A01BF12000ull ? "1" : "";   // auto / unknown: only Donkey Kong Bananza is raised (Lichii #1419: ~30 -> ~60 fps)
+}
+
+std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t ram, uint64_t title_id) {
     // EDEN_NX2_NO_REACTIVE is still read by build 177. EDEN_NX2_PRELOAD_ALL_PIPELINES is gone (removed in build 160): "Shaders at start" is the ini key
     // [Renderer] build_all_cached_shaders now, written by lichii_ini_launch from lichii_preload_all. `ram` is kept so callers (nx_env) need no change.
     (void)ram;
     std::vector<std::pair<std::string, std::string>> env;
     if (lichii_fast_reads(v)) env.push_back({"EDEN_NX2_NO_REACTIVE", "1"});
+    const std::string fa = lichii_frames_ahead(v, title_id);
+    if (!fa.empty()) env.push_back({"EDEN_NX2_FRAMES_AHEAD", fa});
     return env;
 }
 

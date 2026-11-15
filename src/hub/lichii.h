@@ -157,7 +157,10 @@ std::string prepare_lichii(const std::string& install_dir, const hubctl::Profile
  * also missing / unknown) -> false. true becomes [Renderer] build_all_cached_shaders=true in lichii_ini_launch (Lichii builds every cached pipeline at load, ~0.45 MB driver
  * memory each, capped by Lichii at a quarter of RAM). Pure; the ini writer, the headless trace and the tests all use it. */
 bool lichii_preload_all(const hub::gs::Values& v, uint64_t ram);
-std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t physical_ram_bytes);
+/* switch.frames_ahead ("Frames ahead"): "0"/"1"/"2" -> that value; "auto" (the default, also missing / unknown) -> "1" for Donkey Kong Bananza (040074A01BF12000), "" (leave EDEN_NX2_FRAMES_AHEAD unset,
+ * Lichii keeps its per-title default) for every other game. Becomes EDEN_NX2_FRAMES_AHEAD in lichii_env / nx_env. */
+std::string lichii_frames_ahead(const hub::gs::Values& v, uint64_t title_id);
+std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Values& v, uint64_t physical_ram_bytes, uint64_t title_id = 0);
 /* switch.fast_reads ("Faster GPU reads"): anything but "off" (missing counts as on) -> EDEN_NX2_NO_REACTIVE=1 (Lichii build 125+ drops its read traps on Switch 2
  * programs, still read in build 177 (and since build 125); stale reads are possible but rare). One helper for every Lichii-family launch: lichii_env (Lichii) and nx_env (Fritchii) both call it. */
 bool lichii_fast_reads(const hub::gs::Values& v);

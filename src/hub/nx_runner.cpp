@@ -61,10 +61,11 @@ const std::vector<std::string>& nx_skip_keys(Kind k) {
     return none;
 }
 
-std::vector<std::pair<std::string, std::string>> nx_env(Kind k, const hub::gs::Values& v, uint64_t ram) {
-    if (k != Kind::Fritchii) return lichii_env(v, ram);   // Lichii: exactly as before
+std::vector<std::pair<std::string, std::string>> nx_env(Kind k, const hub::gs::Values& v, uint64_t ram, uint64_t title_id) {
+    if (k != Kind::Fritchii) return lichii_env(v, ram, title_id);   // Lichii: exactly as before
     std::vector<std::pair<std::string, std::string>> env;
     if (lichii_fast_reads(v)) env.push_back({"EDEN_NX2_NO_REACTIVE", "1"});   // same helper as lichii_env
+    { const std::string fa = lichii_frames_ahead(v, title_id); if (!fa.empty()) env.push_back({"EDEN_NX2_FRAMES_AHEAD", fa}); }   // same helper as lichii_env
     // Fritchii v5 prepares all shaders itself on the first start (no-retain build). EDEN_NX2_PRELOAD_ALL_PIPELINES (Lichii) / build_all_cached_shaders (Lichii's ini key, never written for Fritchii) would build AND keep every pipeline
     // (~460 KB each): double the work and a huge memory bill. Never set it for Fritchii, whatever "Shaders at start" says. Also never FRITCHII_CLASSIC_UI
     // (it hides the preparation screen) or EDEN_NX2_PRECOMPILE=0.

@@ -56,7 +56,7 @@ constexpr const char* kFritchiiUpdateUrl = "http://127.0.0.1:9/x";
 /* Environment added to the child: Lichii = lichii_env (unchanged). Both get EDEN_NX2_NO_REACTIVE=1 from lichii_fast_reads (unless switch.fast_reads is "off"). Fritchii = EDEN_UPDATE_URL only (v5 prepares its shaders itself: NEVER EDEN_NX2_PRELOAD_ALL_PIPELINES, FRITCHII_CLASSIC_UI or EDEN_NX2_PRECOMPILE=0; formerly the
  * merged cache holds ~29k pipelines = ~13 GB of driver memory: "auto" does NOT preload there; "recent" never does). Never EDEN_NX2_DEBUG_SERVER / EDEN_NX2_CRASH_DUMP, and
  * RetroHub never creates or copies an nx2_switches.txt (Fritchii accepts any variable name from it): everything goes through the process environment. */
-std::vector<std::pair<std::string, std::string>> nx_env(Kind k, const hub::gs::Values& v, uint64_t physical_ram);
+std::vector<std::pair<std::string, std::string>> nx_env(Kind k, const hub::gs::Values& v, uint64_t physical_ram, uint64_t title_id = 0);   // title_id: only for switch.frames_ahead "auto"
 
 /* ---- keys + firmware: copied from the Lichii install when the target has none ---- */
 /* Copies keys\prod.keys (+ title.keys) and the firmware .nca files from `from_dir`'s user\ into `to_dir`'s user\ for whichever of them the target lacks.

@@ -207,6 +207,23 @@ int main() {
         CHECK(!lichii_preload_all(v, 32 * GiB) && !has(nx_env(Kind::Lichii, v, 32 * GiB), "EDEN_NX2_PRELOAD_ALL_PIPELINES"));   // auto: a "32 GB" PC builds only recent shaders at start
         CHECK(nx_env(Kind::Lichii, v, 16 * GiB).size() == 1 && has(nx_env(Kind::Lichii, v, 16 * GiB), "EDEN_NX2_NO_REACTIVE", "1"));   // only the fast-reads var
         CHECK(has(nx_env(Kind::Fritchii, v, 16 * GiB), "EDEN_NX2_NO_REACTIVE", "1"));
+        {   // switch.frames_ahead: auto = 1 for Donkey Kong Bananza only; every other game leaves EDEN_NX2_FRAMES_AHEAD unset; explicit values are honoured
+            const uint64_t bananza = 0x040074A01BF12000ull, oot = 0x01006BB00C6F0000ull;
+            hub::gs::Values fa = v;   // v has no switch.frames_ahead: missing counts as auto
+            CHECK(lichii_frames_ahead(fa, bananza) == "1" && lichii_frames_ahead(fa, oot).empty() && lichii_frames_ahead(fa, 0).empty());
+            CHECK(has(nx_env(Kind::Lichii, fa, 16 * GiB, bananza), "EDEN_NX2_FRAMES_AHEAD", "1") && has(nx_env(Kind::Fritchii, fa, 16 * GiB, bananza), "EDEN_NX2_FRAMES_AHEAD", "1"));
+            CHECK(!has(nx_env(Kind::Lichii, fa, 16 * GiB, oot), "EDEN_NX2_FRAMES_AHEAD") && !has(nx_env(Kind::Fritchii, fa, 16 * GiB, oot), "EDEN_NX2_FRAMES_AHEAD") && !has(nx_env(Kind::Lichii, fa, 16 * GiB), "EDEN_NX2_FRAMES_AHEAD"));
+            fa["switch.frames_ahead"] = "auto";
+            CHECK(lichii_frames_ahead(fa, bananza) == "1" && lichii_frames_ahead(fa, oot).empty());
+            fa["switch.frames_ahead"] = "0";
+            CHECK(has(nx_env(Kind::Lichii, fa, 16 * GiB, bananza), "EDEN_NX2_FRAMES_AHEAD", "0") && has(nx_env(Kind::Lichii, fa, 16 * GiB, oot), "EDEN_NX2_FRAMES_AHEAD", "0"));
+            fa["switch.frames_ahead"] = "2";
+            CHECK(has(nx_env(Kind::Lichii, fa, 16 * GiB, bananza), "EDEN_NX2_FRAMES_AHEAD", "2") && has(nx_env(Kind::Fritchii, fa, 16 * GiB, oot), "EDEN_NX2_FRAMES_AHEAD", "2"));
+            fa["switch.frames_ahead"] = "junk";
+            CHECK(lichii_frames_ahead(fa, bananza) == "1" && lichii_frames_ahead(fa, oot).empty());
+            const hub::gs::Option* o = hub::gs::find_option("switch.frames_ahead");
+            CHECK(o && o->def == "auto");
+        }
         {
             hub::gs::Values off = v;
             off["switch.fast_reads"] = "off";
