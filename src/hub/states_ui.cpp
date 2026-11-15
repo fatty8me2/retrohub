@@ -130,9 +130,14 @@ void draw_state_strip(const hub::GameEntry& e) {
         ++n;
         ImGui::PushID(s.slot + 2);
         ImVec2 p0 = ImGui::GetCursorScreenPos();
-        bool clicked = ImGui::InvisibleButton("cell", ImVec2(cw, ch));
+        bool clicked = ImGui::InvisibleButton("cell", ImVec2(cw, ch), ImGuiButtonFlags_EnableNav);   // EnableNav: the D-pad reaches every cell, A = click
         bool focused = ImGui::IsItemFocused();
-        if (clicked || focused) {
+        const bool pad_focus = focused && ImGui::GetIO().NavVisible;   // the focus ring is for D-pad / keyboard focus only (a mouse click also sets focus)
+        if (pad_focus && g_headless) shot_trace_once("state-focus", e.key + " slot=" + std::to_string(s.slot));   // QA trace (HUB_SHOT_TRACE)
+        if (clicked) shot_trace("state-pick", e.key + " slot=" + std::to_string(s.slot));
+        /* A click or A selects (the info line, Resume from this and Delete act on the selection). Focus alone does not: walking down
+         * from the first row to Resume would otherwise select every cell on the way. */
+        if (clicked) {
             if (A.state_sel != s.slot) A.state_confirm = -2;
             A.state_sel = s.slot;
         }
@@ -158,6 +163,7 @@ void draw_state_strip(const hub::GameEntry& e) {
                         ui::ellipsize(ui::F.cap, cap, hubui::ago_text(unix_now(), s.time), cw - sp(1.5f)).c_str());
         if (sel || focused) dl->AddRect(p0, p1, ui::ACCENT, rad, 0, focused ? 2.5f : 1.5f);
         else dl->AddRect(p0, p1, ui::HAIRLINE, rad, 0, 1.f);
+        if (pad_focus) ui::focus_ring(dl, p0, p1, rad);
         if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         ImGui::PopID();
     }

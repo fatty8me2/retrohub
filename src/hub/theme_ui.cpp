@@ -84,10 +84,11 @@ void theme_settings_row() {
         Palette pal = effective(i, g_choice.cover && i == g_choice.preset);
         ImGui::PushID(i);
         ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + cw, p0.y + ch);
-        bool clicked = ImGui::InvisibleButton("theme", ImVec2(cw, ch));
+        bool clicked = ImGui::InvisibleButton("theme", ImVec2(cw, ch), ImGuiButtonFlags_EnableNav);   // EnableNav: the D-pad reaches every swatch, A = click
         bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
         if (hot) g_preview = i;
-        if (clicked) { g_choice.preset = i; persist(); }
+        if (g_headless && ImGui::IsItemFocused() && ImGui::GetIO().NavVisible) shot_trace_once("theme-focus", "preset=" + std::to_string(i));   // QA trace (HUB_SHOT_TRACE)
+        if (clicked) { g_choice.preset = i; persist(); shot_trace("theme-pick", "preset=" + std::to_string(i)); }
         bool sel = i == g_choice.preset;
         float r = sp(1.25f);
         dl->AddRectFilled(p0, p1, pal.c[S_BG], r);

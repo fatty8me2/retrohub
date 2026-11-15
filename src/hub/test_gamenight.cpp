@@ -202,6 +202,11 @@ int main() {
         CHECK(ics_fold("").size() == 2 && ics_fold(std::string(75, 'a')) == std::string(75, 'a') + "\r\n");
         CHECK(ics_fold(std::string(76, 'a')) == std::string(75, 'a') + "\r\n a\r\n");
     }
+    // "Add to calendar" folder: a "calendar" subfolder of the user data folder (it used to lose its backslash: "...\userdatacalendar")
+    CHECK(ics_dir("C:\\RetroHub\\userdata\\") == "C:\\RetroHub\\userdata\\calendar");
+    CHECK(ics_dir("C:\\RetroHub\\userdata") == "C:\\RetroHub\\userdata\\calendar");
+    CHECK(ics_dir("D:/Games/RetroHub/userdata/") == "D:/Games/RetroHub/userdata\\calendar");
+    CHECK(ics_dir("C:\\RetroHub\\userdata\\").find("userdatacalendar") == std::string::npos);
     std::printf(fails ? "FAILED (%d)\n" : "gamenight tests passed\n", fails);
     return fails ? 1 : 0;
 }
