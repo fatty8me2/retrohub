@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.45.1",
+      "date": "2026-11-14",
+      "title": "Smoother Donkey Kong Bananza",
+      "new": [
+        "Switch games have a new per-game setting, Frames ahead (smoother on some games). On Auto it is turned on for Donkey Kong Bananza, which can run at about 60 fps instead of 30; every other game keeps the emulator's own choice"
+      ],
+      "improved": [],
+      "fixed": []
+    },
+    {
       "version": "1.45.0",
       "date": "2026-11-14",
       "title": "Lichii build 177, Longshot, Hookshot fix",
