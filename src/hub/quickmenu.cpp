@@ -1571,13 +1571,21 @@ void shots_gallery(const hub::GameEntry& e) {
         ImGui::PushID((int)i);
         ImGui::BeginGroup();
         ImVec2 p = ImGui::GetCursorScreenPos();
-        bool open_it = ImGui::InvisibleButton("shot", ImVec2(tw, th));
+        bool open_it = ImGui::InvisibleButton("shot", ImVec2(tw, th), ImGuiButtonFlags_EnableNav);   // EnableNav: the D-pad reaches each picture (ImGui scrolls the strip to it), A = click
         bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+        const bool pad_focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
+        if (pad_focus && g_headless) {   // QA trace (HUB_SHOT_TRACE): which picture has the focus and whether the strip shows all of it
+            const ImVec2 c0 = ImGui::GetWindowPos(), c1(c0.x + ImGui::GetWindowWidth(), c0.y + ImGui::GetWindowHeight());
+            const bool vis = p.x >= c0.x - 0.5f && p.x + tw <= c1.x + 0.5f;
+            shot_trace_once("shots-focus", "i=" + std::to_string(i) + " sx=" + std::to_string((int)ImGui::GetScrollX()) + "/" + std::to_string((int)ImGui::GetScrollMaxX()) + " visible=" + (vis ? "1" : "0"));
+        }
+        if (open_it) shot_trace("shots-open", "i=" + std::to_string(i));
         ImDrawList* dl = ImGui::GetWindowDrawList();
         Tex* t = tex_for(path, &g_shot_budget);   // placeholder until its turn: a few decodes per frame, not 60 at once
         if (t) ui::draw_art(dl, t->t, t->w, t->h, p, ImVec2(p.x + tw, p.y + th), sp(1.f));
         else dl->AddRectFilled(p, ImVec2(p.x + tw, p.y + th), ui::PANEL2, sp(1.f));
         if (hot) dl->AddRect(p, ImVec2(p.x + tw, p.y + th), ui::ACCENT, sp(1.f), 0, 2.f);
+        if (pad_focus) ui::focus_ring(dl, p, ImVec2(p.x + tw, p.y + th), sp(1.f));
         if (s_files[i].size() > 4 && _stricmp(s_files[i].c_str() + s_files[i].size() - 4, ".mp4") == 0) {   // clip: dark disc with a play triangle
             ImVec2 c(p.x + tw * 0.5f, p.y + th * 0.5f);
             dl->AddCircleFilled(c, sp(3.f), IM_COL32(0, 0, 0, 170), 24);

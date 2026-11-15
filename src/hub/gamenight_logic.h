@@ -370,5 +370,13 @@ inline std::string ics_file_name(const Night& n) {
     return "game-night-" + t.substr(0, 8) + "-" + t.substr(9, 4) + "-" + night_hash(n).substr(0, 8) + ".ics";
 }
 
+/* Folder for "Add to calendar" files: <user data>\calendar (with or without a trailing separator on `data_dir`). Up to 1.45.x a
+ * string typo dropped the backslash, so the files went to a sibling folder named "userdatacalendar". Nothing ever reads either
+ * folder back (Open / Show in folder use the path of the file just written), so files left there are harmless and stay untouched. */
+inline std::string ics_dir(std::string data_dir) {
+    while (!data_dir.empty() && (data_dir.back() == '\\' || data_dir.back() == '/')) data_dir.pop_back();
+    return data_dir + "\\calendar";
+}
+
 }  // namespace night
 }  // namespace hubui

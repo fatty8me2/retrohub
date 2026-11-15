@@ -32,6 +32,7 @@ struct GnState {
     // "Add to calendar": the last .ics written (path empty = the last try failed; msg says why)
     std::string ics_path, ics_msg;
     bool ics_ok = true;
+    bool inner_busy = false;   // last frame: a combo list was open or an item was active inside the plan popup (B closes that first)
 };
 GnState GN;
 
@@ -89,7 +90,7 @@ void toast_sync(bool force, bool for_exit = false) {
 /* Writes the .ics to <user data>\calendar (not into a game's save-vault folder). Nothing is opened here: Open / Show in folder act on
  * click only. Headless runs use the same folder, which then sits next to the (sandbox) exe. */
 void export_ics(const Night& n) {
-    const std::string dir = no_slash(hub::data_dir()) + "\calendar";
+    const std::string dir = ics_dir(hub::data_dir());   // <user data>\calendar (see ics_dir about the old misspelt folder)
     make_dirs(dir);
     const std::string file = dir + "\\" + ics_file_name(n);
     const std::string body = make_ics(n, wall_ms());
@@ -230,7 +231,10 @@ void gn_plan_popup() {
     if (!GN.open) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(std::min(sp(52.f), ImGui::GetIO().DisplaySize.x - sp(4.f)), 0));
-    if (!ImGui::BeginPopupModal("##plan_night", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) { GN.open = false; return; }
+    if (!ImGui::BeginPopupModal("##plan_night", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) { GN.open = false; GN.inner_busy = false; return; }
+    /* B / Esc = Cancel, like every other modal. Not on the press that only closed the Game / Day list or ended a slider edit (ImGui
+     * handles that B before this code runs, so the state of the last frame tells). */
+    if (!GN.inner_busy && ui::modal_back()) { GN.open = false; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
     ImGui::PushFont(ui::F.bold);
     ImGui::TextUnformatted("Plan a session");
     ImGui::PopFont();
@@ -321,6 +325,7 @@ void gn_plan_popup() {
     }
     ImGui::SameLine();
     if (ui::button("Cancel", ImVec2(sp(10.f), sp(4.5f)))) { GN.open = false; ImGui::CloseCurrentPopup(); }
+    GN.inner_busy = ImGui::IsAnyItemActive() || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);   // a list open or a slider being edited
     ImGui::EndPopup();
 }
 
