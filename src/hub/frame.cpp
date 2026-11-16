@@ -3,6 +3,7 @@
 #include "../net/username.h"
 #include "homefun.h"
 #include "libview_ui.h"
+#include "padspots_logic.h"
 #include "ui_sound.h"
 
 /* Startup "new version available" prompt. Shown once per run when the launch
@@ -66,25 +67,69 @@ void draw_update_popup() {
 
 /* ---------- toasts ---------- */
 
+/* A toast's action ("Leave and join", "Play", "Retry") on a controller: the newest action toast shows a Y glyph beside its action once it
+ * has settled, and Y presses it, like Y on the "removed from library" Undo card (padspots_logic.h). The toast never takes the focus.
+ * draw_toasts records which toast showed the glyph; toast_pad_input() reads that at the start of the next frame, before any page or
+ * panel sees the press, so Y only ever acts on a glyph that was on screen. */
+static double g_toast_pad_t0 = -1.0;   // t0 of the toast that showed the Y glyph last frame (-1 = none)
+static hubui::padspots::ToastPadEnv toast_pad_env() {
+    hubui::padspots::ToastPadEnv e;
+    e.pad_mode = A.pad_mode;
+    e.input_blocked = !A.focused || osk::hub_input_blocked();
+    e.game_running = A.proc != nullptr;
+    e.popup_open = ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    e.text_input = ImGui::GetIO().WantTextInput;
+    e.wizard = wizard_state() >= 0;
+    return e;
+}
+static float toast_alpha(const Toast& t, double now) {
+    float in = (float)std::min(1.0, (now - t.t0) / 0.28), out = (float)std::min(1.0, (t.until - now) / 0.35);
+    in = 1.f - (1.f - in) * (1.f - in);   // ease-out
+    return std::max(0.f, std::min(1.f, in * out));
+}
+static void toast_pad_input() {
+    if (g_toast_pad_t0 < 0 || !ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) return;
+    if (ImGui::IsKeyDown(ImGuiKey_GamepadBack) || attract_woke_this_frame()) return;   // View + Y is the palette / quick menu
+    if (!hubui::padspots::toast_pad_env_ok(toast_pad_env())) return;
+    for (Toast& t : A.toasts) {
+        if (t.t0 != g_toast_pad_t0 || t.action_label.empty() || t.until <= ImGui::GetTime()) continue;
+        ImGui::SetKeyOwner(ImGuiKey_GamepadFaceUp, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);   // this Y is spent: Details, a friend's menu or a reaction must not also open
+        shot_trace("toast-pad", t.action_label);
+        auto fn = t.action;
+        t.until = 0;
+        g_toast_pad_t0 = -1.0;
+        if (fn) fn();   // may push a new toast: `t` is not touched again
+        return;
+    }
+}
+
 float draw_toasts(float bottom, float right, float top) {
     double now = ImGui::GetTime();
     A.toasts.erase(std::remove_if(A.toasts.begin(), A.toasts.end(), [&](const Toast& t) { return t.until < now; }), A.toasts.end());
     { void scan_toast_prune(); scan_toast_prune(); }   // help_ui.cpp: a scan-result toast never survives into a running game
+    int pad_i = -1;   // the toast that shows the Y glyph
+    {
+        std::vector<hubui::padspots::ToastPadIn> pin;
+        for (const Toast& t : A.toasts) pin.push_back({!t.action_label.empty(), toast_alpha(t, now) > 0.9f, now - t.t0});
+        pad_i = hubui::padspots::toast_pad_pick(pin, toast_pad_env());
+        g_toast_pad_t0 = pad_i >= 0 ? A.toasts[(size_t)pad_i].t0 : -1.0;
+        if (pad_i >= 0 && g_headless) shot_trace_once("toast-pad-hint", A.toasts[(size_t)pad_i].action_label);   // QA trace (HUB_SHOT_TRACE)
+    }
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImFont* f = ui::F.body;
     float fs = f->FontSize, y_bot = bottom, y_top = top;
     for (int i = (int)A.toasts.size() - 1; i >= 0; --i) {
         const Toast& t = A.toasts[i];
-        float in = (float)std::min(1.0, (now - t.t0) / 0.28), out = (float)std::min(1.0, (t.until - now) / 0.35);
-        in = 1.f - (1.f - in) * (1.f - in);   // ease-out
-        float a = std::max(0.f, std::min(1.f, in * out));
+        float a = toast_alpha(t, now), in = (float)std::min(1.0, (now - t.t0) / 0.28);
+        in = 1.f - (1.f - in) * (1.f - in);   // ease-out (slide)
         float maxw = std::min(sp(58.f), ds.x * 0.62f);
         std::vector<std::string> lines = ui::wrap_lines(f, fs, t.text, maxw - sp(6.f), 4);
         float tw = 0;
         for (auto& l : lines) tw = std::max(tw, f->CalcTextSizeA(fs, FLT_MAX, 0.f, l.c_str()).x);
         const bool has_act = !t.action_label.empty();
-        float w = tw + sp(6.f) + (has_act ? f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.action_label.c_str()).x + sp(4.f) : 0.f), h = lines.size() * fs * 1.25f + sp(2.5f) + (has_act ? 0.f : 0.f);
+        const float hint_w = has_act && A.pad_mode ? ui::key_hint_width(true, "Y", "", "") : 0.f;   // room for the Y glyph left of the action (pad only)
+        float w = tw + sp(6.f) + (has_act ? f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.action_label.c_str()).x + sp(4.f) + hint_w : 0.f), h = lines.size() * fs * 1.25f + sp(2.5f) + (has_act ? 0.f : 0.f);
         float x1 = right + (1.f - in) * sp(5.f);
         float y0 = t.top ? y_top : y_bot - h;   // top toasts grow downward from the top edge, the rest upward from the bottom
         ImVec2 p1(x1, y0 + h), p0(x1 - w, y0);
@@ -101,6 +146,7 @@ float draw_toasts(float bottom, float right, float top) {
             bool hov = mp.x >= b0.x && mp.x <= b1.x && mp.y >= b0.y && mp.y <= b1.y;
             dl->AddRectFilled(b0, b1, hov ? ui::scale_alpha(t.col, 0.55f) : ui::scale_alpha(t.col, 0.3f), sp(0.75f));
             dl->AddText(f, fs, ImVec2(b0.x + sp(1.f), b0.y + (b1.y - b0.y - ls.y) * 0.5f), ui::TEXT, t.action_label.c_str());
+            if (i == pad_i) ui::key_hint(dl, ImVec2(b0.x - hint_w, (b0.y + b1.y - ui::F.cap->FontSize - sp(0.75f)) * 0.5f), true, "Y", "", "");   // Y presses it
             if (hov && ImGui::IsMouseClicked(0)) { auto fn = t.action; A.toasts[i].until = 0; if (fn) fn(); return bottom - y_bot; }
         }
         if (t.top) y_top += h + sp(1.f);
@@ -304,6 +350,7 @@ void draw_frame() {
         draw_quick_menu();
         return;
     }
+    toast_pad_input();   // Y on a toast's action: before any page or panel reads that press
     if (A.page != A.last_page || A.view != A.last_view) { if (A.page != A.last_page) A.page_focus_req = true; A.last_page = A.page; A.last_view = A.view; A.nav_seed = true; }
     {   // a modal/menu just closed and the pad lost its focus: land on the page's default item again
         static bool was_popup = false;
