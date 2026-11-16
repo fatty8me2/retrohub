@@ -237,8 +237,9 @@ void draw_footer(float h) {
     }
     float hy = p.y + (h - (cf->FontSize + sp(0.75f))) * 0.5f, x = p.x;
     for (auto& hn : hints) {
-        bool is_shoulder = hn.pad[0] == 'L' || hn.pad[0] == 'R';
-        if (!pad && (is_shoulder || hn.pad[0] == 'L' || !hn.key[0])) continue;
+        /* keyboard: no shoulder / trigger hints (LB, RB, LT, RT); a stick click with a key of its own ("R3" / S) still shows its key */
+        const bool is_shoulder = (hn.pad[0] == 'L' || hn.pad[0] == 'R') && hn.pad[1] != '3';
+        if (!pad && (is_shoulder || !hn.key[0])) continue;
         float need = ui::key_hint_width(pad, hn.pad, hn.key, hn.label);
         if (x + need > p.x + w - sw - sp(2.f)) break;
         x += ui::key_hint(dl, ImVec2(x, hy), pad, hn.pad, hn.key, hn.label) + sp(3.f);

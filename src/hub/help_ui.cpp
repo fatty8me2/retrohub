@@ -93,22 +93,30 @@ const std::string& scan_last_line() { return g_scan_last_line; }
 double scan_elapsed_s() { return A.scanning ? std::max(0.0, ImGui::GetTime() - g_scan_started) : 0.0; }
 std::string scan_home_dir() { return home_dir(); }
 
-void finish_setup_card() {
-    static bool dismissed = false;   // this run only: it returns next time while steps stay open
-    if (dismissed || wizard_state() != -1) return;
+namespace {
+bool g_setup_dismissed = false;   // Not now: this run only (the card returns next time while steps stay open)
+}  // namespace
+
+std::vector<std::string> finish_setup_steps(bool empty_card_showing) {
+    if (g_setup_dismissed || wizard_state() != -1) return {};
     hubhelp::SetupInputs in;
     in.setup_done = A.st.setup_done;
     in.have_games = !A.lib.empty() || !A.st.rom_folders.empty();
     in.username_claimed = A.st.username_claimed;
     in.net_probe_done = A.st.net_probe_done;
     in.have_pad = !A.pads.empty();
-    {   // Home's "Add your game folders" card is showing: it already asks for games, so this card does not
-        bool own_empty = true;
-        for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey) { own_empty = false; break; }
-        in.empty_card_showing = own_empty && !A.scanning && A.view != LibView::All;   // exactly when page_library draws the add-folders card
-    }
-    std::vector<std::string> steps = hubhelp::open_steps(in);
+    in.empty_card_showing = empty_card_showing;
+    return hubhelp::open_steps(in);
+}
+
+void finish_setup_dismiss() { g_setup_dismissed = true; }
+
+void finish_setup_card() {
+    bool own_empty = true;   // Home's "Add your game folders" card is showing: it already asks for games, so this card does not
+    for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey) { own_empty = false; break; }
+    std::vector<std::string> steps = finish_setup_steps(own_empty && !A.scanning && A.view != LibView::All);   // exactly when page_library draws the add-folders card
     if (steps.empty()) return;
+    bool& dismissed = g_setup_dismissed;
     if (hubhelp::finish_card_compact(ImGui::GetIO().DisplaySize.y, ui::sp(1.f) / 8.f)) {   // a short window: one line, never cut off by the bottom bar
         begin_panel("finish_setup", ImVec2(0, 0));
         const float bw1 = ui::sp(18.f), bw2 = ui::sp(10.f), gap = ui::sp(1.f);

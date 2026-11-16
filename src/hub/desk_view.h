@@ -20,7 +20,8 @@ void desk_set_list_width_choice(int choice);
  * desk_card_done), only once setup is finished and never while a game or session runs. Try it switches at once; the desk then shows
  * "You can switch back in Settings" once. */
 void desk_try_card();
-void add_folders_card();                       // page_library.cpp: "Add your game folders" while only the bundled game is here (both layouts)
+void add_folders_card();                       // page_library.cpp: Home's "Add your game folders" while only the bundled game is here (the desk
+                                               // shows the same request as a slim banner above its pane)
 
 /* The selected game's page (game_page.h, the same layout as the full-window page, without Close), drawn inside the pane window in the
  * rectangle r (screen coordinates). Another game picked in the list updates it without taking the focus from the list; it keeps the tab

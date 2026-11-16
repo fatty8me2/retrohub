@@ -35,3 +35,7 @@ void palette_set_hotkey_hint(bool on);
 /* help_ui.cpp */
 void help_tab_ui();                      // Settings > Help: FAQ
 void finish_setup_card();                // Home: "Finish setup" while steps are open
+/* The setup steps the card lists ("Pick a username", ...): empty while the setup tour is open or after Not now (this run only). The
+ * Library desk shows them as a slim banner above its pane (desk_view.cpp); Not now there hides the Home card too, and the other way round. */
+std::vector<std::string> finish_setup_steps(bool empty_card_showing);
+void finish_setup_dismiss();

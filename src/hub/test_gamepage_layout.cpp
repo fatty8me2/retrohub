@@ -137,6 +137,21 @@ int main() {
     CHECK(ov.close_button && ov.footer_hints && !ov.keep_tab);
     CHECK(!pa.close_button && !pa.footer_hints && pa.keep_tab);
 
+    /* the desk pane: room above the header for the focused Play button's glow (2.5 units) and a little air, whatever the padding */
+    for (float u : {8.f, 10.f, 12.f}) {
+        for (Tier tr : {Tier::Full, Tier::Compact, Tier::Tight, Tier::Mini}) {
+            float pad = -1.f, gap = -1.f;
+            sheet_spacing(tr, u, &pad, &gap);
+            for (float pd : {pad, 2.f * u, 3.f * u}) {   // the tier's padding, or the sheet's own (2 units on a small pane, else 3)
+                if (pd < 0.f) continue;
+                CHECK(pd + pane_header_inset(pd, u) >= 2.5f * u + 0.01f);   // the glow fits, with air
+                CHECK(near(pd + pane_header_inset(pd, u), std::max(pd, 3.f * u)));
+            }
+        }
+    }
+    CHECK(near(pane_header_inset(18.f, 12.f), 18.f));   // Mini at 150 %: 1.5 units of padding, 1.5 more above the header
+    CHECK(near(pane_header_inset(24.f, 8.f), 0.f));     // 3 units: room enough, nothing changes
+
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("hub_gamepage_test ok\n");
     return 0;

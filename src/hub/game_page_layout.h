@@ -70,6 +70,12 @@ inline void sheet_spacing(Tier t, float u, float* pad, float* body_gap) {
 
 inline float title_min_w(float u) { return 28.f * u; }   // the title column never gets narrower than this beside the buttons
 
+/* The desk pane cuts off whatever is drawn past its edge. A focused Play button glows 2.5 units past its edge (ui_kit.cpp glow), so in the
+ * pane the header starts lower when the sheet's padding leaves less than that plus half a unit of air above it (Tight 2, Mini 1.5, a small
+ * pane 2 units). The full-window page keeps its layout (it is the whole window). */
+constexpr float kPlayGlowUnits = 2.5f, kGlowAirUnits = 0.5f;
+inline float pane_header_inset(float pad, float u) { return std::max(0.f, (kPlayGlowUnits + kGlowAirUnits) * u - pad); }
+
 inline HeaderPlan plan_header(const HeaderIn& in) {
     const float u = in.u;
     HeaderPlan p;

@@ -100,6 +100,8 @@ struct SheetResult {
 /* Draw a page sheet into the rect at `pos` (screen pixels) of `size`. See the guide above. For the whole hub window pass
  * ImVec2(0, 0) and ImGui::GetIO().DisplaySize. */
 SheetResult sheet(const char* id, SheetHost host, ImVec2 pos, ImVec2 size, bool* open, const SheetParts& parts, const SheetOpts& opts = SheetOpts());
+/* The inner padding sheet() uses for that size and opts (opts.pad, or its own choice when that is -1). */
+float sheet_pad(ImVec2 size, const SheetOpts& opts);
 
 enum class DialogSize { Small, Medium, Large };   // about 416 / 528 / 704 px at 100 % UI size
 
