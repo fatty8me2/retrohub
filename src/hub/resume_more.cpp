@@ -3,6 +3,7 @@
 #include "wave3_hooks.h"
 #include "resume_logic.h"
 #include "resume_more.h"
+#include "ui_sheet.h"
 #include <atomic>
 #include <fstream>
 #include <map>
@@ -243,7 +244,7 @@ void resume_choice_draw() {
     ImGui::TextWrapped("%s", G.title.empty() ? "This game" : G.title.c_str());
     ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));
     text_wrapped_disabled("Your newest save is newer than this PC's resume point. Which one do you want?");
-    ImGui::Dummy(ImVec2(0, ui::sp(1.5f)));
+    ui::dialog_buttons();
     const ImVec2 bs(ImGui::GetContentRegionAvail().x, ui::sp(4.f));
     if (!G.seen) { ImGui::SetKeyboardFocusHere(0); G.seen = true; }   // a pad lands on the default
     if (button(newest_label(G.key).c_str(), bs, true, true)) finish_choice(ResumeChoice::Newest);
@@ -252,7 +253,7 @@ void resume_choice_draw() {
     ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));
     if (button("Cancel", ImVec2(ui::sp(14.f), ui::sp(3.5f)))) G.open = false;
     if (!G.open) { ImGui::CloseCurrentPopup(); G.seen = false; }
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 void resume_choice_shot() {

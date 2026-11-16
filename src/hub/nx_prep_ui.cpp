@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include "nx_runner.h"
+#include "ui_sheet.h"
 
 /* ---------- Fritchii: the one-time copy job that runs between Play and the game starting ----------
  * Fritchii has its own user\ folder, so before it starts RetroHub COPIES (never links) what Lichii already holds:
@@ -76,6 +77,16 @@ void poll_nxprep() {
 }
 
 void draw_nxprep_dialog() {
+    static bool shot_tried = false;   // screenshot aid HUB_SHOT_NXPREP=1: the copy dialog frozen half-way (no thread, nothing copied)
+    if (!shot_tried && g_headless) {
+        shot_tried = true;
+        if (std::getenv("HUB_SHOT_NXPREP")) {
+            PREP.total = 1400ull << 20;
+            PREP.got = 600ull << 20;
+            { std::lock_guard<std::mutex> lk(PREP.mu); PREP.status = "Copying Lichii's shader cache (one time, this can take a minute)..."; }
+            PREP.running = true;
+        }
+    }
     if (!PREP.running) return;
     bool open = false;
     emu_modal_begin("Getting Fritchii ready", &open);
@@ -90,7 +101,7 @@ void draw_nxprep_dialog() {
         ImGui::ProgressBar((float)((double)got / (double)tot), ImVec2(-1, 24 * S), ov);
     }
     text_wrapped_disabled("Fritchii keeps its own copy, so Lichii is not changed. Your game starts as soon as this is done.");
-    ImGui::Dummy(ImVec2(0, 6 * S));
+    ui::dialog_buttons();
     if (button("Cancel", ImVec2(160 * S, 44 * S)) || ui::modal_back()) PREP.cancel = true;
-    ImGui::EndPopup();
+    ui::dialog_end();
 }

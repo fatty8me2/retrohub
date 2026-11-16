@@ -4,6 +4,7 @@
 #include "lichii.h"
 #include "nx_runner.h"
 #include "option_rows.h"
+#include "ui_sheet.h"
 
 #include <algorithm>
 
@@ -150,15 +151,15 @@ void draw_switch_dialogs() {
     ImGui::Dummy(ImVec2(0, 4 * S));
     if (!ASK.focused) { ImGui::SetKeyboardFocusHere(0); ASK.focused = true; }   // a pad lands on the first import button
     import_buttons(LOOK, "ask");
-    ImGui::Dummy(ImVec2(0, 8 * S));
-    if (g && keys_ok && LOOK.st.firmware) { if (button("Play", ImVec2(160 * S, 44 * S), true, true)) start_game(); ImGui::SameLine(); }
+    ui::dialog_buttons();
+    if (g && keys_ok && LOOK.st.firmware) { if (button("Play", ImVec2(160 * S, 44 * S), true, true)) start_game(); ui::dialog_same_line(140 * S); }
     else if (g && keys_ok) {
         if (button("Play without firmware", ImVec2(240 * S, 44 * S))) { g_skip_firmware = true; start_game(); }
-        ImGui::SameLine();
+        ui::dialog_same_line(140 * S);
     }
     if (button(g ? "Cancel" : "Close", ImVec2(140 * S, 44 * S))) ASK.open = false;
     if (!ASK.open) { ImGui::CloseCurrentPopup(); ASK.focused = false; }
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 /* Settings > Video & Games: Fritchii (opt-in) and which program Switch games play with. */

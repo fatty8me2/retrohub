@@ -87,6 +87,14 @@ int main() {
         CHECK(near(dialog_max_h(720.f), 648.f));
         CHECK(near(dialog_body_max(648.f, 24.f, 40.f, 50.f, 20.f, 60.f), 490.f));
         CHECK(near(dialog_body_max(200.f, 24.f, 80.f, 90.f, 20.f, 60.f), 60.f));   // never below the minimum
+        /* wrapping button rows (dialog_same_line) */
+        CHECK(fits_on_line(100.f, 8.f, 200.f, 308.f));                     // exactly fits: same line
+        CHECK(fits_on_line(100.f, 8.f, 200.4f, 308.f));                    // sub-pixel rounding still fits
+        CHECK(!fits_on_line(100.f, 8.f, 201.f, 308.f));                    // one pixel too wide: next line
+        CHECK(!fits_on_line(400.f, 8.f, 10.f, 300.f));                     // already past the edge
+        float x = 20.f; int rows = 1;                                       // five 150 px buttons in a 500 px row: 3 + 2
+        for (int i = 0; i < 5; ++i) { if (i && !fits_on_line(x, 8.f, 150.f, 520.f)) { ++rows; x = 20.f; } x += (x > 20.f ? 8.f : 0.f) + 150.f; }
+        CHECK(rows == 2);
     }
 
     /* ---- option columns ---- */

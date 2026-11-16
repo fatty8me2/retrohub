@@ -1,5 +1,6 @@
 ﻿#include "app.h"
 #include "findgames.h"
+#include "ui_sheet.h"
 
 /* ---------- "Find my games": first-run folder finder (scan on a worker thread, then a checklist) ----------
  * Shown once when rom_folders is empty and the player has not dismissed it; re-opened from Settings > ROM folders.
@@ -85,56 +86,52 @@ void find_games_open() {
     FG.run.start([] { FG.found = hub::fg::scan_roots(hub::fg::default_roots(), &FG.run.ctl); });
 }
 
+/* A ui::dialog (ui_sheet.h): the folder list is the dialog's scrolling middle (it used to be a nested list with its own scrollbar) and the
+ * Add / Add another folder / Skip row stays put. Up while FG.st says so (open = nullptr); B stops a scan, or closes the results. */
 static void find_games_modal() {
-    ImGui::OpenPopup("Find my games");
-    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(c, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(std::min(sp(80.f), ImGui::GetIO().DisplaySize.x * 0.94f), 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
-    bool open = ImGui::BeginPopupModal("Find my games", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
-    ImGui::PopStyleVar(2);
-    if (!open) return;
+    ui::DialogOpts o;
+    o.back_closes = false;
+    o.keep_id = true;
+    if (!ui::dialog_begin("Find my games", "Find my games", nullptr, ui::DialogSize::Large, o)) return;
     if (ui::modal_back()) {
         if (FG.st == FindGames::Scanning) FG.run.ctl.cancel = true;
-        else { close_flow(true); ImGui::EndPopup(); return; }
+        else { close_flow(true); ImGui::CloseCurrentPopup(); ui::dialog_end(); return; }
     }
 
-    ImGui::PushFont(ui::F.title);
-    ImGui::TextUnformatted("Find my games");
-    ImGui::PopFont();
     const char* skip_label = FG.first_run ? "Skip" : "Close";
     const ImVec2 bsz(sp(22.f), sp(5.5f));
 
     if (FG.st == FindGames::Scanning) {
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
         text_wrapped_disabled("Looking through the usual places on this PC (Desktop, Documents, Downloads, Games and ROMs folders, "
                               "your emulators' game folders). Only folder listings are read; nothing is opened, moved or uploaded.");
         ImGui::Dummy(ImVec2(0, sp(1.5f)));
         ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(), ImVec2(-1, sp(2.f)), "");
-        ImGui::Text("%d folders checked, %d game files found so far", FG.run.ctl.dirs.load(), FG.run.ctl.games.load());
+        ImGui::TextWrapped("%d folders checked, %d game files found so far", FG.run.ctl.dirs.load(), FG.run.ctl.games.load());
         std::string cur;
         { std::lock_guard<std::mutex> lk(FG.run.ctl.mu); cur = FG.run.ctl.current; }
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+        ImGui::PushTextWrapPos(0.f);
         ImGui::TextDisabled("%s", cur.size() > 90 ? ("..." + cur.substr(cur.size() - 87)).c_str() : cur.c_str());
         ImGui::PopTextWrapPos();
-        ImGui::Dummy(ImVec2(0, sp(2.f)));
+        ui::dialog_buttons();
         if (button("Stop and show what was found", ImVec2(sp(30.f), bsz.y), true)) FG.run.ctl.cancel = true;
-        ImGui::SameLine();
-        if (button(skip_label, bsz)) close_flow(true);
+        ui::dialog_same_line(bsz.x);
+        if (button(skip_label, bsz)) { close_flow(true); ImGui::CloseCurrentPopup(); }
     } else {
         const bool any = !FG.found.empty() || !FG.extra.empty();
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
         if (!FG.found.empty())
             text_wrapped_disabled("These folders hold game files. Tick the ones to add; RetroHub shows everything inside them. "
                                   "Your files stay where they are.");
         else
             text_wrapped_disabled("No game files turned up in the usual places. If your games live somewhere else, add that folder yourself.");
         ImGui::Dummy(ImVec2(0, sp(1.f)));
-        if (any) {
-            float rows = (float)(FG.found.size() + FG.extra.size());
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::PANEL);
-            ImGui::BeginChild("fg_list", ImVec2(0, std::min(sp(56.f), rows * sp(14.f) + sp(2.f))), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+        if (any) {   // the rows on a panel, drawn behind them once their height is known
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->ChannelsSplit(2);
+            dl->ChannelsSetCurrent(1);
+            const ImVec2 lp0 = ImGui::GetCursorScreenPos();
+            const float lw = ImGui::GetContentRegionAvail().x;
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            ImGui::Indent(sp(1.f));
             for (size_t i = 0; i < FG.found.size(); ++i) {
                 ImGui::PushID((int)i);
                 const bool have = already_added(FG.found[i].path);
@@ -175,15 +172,20 @@ static void find_games_modal() {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", FG.extra[i].c_str());
                 ImGui::PopID();
             }
-            ImGui::EndChild();
-            ImGui::PopStyleColor();
-            ImGui::Dummy(ImVec2(0, sp(1.f)));
+            ImGui::Unindent(sp(1.f));
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            const ImVec2 lp1(lp0.x + lw, ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y);
+            dl->ChannelsSetCurrent(0);
+            dl->AddRectFilled(lp0, lp1, ui::PANEL, sp(1.f));
+            dl->AddRect(lp0, lp1, ui::HAIRLINE, sp(1.f), 0, 1.f);
+            dl->ChannelsMerge();
         }
         int n_ticked = 0;
         for (size_t i = 0; i < FG.found.size(); ++i) n_ticked += FG.tick[i] && !already_added(FG.found[i].path);
         for (size_t i = 0; i < FG.extra.size(); ++i) n_ticked += FG.extra_tick[i];
         char lbl[48];
         std::snprintf(lbl, sizeof lbl, n_ticked == 1 ? "Add %d folder" : "Add %d folders", n_ticked);
+        ui::dialog_buttons();
         if (any && button(lbl, bsz, true, n_ticked > 0, ui::Icon::Folder)) {
             int added = 0;
             auto add = [&](const std::string& p) {
@@ -193,16 +195,17 @@ static void find_games_modal() {
             for (size_t i = 0; i < FG.extra.size(); ++i) if (FG.extra_tick[i]) add(FG.extra[i]);
             if (added) { mark_dirty(); start_scan(true); set_toast("Scanning your games..."); }
             close_flow(true);
+            ImGui::CloseCurrentPopup();
         }
-        if (any) ImGui::SameLine();
+        if (any) ui::dialog_same_line(sp(26.f));
         {
             std::string p = osk::folder("fg_extra", button("Add another folder...", ImVec2(sp(26.f), bsz.y), !any, true, ui::Icon::Plus));
             if (!p.empty()) { FG.extra.push_back(p); FG.extra_tick.push_back(1); }
         }
-        ImGui::SameLine();
-        if (button(skip_label, ImVec2(sp(14.f), bsz.y))) close_flow(true);
+        ui::dialog_same_line(sp(14.f));
+        if (button(skip_label, ImVec2(sp(14.f), bsz.y))) { close_flow(true); ImGui::CloseCurrentPopup(); }
     }
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 void draw_find_games() {

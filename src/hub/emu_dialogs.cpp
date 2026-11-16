@@ -1,5 +1,6 @@
 #include "app.h"
 #include "emu_error_text.h"
+#include "ui_sheet.h"
 
 /* ---------- 3DS / Wii U emulator download + unzip dialogs ---------- */
 
@@ -46,15 +47,16 @@ void poll_emulators() {
     }
 }
 
+/* The frame of the emulator / launch prompts (download, unpack, BIOS, keys, which save, ...): a ui::dialog (ui_sheet.h) that is up while the
+ * caller calls this, with the popup name kept as it was (QA scripts match it) and its visible part as the pinned title. When *open_flag is
+ * true the caller draws the middle, calls ui::dialog_buttons() before its buttons and ui::dialog_end() instead of ImGui::EndPopup().
+ * B / Esc stay the caller's (ui::modal_back()), so a dialog that must not close on B (a running install) still does not. */
 void emu_modal_begin(const char* name, bool* open_flag) {
-    ImGui::OpenPopup(name);
-    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(c, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(std::min(sp(66.f), ImGui::GetIO().DisplaySize.x * 0.92f), 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
-    *open_flag = ImGui::BeginPopupModal(name, nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-    ImGui::PopStyleVar(2);
+    const std::string title(name, ImGui::FindRenderedTextEnd(name));
+    ui::DialogOpts o;
+    o.back_closes = false;
+    o.keep_id = true;
+    *open_flag = ui::dialog_begin(name, title.c_str(), nullptr, ui::DialogSize::Medium, o);
 }
 
 void draw_emulator_dialogs() {
@@ -70,25 +72,25 @@ void draw_emulator_dialogs() {
                 if (back) EMU.state = hubemu::Installer::Idle;
                 if (hubemu::release_is_placeholder(EMU.kind)) {   // Fritchii before its release is pinned: nothing to download yet
                     ImGui::TextWrapped("%s isn't available yet. To play now, pick Lichii under Plays with on the game's Settings tab, or in Settings > Video & Games.", nm.c_str());
-                    ImGui::Dummy(ImVec2(0, 8 * S));
+                    ui::dialog_buttons();
                     if (button("Close", ImVec2(160 * S, 44 * S), true)) EMU.state = hubemu::Installer::Idle;
                     ImGui::SetItemDefaultFocus();
                 } else if (EMU.updating && EMU.kind == hubemu::Kind::Fritchii && !hubemu::update_leftovers(EMU.kind, hubemu::find(EMU.kind, "", "").dir).empty()) {   // its own updater left a half-finished update: Fritchii would open an "Interrupted Update" box over the game
                     ImGui::TextWrapped("Fritchii was left half-updated by its own updater. Reinstall the tested version (%s, about %d MB, the copy built from Frizti's published source) so it starts cleanly? "
                                        "Your keys, firmware, saves and settings are kept.", rel.version, (int)(rel.size / 1048576));
-                    ImGui::Dummy(ImVec2(0, 8 * S));
+                    ui::dialog_buttons();
                     if (button("Reinstall", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());
                     ImGui::SetItemDefaultFocus();
-                    ImGui::SameLine();
+                    ui::dialog_same_line(160 * S);
                     if (button("Cancel", ImVec2(160 * S, 44 * S))) { EMU.state = hubemu::Installer::Idle; EMU.updating = false; }
                 } else if (EMU.updating) {
                     ImGui::TextWrapped("%s has a newer version (%s, about %d MB download%s). Update it now? "
                                        "Your keys, firmware, saves and settings are kept. If the update fails, the current version stays.",
                                        nm.c_str(), rel.version, (int)(rel.size / 1048576), EMU.kind == hubemu::Kind::Fritchii ? ", a copy built from Frizti's published source" : " from its official release");
-                    ImGui::Dummy(ImVec2(0, 8 * S));
+                    ui::dialog_buttons();
                     if (button("Update", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());
                     ImGui::SetItemDefaultFocus();
-                    ImGui::SameLine();
+                    ui::dialog_same_line(160 * S);
                     if (button("Not now", ImVec2(160 * S, 44 * S))) {   // play with what is installed
                         EMU_UPDATE_SKIP[(int)EMU.kind] = true;
                         EMU.state = hubemu::Installer::Idle;
@@ -104,13 +106,13 @@ void draw_emulator_dialogs() {
                 ImGui::TextWrapped("%s games need the %s emulator (about %d MB download from its official release, %s). "
                                    "It is kept inside RetroHub's data folder. Download now?",
                                    EMU.kind == hubemu::Kind::Azahar ? "Nintendo 3DS" : EMU.kind == hubemu::Kind::Dolphin ? "GameCube" : EMU.kind == hubemu::Kind::Pcsx2 ? "PlayStation 2" : EMU.kind == hubemu::Kind::Ppsspp ? "PSP" : EMU.kind == hubemu::Kind::Lichii ? "Switch / Switch 2" : "Wii U", nm.c_str(), (int)(rel.size / 1048576), rel.license);
-                ImGui::Dummy(ImVec2(0, 8 * S));
+                ui::dialog_buttons();
                 if (button("Download", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());
                 ImGui::SetItemDefaultFocus();
-                ImGui::SameLine();
+                ui::dialog_same_line(160 * S);
                 if (button("Cancel", ImVec2(160 * S, 44 * S))) EMU.state = hubemu::Installer::Idle;
                 }
-            } else if (EMU.state == hubemu::Installer::Working) {
+            } else if (EMU.state == hubemu::Installer::Working) {   // no Cancel: the install job has no way to stop cleanly mid-way, and B does nothing here
                 std::string phases[] = {(EMU.updating ? "Updating " : "Downloading ") + nm + "...", "Checking the download...", "Unpacking...", "Installing..."};
                 ImGui::TextUnformatted(phases[std::min(3, (int)EMU.phase)].c_str());
                 uint64_t got = EMU.got, tot = EMU.total;
@@ -126,14 +128,14 @@ void draw_emulator_dialogs() {
                 ImGui::Dummy(ImVec2(0, 2 * S));
                 ImGui::TextWrapped("%s", hubemu::plain_install_failure(err, nm, EMU.updating).c_str());
                 if (!err.empty()) text_wrapped_disabled("Details: " + err);
-                ImGui::Dummy(ImVec2(0, 8 * S));
+                ui::dialog_buttons();
                 if (button("Try again", ImVec2(160 * S, 44 * S), true)) EMU.start(EMU.kind, hubemu::managed_root());   // the same install job, only when the player asks
                 ImGui::SetItemDefaultFocus();
-                ImGui::SameLine();
+                ui::dialog_same_line(160 * S);
                 if (button("Close", ImVec2(160 * S, 44 * S))) EMU.state = hubemu::Installer::Idle;
             }
             if (EMU.state == hubemu::Installer::Idle) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
+            ui::dialog_end();
         }
     }
     if (UNZ.state != UnzipJob::Idle) {
@@ -151,10 +153,10 @@ void draw_emulator_dialogs() {
                 ImGui::Dummy(ImVec2(0, 2 * S));
                 text_wrapped_disabled("The unpacked image goes to " + hub::extract_3ds_dir(*g) + " and needs the same amount of free disk space. "
                                       "Your archive is left untouched. You can also unpack it yourself into a ROM folder.");
-                ImGui::Dummy(ImVec2(0, 8 * S));
+                ui::dialog_buttons();
                 if (button("Unpack and play", ImVec2(200 * S, 44 * S), true)) start_unzip(*g);
                 ImGui::SetItemDefaultFocus();
-                ImGui::SameLine();
+                ui::dialog_same_line(160 * S);
                 if (button("Cancel", ImVec2(160 * S, 44 * S))) UNZ.state = UnzipJob::Idle;
             } else if (UNZ.state == UnzipJob::Working) {
                 ImGui::TextWrapped("Preparing %s (one time)...", g ? g->title.c_str() : "the game");
@@ -163,18 +165,18 @@ void draw_emulator_dialogs() {
                 char ov[48];
                 std::snprintf(ov, sizeof ov, "%.2f / %.2f GB", got / 1073741824.0, tot / 1073741824.0);
                 ImGui::ProgressBar(tot ? (float)((double)got / (double)tot) : 0.f, ImVec2(-1, 24 * S), ov);
-                ImGui::Dummy(ImVec2(0, 6 * S));
+                ui::dialog_buttons();
                 if (button("Cancel", ImVec2(160 * S, 44 * S))) UNZ.cancel = true;
             } else {
                 std::string err;
                 { std::lock_guard<std::mutex> lk(UNZ.mu); err = UNZ.error; }
                 ImGui::TextWrapped("Could not unpack the game: %s", err.c_str());
-                ImGui::Dummy(ImVec2(0, 8 * S));
+                ui::dialog_buttons();
                 if (button("Close", ImVec2(160 * S, 44 * S), true)) UNZ.state = UnzipJob::Idle;
                 ImGui::SetItemDefaultFocus();
             }
             if (UNZ.state == UnzipJob::Idle) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
+            ui::dialog_end();
         }
     }
 }

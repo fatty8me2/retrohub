@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include "hookshot.h"
+#include "ui_sheet.h"
 
 /* The small prompt before Hookshot starts when Windows has no AV1 video decoder. Hookshot would open a top-most message box over the game
  * for that, and nothing may pop up over a running game, so RetroHub asks first, in its own window (docs/EMULATORS.md, Hookshot). */
@@ -49,7 +50,7 @@ static void draw_missing_dialog() {
     ImGui::TextWrapped("This game is set to play with %s, but %s is not ready here (%s).", MISS.name.c_str(), MISS.name.c_str(), MISS.why.c_str());
     ImGui::Dummy(ImVec2(0, 2 * S));
     text_wrapped_disabled("Build it from the game's page (About, at the bottom), or play with Lichii this time. To change it for good, use Plays with on the Settings tab of the game's page.");
-    ImGui::Dummy(ImVec2(0, 8 * S));
+    ui::dialog_buttons();
     if (!MISS.focused) { ImGui::SetKeyboardFocusHere(0); MISS.focused = true; }   // a pad lands on the first button
     if (button("Open the game's page", ImVec2(300 * S, 44 * S), true)) {
         MISS.open = false;
@@ -58,7 +59,7 @@ static void draw_missing_dialog() {
     if (button("Play with Lichii this time", ImVec2(300 * S, 44 * S))) { MISS.open = false; play_with_lichii_once(MISS.key); }
     if (button("Cancel", ImVec2(300 * S, 44 * S))) MISS.open = false;
     if (!MISS.open) { ImGui::CloseCurrentPopup(); MISS.focused = false; }
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 /* The cloud check before a launch was cancelled (or timed out): that launch is off, so its "Lichii this time" must not reach a later Play. */
@@ -88,7 +89,7 @@ void draw_hookshot_run_dialogs() {
     ImGui::TextWrapped("Ocarina of Time's movies need Microsoft's free AV1 Video Extension.");
     ImGui::Dummy(ImVec2(0, 2 * S));
     text_wrapped_disabled("Get it from the Microsoft Store, then press Play again. Or play with Lichii this time.");
-    ImGui::Dummy(ImVec2(0, 8 * S));
+    ui::dialog_buttons();
     if (!ASK.focused) { ImGui::SetKeyboardFocusHere(0); ASK.focused = true; }   // a pad lands on the first button
     if (button("Get it from the Microsoft Store", ImVec2(300 * S, 44 * S), true)) {
         if (!g_headless) ShellExecuteW(nullptr, L"open", L"ms-windows-store://pdp/?ProductId=9MVZQVXJBQ9V", nullptr, nullptr, SW_SHOWNORMAL);
@@ -97,5 +98,5 @@ void draw_hookshot_run_dialogs() {
     if (button("Play with Lichii this time", ImVec2(300 * S, 44 * S))) { ASK.open = false; play_with_lichii_once(ASK.key); }
     if (button("Cancel", ImVec2(300 * S, 44 * S))) ASK.open = false;
     if (!ASK.open) { ImGui::CloseCurrentPopup(); ASK.focused = false; }
-    ImGui::EndPopup();
+    ui::dialog_end();
 }

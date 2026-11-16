@@ -39,6 +39,20 @@
  *       }
  *
  * Call dialog_begin every frame while *open may be true, from the window it belongs to (inside a sheet callback for a sheet's dialog).
+ * open = nullptr: the dialog is up whenever you call dialog_begin (your own state decides, like the old "OpenPopup every frame" code).
+ * Close it with ImGui::CloseCurrentPopup() before dialog_end(), then stop calling it. B / Esc are yours then: read ui::modal_back().
+ *
+ * CONVERTING AN OLD BeginPopupModal DIALOG (the recipe; batch 1 = emu_dialogs, add / find games, hacks, cloud):
+ *   1. OpenPopup + SetNextWindow* + PushStyleVar + BeginPopupModal -> dialog_begin(<the SAME popup name>, <title>, ...) with
+ *      opts.keep_id = true (QA scripts match window names, other code calls IsPopupOpen(name)). ImGui's title-bar text or the old big
+ *      heading becomes `title`; pick Small / Medium / Large nearest the old width.
+ *   2. "Open while my state says so" code: open = nullptr, keep the state machine and its CloseCurrentPopup(). "OpenPopup once" code: a bool.
+ *   3. Keep each B / Esc rule as it was: back_closes = false and the dialog's own ui::modal_back() where B is conditional (busy, no Cancel).
+ *   4. Buttons after dialog_buttons(), in the same order; drop the Dummy spacer above them; SameLine between buttons -> dialog_same_line(w).
+ *   5. A nested BeginChild list becomes plain rows in the middle (one scrollbar). Keep the item order: the default focus is the first item
+ *      (or SetItemDefaultFocus / SetKeyboardFocusHere) and works the same from the middle or the button row.
+ *   Pitfalls: every early return must call dialog_end(), never ImGui::EndPopup(); a PushTextWrapPos(x) sized for the old window wraps
+ *   wrongly in the middle (use TextWrapped / wrap pos 0); a fixed-width button wider than the dialog still clips (size it from the row).
  *
  * ---- FOOTER HINTS ------------------------------------------------------------------------------------------------------------
  * An Overlay sheet covers the hub's own footer: put the controller / keyboard hints in the sheet footer with ui::hint_bar().
@@ -91,14 +105,19 @@ enum class DialogSize { Small, Medium, Large };   // about 416 / 528 / 704 px at
 struct DialogOpts {
     const char* subtitle = nullptr; // muted line under the title
     bool back_closes = true;        // B / Esc set *open = false
-    bool close_x = false;           // a small close button at the right of the title row
+    bool close_x = false;           // a small close button at the right of the title row (needs `open`)
+    bool keep_id = false;           // the ImGui popup name is exactly `id` (no suffix): a converted dialog keeps the name others look up
 };
 
-/* Begin a dialog. Shows it while *open is true (opens it the first time), closes it when *open turns false. Returns true when it is
- * on screen: then draw the middle, call dialog_buttons(), draw the buttons and call dialog_end(). */
+/* Begin a dialog. Shows it while *open is true (opens it the first time), closes it when *open turns false; open = nullptr: see above.
+ * Returns true when it is on screen: then draw the middle, call dialog_buttons(), draw the buttons and call dialog_end(). */
 bool dialog_begin(const char* id, const char* title, bool* open, DialogSize size = DialogSize::Medium, const DialogOpts& opts = DialogOpts());
 void dialog_buttons();   // ends the scrolling middle, starts the pinned button row (optional: dialog_end() does it if you did not)
 void dialog_end();
+/* Between buttons (button row or middle): the next item, `next_w` wide, goes on this line when it fits, else it starts a new line, so a
+ * row wraps instead of running past the edge at a big UI size. gap < 0 = the style's item spacing. */
+void dialog_same_line(float next_w, float gap = -1.f);
+float dialog_button_w(const char* label, bool icon = false);   // the width ui::button() gives `label` with size.x = 0
 
 /* One line of controller / keyboard hints ("(A) Select  (B) Close"). Pad glyphs while a pad is in use, key caps otherwise; a hint
  * with no key is shown only with a pad. Stops at the right edge rather than overflow. */

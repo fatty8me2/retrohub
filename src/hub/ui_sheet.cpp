@@ -184,9 +184,12 @@ bool dialog_begin(const char* id, const char* title, bool* open, DialogSize size
     ImGuiIO& io = ImGui::GetIO();
     const float w = hubui::kit::dialog_width((int)size, sp(1.f), io.DisplaySize.x), max_h = hubui::kit::dialog_max_h(io.DisplaySize.y);
     const float pad = io.DisplaySize.y < hubui::lc::kShortWindowPx ? sp(2.f) : sp(3.f);   // like the game page modal on a short window
-    const std::string name = std::string(id) + "##uidlg";
+    const std::string name = opts.keep_id ? std::string(id) : std::string(id) + "##uidlg";
     const ImGuiID mk = ImGui::GetID(name.c_str());
     ModalMemo& m = g_memo[mk];
+    bool always = true;
+    bool* op = open ? open : &always;
+    if (!open && m.was_open && !ImGui::IsPopupOpen(mk, ImGuiPopupFlags_None)) m.was_open = false;   // the caller closed it: show it again at once
     auto prep = [&] {
         ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(w, 0.f));
@@ -196,7 +199,7 @@ bool dialog_begin(const char* id, const char* title, bool* open, DialogSize size
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
     const ImGuiWindowFlags wf = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-    const bool b = modal_gate(name.c_str(), open, wf, m, prep);
+    const bool b = modal_gate(name.c_str(), op, wf, m, prep);
     ImGui::PopStyleVar(2);
     if (!b) return false;
 
@@ -207,7 +210,7 @@ bool dialog_begin(const char* id, const char* title, bool* open, DialogSize size
     /* pinned title row */
     const float y0 = ImGui::GetCursorPosY();
     const float avail = ImGui::GetContentRegionAvail().x;
-    const float xb = opts.close_x ? sp(4.f) : 0.f;
+    const float xb = opts.close_x && open ? sp(4.f) : 0.f;
     const ImVec2 title_pos = ImGui::GetCursorPos();
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + avail - (xb > 0.f ? xb + sp(1.f) : 0.f));
     ImGui::PushFont(F.h2);
@@ -256,12 +259,26 @@ void dialog_end() {
     g_dlg.pop_back();
     ModalMemo& m = g_memo[f.memo];
     m.buttons_h = std::max(0.f, ImGui::GetCursorPosY() - f.btn_y0);
-    if (f.opts.back_closes && *f.open && modal_back()) { *f.open = false; consume_back(); }
-    if (!*f.open) {
+    if (f.opts.back_closes && f.open && *f.open && modal_back()) { *f.open = false; consume_back(); }
+    if (f.open && !*f.open) {
         ImGui::CloseCurrentPopup();
         m.was_open = false;
     }
     ImGui::EndPopup();
+}
+
+void dialog_same_line(float next_w, float gap) {
+    const float g = gap >= 0.f ? gap : ImGui::GetStyle().ItemSpacing.x;
+    /* the cursor is at the start of the next line now: its x + the available width is the same right edge GetContentRegionAvail() sizes a
+     * "fill the row" button with (WorkRect is rounded differently and would wrap such a row by a fraction of a pixel) */
+    const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    if (hubui::kit::fits_on_line(ImGui::GetItemRectMax().x, g, next_w, right)) ImGui::SameLine(0.f, g);
+}
+
+float dialog_button_w(const char* label, bool icon) {   // mirrors ui::button(): text + icon + gap + sp(2.5) padding each side
+    const ImVec2 ts = ImGui::CalcTextSize(label, nullptr, true);
+    const bool text = ts.x > 0.f;
+    return ts.x + (icon ? sp(2.25f) : 0.f) + (icon && text ? sp(1.f) : 0.f) + sp(5.f);
 }
 
 float hint_bar_width(const KeyHint* hints, int n) {

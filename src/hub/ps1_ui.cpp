@@ -8,6 +8,7 @@
 #include "online_caps.h"
 #include "launch_text.h"
 #include "hub_log.h"
+#include "ui_sheet.h"
 
 #include <fstream>
 
@@ -163,7 +164,7 @@ static void draw_ps2_ask() {
     ImGui::Dummy(ImVec2(0, 2 * S));
     text_wrapped_disabled(hubemu::pcsx2_bios_missing_text());
     if (!ASK2.warning.empty()) { ImGui::Dummy(ImVec2(0, 2 * S)); ImGui::TextColored(ImColor(ui::WARN), "%s", ASK2.warning.c_str()); }
-    ImGui::Dummy(ImVec2(0, 8 * S));
+    ui::dialog_buttons();
     static bool seen2 = false;
     if (!seen2) { ImGui::SetKeyboardFocusHere(0); seen2 = true; }   // a pad lands on "Choose", not on Cancel
     const bool choose = button("Choose BIOS folder...", ImVec2(240 * S, 44 * S), true, true, ui::Icon::Folder);
@@ -178,10 +179,10 @@ static void draw_ps2_ask() {
             if (const hub::GameEntry* g = find_entry(ASK2.key)) { hub::GameEntry copy = *g; play_entry(copy); }
         }
     }
-    ImGui::SameLine();
+    ui::dialog_same_line(140 * S);
     if (button("Cancel", ImVec2(140 * S, 44 * S))) ASK2.open = false;
     if (!ASK2.open) { ImGui::CloseCurrentPopup(); seen2 = false; }
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 /* Online (launch_online.cpp): retrorun arguments for a PlayStation room, or false + `err`. `net` is the shared " --net ... --ports ..." tail,
@@ -239,7 +240,7 @@ void draw_ps1_dialogs() {
                               "scph1001 / scph7001 / scph7003 also work). Putting the file in a BIOS folder next to your games (for example Desktop\\Everything\\BIOS) "
                               "is picked up automatically.");
         if (!ASK.warning.empty()) { ImGui::Dummy(ImVec2(0, 2 * S)); ImGui::TextColored(ImColor(ui::WARN), "%s", ASK.warning.c_str()); }
-        ImGui::Dummy(ImVec2(0, 8 * S));
+        ui::dialog_buttons();
         if (ui::modal_back()) ASK.open = false;
         const bool pad = A.pad_mode;
         if (!ASK.focused) { ImGui::SetKeyboardFocusHere(0); ASK.focused = true; }   // a pad lands on "Choose", not on a later button
@@ -270,7 +271,7 @@ void draw_ps1_dialogs() {
                 if (const hub::GameEntry* g = find_entry(ASK.key)) { hub::GameEntry copy = *g; play_entry(copy); }
             }
         }
-        ImGui::SameLine();
+        ui::dialog_same_line(220 * S);
         if (button("Use built-in OpenBIOS", ImVec2(220 * S, 44 * S))) {
             A.st.ps1_openbios = true;
             mark_dirty();
@@ -279,7 +280,7 @@ void draw_ps1_dialogs() {
         }
         if (button("Cancel", ImVec2(140 * S, 44 * S))) ASK.open = false;
         if (!ASK.open) { ImGui::CloseCurrentPopup(); ASK.focused = false; }
-        ImGui::EndPopup();
+        ui::dialog_end();
     }
 }
 
