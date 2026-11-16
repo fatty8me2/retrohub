@@ -1,23 +1,39 @@
 # Headless gamepad-navigation walk of every RetroHub page / panel / modal (no visible window, no network, fake library + friends).
-# Usage: qa\pad_nav.ps1 [outdir]      Exit code 1 if any page is unreachable or a modal cannot be closed with B.
+# Usage: qa\pad_nav.ps1 [-Out dir] [-Bin <build output dir>]      Exit code 1 if any page is unreachable or a modal cannot be closed with B
+# (3 = refused: the owner is gaming). -Bin (default build\bin\Release) is COPIED, without userdata / vault, to build\qa_padnav_box and
+# run from there with a scratch vault inside it, muted; the build folder itself is never run or touched.
 # Injects pad presses via HUB_SHOT_PAD=<tokens> (down,up,left,right,a,b,x,y,lb,rb,lt,rt,start,back,wait,shot:<name>) and asserts on the
 # HUB_SHOT_TRACE lines:  pad <tok> page=<p> popup=<0|1> friends=<0|1> nav=<id> at=<x>,<y> win=<imgui window>
-param([string]$Out = "$env:TEMP\pad_nav")
+param([string]$Out = "$env:TEMP\pad_nav", [string]$Bin = "")
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-$exe = Join-Path $root "build\bin\Release\RetroHub.exe"
+function Get-OwnerGames {   # a game / emulator not started by an agent's headless test (those live under ...\wt\ or a Temp folder)
+  Get-Process lichii,eden-cli,hookshot,Dolphin,Cemu,azahar,pcsx2-qt,PPSSPPWindows64,retrorun,n64run -ErrorAction SilentlyContinue |
+    Where-Object { -not ($_.Path -and ($_.Path -like '*\SmashClassicPort\wt\*' -or $_.Path -like '*\Temp\*')) }
+}
+if (@(Get-OwnerGames).Count) { Write-Host "REFUSED: the owner is gaming. Re-run when no game is running."; exit 3 }
+if (-not $Bin) { $Bin = Join-Path $root "build\bin\Release" }
+$box = Join-Path $root "build\qa_padnav_box"
+New-Item -ItemType Directory -Force $box | Out-Null
+& robocopy $Bin $box /MIR /XD userdata vault /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
+$exe = Join-Path $box "RetroHub.exe"
+if (-not (Test-Path $exe)) { throw "no RetroHub.exe in $Bin" }
+$vault = Join-Path $box "vault"
 New-Item -ItemType Directory -Force $Out | Out-Null
 $script:fail = 0
 function Run($name, $pad, $extra = @{}) {
+  while (@(Get-OwnerGames).Count) { Write-Host "a game is running: waiting 60 s"; Start-Sleep -Seconds 60 }
   $trace = Join-Path $Out "$name.trace"
   Remove-Item $trace -ErrorAction SilentlyContinue
-  Remove-Item (Join-Path $root "build\bin\Release\userdata\hub.json") -ErrorAction SilentlyContinue   # worktree-local settings: every run starts fresh
-  $set = @{ RETROHUB_NO_SHELL = "1"; SSB64_MUTE = "1"; RETRORUN_MUTE = "1"; N64RUN_MUTE = "1"; HUB_SCREENSHOT = (Join-Path $Out "$name.bmp");
+  Remove-Item (Join-Path $box "userdata") -Recurse -Force -ErrorAction SilentlyContinue   # the sandbox's settings: every run starts fresh
+  Remove-Item $vault -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force (Join-Path $vault "_account") | Out-Null
+  $set = @{ RETROHUB_NO_SHELL = "1"; RETROHUB_QA = "1"; SSB64_MUTE = "1"; RETRORUN_MUTE = "1"; N64RUN_MUTE = "1"; HUB_SCREENSHOT = (Join-Path $Out "$name.bmp"); HUB_SHOT_VAULT = $vault;
             HUB_SHOT_SIZE = $(if ($extra.ContainsKey("SIZE")) { $extra["SIZE"] } else { "1280x800" }); HUB_SHOT_NOWAIT = "1"; HUB_SHOT_SECS = "3"; HUB_SHOT_FAKE_LIB = "14"; HUB_SHOT_PAD = $pad; HUB_SHOT_TRACE = $trace }
   foreach ($k in $extra.Keys) { if ($k -ne "SIZE") { $set[$k] = $extra[$k] } }
   foreach ($k in $set.Keys) { Set-Item "env:$k" $set[$k] }
-  $p = Start-Process $exe -PassThru -WindowStyle Hidden
-  if (-not $p.WaitForExit(120000)) { $p.Kill() }
+  $p = Start-Process $exe -WorkingDirectory $box -PassThru -WindowStyle Hidden
+  if (-not $p.WaitForExit(120000)) { Stop-Process -Id $p.Id -Force }   # our own PID only
   foreach ($k in $set.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
   $rows = @()
   if (Test-Path $trace) {
@@ -36,14 +52,15 @@ function Check($name, $ok, $detail) {
 function Moves($rows) { @($rows | Where-Object { $_.tok -in @("up", "down", "left", "right") }) }
 function Distinct($rows) { @($rows | Where-Object { $_.nav -ne "00000000" } | Select-Object -ExpandProperty nav -Unique).Count }
 
-# 1. LB/RB cycle through every top-level page and wrap (Settings keeps LB/RB for its 6 tabs, then carries on)
+# 1. LB/RB cycle through every top-level page and wrap (Library, Discover, Play Online, Saves, Controllers, Settings, About; Settings keeps
+# LB/RB for its 5 sections, then carries on)
 $r = Run "pages" "rb,rb,rb,rb,rb,rb,rb,rb,rb,rb,rb,lb"
 $seq = ($r.rows | ForEach-Object { $_.page }) -join ","
-Check "rb cycles pages" ($seq -eq "online,saves,controllers,settings,settings,settings,settings,settings,settings,about,library,about") $seq
+Check "rb cycles pages" ($seq -eq "discover,online,saves,controllers,settings,settings,settings,settings,settings,about,library,about") $seq
 Check "page switch keeps a focus" (@($r.rows | Where-Object { $_.nav -eq "00000000" }).Count -eq 0) "focus lost after a page switch"
 
-# 2. every page: first focus exists and D-pad reaches several different items
-$pages = @(@("online", "rb"), @("saves", "rb,rb"), @("controllers", "rb,rb,rb"), @("settings", "rb,rb,rb,rb"), @("about", "rb,rb,rb,rb,rb"))
+# 2. every page: first focus exists and D-pad reaches several different items (RB from the Library: Discover comes first)
+$pages = @(@("online", "rb,rb"), @("saves", "rb,rb,rb"), @("controllers", "rb,rb,rb,rb"), @("settings", "rb,rb,rb,rb,rb"), @("about", "rb,rb,rb,rb,rb,rb,rb,rb,rb,rb"))
 foreach ($pg in $pages) {
   $r = Run "reach_$($pg[0])" "$($pg[1]),down,right,down,down,down,down,up"
   $mv = Moves $r.rows
@@ -130,7 +147,7 @@ $bk = @($rows | Where-Object { $_.tok -eq "shot:w_back" })[0]   # the b row itse
 Check "B returns to the wizard controller step" ($bk.wiz -eq 1 -and $bk.nav -ne "00000000") "wiz=$($bk.wiz) nav=$($bk.nav)"
 
 # 11. LT / RT scroll whole pages (short window so they overflow) and the focus follows
-foreach ($pg in @(@("controllers", "rb,rb,rb"), @("settings", "rb,rb,rb,rb"), @("saves", "rb,rb"))) {
+foreach ($pg in @(@("controllers", "rb,rb,rb,rb"), @("settings", "rb,rb,rb,rb,rb"), @("saves", "rb,rb,rb"))) {
   $r = Run "scroll_$($pg[0])" "$($pg[1]),down,rt,rt,lt,lt" @{ SIZE = "1280x500" }
   $rows = @($r.rows)
   $sc = @($rows | Where-Object { $_.tok -in @("rt", "lt") } | ForEach-Object { if ($_.sy -match '^(\d+)/') { [int]$Matches[1] } else { -1 } })

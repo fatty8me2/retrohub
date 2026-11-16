@@ -393,6 +393,7 @@ std::string folder(const char* tag, bool clicked) {
             S.fb_tag = tag;
             S.fb.pick_files = false;
             S.fb.filters.clear();
+            S.fb.made_up = g_headless;   // screenshot runs list made-up folders: this PC's drives and folders are never read or shown
             S.fb.open(S.last_folder);
             S.fb_open = true;
             S.fb_need_popup = true;
@@ -424,6 +425,7 @@ std::string file(const char* tag, bool clicked, const std::vector<std::string>& 
             S.fb_tag = tag;
             S.fb.pick_files = true;
             S.fb.filters = filters;
+            S.fb.made_up = g_headless;
             S.fb.open(S.last_folder);
             S.fb_open = true;
             S.fb_need_popup = true;
@@ -524,6 +526,7 @@ void shot_init() {
         S.fb.pick_files = mode == "file";
         S.fb.filters = {".json", ".zip", ".exe"};
         S.fb_tag = "shot";
+        S.fb.made_up = arg.empty();   // an explicit folder (HUB_SHOT_OSK=folder:<dir>) is listed for real; otherwise made-up entries
         S.fb.open(arg);
         S.fb_open = true;
         S.fb_need_popup = true;

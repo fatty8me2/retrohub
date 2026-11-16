@@ -1,5 +1,5 @@
 #pragma once
-/* Game info for the library details modal: pure logic, no UI, no sockets (the network is a callback).
+/* Game info for the game page's About tab: pure logic, no UI, no sockets (the network is a callback).
  *
  *  - Offline metadata: data/gameinfo.tsv, built by scripts/gameinfo_build.js from libretro-database metadat/
  *    (CC BY-SA 4.0; see THIRD_PARTY.md): developer, publisher, genre, release year/month, players, ESRB, Famitsu/Edge scores.

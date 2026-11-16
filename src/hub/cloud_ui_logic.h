@@ -45,7 +45,7 @@ inline Chip game_chip(const GameCloudInfo& g, const CloudAccountInfo& a) {
     return {"Checking...", Tone::Muted};
 }
 
-/* Short pill for tiles and the details modal. Quiet ("") when everything is fine or nothing is known. */
+/* Short pill for tiles and the game page. Quiet ("") when everything is fine or nothing is known. */
 inline std::string tile_pill(const GameCloudInfo& g, const CloudAccountInfo& a) {
     switch (g.state) {
         case CloudState::Synced: return "CLOUD";

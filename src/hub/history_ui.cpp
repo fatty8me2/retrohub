@@ -171,7 +171,7 @@ void history_ui_saves_page() {
     ImGui::Dummy(ImVec2(0, 4 * S));
 }
 
-/* Details modal: one small line + button. */
+/* The game page's Saves tab: one small line + button. */
 void history_ui_details_section(const hub::GameEntry& e) {
     static std::string key;
     static double at = -10;

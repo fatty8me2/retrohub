@@ -1,12 +1,12 @@
 /* Library desk: the second library layout (Settings > General > Layout).
  *
- *   [ icon sidebar ][ list column              ]|[ game page (game_page.h, SheetHost::Pane)     ]
- *                   [ search box               ]|[ (setup cards while they apply)               ]
+ *   [ icon sidebar ][ list column              ]|[ (setup banner while it applies: pane_banner)  ]
+ *                   [ search box               ]|[ game page (game_page.h, SheetHost::Pane)     ]
  *                   [ Sort: Title A-Z  [F][?][..]]|[ cover  title / facts / play time   Play More  ]
  *                   [ health chip / filters line ]|[ About  Saves  Screenshots  Settings           ]
  *                   [ Recent             5  -  ]|[ the tab, scrolling                           ]
- *                   [   game rows              ]|[                                             ]
- *                   [ Add games  | Coverflow   ]|[ (a pinned footer strip: pane_footer_h)        ]
+ *                   [   game rows              ]|[ (Settings tab: the help strip of the focused row) ]
+ *                   [ Add games  | Coverflow   ]|
  *                                               ^ the divider: drag it to change the list width (hub.json desk_list_w)
  *
  * The list is ONE focusable item: the cursor row, the groups and the scrolling are ours (desk_logic.h), so the pad / keyboard moves are
@@ -34,6 +34,7 @@
 #include "hidden_ui.h"
 #include "help_logic.h"
 #include "ui_scroll.h"
+#include "ui_controls.h"
 
 #include <algorithm>
 #include <cmath>
@@ -94,6 +95,7 @@ struct DeskState {
     std::string cf_prev;                // the Traditional All Games layout to put back
     /* "You can switch back in Settings" (once, after the Home card's Try it) */
     bool note_on = false;
+    bool folders_not_now = false;       // the "Add your game folders" banner's Not now (this run only)
     /* the game page in the pane */
     gamepage::View page;
     std::string want_page;              // desk_show_game_page: select this game and enter the pane (next frame, after the model is built)
@@ -296,7 +298,7 @@ void rebuild() {
                " sort=" + A.st.library_sort + (A.st.library_sort_rev ? "+rev" : "") + (filters_on() ? " filtered" : ""));
 }
 
-/* Something else chose a game (the palette, the start animation, Coverflow, the details popup...): the cursor follows when the game is in
+/* Something else chose a game (the palette, the start animation, Coverflow, the full-window game page...): the cursor follows when the game is in
  * view, in the group the cursor is in when that group shows it (else the game's console group). */
 void follow_outside_selection() {
     if (A.sel_game == D.seen_sel) return;
@@ -1172,25 +1174,86 @@ void pane_ghost(const ImRect& r, const hubui::fg::Ghost& g) {
     if (ui::button("Details", ImVec2(sp(18.f), sp(5.f)), true, true, ui::Icon::Dots)) open_ghost("ghost:" + g.id);
 }
 
-/* The setup cards Traditional's Home shows ("Add your game folders", "Finish setup"), at the top of the pane while they apply; the game
- * page gets the room under them. They take at most 45 % of the pane and scroll past that. Returns the height used (0 = none). */
-float pane_cards(const ImRect& r) {
-    if (A.lib.empty()) return 0.f;   // the empty-library pane shows them itself
-    ImGui::SetCursorScreenPos(r.Min);
-    ui::scroll_begin("desk_cards", ImVec2(r.GetWidth(), std::max(sp(6.f), r.GetHeight() * 0.45f)), ui::ScrollFlags_AutoHeight | ui::ScrollFlags_OverlayBar, ImVec2(0.f, 0.f));
-    ImGui::BeginChild("##desk_card_list", ImVec2(std::max(1.f, ImGui::GetContentRegionAvail().x), 0.f), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened,
-                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
-    add_folders_card();
-    finish_setup_card();
-    ImGui::EndChild();
-    const ui::ScrollInfo si = ui::scroll_end();
-    return si.content_h > sp(1.f) ? si.view_h : 0.f;
-}
+/* What Traditional's Home asks for with its setup cards, as ONE slim banner above the game page: "Add your game folders" while only the
+ * bundled game is here, otherwise "Finish setup" with the steps still open. The title and one short line on the left (cut with "...", or
+ * left out when there is too little room; the whole text is in its tooltip), the two buttons on the right. When even the title and the
+ * buttons do not fit (a narrow pane at a big UI size) the buttons go on a line of their own under the text, sharing its width, or one
+ * under the other. Not now hides it for this run (Finish setup: on Home too). Returns the height it takes, gap under it included. */
+float pane_banner(const ImRect& r) {
+    if (A.lib.empty()) return 0.f;   // the empty-library pane shows Traditional's cards itself
+    bool own_empty = true;
+    for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey) { own_empty = false; break; }
+    const bool folders = own_empty && !A.scanning && !D.folders_not_now;
+    const std::vector<std::string> steps = folders ? std::vector<std::string>() : finish_setup_steps(false);
+    if (!folders && steps.empty()) return 0.f;
+    const char* title = folders ? "Add your game folders" : "Finish setup";
+    const std::string line = folders ? std::string("Only the bundled game is here.") : hubhelp::join_steps(steps);
+    const char* b1 = folders ? "Add ROM folder" : "Continue setup";
+    const ui::Icon i1 = folders ? ui::Icon::Folder : ui::Icon::ChevronR;
+    const char* b2 = "Not now";
+    shot_trace_once("desk-banner", folders ? "folders" : "setup");
 
-/* The pane's pinned strip under the game page (short help for the focused option, if the game page lane asks for one). The ONE place to
- * add it: return its height here and draw it in pane_footer(); pane_host() already gives the page only the room above it. Nothing today. */
-float pane_footer_h(const ImRect&) { return 0.f; }
-void pane_footer(const ImRect&) {}
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImFont* tf = ui::F.bold;
+    ImFont* bf = ui::F.body;
+    const float padx = sp(1.5f), pady = sp(0.75f), gap = sp(1.f), lgap = sp(0.75f), bh = sp(4.f);
+    float w1 = ui::button_width(b1, i1), w2 = ui::button_width(b2);
+    const float btns = w1 + gap + w2;
+    const float inner = std::max(1.f, r.GetWidth() - padx * 2.f);
+    const float title_w = tf->CalcTextSizeA(tf->FontSize, FLT_MAX, 0.f, title).x, sep = sp(1.5f);
+    const bool one = title_w + gap * 2.f + btns <= inner;                     // one line: the title, what fits of the line, the buttons
+    int rows = 1;                                                             // otherwise the buttons go on a line under the text:
+    if (!one && btns > inner) {
+        const float c1 = w1 - sp(5.f), c2 = w2 - sp(5.f);                    // (the labels, without the buttons' side padding)
+        if (c1 + c2 + gap + sp(5.f) <= inner) {                               // side by side with less padding, sharing the width
+            const float side = (inner - gap - c1 - c2) * 0.5f;
+            w1 = c1 + side;
+            w2 = c2 + side;
+        } else rows = 2;                                                      // or one under the other
+    }
+    const float text_h = std::max(tf->FontSize, bf->FontSize);
+    const float h = one ? pady * 2.f + std::max(bh, text_h) : pady * 2.f + text_h + lgap + (float)rows * bh + (float)(rows - 1) * lgap;
+    const ImRect br(r.Min, ImVec2(r.Max.x, r.Min.y + h));
+    dl->AddRectFilled(br.Min, br.Max, ui::PANEL, sp(2.f));
+    dl->AddRect(br.Min, br.Max, ui::HAIRLINE, sp(2.f), 0, 1.f);
+
+    /* the text: the title in bold, the line after it (cut to the room left) */
+    const float tx0 = br.Min.x + padx, tx1 = one ? br.Max.x - padx - (w1 + gap + w2) - gap * 2.f : br.Max.x - padx;
+    const float ty = one ? br.Min.y + (h - text_h) * 0.5f : br.Min.y + pady;
+    const std::string t = ui::ellipsize(tf, tf->FontSize, title, tx1 - tx0);
+    dl->AddText(tf, tf->FontSize, ImVec2(tx0, ty + (text_h - tf->FontSize) * 0.5f), ui::TEXT, t.c_str());
+    const float lx = tx0 + tf->CalcTextSizeA(tf->FontSize, FLT_MAX, 0.f, t.c_str()).x + sep;
+    bool cut = t != title;
+    if (lx < tx1 - sp(10.f)) {   // (less room than that: the title alone, the line in its tooltip)
+        const std::string l = ui::ellipsize(bf, bf->FontSize, line, tx1 - lx);
+        dl->AddText(bf, bf->FontSize, ImVec2(lx, ty + (text_h - bf->FontSize) * 0.5f), ui::TEXT2, l.c_str());
+        cut = cut || l != line;
+    } else cut = true;
+    if (cut && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImVec2(tx0, ty), ImVec2(tx1, ty + text_h)))
+        ImGui::SetTooltip("%s: %s", title, line.c_str());
+
+    /* the buttons: at the right end of the line, or on a line of their own under the text. Their focus ring and the primary button's glow
+     * reach past the slim banner, above the pane's top edge too: they are not cut there (the clip rect is widened for them) */
+    const float room = sp(3.f);
+    ImGui::PushClipRect(ImVec2(br.Min.x - room, br.Min.y - room), ImVec2(br.Max.x + room, br.Max.y + room), false);
+    const float by = one ? br.Min.y + (h - bh) * 0.5f : ty + text_h + lgap;
+    ImGui::SetCursorScreenPos(ImVec2(one ? br.Max.x - padx - (w1 + gap + w2) : tx0, by));
+    const bool p1 = ui::button(b1, ImVec2(rows == 2 ? std::min(w1, inner) : w1, bh), true, true, i1);
+    if (rows == 1) ImGui::SameLine(0.f, gap);
+    else ImGui::SetCursorScreenPos(ImVec2(tx0, by + bh + lgap));
+    const bool p2 = ui::button(b2, ImVec2(rows == 2 ? std::min(w2, inner) : w2, bh));
+    const bool p2_pad = p2 && ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
+    ImGui::PopClipRect();
+    if (folders) add_rom_folder(p1);   // every frame while shown (the pad folder browser)
+    else if (p1) { shot_trace("desk-banner", "continue"); wizard_open(); }
+    if (p2) {
+        if (folders) D.folders_not_now = true;
+        else finish_setup_dismiss();
+        shot_trace("desk-banner", std::string("not-now ") + (folders ? "folders" : "setup"));
+        if (p2_pad) { D.focus_pane = true; D.focus_pane_visible = true; }   // the banner is gone: the focus goes to Play, not nowhere
+    }
+    return h + sp(1.25f);
+}
 
 const hub::GameEntry* shown_game() {
     if (A.lib.empty() || !D.ghost_sel.empty()) return nullptr;
@@ -1209,9 +1272,7 @@ void pane_host(const ImRect& r) {
     const hub::GameEntry* shown = shown_game();
     const hubui::fg::Ghost* ghost = D.ghost_sel.empty() ? nullptr : ghost_of_key(D.ghost_sel);
     ImRect page = r;
-    page.Min.y += pane_cards(r);
-    const float fh = pane_footer_h(page);
-    if (fh > 0.f) page.Max.y -= fh + sp(1.f);
+    page.Min.y += pane_banner(r);
     if (D.focus_pane) {   // entering the pane: the game page puts the focus on Play when it draws it
         D.focus_pane = false;
         if (shown) { D.page.focus_play = true; D.page.focus_visible = D.focus_pane_visible; }
@@ -1225,7 +1286,6 @@ void pane_host(const ImRect& r) {
         if (A.scanning) pane_message(page, "Looking for your games", "RetroHub is looking through your folders. Your games show up in the list as they are found.", true);
         else pane_empty(page);
     } else pane_message(page, "No game selected", "Pick a game from the list.", false);
-    if (fh > 0.f) pane_footer(ImRect(ImVec2(page.Min.x, page.Max.y + sp(1.f)), r.Max));
     D.pane_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
     ImGui::EndChild();
     /* Left with nothing further left inside the pane: back to the list, on the same row (instead of the sidebar). Not inside a menu or
@@ -1378,8 +1438,10 @@ void desk_page() {
     follow_outside_selection();
     apply_page_request();
     /* B / Esc inside the pane: ImGui leaves the pane window (the focus lands on the pane itself, as an item of the page). Back to the list.
+     * Not while an option row's dropdown list is open: that B closes only the list, and the dropdown puts the focus back on its row when
+     * it draws, later this frame.
      * The same item reached by a move from outside (Right from the search box): into the pane instead. */
-    if (g.NavId != 0 && g.NavId == D.pane_child) {
+    if (g.NavId != 0 && g.NavId == D.pane_child && !(D.pane_focused && ui::dropdown_list_open())) {
         if (D.pane_focused) {
             D.focus_list = D.focus_list_visible = true;
             ui_sound::play(ui_sound::Sfx::Back);
@@ -1514,7 +1576,7 @@ void desk_draw_game_pane(const hub::GameEntry& e, const ImRect& r) {
 }
 
 bool desk_show_game_page(const std::string& key) {
-    if (!desk_layout_on() || A.page != Page::Library || lib_cases_active() || !find_entry(key)) return false;
+    if (!desk_layout_on() || A.page != Page::Library || lib_cases_active() || !find_entry(key)) return false;   // Coverflow: the full-window page goes over it
     D.want_page = key;   // applied on the desk's next frame, once its list model is current (desk_page)
     A.sel_game = key;
     A.sel_ghost.clear();

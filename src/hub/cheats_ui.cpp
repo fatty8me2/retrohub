@@ -638,9 +638,9 @@ void draw_cheats_modal() {
         ImGui::TextWrapped("Game running: changes apply right away.");
         ImGui::PopStyleColor();
     } else if (e.system == hub::System::GC) {
-        ImGui::TextDisabled("GameCube cheats are loaded by Dolphin when the game starts. Gecko and Action Replay codes both work.");
+        text_wrapped_disabled("GameCube cheats are loaded by Dolphin when the game starts. Gecko and Action Replay codes both work.");   // wraps in a narrow dialog
     } else {
-        if (A.pad_mode) ImGui::TextDisabled("In a game, hold %s and press %s to open this again.", hubglyph::label(ui::pad_kind, "View"), hubglyph::label(ui::pad_kind, "Y"));
+        if (A.pad_mode) text_wrapped_disabled(std::string("In a game, hold ") + hubglyph::label(ui::pad_kind, "View") + " and press " + hubglyph::label(ui::pad_kind, "Y") + " to open this again.");
     }
 
     // save safety
@@ -650,7 +650,8 @@ void draw_cheats_modal() {
         bool has_bk = gs && cheatstore::has_backup(gd, gs->backup);
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         if (has_bk) ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled(has_bk ? "Your save was backed up before cheats were first turned on." : "Your save is backed up automatically the first time you turn a cheat on.");
+        if (has_bk) ImGui::TextDisabled("Your save was backed up before cheats were first turned on.");   // (a Restore button follows on this line)
+        else text_wrapped_disabled("Your save is backed up automatically the first time you turn a cheat on.");
         if (has_bk) {
             ImGui::SameLine(0, sp(1.5f));
             bool ok = !(A.proc && A.run.key == e.key) && !locked_guest;   // another game running does not touch this save

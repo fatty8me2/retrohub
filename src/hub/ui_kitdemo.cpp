@@ -1,4 +1,6 @@
 #include "app.h"
+#include "desk_logic.h"
+#include "game_page_layout.h"
 #include "ui_controls.h"
 #include "ui_sheet.h"
 
@@ -75,8 +77,8 @@ void header() {
 }
 
 void body() {
-    if (g_tab == 0) {
-        ImGui::PushTextWrapPos(0.f);
+    if (g_tab == 0) {   // text at the game page's readable width (game_page_layout.h)
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + hubui::gp::readable_w(ImGui::GetContentRegionAvail().x, sp(1.f)));
         ImGui::TextUnformatted("Deliver parcels across a cartoon solar system in this fast arcade racer. Four friends can race on one screen, "
                                "or online in a room.");
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
@@ -214,7 +216,7 @@ void desk() {
                                                 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar(2);
     const float pad = sp(3.f), gap = sp(2.f);
-    const float list_w = std::max(sp(28.f), std::min(sp(44.f), io.DisplaySize.x * 0.3f));
+    const float list_w = hubdesk::column_width(io.DisplaySize.x - pad * 2.f, sp(1.f));   // the real Library desk's Normal list width
     const ImVec2 o = ImGui::GetCursorScreenPos();
     const float h = io.DisplaySize.y - pad * 2.f;
     /* left: the game list (a kit scroll area) */

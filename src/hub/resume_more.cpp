@@ -264,7 +264,7 @@ void resume_choice_shot() {
     G.sys = "gba";
 }
 
-/* Details modal, Saves tab: shown only when another PC's save is newer than this PC's resume point. */
+/* The game page's Saves tab: shown only when another PC's save is newer than this PC's resume point. */
 void resume_details_section(const hub::GameEntry& e) {
     static std::string cached_key;
     static double cached_at = -10;

@@ -120,8 +120,17 @@ float draw_toasts(float bottom, float right, float top) {
     ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImFont* f = ui::F.body;
     float fs = f->FontSize, y_bot = bottom, y_top = top;
+    /* An open dialog: a toast that would lie over it waits (its clock stops) and shows when the dialog closes. A full-window page (the
+     * game page) is not a dialog: toasts show over it as before. */
+    ImRect dialog;
+    bool avoid = false;
+    if (ImGuiWindow* m = ImGui::GetTopMostPopupModal()) {
+        const ImRect r = m->Rect();
+        if (m->WasActive && r.GetWidth() * r.GetHeight() < ds.x * ds.y * 0.9f) { dialog = r; dialog.Expand(sp(1.f)); avoid = true; }
+    }
+    const double dt = ImGui::GetIO().DeltaTime;
     for (int i = (int)A.toasts.size() - 1; i >= 0; --i) {
-        const Toast& t = A.toasts[i];
+        Toast& t = A.toasts[i];
         float a = toast_alpha(t, now), in = (float)std::min(1.0, (now - t.t0) / 0.28);
         in = 1.f - (1.f - in) * (1.f - in);   // ease-out (slide)
         float maxw = std::min(sp(58.f), ds.x * 0.62f);
@@ -134,6 +143,11 @@ float draw_toasts(float bottom, float right, float top) {
         float x1 = right + (1.f - in) * sp(5.f);
         float y0 = t.top ? y_top : y_bot - h;   // top toasts grow downward from the top edge, the rest upward from the bottom
         ImVec2 p1(x1, y0 + h), p0(x1 - w, y0);
+        if (avoid && dialog.Overlaps(ImRect(ImVec2(right - w, y0), ImVec2(right, y0 + h)))) {   // waits for the dialog to close
+            t.t0 += dt;
+            t.until += dt;
+            continue;
+        }
         ui::shadow(dl, p0, p1, sp(1.5f), a);
         dl->AddRectFilled(p0, p1, ui::scale_alpha(ui::PANEL2, a), sp(1.5f));
         dl->AddRect(p0, p1, ui::scale_alpha(ui::HAIRLINE, a), sp(1.5f), 0, 1.f);
@@ -177,7 +191,9 @@ bool nav_item(Page pg, const char* label, ui::Icon ic, float w, float expand, Im
     if (*an > 0.6f) dl->AddRectFilled(ImVec2(p0.x, p0.y + sp(1.25f)), ImVec2(p0.x + sp(0.5f), p1.y - sp(1.25f)), ui::ACCENT, sp(0.25f));
     ImU32 col = mix(ui::TEXT2, ui::HILITE, std::min(1.f, *an * 1.4f));
     ImVec2 ic_c(p0.x + sp(3.f), (p0.y + p1.y) * 0.5f);
-    ui::icon(dl, ic, ic_c, sp(3.f), sel ? mix(ui::ACCENT, IM_COL32_WHITE, 0.55f) : col);
+    /* the selected icon: the accent lightened (dark themes). The Library desk's icon rail has no label beside it, so on a light theme
+     * (HILITE is black there) it is darkened instead, to stand out on its light pill */
+    ui::icon(dl, ic, ic_c, sp(3.f), sel ? mix(ui::ACCENT, desk_layout_on() ? ui::HILITE : IM_COL32_WHITE, 0.55f) : col);
     if (badge) dl->AddCircleFilled(ic_c + ImVec2(sp(1.5f), -sp(1.5f)), sp(0.625f), badge, 12);
     if (expand > 0.02f) {
         dl->PushClipRect(p0, p1, true);
@@ -237,8 +253,9 @@ void draw_footer(float h) {
     }
     float hy = p.y + (h - (cf->FontSize + sp(0.75f))) * 0.5f, x = p.x;
     for (auto& hn : hints) {
-        bool is_shoulder = hn.pad[0] == 'L' || hn.pad[0] == 'R';
-        if (!pad && (is_shoulder || hn.pad[0] == 'L' || !hn.key[0])) continue;
+        /* keyboard: no shoulder / trigger hints (LB, RB, LT, RT); a stick click with a key of its own ("R3" / S) still shows its key */
+        const bool is_shoulder = (hn.pad[0] == 'L' || hn.pad[0] == 'R') && hn.pad[1] != '3';
+        if (!pad && (is_shoulder || !hn.key[0])) continue;
         float need = ui::key_hint_width(pad, hn.pad, hn.key, hn.label);
         if (x + need > p.x + w - sw - sp(2.f)) break;
         x += ui::key_hint(dl, ImVec2(x, hy), pad, hn.pad, hn.key, hn.label) + sp(3.f);

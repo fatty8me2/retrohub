@@ -1,5 +1,5 @@
 #pragma once
-/* Save-state slots of one game as the details modal shows them, plus the Home "resume" wording and library sort modes.
+/* Save-state slots of one game as the game page shows them, plus the Home "resume" wording and library sort modes.
  * Pure (std::filesystem + the shared JSON reader), unit-tested by hub_states_test.
  *
  * File contract (owned by Lane 2, src/common/runner_ctl.h; mirrored here so this lane builds on its own):
@@ -33,7 +33,7 @@ bool delete_state(const std::string& state_dir, int slot);
 std::string state_slot_label(int slot);   // "Auto" / "Slot 3"
 /* Systems whose runner supports states at all: false for external emulators (Dolphin, Cemu, Azahar, PCSX2) and the native port. */
 bool system_has_states(const std::string& system_short, bool native);
-/* Why not, for the details modal ("" when supported). */
+/* Why not, for the game page ("" when supported). */
 std::string no_states_reason(const std::string& system_short, bool native);
 
 /* "3 min ago" "2h ago" "yesterday" "5 days ago" (older: "3 weeks ago"); "never" for 0. now < t reads "just now". */

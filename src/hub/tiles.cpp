@@ -56,8 +56,8 @@ void refresh_save_info(const hub::GameEntry& e) {
     }
 }
 
-/* Periodic / first-open refresh of the details modal's save info: the directory walks run on a worker,
-   the UI thread only swaps the result in (poll_save_info, every frame the modal is open). User actions
+/* Periodic / first-open refresh of the game page's save info: the directory walks run on a worker,
+   the UI thread only swaps the result in (poll_save_info, every frame the page is drawn). User actions
    that need the fresh numbers immediately (states_ui) still call refresh_save_info. */
 namespace {
 struct SaveInfoBg {

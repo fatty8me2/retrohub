@@ -516,6 +516,33 @@ Four programs can play a Switch game. The per-game setting `switch.runner` picks
 - **Longshot** is a second native build of the same game (a fork of Hookshot), made the same way into its own folder, with the same save mapping. A chosen native build that is not built does not fall back to an emulator: Play asks (open the game's page / Play with Lichii this time / Cancel). See `docs/HOOKSHOT.md`.
 - Tests: `hub_nx_runner_test`, `hub_hookshot_test`, `hub_hookshot_build_test`.
 
+## UI kit and layouts (`ui_scroll.h`, `ui_sheet.h`, `ui_controls.h`, `desk_view.*`, `game_page*`)
+- **The kit** (each header starts with a usage guide; layout math in `ui_layout_logic.h`, tested by `hub_uikit_test`):
+  - `ui_scroll.h`: the one vertical scroll area. Themed scrollbar with its space always reserved, the controller focus kept in view with a
+    margin, LT / RT page it. Options: Eased, OverlayBar (no gutter), AutoGutter.
+  - `ui_sheet.h`: `ui::sheet`, a page with a pinned header and footer and a scrolling body that takes the rest of the rect, hosted as an
+    Overlay (a modal over the whole window; B / Esc close it) or as a Pane inside a rect (no modality; the screen around it decides what B
+    does). `ui::dialog`, a centred modal with a pinned title, a scrolling middle and a pinned button row that wraps. `ui::hint_bar`.
+  - `ui_controls.h`: collapsible sections, option rows (dropdown, toggle, stepper; compact rows with one pinned help strip; sections in
+    columns), the tab bar (LB / RB), `FlowRow` (a button row that wraps).
+  - **Rule:** new screens and dialogs use the kit, not raw `BeginChild` / `BeginPopupModal` scrolling and sizing (old dialogs convert
+    with the recipe in `ui_sheet.h`). Open a dialog from INSIDE a sheet callback (header, body or footer) so it stacks on an Overlay sheet:
+    opened from outside, it replaces the sheet (ImGui popups at one level replace each other). The game page opens Customize, Add to shelf
+    and the hack dialogs from its footer callback for this reason.
+- **Two layouts** (`Settings::ui_layout`, Settings > General > Layout, `desk_layout_on()`; `HUB_SHOT_LAYOUT` for screenshots). Only the
+  Library page differs. `traditional` (the default): Home with the hero and shelves, All Games with its views. `desk`, the Library desk
+  (`desk_view.cpp`, list model `desk_logic.h`, `hub_desk_test`): a game list on the left, the selected game's page in a pane on the right,
+  an icon sidebar, and one slim setup banner above the pane while setup asks for something.
+- **The game page** is one component (`game_page.h` pieces, `game_page_view.cpp` layout, sizing rules in `game_page_layout.h`, tested by
+  `hub_gamepage_test`) with two hosts of `gamepage::draw_view`:
+  - Overlay: the full-window page (`page_library.cpp` `draw_details_modal`, ImGui window `details##uisheet`) with Close and its own hint
+    footer. Used by Traditional, and by the desk while its Library page is not showing (or over Coverflow).
+  - Pane: the desk's right-hand pane (`desk_draw_game_pane`): no Close, the hub footer carries the hints, the header leaves room for the
+    focused Play button's glow. B goes back to the list unless an open dropdown or menu takes it first.
+  - Every request for a game's page (Y / I, a tile, "...", the palette, Surprise me, a hack's Versions row ...) sets `A.show_details`;
+    `draw_details_modal` hands it to `desk_show_game_page` (select the game in the list, focus Play in the pane) when the desk's Library
+    page is showing, and opens the full-window page otherwise.
+
 ## All Games layouts (`libview_ui.cpp`, `libview_logic.h`)
 - **Six layouts** (`LibLayout` in `libview_logic.h`), switched by the icon cells next to the Sort chip (saved: `Settings::lib_layout` grid | list | compact | showcase | shelf | cases; the default is Cases):
   - Grid (classic).

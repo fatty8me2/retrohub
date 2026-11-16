@@ -1,4 +1,4 @@
-/* Resume + save states UI: the Home "Resume" button, library sort cycling and the details-modal strip of save states
+/* Resume + save states UI: the Home "Resume" button, library sort cycling and the game page's strip of save states (Saves tab)
  * (slots 0-9 + auto with thumbnail, date and play time; Resume from this / Delete). Pure listing logic lives in state_slots.cpp.
  * Screenshot aid: HUB_SHOT_STATES=1 seeds fake states + thumbnails + play history for the fake library (fake:1 GBA, fake:4 GB). */
 #define STBI_ONLY_PNG

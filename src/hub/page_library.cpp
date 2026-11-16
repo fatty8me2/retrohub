@@ -957,7 +957,8 @@ void sync_card() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
 }
 
-/* Home card while only the bundled game is here: ask for game folders. Library desk shows the same card above the game page. */
+/* Home card while only the bundled game is here: ask for game folders. The Library desk asks the same in a slim banner above its pane
+ * (desk_view.cpp pane_banner). */
 void add_folders_card() {
     if (!own_library_empty() || A.scanning) return;
     begin_panel("add_folders_card");

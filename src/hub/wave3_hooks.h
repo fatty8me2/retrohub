@@ -18,7 +18,7 @@ namespace hub { struct GameEntry; }
 
 std::string transferpak_launch_args(const hub::GameEntry& e);                            // n64run flags (offline N64)
 bool transferpak_will_use(const hub::GameEntry& e);                                  // no side effects: would transferpak_launch_args add flags? (resume is dropped then)
-void transferpak_details_section(const hub::GameEntry& e);                               // details modal, Info tab
+void transferpak_details_section(const hub::GameEntry& e);                               // game page, About tab
 void transferpak_run_finished();                                                         // the game process ended: queue the Game Boy game's save push
 
 void gba_link_apply_dolphin(const hub::GameEntry& e, const std::string& dolphin_dir);   // before an offline GameCube launch
@@ -30,13 +30,13 @@ void palpark_details_section(const hub::GameEntry& e);
 void palpark_shot_init();                                                                // HUB_SHOT_PALPARK screenshot aid (headless)
 void palpark_process_ended();                                                            // poll_process: the game ended; queue the Slot-2 GBA save for the cloud
 
-void resume_details_section(const hub::GameEntry& e);                                    // details modal, Saves tab
+void resume_details_section(const hub::GameEntry& e);                                    // game page, Saves tab
 
-void progress_details_section(const hub::GameEntry& e);                                  // details modal, Info tab
+void progress_details_section(const hub::GameEntry& e);                                  // game page, About tab
 
-void verify_details_section(const hub::GameEntry& e);                                    // details modal, Info tab
-void dumpwarn_details_section(const hub::GameEntry& e);                                  // details modal, top of the About tab: an incomplete Switch dump
-void nuprepair_details_section(const hub::GameEntry& e);                                  // details modal, About tab under the dump warning: a .nup copy RetroHub repairs at launch
+void verify_details_section(const hub::GameEntry& e);                                    // game page, About tab
+void dumpwarn_details_section(const hub::GameEntry& e);                                  // game page, top of the About tab: an incomplete Switch dump
+void nuprepair_details_section(const hub::GameEntry& e);                                  // game page, About tab under the dump warning: a .nup copy RetroHub repairs at launch
 bool verify_library_card(bool compact = false);   // All Games page, above the grid; false when it drew nothing; compact = only the chip + popup (the caller places it)
 
 void save_import_section();                                                              // Saves page

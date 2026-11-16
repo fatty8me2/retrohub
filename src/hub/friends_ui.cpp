@@ -1002,11 +1002,21 @@ void fr_anim_panel() {
 
 /* ---- invite / request cards (toast + bell list) ---- */
 float fr_invite_card_h() { return sp(1.75f) * 2 + sp(8.f) + sp(1.f) + sp(3.5f); }
+/* The card's height for this invite at width w: its text (a title of up to two lines, the room line, "You don't have ... yet") never runs
+ * into the Join / Dismiss row, whatever the UI size. */
+static float fr_invite_card_h(const Notif& n, float w) {
+    const float pad = sp(1.75f), tw = w - pad * 2.f - sp(8.f) - sp(1.5f);
+    const std::string game = n.inv.game_title.empty() ? "a game" : n.inv.game_title;
+    const size_t lines = ui::wrap_lines(ui::F.bold, ui::F.bold->FontSize, n.name + " invited you to play " + game, std::max(1.f, tw), 2).size();
+    const bool owned = n.inv.game_id.empty() || find_entry(n.inv.game_id) || find_room_entry(n.inv.game_id);
+    const float text_h = (float)lines * ui::F.bold->FontSize * 1.2f + sp(0.25f) + ui::F.cap->FontSize + (owned ? 0.f : ui::F.cap->FontSize * 1.25f);
+    return pad * 2.f + std::max(sp(8.f), text_h) + sp(1.f) + sp(3.5f);
+}
 /* Returns 1 = Join, 2 = Dismiss. frac >= 0 draws the remaining-time bar. */
 int fr_invite_card(const Notif& n, float w, float frac, bool shadow) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
-    float pad = sp(1.75f), h = fr_invite_card_h();
+    float pad = sp(1.75f), h = fr_invite_card_h(n, w);
     ImVec2 p1(p0.x + w, p0.y + h);
     long long now = wall_ms();
     bool expired = hubui::invite_expired(n.inv.expires_at, now);
@@ -1185,7 +1195,7 @@ void fr_draw_toasts(float right_x, float bottom_y) {
     float y = bottom_y, w = std::min(sp(45.f), right_x - sp(2.f));
     for (auto& n : FR.notifs) {
         if (n.done || !n.toast) continue;
-        if (n.invite && n.night_id.empty() && A.popup_last_frame) continue;   // the bell / a menu / a modal is open: the floating invite card or pill is hidden (it is in the bell list), never over the panel
+        if (A.popup_last_frame) continue;   // the bell / a menu / a dialog is open: no floating card over it (invites and asks are in the bell, a game night in the Friends list, requests in the requests list)
         if (FR.fake && g_headless) n.t0 = std::max(n.t0, now - 1.0);   // screenshots: the toast must outlive a slow library scan
         if (FR.fake && g_headless && std::getenv("HUB_SHOT_INVITE_AGE")) n.t0 = now - std::atof(std::getenv("HUB_SHOT_INVITE_AGE"));   // screenshot aid: age the invite toast (>10 = shrunk pill)
         double life = !n.night_id.empty() ? hubui::dlg2b::kNightCardLife : (n.invite || n.ask) ? 30.0 : 20.0, age = now - n.t0;   // a night card's Friends-list row follows the same life
@@ -1193,7 +1203,8 @@ void fr_draw_toasts(float right_x, float bottom_y) {
         float in = (float)std::min(1.0, age / 0.3);
         in = 1.f - (1.f - in) * (1.f - in);
         const bool pill = n.invite && n.night_id.empty() && !n.expanded && (age > kInvitePillAfter || A.popup_last_frame);   // a modal or menu is open: the card shrinks to the one-line pill so it never sits over its buttons (a click expands it)
-        float h = pill ? fr_invite_pill_h() : n.invite ? fr_invite_card_h() : fr_request_card_h();
+        float h = pill ? fr_invite_pill_h() : n.invite ? fr_invite_card_h(n, w) : fr_request_card_h();
+        if (y - h < sp(1.f)) break;   // no room above (a short window, a big UI size): the rest wait in the bell, never cut by the top edge
         float cw = pill ? std::min(w, fr_tw(ui::F.bold, fr_invite_pill_text(n)) + sp(3.5f)) : w;
         ImGui::SetNextWindowPos(ImVec2(right_x - cw + (1.f - in) * sp(8.f), y - h));
         ImGui::SetNextWindowSize(ImVec2(cw, h));

@@ -17,7 +17,7 @@
 #include "third_party/stb_image.h"
 
 /* ---------- Full-size screenshot viewer (modal) ----------
- * Opened by the screenshots strip (quickmenu.cpp shots_gallery, which also serves the details modal's Screenshots tab).
+ * Opened by the screenshots strip (quickmenu.cpp shots_gallery, which also serves the game page's Screenshots tab).
  * Pad: left/right (or LB/RB) = previous/next picture, B = close (or cancel the delete question), up/down + A = actions.
  * Actions: Copy to clipboard (CF_DIB), Set as cover (custom_set_cover: copied into the synced vault and stored as the game's cover),
  * Delete (asks, then moves the file to the Recycle Bin where the drive has one; queued and run at the start of the next frame), Open in viewer (the default Windows image app),

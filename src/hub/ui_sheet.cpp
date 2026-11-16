@@ -25,6 +25,9 @@ struct ModalMemo {
     bool was_open = false;     // the popup was on screen last time we asked
     float footer_h = -1.f;     // sheet: footer height measured last frame
     float buttons_h = -1.f;    // dialog: button row height measured last frame
+    ImGuiID body_win = 0;      // dialog: the scrolling middle's window (last frame)
+    float btn_top = -1.f;      // dialog: screen y of the button row's first line (last frame)
+    bool up_search = false;    // dialog: an Up from the buttons is still looking for an item in the middle (moved on to the next frame)
 };
 std::unordered_map<ImGuiID, ModalMemo> g_memo;
 
@@ -114,14 +117,54 @@ struct DlgFrame {
     DialogOpts opts;
     bool buttons = false;
     float btn_y0 = 0.f;
+    bool up = false;           // this frame's Up from the buttons into the middle (up_into_middle_*)
 };
 std::vector<DlgFrame> g_dlg;
 
+/* Up from the first line of a dialog's pinned buttons goes to the nearest item ABOVE them in the middle, also when it is scrolled out of
+ * view. ImGui scores only the visible part of a NavFlattened child when the focus enters it from its parent window (NavScoreItem), so an
+ * item below the visible part (a friend's "Ask ... to host" row under a long description) could not be reached that way. Before the middle
+ * is drawn: scroll it to its end, so the move scores what is there. After the buttons: when the move found nothing in the middle, scroll it
+ * up a page and carry the move on to the next frame, until something shows or the middle is at its top. True = this frame's move is one. */
+bool up_into_middle_begin(ModalMemo& m) {
+    ImGuiContext& g = *GImGui;
+    ImGuiWindow* dw = g.CurrentWindow;   // the dialog itself (its buttons are its own items)
+    const bool up = g.NavMoveSubmitted && g.NavMoveDir == ImGuiDir_Up && g.NavWindow == dw && g.NavLayer == ImGuiNavLayer_Main &&
+                    !(g.NavMoveFlags & (ImGuiNavMoveFlags_IsTabbing | ImGuiNavMoveFlags_FocusApi | ImGuiNavMoveFlags_IsPageMove | ImGuiNavMoveFlags_ScrollToEdgeY));
+    ImGuiWindow* mid = m.body_win ? ImGui::FindWindowByID(m.body_win) : nullptr;
+    if (!up || !mid || !mid->WasActive || !hubui::kit::overflows(mid->ScrollMax.y) || m.btn_top < 0.f) { m.up_search = false; return false; }
+    if ((g.NavMoveFlags & ImGuiNavMoveFlags_Forwarded) && m.up_search) return true;   // our own move, carried on: the middle was paged already
+    const ImRect cur = ImGui::WindowRectRelToAbs(dw, dw->NavRectRel[ImGuiNavLayer_Main]);
+    if (cur.IsInverted() || cur.Min.y < m.btn_top - sp(0.5f) || cur.Min.y > m.btn_top + sp(1.f)) { m.up_search = false; return false; }   // not the buttons' first line
+    if (mid->Scroll.y < mid->ScrollMax.y - 0.5f) scroll_set(mid->ID, mid->ScrollMax.y);   // applied when the middle begins, below
+    m.up_search = true;
+    return true;
+}
+
+void up_into_middle_end(ModalMemo& m) {
+    ImGuiContext& g = *GImGui;
+    ImGuiWindow* mid = m.body_win ? ImGui::FindWindowByID(m.body_win) : nullptr;
+    if (!mid || !g.NavMoveSubmitted || g.NavMoveForwardToNextFrame) { m.up_search = false; return; }
+    /* the result ImGui is about to take (NavMoveRequestApplyResult's choice) */
+    const ImGuiNavItemData* res = g.NavMoveResultLocal.ID ? &g.NavMoveResultLocal : g.NavMoveResultOther.ID ? &g.NavMoveResultOther : nullptr;
+    const ImGuiNavItemData& oth = g.NavMoveResultOther;
+    if (res && res != &oth && oth.ID && oth.Window && oth.Window->ParentWindow == g.NavWindow &&
+        (oth.DistBox < res->DistBox || (oth.DistBox == res->DistBox && oth.DistCenter < res->DistCenter)))
+        res = &oth;
+    if ((res && res->Window && ImGui::IsWindowChildOf(res->Window, mid, false)) || mid->Scroll.y <= 0.5f) { m.up_search = false; return; }
+    scroll_set(mid->ID, std::max(0.f, mid->Scroll.y - std::max(sp(4.f), mid->InnerRect.GetHeight() * 0.8f)));
+    ImGui::NavMoveRequestForward(g.NavMoveDir, g.NavMoveClipDir, g.NavMoveFlags & ~ImGuiNavMoveFlags_Forwarded, g.NavMoveScrollFlags);
+}
+
 }  // namespace
+
+float sheet_pad(ImVec2 size, const SheetOpts& opts) {
+    return opts.pad >= 0.f ? opts.pad : ((size.x < sp(70.f) || size.y < sp(60.f)) ? sp(2.f) : sp(3.f));
+}
 
 SheetResult sheet(const char* id, SheetHost host, ImVec2 pos, ImVec2 size, bool* open, const SheetParts& parts, const SheetOpts& opts) {
     SheetResult r;
-    const float pad = opts.pad >= 0.f ? opts.pad : ((size.x < sp(70.f) || size.y < sp(60.f)) ? sp(2.f) : sp(3.f));
+    const float pad = sheet_pad(size, opts);
     if (host == SheetHost::Pane) {
         if (open && !*open) return r;
         ImGui::PushID(id);
@@ -183,7 +226,7 @@ SheetResult sheet(const char* id, SheetHost host, ImVec2 pos, ImVec2 size, bool*
 bool dialog_begin(const char* id, const char* title, bool* open, DialogSize size, const DialogOpts& opts) {
     ImGuiIO& io = ImGui::GetIO();
     const float w = hubui::kit::dialog_width((int)size, sp(1.f), io.DisplaySize.x), max_h = hubui::kit::dialog_max_h(io.DisplaySize.y);
-    const float pad = io.DisplaySize.y < hubui::lc::kShortWindowPx ? sp(2.f) : sp(3.f);   // like the game page modal on a short window
+    const float pad = io.DisplaySize.y < hubui::lc::kShortWindowPx ? sp(2.f) : sp(3.f);   // a short window: less padding, more room for the middle
     const std::string name = opts.keep_id ? std::string(id) : std::string(id) + "##uidlg";
     const ImGuiID mk = ImGui::GetID(name.c_str());
     ModalMemo& m = g_memo[mk];
@@ -235,6 +278,7 @@ bool dialog_begin(const char* id, const char* title, bool* open, DialogSize size
     const float body_max = hubui::kit::dialog_body_max(max_h, pad, title_h, m.buttons_h >= 0.f ? m.buttons_h : sp(7.f), spacing * 2.f + sp(1.f), sp(6.f));
     /* scrolling middle, half the padding wider each side (focus rings), text aligned with the title */
     const float spx = pad * 0.5f;
+    f.up = up_into_middle_begin(m);   // (before the middle begins: it may scroll it)
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() - spx);
     scroll_begin("##dlg_body", ImVec2(avail + 2.f * spx, body_max), ScrollFlags_AutoHeight | ScrollFlags_PadOwner, ImVec2(spx, sp(0.5f)));
     g_dlg.push_back(f);
@@ -252,6 +296,9 @@ void dialog_buttons() {
         hline(w->DrawList, w->Pos.x + sp(1.5f), w->Pos.x + w->Size.x - sp(1.5f), y);
     }
     f.btn_y0 = ImGui::GetCursorPosY();
+    ModalMemo& m = g_memo[f.memo];
+    m.body_win = si.window_id;
+    m.btn_top = ImGui::GetCursorScreenPos().y;
 }
 
 void dialog_end() {
@@ -261,6 +308,7 @@ void dialog_end() {
     g_dlg.pop_back();
     ModalMemo& m = g_memo[f.memo];
     m.buttons_h = std::max(0.f, ImGui::GetCursorPosY() - f.btn_y0);
+    if (f.up) up_into_middle_end(m);   // (every button scored: was an item of the middle found?)
     if (f.opts.back_closes && f.open && *f.open && modal_back()) { *f.open = false; consume_back(); }
     if (f.open && !*f.open) {
         ImGui::CloseCurrentPopup();

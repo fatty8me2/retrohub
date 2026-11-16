@@ -17,7 +17,7 @@
 #include <vector>
 #include <thread>
 
-/* ---------- Game info section of the details modal ----------
+/* ---------- Game info section of the game page (About tab) ----------
  * Facts (developer, publisher, genre, release, players, age rating, Famitsu/Edge scores) come from the bundled libretro-database file
  * (data\gameinfo.tsv) and show instantly. The description and review scores are fetched on demand from Wikidata/Wikipedia by ONE
  * background thread (>= 1 s between requests), cached per game under <data>\gameinfo\, and refreshed rarely; offline the cached copy is

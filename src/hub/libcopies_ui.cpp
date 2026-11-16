@@ -311,7 +311,7 @@ std::string library_folder_status_line(const std::string& folder) {
     return std::string();
 }
 
-/* Details > About: "N copies found" with their paths and a "Use this one" choice. */
+/* The game page's About tab: "N copies found" with their paths and a "Use this one" choice. */
 void dupes_details_section(const hub::GameEntry& e) {
     auto it = A.dupes.find(e.key);
     if (it == A.dupes.end() || it->second.size() < 2) return;

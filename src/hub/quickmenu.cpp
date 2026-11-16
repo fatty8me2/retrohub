@@ -1522,7 +1522,7 @@ static void qm_body() {
     ImGui::TextDisabled("Press B to go back to the game.");
 }
 
-/* ---------------- screenshots gallery (game details modal) ---------------- */
+/* ---------------- screenshots gallery (the game page's Screenshots tab) ---------------- */
 
 static bool is_image(const std::string& n) {
     auto dot = n.rfind('.');

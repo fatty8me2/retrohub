@@ -472,7 +472,7 @@ add_executable(hub_ps2_online_test test_ps2_online.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_ps2_online_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_ps2_online_test PRIVATE hublogic hubcommon hubminiz bcrypt winhttp xinput setupapi)
 
-# Game info (details modal): WinHTTP + fixture layer, the fixture recorder (live network, never run by tests) and the offline test.
+# Game info (the game page's About tab): WinHTTP + fixture layer, the fixture recorder (live network, never run by tests) and the offline test.
 add_library(hubgameinfo_net STATIC gameinfo_net.cpp)
 target_include_directories(hubgameinfo_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hubgameinfo_net PUBLIC hubcommon winhttp)

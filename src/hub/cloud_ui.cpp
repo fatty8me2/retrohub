@@ -439,28 +439,35 @@ void cloud_ui_overlays() {
     if (CK.on) {
         ImDrawList* dl = ImGui::GetForegroundDrawList();
         ImFont* f = ui::F.bold;
+        ImFont* s = ui::F.cap;
         std::string t = checking_text();
         ImVec2 ts = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.f, t.c_str());
-        float w = ts.x + sp(7.f), h = ts.y + sp(2.5f);
+        /* One panel holds every line, stacked: the message, the game's name, the Cancel control (each measured, so they never overlap
+         * and never hang below the panel over the page) */
+        const bool padm = A.pad_mode, waiting = A.cloud_gate.waiting;
+        const char* ct = "Cancel (Esc)";
+        const ImVec2 us = CK.title.empty() ? ImVec2(0.f, 0.f) : s->CalcTextSizeA(s->FontSize, FLT_MAX, 0.f, CK.title.c_str());
+        const ImVec2 cs = !waiting ? ImVec2(0.f, 0.f) : padm ? ImVec2(ui::key_hint_width(true, "B", "Esc", "Cancel"), s->FontSize + sp(0.75f)) : s->CalcTextSizeA(s->FontSize, FLT_MAX, 0.f, ct);
+        const float pad_y = sp(1.25f), title_gap = sp(0.5f), cancel_gap = sp(1.25f);
+        float w = std::max({ts.x + sp(7.f), us.x + sp(4.f), cs.x + sp(4.f)});
+        float h = pad_y * 2.f + ts.y + (CK.title.empty() ? 0.f : title_gap + us.y) + (waiting ? cancel_gap + cs.y : 0.f);
         ImVec2 p0((io.DisplaySize.x - w) * 0.5f, io.DisplaySize.y * 0.82f - h), p1(p0.x + w, p0.y + h);
         ui::shadow(dl, p0, p1, sp(1.5f), 1.f);
         dl->AddRectFilled(p0, p1, ui::PANEL2, sp(1.5f));
         dl->AddRect(p0, p1, ui::HAIRLINE, sp(1.5f), 0, 1.f);
         const float a = (float)ImGui::GetTime() * 5.f;
-        ImVec2 c(p0.x + sp(2.2f), (p0.y + p1.y) * 0.5f);
+        const float tx = (p0.x + p1.x - (ts.x + sp(3.f))) * 0.5f + sp(3.f);   // the message (with the dots before it) centred
+        ImVec2 c(tx - sp(1.9f), p0.y + pad_y + ts.y * 0.5f);
         for (int i = 0; i < 3; ++i) dl->AddCircleFilled(ImVec2(c.x + i * sp(0.9f) - sp(0.9f), c.y + std::sin(a + i * 0.9f) * sp(0.35f)), sp(0.28f), ui::ACCENT, 10);
-        dl->AddText(f, f->FontSize, ImVec2(p0.x + sp(4.2f), p0.y + sp(1.25f)), ui::TEXT, t.c_str());
+        dl->AddText(f, f->FontSize, ImVec2(tx, p0.y + pad_y), ui::TEXT, t.c_str());
+        float y = p0.y + pad_y + ts.y;
         if (!CK.title.empty()) {
-            ImFont* s = ui::F.cap;
-            ImVec2 us = s->CalcTextSizeA(s->FontSize, FLT_MAX, 0.f, CK.title.c_str());
-            dl->AddText(s, s->FontSize, ImVec2((p0.x + p1.x - us.x) * 0.5f, p1.y + sp(0.5f)), ui::TEXT2, CK.title.c_str());
+            y += title_gap;
+            dl->AddText(s, s->FontSize, ImVec2((p0.x + p1.x - us.x) * 0.5f, y), ui::TEXT2, CK.title.c_str());
+            y += us.y;
         }
-        if (A.cloud_gate.waiting) {   // waiting for the previous session's cloud work: offer a way out (click, Esc, B, or A on the focused control)
-            ImFont* s = ui::F.cap;
-            const bool padm = A.pad_mode;
-            const char* ct = "Cancel (Esc)";
-            const ImVec2 cs = padm ? ImVec2(ui::key_hint_width(true, "B", "Esc", "Cancel"), s->FontSize + sp(0.75f)) : s->CalcTextSizeA(s->FontSize, FLT_MAX, 0.f, ct);
-            ImVec2 q0((p0.x + p1.x - cs.x) * 0.5f, p1.y + sp(2.6f)), q1(q0.x + cs.x, q0.y + cs.y);
+        if (waiting) {   // waiting for the previous session's cloud work: offer a way out (click, Esc, B, or A on the focused control)
+            ImVec2 q0((p0.x + p1.x - cs.x) * 0.5f, y + cancel_gap), q1(q0.x + cs.x, q0.y + cs.y);
             const ImVec2 r0(q0.x - sp(1.f), q0.y - sp(0.5f)), r1(q1.x + sp(1.f), q1.y + sp(0.5f));
             const bool no_popup = !ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
             /* A real control in a tiny window of its own, so the D-pad / keyboard focus can sit on it; a pad player lands on it when it appears. */

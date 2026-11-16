@@ -92,6 +92,7 @@ struct Frame {
     std::optional<Ctx> ctx;
     bool gone = false;
     ui::SheetOpts so;
+    float top_inset = 0.f;   // the desk pane: room above the header for the focused Play button's glow (game_page_layout.h)
     Frame(View& v_, HostKind h, ImVec2 s, bool* o) : v(v_), host(h), hm(hubui::gp::host_metrics(h == HostKind::Pane)), size(s), open(o) {}
 };
 
@@ -101,6 +102,7 @@ bool draw_page_header(Frame& F) {
     View& v = F.v;
     ImGuiContext& g = *ImGui::GetCurrentContext();
     ImGuiWindow* hw = ImGui::GetCurrentWindow();
+    if (F.top_inset > 0.f) ImGui::SetCursorScreenPos(ImGui::GetCursorScreenPos() + ImVec2(0.f, F.top_inset));
     const float W = std::max(1.f, ImGui::GetContentRegionAvail().x);
 
     std::vector<Action> prim = primary_actions(c);
@@ -182,7 +184,9 @@ bool draw_page_header(Frame& F) {
             tooltip_for(*play);
         }
         ImGui::SetItemDefaultFocus();
-        if (v.focus_play || (ImGui::GetFrameCount() <= v.focus_until && !nav_inside)) {
+        /* The pane waits while a popup is up (a dialog the page opened, the friends panel's menus ...): focusing the pane would close it */
+        const bool popup_up = F.host == HostKind::Pane && ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        if ((v.focus_play && !popup_up) || (ImGui::GetFrameCount() <= v.focus_until && !nav_inside)) {
             focus_last_item(v.focus_play ? v.focus_visible : A.pad_mode);
             if (v.focus_play) shot_trace("gamepage-focus", "play " + c.e.key);
             v.focus_play = false;
@@ -324,6 +328,7 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
     }
 
     hubui::gp::sheet_spacing(hubui::gp::tier_for(size.y, sp(1.f)), sp(1.f), &F.so.pad, &F.so.gap);   // Mini: less padding and gaps
+    if (pane) F.top_inset = hubui::gp::pane_header_inset(ui::sheet_pad(size, F.so), sp(1.f));
     ui::SheetParts parts;
     parts.header = [&F] {
         if (!F.ctx || F.gone) return;

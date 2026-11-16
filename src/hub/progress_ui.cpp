@@ -1,10 +1,11 @@
-/* Plan 4 Wave 3 L2: completion status + a short note per game (synced prefs.progress), shown in the details modal's Info tab and as a
+/* Plan 4 Wave 3 L2: completion status + a short note per game (synced prefs.progress), shown on the game page's About tab and as a
  * small badge on tiles. Also the facts a smart shelf rule (L1) is matched against. The prefs cache and writes live in customize_ui.cpp
  * (custom_progress / custom_set_status / custom_set_note); this file is the drawing. */
 #include "app.h"
 #include "gameinfo.h"
 #include "osk.h"
 #include "progress_ui.h"
+#include "ui_controls.h"
 #include "wave3_hooks.h"
 
 namespace {
@@ -82,24 +83,27 @@ void progress_details_section(const hub::GameEntry& e) {
     ImGui::TextUnformatted("Your progress");
     ImGui::PopFont();
     ImGui::PushID("progress");
-    bool first = true;
+    ui::FlowRow row(sp(0.75f));   // the buttons wrap onto a second line when the column is narrow (the Library desk pane)
     for (const auto& s : hubui::prog::statuses()) {
-        if (!first) ImGui::SameLine(0, sp(0.75f));
-        first = false;
         const bool on = status == s.id;
-        if (ui::button(s.label, ImVec2(0, sp(3.5f)), on, true, on ? ui::Icon::Check : ui::Icon::None)) custom_set_status(e.key, on ? std::string() : std::string(s.id));
+        const ui::Icon ic = on ? ui::Icon::Check : ui::Icon::None;
+        row.next(ui::button_width(s.label, ic));
+        if (ui::button(s.label, ImVec2(0, sp(3.5f)), on, true, ic)) custom_set_status(e.key, on ? std::string() : std::string(s.id));
     }
     if (NS.key != e.key) { NS.key = e.key; NS.base = note; std::snprintf(NS.buf, sizeof NS.buf, "%s", note.c_str()); }
     else if (NS.base != note) {   // the note changed elsewhere (another PC synced): reload the box unless the player is mid-edit
         if (hubui::prog::clean_note(NS.buf) == NS.base) std::snprintf(NS.buf, sizeof NS.buf, "%s", note.c_str());
         NS.base = note;
     }
-    ImGui::SetNextItemWidth(std::min(sp(60.f), ImGui::GetContentRegionAvail().x - sp(14.f)));
+    /* the note box and Save note on one line; in a narrow column (under about 30 units for the box) Save note goes under the box */
+    const float avail = ImGui::GetContentRegionAvail().x, save_w = ui::button_width("Save note");
+    const bool note_wraps = avail - sp(14.f) < sp(30.f);
+    ImGui::SetNextItemWidth(note_wraps ? avail : std::min(sp(60.f), avail - sp(14.f)));
     bool go = osk::input("##progress_note", "Add a short note", NS.buf, sizeof NS.buf, ImGuiInputTextFlags_EnterReturnsTrue);
     go = go || ImGui::IsItemDeactivatedAfterEdit();
     const std::string typed = hubui::prog::clean_note(NS.buf);
-    ImGui::SameLine(0, sp(1.f));
-    if (ui::button("Save note", ImVec2(0, sp(3.5f)), false, typed != note)) go = true;
+    if (!note_wraps) ImGui::SameLine(0, sp(1.f));
+    if (ui::button("Save note", ImVec2(note_wraps ? std::min(save_w, avail) : 0.f, sp(3.5f)), false, typed != note)) go = true;
     if (go && typed != note) {
         if (custom_set_note(e.key, typed)) std::snprintf(NS.buf, sizeof NS.buf, "%s", typed.c_str());
         else push_toast("Couldn't save the note", COL_BAD, 3.0);
