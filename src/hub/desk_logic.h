@@ -1,12 +1,16 @@
 #pragma once
 /* Library desk (Settings > General > Layout: "Library desk"): the model of the game list in the left column.
- * Pure (no ImGui, no app state): groups, search, open / closed groups, keyboard / controller movement over the rows, and the
- * virtual-row maths. Unit-tested in test_desk.cpp (hub_desk_test). The drawing is desk_view.cpp.
+ * Pure (no ImGui, no app state): groups, search, open / closed groups, keyboard / controller movement over the rows, type to jump, the
+ * column width and the virtual-row maths. Unit-tested in test_desk.cpp (hub_desk_test). The drawing is desk_view.cpp.
  *
  * Groups, in order: "Recent" (the most recently played games, up to 5), "Favorites" (when there are any), then one group per console
  * in hubui::console_order(), and "other" for a console id that is not in that list. A game can be in Recent, in Favorites and in its
- * console group at once. Hidden games are never listed. A search keeps the games whose title contains the text (any case) and opens
- * every group that has a match; empty groups are left out. */
+ * console group at once. Hidden games are never listed. A search keeps the games whose title (or the scanned name of a renamed game)
+ * contains the text (any case) and opens every group that has a match; empty groups are left out.
+ * The library's own Sort order and filters (desk_view.cpp passes them from rebuild_vis, the same code Traditional uses): Game::rank orders
+ * Favorites and the console groups (Recent stays newest first), Game::listed = false leaves a game out (Favorites only, a genre, Online
+ * games). Friends' games you do not own (Game::ghost) are listed greyed in their console group after your own games, never in Recent or
+ * Favorites, and never counted as yours. */
 
 #include "logic.h"   // hubui::console_order()
 
@@ -29,8 +33,12 @@ inline std::string normalize_layout(const std::string& v) { return v == kDesk ? 
 /* ---- input ---- */
 struct Game {
     std::string key, title, console;   // console: library.h console id (a system short, or "switch2")
+    std::string alt_title;             // the scanned name when `title` is the player's rename: the search matches either
     unsigned long long last_played = 0;
     bool favorite = false, hidden = false, pinned = false;   // pinned: the bundled native port, first in its console group
+    bool ghost = false;                // a friend's game you do not own: greyed, only in its console group, after your own games
+    bool listed = true;                // false: the library filters leave it out (Favorites only, a genre, Online games)
+    int rank = -1;                     // position in the library's Sort order; -1 = unknown (pinned first, then title A-Z)
 };
 
 constexpr int kMaxRecent = 5;
@@ -85,9 +93,10 @@ struct Model {
     std::vector<Group> groups;
     std::vector<Row> rows;        // the visible rows: each group's header, then its games when it is open
     bool searching = false;
-    int total = 0;                // games in the library (hidden ones not counted)
-    int matches = 0;              // games that match the search (each once); == total without a search
-    std::string first_console;    // id of the first console group of the whole library (the default-open one)
+    int total = 0;                // your games in the library (hidden ones and friends' games not counted)
+    int matches = 0;              // your games that are listed (search and filters); == total without either
+    int ghosts = 0;               // friends' games listed
+    std::string first_console;    // id of the first console group of your whole library (the default-open one)
 };
 
 inline std::string lower_ascii(const std::string& s) {
@@ -103,6 +112,9 @@ inline std::string trim_query(const std::string& q) {
 }
 inline bool title_matches(const std::string& title, const std::string& lower_query) {
     return lower_query.empty() || lower_ascii(title).find(lower_query) != std::string::npos;
+}
+inline bool game_matches(const Game& g, const std::string& lower_query) {
+    return title_matches(g.title, lower_query) || (!g.alt_title.empty() && !lower_query.empty() && title_matches(g.alt_title, lower_query));
 }
 
 /* Which console group a console id goes in: itself when it is a known console, else "other". */
@@ -127,25 +139,34 @@ inline Model build(const std::vector<Game>& games, const std::string& query, con
     Model m;
     const std::string q = lower_ascii(trim_query(query));
     m.searching = !q.empty();
-    std::vector<int> keep;   // matching, not hidden
+    std::vector<int> keep;   // matching, listed, not hidden
     for (size_t i = 0; i < games.size(); ++i) {
-        if (games[i].hidden) continue;
-        ++m.total;
-        if (title_matches(games[i].title, q)) keep.push_back((int)i);
+        const Game& g = games[i];
+        if (g.hidden) continue;
+        if (!g.ghost) ++m.total;
+        if (!g.listed || !game_matches(g, q)) continue;
+        if (g.ghost) ++m.ghosts; else ++m.matches;
+        keep.push_back((int)i);
     }
-    m.matches = (int)keep.size();
     auto by_title = [&](int a, int b) {
         if (games[a].pinned != games[b].pinned) return games[a].pinned;
         const std::string x = lower_ascii(games[a].title), y = lower_ascii(games[b].title);
         if (x != y) return x < y;
         return games[a].key < games[b].key;
     };
-    {   // the first console group of the WHOLE library (a search must not move the default)
+    auto in_order = [&](int a, int b) {   // the library's Sort order; your games before friends' games
+        const Game& x = games[a];
+        const Game& y = games[b];
+        if (x.ghost != y.ghost) return !x.ghost;
+        if (x.rank >= 0 && y.rank >= 0 && x.rank != y.rank) return x.rank < y.rank;
+        return by_title(a, b);
+    };
+    {   // the first console group of your WHOLE library (a search or a filter must not move the default)
         int best = -1;
         bool other = false;
         const std::vector<std::string>& o = hubui::console_order();
         for (const Game& g : games) {
-            if (g.hidden) continue;
+            if (g.hidden || g.ghost) continue;
             auto it = std::find(o.begin(), o.end(), g.console);
             if (it == o.end()) { other = true; continue; }
             const int r = (int)(it - o.begin());
@@ -168,7 +189,7 @@ inline Model build(const std::vector<Game>& games, const std::string& query, con
     };
     {   // Recent: newest first
         std::vector<int> r;
-        for (int i : keep) if (games[i].last_played > 0) r.push_back(i);
+        for (int i : keep) if (!games[i].ghost && games[i].last_played > 0) r.push_back(i);
         std::stable_sort(r.begin(), r.end(), [&](int a, int b) {
             if (games[a].last_played != games[b].last_played) return games[a].last_played > games[b].last_played;
             return by_title(a, b);
@@ -178,8 +199,8 @@ inline Model build(const std::vector<Game>& games, const std::string& query, con
     }
     {
         std::vector<int> f;
-        for (int i : keep) if (games[i].favorite) f.push_back(i);
-        std::stable_sort(f.begin(), f.end(), by_title);
+        for (int i : keep) if (!games[i].ghost && games[i].favorite) f.push_back(i);
+        std::stable_sort(f.begin(), f.end(), in_order);
         add("favs", GroupKind::Favorites, f);
     }
     std::map<std::string, std::vector<int>> by_console;
@@ -187,12 +208,12 @@ inline Model build(const std::vector<Game>& games, const std::string& query, con
     for (const std::string& c : hubui::console_order()) {
         auto it = by_console.find(c);
         if (it == by_console.end()) continue;
-        std::stable_sort(it->second.begin(), it->second.end(), by_title);
+        std::stable_sort(it->second.begin(), it->second.end(), in_order);
         add(c, GroupKind::Console, it->second);
     }
     if (by_console.count("other")) {
         std::vector<int>& v = by_console["other"];
-        std::stable_sort(v.begin(), v.end(), by_title);
+        std::stable_sort(v.begin(), v.end(), in_order);
         add("other", GroupKind::Console, v);
     }
     flatten(&m);
@@ -204,6 +225,13 @@ struct RowRef {
     std::string group, key;   // key "" = the group's header
     bool empty() const { return group.empty(); }
 };
+/* hub.json "desk_sel": "group|key" (the list cursor, kept across restarts). Group ids never hold '|'; a key may. */
+inline std::string format_ref(const RowRef& r) { return r.empty() ? std::string() : r.group + "|" + r.key; }
+inline RowRef parse_ref(const std::string& s) {
+    const size_t b = s.find('|');
+    if (b == std::string::npos || b == 0) return RowRef();
+    return RowRef{s.substr(0, b), s.substr(b + 1)};
+}
 inline RowRef ref_of(const Model& m, const std::vector<Game>& games, int row) {
     if (row < 0 || row >= (int)m.rows.size()) return RowRef();
     const Row& r = m.rows[(size_t)row];
@@ -219,6 +247,22 @@ inline int row_of_key(const Model& m, const std::vector<Game>& games, const std:
         if (!m.rows[i].header() && games[(size_t)m.rows[i].game].key == key) return (int)i;
     return -1;
 }
+/* The row that shows `key` as the selection: its row in `group` when that group shows it (where the player picked it), else its row in
+ * its console group, else its first visible row; -1 when it is not visible. A game can be in Recent, Favorites and its console group at
+ * once: the highlight must not jump to another copy of the row. */
+inline int sel_row_for(const Model& m, const std::vector<Game>& games, const std::string& key, const std::string& group) {
+    if (key.empty()) return -1;
+    int first = -1, console = -1;
+    for (size_t i = 0; i < m.rows.size(); ++i) {
+        const Row& r = m.rows[i];
+        if (r.header() || games[(size_t)r.game].key != key) continue;
+        const Group& g = m.groups[(size_t)r.group];
+        if (!group.empty() && g.id == group) return (int)i;
+        if (first < 0) first = (int)i;
+        if (console < 0 && g.kind == GroupKind::Console) console = (int)i;
+    }
+    return console >= 0 ? console : first;
+}
 inline int header_row(const Model& m, const std::string& group) {
     for (size_t i = 0; i < m.rows.size(); ++i)
         if (m.rows[i].header() && m.groups[(size_t)m.rows[i].group].id == group) return (int)i;
@@ -233,7 +277,7 @@ inline int find_row(const Model& m, const std::vector<Game>& games, const RowRef
         if (ref.key.empty() ? r.header() : (!r.header() && games[(size_t)r.game].key == ref.key)) return (int)i;
     }
     if (!ref.key.empty()) {
-        const int k = row_of_key(m, games, ref.key);
+        const int k = sel_row_for(m, games, ref.key, "");
         if (k >= 0) return k;
     }
     return header_row(m, ref.group);
@@ -247,6 +291,18 @@ inline bool has_game(const Model& m, const std::vector<Game>& games, const std::
 inline int first_game_row(const Model& m) {
     for (size_t i = 0; i < m.rows.size(); ++i) if (!m.rows[i].header()) return (int)i;
     return -1;
+}
+
+/* ---- open / close every group ("Open all groups" / "Close all groups") ---- */
+inline bool all_open(const Model& m) {
+    for (const Group& g : m.groups) if (!g.open) return false;
+    return !m.groups.empty();
+}
+/* The saved map with every group of the model set to `open` (other ids the map remembers are kept). */
+inline OpenMap with_all(const OpenMap& saved, const Model& m, bool open) {
+    OpenMap o = saved;
+    for (const Group& g : m.groups) o[g.id] = open;
+    return o;
 }
 
 /* ---- keyboard / controller movement over the visible rows ---- */
@@ -300,6 +356,64 @@ inline Step step(const Model& m, int cur, Key k, int page_rows) {
         s.act = Act::Play; s.row = cur; return s;
     }
     return s;
+}
+
+/* ---- type to jump (the list has the focus, the search box does not) ---- */
+enum class TypeKey { None, Jump, Search };
+/* What a typed character does in the list: letters and digits jump to a title, other printable characters start a search ("/" always
+ * does). F, I and S stay the Favorite / Details / Add to shelf shortcuts, as everywhere in the library. */
+inline TypeKey type_key(unsigned c) {
+    if (c < 33 || c > 126) return TypeKey::None;
+    const char l = (char)std::tolower((int)c);
+    if (l == 'f' || l == 'i' || l == 's') return TypeKey::None;
+    return std::isalnum((int)c) ? TypeKey::Jump : TypeKey::Search;
+}
+/* Characters typed within `gap` seconds of each other build one prefix ("ze" for Zelda); a longer pause starts a new one. */
+struct TypeAhead { std::string text; double at = -1e9; };
+inline std::string type_ahead(TypeAhead* t, char c, double now, double gap = 1.0) {
+    if (now - t->at > gap) t->text.clear();
+    t->text += (char)std::tolower((unsigned char)c);
+    t->at = now;
+    return t->text;
+}
+/* The row a typed prefix jumps to: the next game row whose title starts with it (any case), wrapping around the visible rows. One letter
+ * (or the same letter again: "mmm") steps on from the current row; a longer prefix keeps the current row while it still matches.
+ * -1 = no visible title starts with it. */
+inline int jump_row(const Model& m, const std::vector<Game>& games, int cur, const std::string& prefix) {
+    const int n = (int)m.rows.size();
+    if (prefix.empty() || n == 0) return -1;
+    const std::string p = lower_ascii(prefix);
+    const bool same = p.find_first_not_of(p[0]) == std::string::npos;
+    const std::string want = same ? p.substr(0, 1) : p;
+    const int start = (cur < 0 || cur >= n) ? 0 : (same ? cur + 1 : cur);
+    for (int k = 0; k < n; ++k) {
+        const int i = (start + k) % n;
+        const Row& r = m.rows[(size_t)i];
+        if (r.header()) continue;
+        if (lower_ascii(games[(size_t)r.game].title).compare(0, want.size(), want) == 0) return i;
+    }
+    return -1;
+}
+
+/* What one typed character does with the prefix built so far: jumps on `t->text`, and when nothing starts with it (a new letter right after
+ * others: "pppz", a typo), starts again from that letter alone (t->text becomes it). -1 = no visible title starts with either. */
+inline int type_jump_row(const Model& m, const std::vector<Game>& games, int cur, TypeAhead* t) {
+    int r = jump_row(m, games, cur, t->text);
+    if (r < 0 && t->text.size() > 1) {
+        t->text = t->text.substr(t->text.size() - 1);
+        r = jump_row(m, games, cur, t->text);
+    }
+    return r;
+}
+
+/* ---- the line under the toolbar while a library filter is on ---- */
+inline std::string filter_line(bool favs_only, const std::string& genre, bool online_only) {
+    std::string o;
+    auto put = [&](const std::string& s) { if (!o.empty()) o += ", "; o += s; };
+    if (favs_only) put("Favorites only");
+    if (!genre.empty()) put("Genre: " + genre);
+    if (online_only) put("Online games");
+    return o.empty() ? o : "Filters: " + o;
 }
 
 /* ---- virtual rows ---- */
@@ -384,5 +498,24 @@ inline float column_width(float content_w, float unit) {
     const float w = content_w * 0.25f, lo = 30.f * unit, hi = 48.f * unit;
     return std::max(std::min(lo, content_w * 0.5f), std::min(hi, w));
 }
+/* The width the player chose (hub.json "desk_list_w", in units): 0 = Normal (column_width above), Narrow and Wide from Settings, anything
+ * else from dragging the divider. Always between kListMin units and what leaves the game page at least 56 units (and 40 % of the room). */
+constexpr int kListNarrow = 30, kListWide = 60, kListMin = 26, kListMax = 80;
+inline int normalize_list_w(int units) { return units <= 0 ? 0 : std::max(kListMin, std::min(kListMax, units)); }
+inline float list_width(int units, float content_w, float unit) {
+    if (units <= 0) return column_width(content_w, unit);
+    const float lo = std::min((float)kListMin * unit, content_w * 0.5f);
+    const float hi = std::max(lo, std::min((float)kListMax * unit, std::min(content_w * 0.6f, content_w - 56.f * unit)));
+    return std::max(lo, std::min(hi, (float)normalize_list_w(units) * unit));
+}
+/* A width dragged to `px` back to the setting: whole units inside the same limits. */
+inline int list_units_for(float px, float content_w, float unit) {
+    if (unit <= 0.f) return 0;
+    const float lo = list_width(kListMin, content_w, unit), hi = list_width(kListMax, content_w, unit);
+    return normalize_list_w((int)std::lround(std::max(lo, std::min(hi, px)) / unit));
+}
+/* Settings > General > List width: 0 Narrow, 1 Normal, 2 Wide, -1 a width set by dragging the divider. */
+inline int list_choice(int units) { return units <= 0 ? 1 : units == kListNarrow ? 0 : units == kListWide ? 2 : -1; }
+inline int list_units_of_choice(int choice) { return choice == 0 ? kListNarrow : choice == 2 ? kListWide : 0; }
 
 }  // namespace hubdesk

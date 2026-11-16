@@ -61,6 +61,11 @@ struct Settings {
     int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only
     std::string ui_layout = "traditional";   // Settings > General > Layout: "traditional" (default; a missing / unknown value too) | "desk" (Library desk, desk_view.cpp)
     std::string desk_groups;           // Library desk: groups the player opened / closed, "recent=1,n64=0" (desk_logic.h; others follow the default)
+    int desk_list_w = 0;               // Library desk: list column width in units of sp(1); 0 = Normal, 30 Narrow, 60 Wide, else dragged (26..80)
+    std::string desk_sel;              // Library desk: the list cursor, "group|key" (kept across restarts)
+    float desk_scroll = 0.f;           // Library desk: the list's scroll position in rows (kept across restarts)
+    bool desk_card_done = false;       // Traditional Home: the "Try the new Library desk layout" card was answered (Try it / Not now)
+    bool desk_switch_note = false;     // Library desk: show "You can switch back in Settings" once (set by the card's Try it)
     std::string option_sections;       // game option pages: headings the player opened / closed, "Advanced=1,Audio=0" (option_sections.h; others follow the default)
     bool show_friends = true;          // friends panel open
     bool tv_start = false;             // start RetroHub in TV mode (fullscreen 10-foot layout)

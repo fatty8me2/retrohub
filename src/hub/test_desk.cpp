@@ -45,6 +45,30 @@ int main() {
         CHECK(hubui::settings_from_json(hubui::settings_to_json(s), &r) && r.ui_layout == "desk" && r.desk_groups == "n64=0,recent=1");
         s.ui_layout = "traditional";
         CHECK(hubui::settings_from_json(hubui::settings_to_json(s), &r) && r.ui_layout == "traditional");
+        /* the desk's own keys: list width, cursor, scroll, the Try it card and the switch-back note */
+        CHECK(d.desk_list_w == 0 && d.desk_sel.empty() && d.desk_scroll == 0.f && !d.desk_card_done && !d.desk_switch_note);
+        s.desk_list_w = 44;
+        s.desk_sel = "n64|n64:abc|def";
+        s.desk_scroll = 12.5f;
+        s.desk_card_done = true;
+        s.desk_switch_note = true;
+        hubui::Settings k;
+        CHECK(hubui::settings_from_json(hubui::settings_to_json(s), &k) && k.desk_list_w == 44 && k.desk_sel == "n64|n64:abc|def" &&
+              std::fabs(k.desk_scroll - 12.5f) < 0.001f && k.desk_card_done && k.desk_switch_note);
+        hubui::Settings w;
+        CHECK(hubui::settings_from_json("{\"desk_list_w\": 500, \"desk_scroll\": -4}", &w) && w.desk_list_w == 80 && w.desk_scroll == 0.f);
+        CHECK(hubui::settings_from_json("{\"desk_list_w\": 3}", &w) && w.desk_list_w == 26);
+        CHECK(hubui::settings_from_json("{\"desk_list_w\": -2}", &w) && w.desk_list_w == 0);
+        hubui::Settings old2;   // a file from before these keys: Normal width, the card not answered yet
+        CHECK(hubui::settings_from_json("{\"ui_layout\": \"desk\"}", &old2) && old2.desk_list_w == 0 && !old2.desk_card_done && !old2.desk_switch_note);
+    }
+    {   // "group|key" text of the remembered cursor
+        CHECK(format_ref(RowRef{"n64", "n64:a|b"}) == "n64|n64:a|b" && format_ref(RowRef{"gc", ""}) == "gc|" && format_ref(RowRef()).empty());
+        RowRef r = parse_ref("n64|n64:a|b");
+        CHECK(r.group == "n64" && r.key == "n64:a|b");
+        r = parse_ref("recent|");
+        CHECK(r.group == "recent" && r.key.empty());
+        CHECK(parse_ref("").empty() && parse_ref("|x").empty() && parse_ref("nobar").empty());
     }
 
     /* ---- open / closed groups text ---- */
@@ -175,6 +199,130 @@ int main() {
         CHECK(s.act == Act::Leave);
         s = step(c, 0, Key::Activate, 5);
         CHECK(s.act == Act::Open);
+    }
+
+    /* ---- the library's Sort order and filters, friends' games, renamed games ---- */
+    {
+        std::vector<Game> g = {G("a", "Alpha", "n64", 10, true), G("b", "Beta", "n64", 30), G("c", "Gamma", "n64", 20, true), G("d", "Delta", "gc")};
+        g[0].rank = 2; g[1].rank = 0; g[2].rank = 1; g[3].rank = 3;   // e.g. Last played: Beta, Gamma, Alpha
+        Model m = build(g, "", OpenMap());   // [recent] b c a [favs] c a [n64] b c a [gc] d
+        CHECK((ids(m) == std::vector<std::string>{"recent", "favs", "n64", "gc"}));
+        CHECK(row_text(m, g, 1) == "b" && row_text(m, g, 2) == "c" && row_text(m, g, 3) == "a");   // Recent: newest first (its own order)
+        CHECK(row_text(m, g, 5) == "c" && row_text(m, g, 6) == "a");                               // Favorites follow the Sort order
+        CHECK(row_text(m, g, 8) == "b" && row_text(m, g, 9) == "c" && row_text(m, g, 10) == "a");  // and so does the console group
+        std::vector<Game> f = g;
+        f[1].listed = false;   // a filter (Favorites only, a genre ...) leaves Beta out everywhere, but it still counts as yours
+        Model mf = build(f, "", OpenMap());
+        CHECK(mf.total == 4 && mf.matches == 3 && !has_game(mf, f, "b"));
+        CHECK(mf.first_console == "n64");
+        std::vector<Game> all_out = g;
+        for (Game& x : all_out) x.listed = false;
+        Model none = build(all_out, "", OpenMap());
+        CHECK(none.rows.empty() && none.total == 4 && none.matches == 0 && none.first_console == "n64");
+        /* friends' games: in their console group after yours, never in Recent / Favorites, never counted as yours */
+        std::vector<Game> gh = g;
+        Game x = G("ghost:1", "Aardvark", "n64", 99, true); x.ghost = true; x.rank = -1;
+        Game y = G("ghost:2", "Zoo", "ps2"); y.ghost = true;
+        gh.push_back(x); gh.push_back(y);
+        Model mg = build(gh, "", OpenMap());
+        CHECK(mg.total == 4 && mg.matches == 4 && mg.ghosts == 2);
+        CHECK(mg.groups[0].items.size() == 3 && mg.groups[1].items.size() == 2);   // Recent / Favorites: yours only
+        const Group* n64 = nullptr;
+        for (const Group& q : mg.groups) if (q.id == "n64") n64 = &q;
+        CHECK(n64 && n64->items.size() == 4 && gh[(size_t)n64->items.back()].key == "ghost:1");
+        CHECK(mg.groups.back().id == "ps2" && mg.groups.back().items.size() == 1);   // a console only friends have
+        CHECK(build(gh, "zoo", OpenMap()).ghosts == 1 && build(gh, "zoo", OpenMap()).matches == 0);
+        /* a renamed game: the search matches the scanned name too */
+        std::vector<Game> rn = {G("r", "My Favourite", "gba")};
+        rn[0].alt_title = "Pokemon Emerald";
+        CHECK(build(rn, "emerald", OpenMap()).matches == 1 && build(rn, "favourite", OpenMap()).matches == 1 && build(rn, "ruby", OpenMap()).matches == 0);
+        /* no ranks (an older caller): pinned first, then A-Z */
+        std::vector<Game> nr = {G("p", "Zed", "n64"), G("q", "Ace", "n64")};
+        nr[0].pinned = true;
+        Model mn = build(nr, "", OpenMap());
+        CHECK(row_text(mn, nr, 1) == "p" && row_text(mn, nr, 2) == "q");
+    }
+
+    /* ---- the same game in two groups: the selection stays on the row the player picked ---- */
+    {
+        std::vector<Game> g = {G("a", "Alpha", "n64", 10, true), G("b", "Beta", "n64")};
+        Model m = build(g, "", OpenMap());   // [recent] a [favs] a [n64] a b
+        CHECK(row_text(m, g, 1) == "a" && row_text(m, g, 3) == "a" && row_text(m, g, 5) == "a");
+        CHECK(sel_row_for(m, g, "a", "favs") == 3);
+        CHECK(sel_row_for(m, g, "a", "recent") == 1);
+        CHECK(sel_row_for(m, g, "a", "n64") == 5);
+        CHECK(sel_row_for(m, g, "a", "") == 5);       // picked elsewhere (palette, Coverflow ...): its console row
+        CHECK(sel_row_for(m, g, "a", "gc") == 5);     // a group that does not show it: the console row too
+        CHECK(sel_row_for(m, g, "nope", "n64") == -1 && sel_row_for(m, g, "", "n64") == -1);
+        Model c = build(g, "", parse_open("n64=0"));  // its console group closed: the first row that shows it
+        CHECK(sel_row_for(c, g, "a", "") == 1 && sel_row_for(c, g, "a", "favs") == 3);
+        CHECK(find_row(m, g, RowRef{"favs", "a"}) == 3 && find_row(m, g, RowRef{"gc", "a"}) == 5);
+    }
+
+    /* ---- open / close every group ---- */
+    {
+        std::vector<Game> g = {G("a", "Alpha", "n64", 10), G("b", "Beta", "gc")};
+        Model m = build(g, "", OpenMap());
+        CHECK(all_open(m) && !all_open(Model()));
+        OpenMap keep = parse_open("wiiu=1");
+        OpenMap closed = with_all(keep, m, false);
+        CHECK(closed.size() == 4 && !closed["recent"] && !closed["n64"] && !closed["gc"] && closed["wiiu"]);   // others it remembers stay
+        Model mc = build(g, "", closed);
+        CHECK(!all_open(mc) && mc.rows.size() == 3);   // headers only
+        CHECK(all_open(build(g, "", with_all(closed, mc, true))));
+    }
+
+    /* ---- type to jump ---- */
+    {
+        CHECK(type_key('z') == TypeKey::Jump && type_key('Q') == TypeKey::Jump && type_key('7') == TypeKey::Jump);
+        CHECK(type_key('f') == TypeKey::None && type_key('I') == TypeKey::None && type_key('s') == TypeKey::None);   // the library shortcuts
+        CHECK(type_key('/') == TypeKey::Search && type_key('-') == TypeKey::Search && type_key(' ') == TypeKey::None && type_key(200) == TypeKey::None);
+        TypeAhead t;
+        CHECK(type_ahead(&t, 'Z', 10.0) == "z" && type_ahead(&t, 'e', 10.5) == "ze" && type_ahead(&t, 'l', 12.0) == "l");   // a pause starts again
+        std::vector<Game> g = {G("a", "Mario Kart", "n64"), G("b", "Metroid", "n64"), G("c", "zelda", "n64"), G("d", "Zoo", "gc"), G("e", "1080 Snow", "n64")};
+        Model m = build(g, "", OpenMap());   // [n64] 1080 Snow, Mario Kart, Metroid, zelda [gc] Zoo
+        CHECK(row_text(m, g, 1) == "e" && row_text(m, g, 2) == "a" && row_text(m, g, 4) == "c" && row_text(m, g, 6) == "d");
+        CHECK(jump_row(m, g, 0, "m") == 2);    // from the header: the first M
+        CHECK(jump_row(m, g, 2, "m") == 3);    // the same letter again: the next M
+        CHECK(jump_row(m, g, 3, "mm") == 2);   // ... and around
+        CHECK(jump_row(m, g, 2, "me") == 3);   // a longer prefix
+        CHECK(jump_row(m, g, 3, "me") == 3);   // the current row still matches: it stays
+        CHECK(jump_row(m, g, 0, "Z") == 4 && jump_row(m, g, 4, "z") == 6 && jump_row(m, g, 6, "z") == 4);   // any case, wraps
+        CHECK(jump_row(m, g, 6, "1") == 1);
+        CHECK(jump_row(m, g, 0, "q") == -1 && jump_row(m, g, 0, "") == -1 && jump_row(Model(), g, 0, "m") == -1);
+        Model c = build(g, "", parse_open("n64=0"));   // closed groups are skipped: only what is on screen
+        CHECK(jump_row(c, g, 0, "m") == -1 && jump_row(c, g, 0, "z") == 2);
+        TypeAhead ta;   // a letter that does not continue the prefix starts again from itself
+        type_ahead(&ta, 'm', 1.0); type_ahead(&ta, 'm', 1.2);
+        CHECK(type_jump_row(m, g, 2, &ta) == 3 && ta.text == "mm");
+        type_ahead(&ta, 'z', 1.4);
+        CHECK(ta.text == "mmz" && type_jump_row(m, g, 3, &ta) == 4 && ta.text == "z");
+        type_ahead(&ta, 'e', 1.6);
+        CHECK(type_jump_row(m, g, 4, &ta) == 4 && ta.text == "ze");   // "ze": Zelda still matches
+        type_ahead(&ta, 'q', 1.8);
+        CHECK(type_jump_row(m, g, 4, &ta) == -1 && ta.text == "q");
+    }
+
+    /* ---- the filters line ---- */
+    CHECK(filter_line(false, "", false).empty());
+    CHECK(filter_line(true, "", false) == "Filters: Favorites only");
+    CHECK(filter_line(true, "Puzzle", true) == "Filters: Favorites only, Genre: Puzzle, Online games");
+    CHECK(filter_line(false, "Other", false) == "Filters: Genre: Other");
+
+    /* ---- the list width (Settings > General > List width, or dragging the divider) ---- */
+    {
+        CHECK(list_width(0, 888, 8) == column_width(888, 8) && list_width(0, 1800, 8) == 384);   // Normal: as before
+        CHECK(list_width(kListNarrow, 1800, 8) == 240 && list_width(kListWide, 1800, 8) == 480);
+        CHECK(list_width(kListWide, 888, 8) == 440);     // 1024 px window: the game page keeps 56 units
+        CHECK(list_width(kListMax, 1800, 8) == 640);
+        CHECK(list_width(10, 1800, 8) == kListMin * 8);  // never narrower than the minimum
+        CHECK(list_width(kListNarrow, 300, 8) == 150);   // a tiny content area: half of it at most
+        CHECK(list_units_for(333, 1800, 8) == 42 && list_units_for(10, 1800, 8) == kListMin && list_units_for(5000, 1800, 8) == kListMax);
+        CHECK(list_units_for(1000, 888, 8) == 55);       // dragged past what fits: what fits (440 px)
+        CHECK(list_units_for(100, 888, 8) == kListMin && list_units_for(100, 888, 0) == 0);
+        CHECK(list_choice(0) == 1 && list_choice(kListNarrow) == 0 && list_choice(kListWide) == 2 && list_choice(44) == -1);
+        CHECK(list_units_of_choice(0) == kListNarrow && list_units_of_choice(1) == 0 && list_units_of_choice(2) == kListWide);
+        CHECK(normalize_list_w(-5) == 0 && normalize_list_w(1) == kListMin && normalize_list_w(999) == kListMax && normalize_list_w(44) == 44);
     }
 
     /* ---- virtual rows ---- */
