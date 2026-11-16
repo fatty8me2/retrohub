@@ -87,6 +87,8 @@ bool icon_button(const char* id, Icon ic, float size, bool active = false, const
 bool chip(const char* label, bool on, ImU32 col);
 /* Inside a modal: true on the frame B (pad) or Esc is pressed while this modal has the focus. ImGui never closes modals on its own. */
 bool modal_back();
+/* Menu sounds for a custom widget, as the widgets above use them: Move when the focus lands on it, Select when it is pressed. */
+void item_sound(bool focused, bool pressed);
 /* Pill-style segmented control; returns the (possibly new) selected index. */
 int segmented(const char* id, const char* const* labels, int n, int cur, int hot = -1);
 /* `hot` (>= 0) marks one segment as the main attraction: a logo-palette (cyan to pink, tinted by the theme accent) gradient border and

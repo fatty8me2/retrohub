@@ -82,6 +82,12 @@ Exit codes: 0 = shot saved. **2 = a requested aid could not be honoured (unknown
 | `HUB_SHOT_QM*` | | quick menu aids |
 | `HUB_SHOT_CTL_*`, `HUB_SHOT_FAKE_PADS=n` | | Controllers page aids |
 
+## UI kit
+
+| Variable | Values | What it shows |
+| --- | --- | --- |
+| **`HUB_SHOT_KITDEMO`** | `sheet` (a game-page-like page sheet over the whole window), `pane` (the "Library desk": a game list on the left, the same page in a pane on the right), `dialog` (the sheet with a scrolling dialog on top). Unknown value exits 2 | the UI kit (`ui_scroll.h`, `ui_sheet.h`, `ui_controls.h`) with fake content: tab bar, three sections (Advanced closed), 17 option rows with long labels and values. `HUB_SHOT_KITTAB=0..3` picks the tab (default 3, Settings). Add `HUB_SHOT_PAD=down,down,...,shot:<name>` to watch the focus follow and LT / RT (`lt`, `rt`) page the body. `qa\uikit_shots.ps1` captures the whole set (sizes, 150 %, Light, pad runs) from a sandbox copy |
+
 ## Matrix
 
 `powershell -NoProfile -ExecutionPolicy Bypass -File qa\shot_matrix.ps1 [-Out dir] [-Only <name-regex>] [-Sizes 1280x720,1920x1080] [-NoKey]`

@@ -129,6 +129,10 @@ void shot_init_ui() {
         if (*hs && !(hs[0] == '0' && !hs[1])) { A.env_select = "switch:0400486024dec000"; A.show_details = true; SH.details_key = A.env_select; }
     }
     if (std::getenv("HUB_SHOT_CTL_SYS") || std::getenv("HUB_SHOT_FAKE_PADS")) A.page = Page::Controllers;   // Controllers page aids: HUB_SHOT_CTL_SYS/_GAME/_DEMO/_CAPTURE, HUB_SHOT_FAKE_PADS=n
+    if (const char* kd = std::getenv("HUB_SHOT_KITDEMO")) {   // UI kit demo (ui_kitdemo.cpp): sheet | pane | dialog, HUB_SHOT_KITTAB=0..3
+        bool uikit_demo_init(const char* mode);
+        if (!uikit_demo_init(kd)) SH.fail = true;
+    }
     static hubemu::Release s_fake_fritchii = {"v4.1", L"github.com", L"/fatty8me2/Fritchii/releases/download/v4.1/Fritchii-v4.1-Windows-x64.zip", 96ull << 20,
                                               "1111111111111111111111111111111111111111111111111111111111111111", L"lichii.exe", "GPL-3.0"};
     static hubemu::InstallTestHooks s_fake_hooks;
