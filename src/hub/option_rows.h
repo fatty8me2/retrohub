@@ -1,7 +1,8 @@
 #pragma once
 /* Pure helpers for the game option rows: a game's Settings tab and Settings > Video & Games > Game defaults (settings_games_ui.cpp), plus
- * the Switch "play with" choice there and in the Switch block of Settings > Video & Games (switch_ui.cpp). No ImGui: the caller measures the
- * text, these decide. Unit tested by hub_option_rows_test (and hub_nx_runner_test for the "Plays with" value against the real runner decision). */
+ * the Switch "play with" choice there and in the Switch block of Settings > Video & Games (switch_ui.cpp): the headings and their order, and
+ * the "Plays with" value shown. No ImGui. Sections, controls and pill words: option_sections.h. Unit tested by hub_option_rows_test (and
+ * hub_nx_runner_test for the "Plays with" value against the real runner decision). */
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -30,44 +31,7 @@ inline std::vector<std::string> option_group_order(const std::vector<std::string
     return out;
 }
 
-/* ---- row layout ---- */
-
-/* Measurements of the rows drawn together (one game's Settings tab, one console's Game defaults), in pixels. */
-struct OptRowIn {
-    float label_max = 0;     // widest label of the rows
-    float value_max = 0;     // widest control the rows need: the longest value plus the combo's own padding and arrow
-    float avail = 0;         // width a row may use
-    float gap = 0;           // space between the label column and the control
-    float min_control = 0;   // narrowest control worth drawing (rows of only "On" / "Off" still get a usable combo)
-};
-struct OptRowLayout {
-    bool stacked = false;    // the control goes on its own line under the label
-    float control_x = 0;     // where the control starts, from the row's left edge (0 when stacked)
-    float control_w = 0;     // control width
-};
-
-/* Label column = the longest label (+ gap), control = the longest value, side by side when both fit in `avail`; otherwise every row puts
- * its control under its label, at the full value width (cut to `avail` only when even that is wider than the row). One layout for all the
- * rows drawn together, so the controls line up under every heading. */
-inline OptRowLayout option_row_layout(const OptRowIn& in) {
-    OptRowLayout r;
-    const float avail = std::max(0.f, in.avail);
-    const float want = std::max(std::max(0.f, in.value_max), std::max(0.f, in.min_control));
-    const float col = std::max(0.f, in.label_max) + std::max(0.f, in.gap);
-    if (col + want <= avail) {
-        r.control_x = col;
-        r.control_w = want;
-        return r;
-    }
-    r.stacked = true;
-    r.control_w = std::min(want, avail);
-    return r;
-}
-
-/* The notes after a control ("overridden", "host decides online", reset): on the same line when they fit before `row_right`, else on the next. */
-inline bool option_trail_fits(float control_right, float gap, float trail_w, float row_right) {
-    return trail_w <= 0.f || control_right + gap + trail_w <= row_right;
-}
+/* (Row layout: the UI kit's option groups size the label and control columns themselves, ui_controls.h.) */
 
 /* ---- Switch: which program plays ("switch.runner") ---- */
 

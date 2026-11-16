@@ -1,5 +1,5 @@
-/* hub_option_rows_test: option_rows.h (row layout, heading order, the "Plays with" value shown) and the option table's headings and help texts
- * (game_settings.cpp). No UI, no files. */
+/* hub_option_rows_test: option_rows.h (heading order, the "Plays with" value shown) and the option table's headings and help texts
+ * (game_settings.cpp). No UI, no files. (The row columns are the UI kit's: hub_uikit_test.) */
 #include "option_rows.h"
 #include "game_settings.h"
 
@@ -22,42 +22,6 @@ static bool has(const std::vector<std::string>& v, const char* s) { for (auto& x
 static int index_of(const std::vector<std::string>& v, const char* s) { for (size_t i = 0; i < v.size(); ++i) if (v[i] == s) return (int)i; return -1; }
 
 int main() {
-    /* ---- row layout: label column from the longest label, control from the longest value, stacked when they do not fit ---- */
-    {
-        OptRowIn in; in.label_max = 200; in.value_max = 150; in.avail = 600; in.gap = 16; in.min_control = 96;
-        OptRowLayout r = option_row_layout(in);
-        CHECK(!r.stacked && r.control_x == 216.f && r.control_w == 150.f);
-        in.value_max = 40;   // short values ("On" / "Off") still get a usable combo
-        r = option_row_layout(in);
-        CHECK(!r.stacked && r.control_w == 96.f);
-        in.value_max = 384; in.avail = 600;   // exactly fits: 200 + 16 + 384
-        r = option_row_layout(in);
-        CHECK(!r.stacked && r.control_x + r.control_w == 600.f);
-        in.avail = 599;   // one pixel short: the control goes under the label at its full width
-        r = option_row_layout(in);
-        CHECK(r.stacked && r.control_x == 0.f && r.control_w == 384.f);
-        in.value_max = 700;   // wider than the row itself: cut to the row
-        r = option_row_layout(in);
-        CHECK(r.stacked && r.control_w == 599.f);
-        in.avail = -5;   // nothing to work with: no negative widths
-        r = option_row_layout(in);
-        CHECK(r.stacked && r.control_w == 0.f);
-    }
-    {   // the clipped cases from the audit, with an 8 px per character stand-in font and a 40 px combo frame at a 1280 px window's ~860 px panel
-        const float ch = 8.f, chrome = 40.f;
-        OptRowIn in;
-        in.label_max = std::strlen("Frames ahead (smoother on some games)") * ch;
-        in.value_max = std::strlen("Smooth 60 (steady 30 + frame generation)") * ch + chrome;
-        in.gap = 16; in.min_control = 96; in.avail = 860;
-        OptRowLayout r = option_row_layout(in);
-        CHECK(!r.stacked && r.control_x >= in.label_max && r.control_w >= in.value_max);   // nothing runs under the combo, no value is cut
-        in.avail = 520;   // a narrow window: under the label, still the full value
-        r = option_row_layout(in);
-        CHECK(r.stacked && r.control_w == in.value_max);
-    }
-    /* trailing notes ("overridden", "host decides online", reset) */
-    CHECK(option_trail_fits(500, 8, 100, 608) && !option_trail_fits(500, 8, 101, 608) && option_trail_fits(900, 8, 0, 100));
-
     /* ---- headings: every group an option uses is drawn (Multitap and Memory card 2 were never shown), known order first ---- */
     CHECK(option_group_label("Video") == "Graphics" && option_group_label("Color") == "Display" && option_group_label("Emulation") == "Gameplay");
     CHECK(option_group_label("Controls") == "Controls" && option_group_label("Saves") == "Saves" && option_group_label("Audio") == "Audio");

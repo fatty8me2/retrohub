@@ -4,6 +4,8 @@
 #include "lichii.h"
 #include "nx_runner.h"
 #include "option_rows.h"
+#include "option_sections.h"
+#include "ui_controls.h"
 
 #include <algorithm>
 
@@ -208,21 +210,19 @@ static void fritchii_settings_ui() {
     const bool chosen = GSTORE.source(hub::System::Switch, "", hubemu::kRunnerKey) != 0;   // false = the built-in default (nx_emulator_for's runner_source 0)
     const bool fr_default = !chosen && hubemu::nx_fritchii_obtainable(hubemu::release_is_placeholder(Kind::Fritchii), !fr.exe.empty());   // Ocarina of Time then plays with Fritchii
     const hub::gs::Option* o = hub::gs::find_option(hubemu::kRunnerKey);
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("Switch and Switch 2 games play with");
-    ImGui::SameLine();
     std::string label = cur;
     if (o) for (const auto& c : o->choices) if (c.value == cur) label = c.label;
     const std::string shown = hubui::switch_wide_runner_preview(label, chosen, fr_default);   // what Play starts: with nothing chosen that is Fritchii for Ocarina of Time
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x, std::max(260 * S, ImGui::CalcTextSize(shown.c_str()).x + ImGui::GetFrameHeight() + style.FramePadding.x * 2)));
-    if (o && ImGui::BeginCombo("##nxrunner", shown.c_str())) {
-        for (const auto& c : o->choices) {
-            const bool sel = chosen && c.value == cur;   // nothing is ticked while nothing is chosen, so picking Lichii then is stored too (Ocarina of Time follows it)
-            if (ImGui::Selectable(c.label.c_str(), sel) && !sel) gs_set_system_value(hub::System::Switch, hubemu::kRunnerKey, c.value);
-            if (sel) ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
+    if (o) {   // the same kit row as the game option pages (settings_games_ui.cpp)
+        std::vector<std::string> items;
+        for (const auto& c : o->choices) items.push_back(c.label);
+        int idx = chosen ? hubui::option_choice_index(*o, cur) : -1;   // nothing is ticked while nothing is chosen, so picking Lichii then is stored too (Ocarina of Time follows it)
+        ui::RowOpts ro;
+        ro.value_text = shown.c_str();
+        ui::option_group_begin("nx_runner_wide");
+        if (ui::dropdown("Switch and Switch 2 games play with", &idx, items, ro) && idx >= 0 && idx < (int)o->choices.size())
+            gs_set_system_value(hub::System::Switch, hubemu::kRunnerKey, o->choices[(size_t)idx].value);
+        ui::option_group_end();
     }
     text_wrapped_disabled(fr_default ? "Ocarina of Time plays with Fritchii unless you pick a program for it. Hookshot only plays Ocarina of Time (once built on its game page). Fritchii needs to be installed; until then Play offers to download it."
                                      : "A game can still have its own choice on its Settings tab. Hookshot only plays Ocarina of Time (once built on its game page).");

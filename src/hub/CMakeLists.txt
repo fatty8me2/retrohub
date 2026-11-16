@@ -116,6 +116,9 @@ add_executable(hub_option_rows_test test_option_rows.cpp)
 target_include_directories(hub_option_rows_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hub_option_rows_test PRIVATE hubcommon)
 target_compile_features(hub_option_rows_test PRIVATE cxx_std_17)
+# Game option pages with the UI kit (option_sections.h): which sections start open, summaries, the hub.json open / closed memory, controls, pill words.
+add_executable(hub_option_sections_test test_option_sections.cpp)
+target_link_libraries(hub_option_sections_test PRIVATE hublogic hubcommon)
 
 # Home scrolling: wheel axis routing + eased page spring (pure header).
 add_executable(hub_homescroll_test test_homescroll.cpp)
