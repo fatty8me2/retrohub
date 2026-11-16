@@ -43,10 +43,6 @@ inline Plan plan_row(float avail, float fixed, float sort_w, float friends_w, fl
 /* The filter chips row in compact mode: one row, this tall (chip height plus a thin scrollbar when the row overflows). */
 inline float chips_row_h(float chip_h, float scrollbar_h, bool overflows) { return chip_h + (overflows ? scrollbar_h : 0.f); }
 
-/* Game page: body height left for the scrolling tab area once the fixed parts (header, buttons, tabs, footer) are placed. */
-inline float body_room(float window_max_h, float used_above, float footer_h, float pad_bottom, float min_h) {
-    const float r = window_max_h - used_above - footer_h - pad_bottom;
-    return r < min_h ? min_h : r;
-}
+/* (The game page's sizing lives in game_page_layout.h.) */
 
 }  // namespace hubui::lc

@@ -190,7 +190,7 @@ void draw_state_strip(const hub::GameEntry& e) {
     }
     ImGui::SameLine(0, sp(1.5f));
     const bool confirm = A.state_confirm == cur->slot;
-    if (ui::button(confirm ? "Really delete?" : "Delete", ImVec2(0, bh), false, true, ui::Icon::Close)) {
+    if (ui::button(confirm ? "Really delete?###state_delete" : "Delete###state_delete", ImVec2(0, bh), false, true, ui::Icon::Close)) {   // one id: the focus stays on it for the second press
         if (confirm) {
             bool ok = hubui::delete_state(dir, cur->slot);
             shot_trace("state-delete", e.key + " slot=" + std::to_string(cur->slot) + (ok ? " ok" : " failed"));

@@ -181,6 +181,7 @@ add_test(NAME hub_playtime_test COMMAND hub_playtime_test)           # Steam-sty
 add_test(NAME hub_libcompact_test COMMAND hub_libcompact_test)       # library top area on small windows: compact threshold, icon-only fallback plan
 add_test(NAME hub_option_rows_test COMMAND hub_option_rows_test)     # game option rows: every heading drawn, "Plays with" shows what runs, help texts
 add_test(NAME hub_option_sections_test COMMAND hub_option_sections_test)   # game option pages: sections open by default, summaries, open / closed memory, controls, pill words
+add_test(NAME hub_gamepage_test COMMAND hub_gamepage_test)           # game page layout: header tiers, buttons beside / under the title, icons, readable width, About columns
 add_test(NAME hub_states_test COMMAND hub_states_test)              # save-state slot listing, resume wording, library sort
 add_test(NAME hub_cases_test COMMAND hub_cases_test)   # Cases view: slot pose maths, case shapes, wrap/clamp, tab memory, flip/inspect modes, layout key round-trip
 add_test(NAME hub_homescroll_test COMMAND hub_homescroll_test)   # Home wheel routing (vertical/horizontal/Shift/diagonal) + eased page spring
