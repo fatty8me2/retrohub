@@ -38,6 +38,7 @@ void draw_overlays() {
     hookshot_ui_tick();
     boot_draw_overlay();
     conv_frame();
+    { void uikit_demo_draw(); uikit_demo_draw(); }   // ui_kitdemo.cpp: HUB_SHOT_KITDEMO screenshots only
 }
 
 void page_about() {

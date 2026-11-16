@@ -467,6 +467,7 @@ static void sfx_item(bool focus, bool pressed) {
     if (focus) { ImGuiID id = ImGui::GetItemID(); if (id != last) { last = id; ui_sound::play(ui_sound::Sfx::Move); } }
     if (pressed) ui_sound::play(ui_sound::Sfx::Select);
 }
+void item_sound(bool focused, bool pressed) { sfx_item(focused, pressed); }
 
 bool button(const char* label, ImVec2 size, bool primary, bool enabled, Icon ic) {
     const char* end = ImGui::FindRenderedTextEnd(label);

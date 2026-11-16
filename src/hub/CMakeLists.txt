@@ -181,6 +181,12 @@ target_link_libraries(RetroHub PRIVATE hubcrashlog hubconv hubattach hubcheevos 
     ole32 shell32 uuid winhttp)
 # main.cpp defines SDL_MAIN_HANDLED and provides WinMain itself, so SDL2main is not needed.
 
+# UI kit (UI overhaul): scroll area, page sheet + dialog, sections / option rows / tab bar, and the HUB_SHOT_KITDEMO demo.
+target_sources(RetroHub PRIVATE ui_scroll.cpp ui_sheet.cpp ui_controls.cpp ui_kitdemo.cpp)
+add_executable(hub_uikit_test test_uikit.cpp)   # the kit's pure layout math (ui_layout_logic.h)
+target_include_directories(hub_uikit_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hub_uikit_test PRIVATE cxx_std_17)
+
 add_custom_command(TARGET RetroHub POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:RetroHub>)
 

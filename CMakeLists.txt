@@ -186,6 +186,7 @@ add_test(NAME hub_homescroll_test COMMAND hub_homescroll_test)   # Home wheel ro
 add_test(NAME hub_shelf_test COMMAND hub_shelf_test)   # Shelf view: media per console, row packing, focus movement, slide-out spring
 add_test(NAME hub_libview_test COMMAND hub_libview_test)               # All Games layouts: A-Z jump runs, list column sort keys, virtual rows, settings round-trip
 add_test(NAME hub_desk_test COMMAND hub_desk_test)                     # Library desk: groups, search, open/closed groups, row movement, virtual rows, ui_layout setting
+add_test(NAME hub_uikit_test COMMAND hub_uikit_test)                   # UI kit layout math: paging, focus margin, scrollbar thumb, sheet split, dialog sizes, option columns, tabs
 add_test(NAME hub_customize_test COMMAND hub_customize_test)   # custom shelves ops, Home composition, renames, rename-aware search
 add_test(NAME hub_progress_test COMMAND hub_progress_test)   # completion status + notes, smart shelf rule evaluation
 add_test(NAME hub_recycle_test COMMAND hub_recycle_test)              # screenshot delete: Recycle Bin helper seams (no real bin call)
