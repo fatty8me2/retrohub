@@ -215,7 +215,8 @@ void draw_footer(float h) {
     } else {
         hints = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}};
     }
-    if (pad && !popup && !lib_cases_active()) {
+    const bool lb_taken = std::any_of(hints.begin(), hints.end(), [](const Hint& h) { return std::strcmp(h.pad, "LB") == 0; });   // the desk pane's tabs own LB / RB
+    if (pad && !popup && !lib_cases_active() && !lb_taken) {
         hints.push_back({"LB", "", "Prev page"});
         hints.push_back({"RB", "", "Next page"});
         if (A.page != Page::Library) hints.push_back({"LT", "", "Scroll up"}), hints.push_back({"RT", "", "Scroll down"});

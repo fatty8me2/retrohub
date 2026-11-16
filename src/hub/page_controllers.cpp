@@ -903,15 +903,17 @@ bool draw_players_strip(int players) {
     hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
     std::vector<hubctl::PadInfo> pads = hubctl::list_pads(st.port_order);
     bool clicked = false;
+    const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;   // a narrow column (the desk pane): the strip wraps
+    auto next = [&](float w, float gap) { if (ImGui::GetItemRectMax().x + gap + w <= right + 0.5f) ImGui::SameLine(0, gap); };
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("Controllers:");
     for (int i = 0; i < players && i < hubctl::PortAssign::kPorts; ++i) {
-        ImGui::SameLine(0, sp(1.f));
         bool has = i < (int)pads.size();
         std::string t = std::to_string(i + 1) + "  " + (has ? hubpadname::label(pads[i].name, pads[i].xinput) : std::string("no controller"));
+        next(ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, t.c_str()).x + sp(2.5f), sp(1.f));
         pill(t.c_str(), has ? COL_ACCENT : COL_PANEL2, has ? IM_COL32_WHITE : ui::PILL_FG);   // PILL_FG: white text on the pale Light-theme pill was invisible
     }
-    ImGui::SameLine(0, sp(1.5f));
+    next(ImGui::CalcTextSize("Reassign").x + sp(2.25f) + sp(1.f) + sp(5.f), sp(1.5f));   // ui::button's width with an icon
     if (button("Reassign", ImVec2(0, sp(4.f)), false, true, ui::Icon::Gamepad)) clicked = true;
     return clicked;
 }

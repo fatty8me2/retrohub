@@ -72,6 +72,35 @@ int main() {
     p = plan_header(t);
     CHECK(p.tier == Tier::Tight && p.cover_h == 0.f && p.text_x == 0.f && p.beside && p.icons && !p.time_line && near(p.btn_h, 54.f));
 
+    /* ---- Mini: the desk pane at 150 % on 1280x720 (about 485 px tall), or at 125 % on 1024x600 ---- */
+    CHECK(tier_for(485.f, 12.f) == Tier::Mini);      // 40 units
+    CHECK(tier_for(395.f, 10.f) == Tier::Mini);      // 1024x600 at 125 %, the pane
+    CHECK(tier_for(576.f, 12.f) == Tier::Tight && tier_for(575.f, 12.f) == Tier::Mini);   // boundary: 48 units
+    CHECK(tier_for(600.f, 12.f) == Tier::Tight);     // the full-window page at 1024x600 150 % stays Tight
+    HeaderIn m;
+    m.u = 12.f; m.avail_w = 600.f; m.sheet_h = 485.f;
+    m.play_w = 144.f; m.online_w = 194.f; m.more_w = 149.f; m.close_w = 0.f;
+    p = plan_header(m);
+    CHECK(p.tier == Tier::Mini && p.cover_h == 0.f && p.beside && p.icons && p.play_icon && !p.facts && !p.time_line && p.small_title);
+    CHECK(near(p.btn_h, 48.f) && near(p.buttons_w, 3.f * 48.f + 2.f * 12.f) && p.title_lines == 1);
+    CHECK(near(p.tabs_h, 48.f) && near(p.pad, 18.f) && near(p.body_gap, 12.f) && p.help_lines_max == 2);
+    m.close_w = 154.f;   // the full-window page at Mini (720p at 200 %): Close is a fourth round button
+    p = plan_header(m);
+    CHECK(near(p.buttons_w, 4.f * 48.f + 3.f * 12.f));
+    /* the other tiers keep their defaults */
+    p = plan_header(in);
+    CHECK(!p.play_icon && p.facts && !p.small_title && near(p.tabs_h, 40.f) && p.pad < 0.f && p.body_gap < 0.f && p.help_lines_max == 3);
+    float pad = 0.f, gap = 0.f;
+    sheet_spacing(Tier::Mini, 8.f, &pad, &gap);
+    CHECK(near(pad, 12.f) && near(gap, 8.f));
+    sheet_spacing(Tier::Tight, 8.f, &pad, &gap);
+    CHECK(near(pad, 16.f) && near(gap, 10.f));
+    sheet_spacing(Tier::Compact, 8.f, &pad, &gap);
+    CHECK(pad < 0.f && gap < 0.f);
+    CHECK(help_lines_max(Tier::Full) == 3 && help_lines_max(Tier::Compact) == 3 && help_lines_max(Tier::Tight) == 2 && help_lines_max(Tier::Mini) == 2);
+    p = plan_header(t);   // 1024x600 at 150 %: Tight, a lower tab bar, less padding
+    CHECK(near(p.tabs_h, 54.f) && near(p.pad, 24.f) && near(p.body_gap, 15.f) && p.help_lines_max == 2 && !p.play_icon && p.facts);
+
     /* very narrow: no cover, the buttons go under the title as icons */
     in.avail_w = 400.f; in.sheet_h = 700.f;
     p = plan_header(in);

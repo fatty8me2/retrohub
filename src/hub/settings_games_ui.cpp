@@ -213,11 +213,31 @@ void runner_note(const hub::GameEntry& ge, const std::string& game_key, const hu
     ImGui::PopStyleColor();
 }
 
+/* Headless QA: how many whole rows (section headers count) are in view in the scroll area around them. The trace gets a "gs-visible <key>
+ * <rows>" line each time the number changes, so the last one is what the screenshot shows. */
+struct VisibleRows {
+    int n = 0;
+    void count() {
+        if (!g_headless) return;
+        ImGuiWindow* w = ImGui::GetCurrentWindow();
+        const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+        if (a.y >= w->InnerClipRect.Min.y - 0.5f && b.y <= w->InnerClipRect.Max.y + 0.5f) ++n;
+    }
+    void trace(const std::string& key) const {
+        static std::string last;
+        const std::string line = key + " " + std::to_string(n);
+        if (g_headless && line != last) { last = line; shot_trace("gs-visible", line); }
+    }
+};
+
 /* One page of option rows: a game's Settings tab (level 2) or one console's Game defaults (level 1, game_key ""). Every heading is a kit
  * section (open / closed remembered by heading) and all rows share one option group, so the label and control columns line up across the
  * sections. `lead(changed rows)` draws first, inside the group. Draws into whatever region hosts it (a modal body, the game page sheet, the
- * Settings page): it never begins its own scrolling child. */
-void options_grouped(const std::string& console, const std::string& game_key, int level, const std::function<void(int)>& lead = nullptr) {
+ * Settings page): it never begins its own scrolling child.
+ * `page` (a game's Settings tab on the game page): compact one-line rows whose help shows in the page's help strip (the host draws it with
+ * ui::option_help_strip), and on a wide body the sections flow into two columns (option_sections.h option_flow). Game defaults keeps the
+ * help under each label: that page scrolls as a whole and has no pinned place for a strip. */
+void options_grouped(const std::string& console, const std::string& game_key, int level, const std::function<void(int)>& lead = nullptr, bool page = false) {
     const hub::System sys = hub::console_system(console);
     const hub::GameEntry* ge = level == 2 ? find_entry(game_key) : nullptr;
     const bool oot_page = ge && hookshot::supports(*ge);
@@ -232,18 +252,37 @@ void options_grouped(const std::string& console, const std::string& game_key, in
     const float label_col = std::max(sp(20.f), std::min(ImGui::GetContentRegionAvail().x, sp(112.f)) - sp(2.5f) - sp(30.f) - sp(2.f));   // next to a typical control
     auto help_cut = [&](const std::string& h) { return ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, h.c_str()).x > label_col * 2.8f; };
     const std::string gid = "gs_rows|" + console + "|" + game_key;
-    ui::option_group_begin(gid.c_str());
+    ui::GroupOpts go;
+    if (page) go.help = ui::HelpMode::Strip;
+    ui::option_group_begin(gid.c_str(), go);
     if (lead) lead(changed);
+    /* which sections start open (before the player opened or closed one), and the columns on a wide page */
+    std::vector<bool> open_now(groups.size());
+    std::vector<int> heights(groups.size());
+    for (size_t gi = 0; gi < groups.size(); ++gi) {
+        const int known = hubui::section_state_get(A.st.option_sections, groups[gi].name);   // the section follows the same store (ui_controls.h)
+        open_now[gi] = known >= 0 ? known == 1 : hubui::option_section_default_open(groups[gi].name, (int)gi, groups[gi].runner, rows);
+        heights[gi] = 1 + (open_now[gi] ? (int)groups[gi].rows.size() : 0);
+    }
+    const hubui::OptionFlow flow = page ? hubui::option_flow(ImGui::GetContentRegionAvail().x, sp(1.f)) : hubui::OptionFlow();
+    const int split = flow.cols > 1 ? hubui::option_flow_split(heights) : (int)groups.size();
+    const bool two = split < (int)groups.size();
+    if (two) {
+        ImGui::Dummy(ImVec2(0.f, sp(0.25f)));
+        ui::option_columns_begin(2, flow.col_w, flow.gap);
+    }
+    VisibleRows seen;
     for (size_t gi = 0; gi < groups.size(); ++gi) {
         const Group& g = groups[gi];
+        if (two && (int)gi == split) ui::option_columns_next();
         ui::SectionOpts so;
         so.default_open = hubui::option_section_default_open(g.name, (int)gi, g.runner, rows);
         so.persist_key = g.name.c_str();
-        const int known = hubui::section_state_get(A.st.option_sections, g.name);   // the section follows the same store (ui_controls.h)
-        const bool open_now = known >= 0 ? known == 1 : so.default_open;
-        const std::string summary = open_now ? std::string() : hubui::option_section_summary((int)g.rows.size(), g.changed);
+        const std::string summary = open_now[gi] ? std::string() : hubui::option_section_summary((int)g.rows.size(), g.changed);
         if (!summary.empty()) so.summary = summary.c_str();
-        if (!ui::section(g.name.c_str(), so)) continue;
+        const bool sec_open = ui::section(g.name.c_str(), so);
+        seen.count();
+        if (!sec_open) continue;
         for (const Row& r : g.rows) {
             const hub::gs::Option& o = *r.o;
             std::string cur = v[o.key];
@@ -251,12 +290,14 @@ void options_grouped(const std::string& console, const std::string& game_key, in
             bool reset = false;
             ui::RowOpts ro;
             if (!o.help.empty()) ro.help = o.help.c_str();
-            if (!o.help.empty() && help_cut(o.help)) ro.tooltip = o.help.c_str();
+            if (!page && !o.help.empty() && help_cut(o.help)) ro.tooltip = o.help.c_str();   // (the page's strip shows the whole help)
             ro.pill = hubui::option_changed_pill(r.changed, false);
             if (r.changed) ro.pill_pressed = &reset;
             ro.pill2 = r.inherited ? hubui::option_changed_pill(false, true) : hubui::option_online_pill(o.scope);
             std::string nv;
-            if (option_row(o, cur, ro, &nv)) {
+            const bool picked = option_row(o, cur, ro, &nv);
+            seen.count();
+            if (picked) {
                 if (level == 2) GSTORE.set_game(game_key, sys, o.key, nv);
                 else GSTORE.set_console(console, o.key, nv);
                 gs_save();
@@ -270,6 +311,8 @@ void options_grouped(const std::string& console, const std::string& game_key, in
             if (level == 2 && o.key == hookshot::kRunnerSetting && ge) runner_note(*ge, game_key, v);
         }
     }
+    if (two) ui::option_columns_end();
+    if (page) seen.trace(game_key);
     ui::option_group_end();
     if (!groups.empty()) {   // say what is missing instead of silently leaving it out
         bool has_fx = false;
@@ -327,10 +370,12 @@ void gs_draw_game_section(const hub::GameEntry& e) {   // body of the game page'
     const std::string console = hub::console_id(e);
     ImGui::PushID("gs_game");
     options_grouped(console, e.key, 2, [&](int changed) {
+        ImGui::PushFont(ui::F.cap);   // the page's lead line in the small font: the rows get the room
+        struct PopFont { ~PopFont() { ImGui::PopFont(); } } pop_font;
         if (changed > 0) text_wrapped_disabled(settings_count(changed) + " changed for this game.");
         else if (over) text_wrapped_disabled("This game has its own settings.");
         else text_wrapped_disabled(std::string("Changes here are for this game only. The rest use the ") + hub::console_name(console) + " defaults in Settings.");
-    });
+    }, true);
     static bool ask = false;
     static std::string ask_key;
     if (reset_button(over)) { ask = true; ask_key = e.key; }

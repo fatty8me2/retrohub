@@ -3,6 +3,7 @@
 #include "app.h"
 #include "game_page.h"
 #include "game_page_layout.h"
+#include "hack_ui.h"
 #include "ui_controls.h"
 #include "ui_sheet.h"
 
@@ -128,10 +129,10 @@ bool draw_page_header(Frame& F) {
     const ImVec2 o = ImGui::GetCursorScreenPos();
     if (P.cover_h > 0.f) draw_cover(c, dl, o, ImVec2(o.x + P.cover_w, o.y + P.cover_h));
 
-    /* the text block: title (1-2 lines), facts, play time */
+    /* the text block: title (1-2 lines), facts, play time (Mini: the title alone, its tooltip has the rest) */
     const float tx = o.x + P.text_x, tw = W - P.text_x;
     const float text_w = P.beside ? std::max(sp(10.f), tw - P.buttons_w - sp(2.f)) : tw;
-    ImFont* tf = full ? ui::F.title : ui::F.h2;
+    ImFont* tf = full ? ui::F.title : P.small_title ? ui::F.bold : ui::F.h2;
     ImFont* bf = ui::F.body;
     ImFont* cf = ui::F.cap;
     const std::vector<std::string> tl = ui::wrap_lines(tf, tf->FontSize, c.e.title, text_w, P.title_lines);
@@ -140,7 +141,7 @@ bool draw_page_header(Frame& F) {
     std::string facts = facts_line(c);
     if (!P.time_line) facts += "  \xC2\xB7  " + time;
     const float line_gap = sp(0.5f);
-    float block_h = title_h + line_gap + bf->FontSize + (P.time_line ? line_gap + cf->FontSize : 0.f);
+    float block_h = title_h + (P.facts ? line_gap + bf->FontSize : 0.f) + (P.time_line ? line_gap + cf->FontSize : 0.f);
     const float btn_row = P.beside ? 0.f : sp(1.25f) + P.btn_h;
     const float content_h = std::max(P.beside ? P.btn_h : 0.f, block_h + btn_row);
     const float head_h = std::max(P.cover_h, content_h);
@@ -150,10 +151,13 @@ bool draw_page_header(Frame& F) {
     const std::string& title = c.e.title;
     const bool title_cut = !tl.empty() && tl.back().size() >= 3 && tl.back().compare(tl.back().size() - 3, 3, "...") == 0 &&
                            !(title.size() >= 3 && title.compare(title.size() - 3, 3, "...") == 0);   // wrap_lines cut the title short
-    if (title_cut && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImVec2(tx, title_y0), ImVec2(tx + text_w, y))) ImGui::SetTooltip("%s", c.e.title.c_str());
-    y += line_gap;
-    if (text_cut(dl, bf, ImVec2(tx, y), ui::TEXT2, facts, text_w)) ImGui::SetTooltip("%s", facts.c_str());
-    y += bf->FontSize;
+    if ((title_cut || !P.facts) && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImVec2(tx, title_y0), ImVec2(tx + text_w, y)))
+        ImGui::SetTooltip("%s", P.facts ? c.e.title.c_str() : (c.e.title + "\n" + facts).c_str());
+    if (P.facts) {
+        y += line_gap;
+        if (text_cut(dl, bf, ImVec2(tx, y), ui::TEXT2, facts, text_w)) ImGui::SetTooltip("%s", facts.c_str());
+        y += bf->FontSize;
+    }
     if (P.time_line) {
         y += line_gap;
         if (text_cut(dl, cf, ImVec2(tx, y), ui::TEXT2, time, text_w)) ImGui::SetTooltip("%s", time.c_str());
@@ -166,8 +170,17 @@ bool draw_page_header(Frame& F) {
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
     const bool nav_inside = g.NavWindow && ImGui::IsWindowChildOf(g.NavWindow, hw, true);
     if (play) {
-        const bool pressed = ui::button(play->label.c_str(), ImVec2(in.play_w, P.btn_h), true, play->enabled, ui::Icon::Play);
-        tooltip_for(*play);
+        bool pressed = false;
+        if (P.play_icon) {   // Mini: a round accent button, its name in the tooltip
+            ImGui::BeginDisabled(!play->enabled);
+            pressed = ui::icon_button("gp_play", ui::Icon::Play, P.btn_h, play->enabled, play->enabled ? play->label.c_str() : nullptr) && play->enabled;
+            ImGui::EndDisabled();
+            if (!play->enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", (play->label + (play->tooltip.empty() ? std::string() : ": " + play->tooltip)).c_str());
+        } else {
+            pressed = ui::button(play->label.c_str(), ImVec2(in.play_w, P.btn_h), true, play->enabled, ui::Icon::Play);
+            tooltip_for(*play);
+        }
         ImGui::SetItemDefaultFocus();
         if (v.focus_play || (ImGui::GetFrameCount() <= v.focus_until && !nav_inside)) {
             focus_last_item(v.focus_play ? v.focus_visible : A.pad_mode);
@@ -250,7 +263,7 @@ bool draw_page_header(Frame& F) {
     /* below the cover / text / buttons: the notices, then the tabs */
     const float bottom = std::max({o.y + P.cover_h, y, buttons_bottom});
     {   /* the notices (warnings, Kanto how-to) stay in view under the header; nothing at all for most games */
-        const float ny = bottom + (full ? sp(1.5f) : sp(1.f));
+        const float ny = bottom + (full ? sp(1.5f) : P.tier == hubui::gp::Tier::Mini ? sp(0.5f) : sp(1.f));
         ImGui::SetCursorScreenPos(ImVec2(o.x, ny));
         ImGui::BeginGroup();
         draw_notices(c);
@@ -266,6 +279,7 @@ bool draw_page_header(Frame& F) {
         if (tabl[i].id == shown_tab(c)) cur = (int)i;
     }
     ui::TabBarOpts to;
+    to.height = P.tabs_h;
     if (!labels.empty() && ui::tab_bar("gp_tabs", labels.data(), (int)labels.size(), &cur, to)) {
         select_tab(c, tabl[(size_t)cur].id);
         shot_trace("gamepage-tab", std::string(kTabKeys[std::max(0, std::min(3, shown_tab(c)))]) + " " + c.e.key);
@@ -309,6 +323,7 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
         v.fresh = false;
     }
 
+    hubui::gp::sheet_spacing(hubui::gp::tier_for(size.y, sp(1.f)), sp(1.f), &F.so.pad, &F.so.gap);   // Mini: less padding and gaps
     ui::SheetParts parts;
     parts.header = [&F] {
         if (!F.ctx || F.gone) return;
@@ -321,11 +336,31 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
         if (!F.ctx || F.gone) return;
         draw_tab(*F.ctx, shown_tab(*F.ctx));
     };
+    const bool settings_tab = F.ctx && shown_tab(*F.ctx) == TabSettings;
     if (F.hm.footer_hints) {
         parts.footer = [&F, &v] {
-            static const ui::KeyHint hints[] = {{"A", "Enter", "Select"}, {"B", "Esc", "Close"}, {"LB", "", "Tabs"}, {"LT", "", "Page up"}, {"RT", "", "Page down"}};
-            ui::hint_bar(hints, 5);
+            /* the hints; on the Settings tab the help strip of the focused row, with the hints at the right end of its heading line */
+            static const ui::KeyHint hints[] = {{"A", "Enter", "Select"}, {"B", "Esc", "Close"}, {"LB", "[", ""}, {"RB", "]", "Tabs"},
+                                                {"LT", "PgUp", "Page up"}, {"RT", "PgDn", "Page down"}};
+            const int nh = (int)(sizeof hints / sizeof hints[0]);
+            ui::OptionHelp h;
+            if (F.ctx && !F.gone && shown_tab(*F.ctx) == TabSettings && ui::option_help(&h)) {
+                const float w = std::max(1.f, ImGui::GetContentRegionAvail().x);
+                const float hw = ui::hint_bar_width(hints, nh), gap = sp(3.f);
+                const float heading_w = std::max(w * 0.4f, w - hw - gap);
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                const int mx = hubui::gp::help_lines_max(hubui::gp::tier_for(F.size.y, sp(1.f)));
+                ui::option_help_strip(h, w, ui::option_help_lines(w, ui::StripStyle::Heading, mx), ui::StripStyle::Heading, heading_w);
+                const ImVec2 after = ImGui::GetCursorScreenPos();
+                const float line_h = ui::F.cap->FontSize + sp(0.75f);
+                const float head_h = std::max(ui::F.bold->FontSize, line_h);
+                ImGui::SetCursorScreenPos(ImVec2(p.x + std::max(heading_w + gap, w - hw), p.y + (head_h - line_h) * 0.5f));
+                ui::hint_bar(hints, nh);   // (drops the hints that do not fit, from the end)
+                ImGui::SetCursorScreenPos(after);
+                ImGui::Dummy(ImVec2(0.f, 0.f));
+            } else ui::hint_bar(hints, nh);
             if (F.ctx && !F.gone) custom_draw(1);   // Customize / Add to shelf, opened from More: inside the sheet so they stack on top of it
+            if (F.ctx && !F.gone) hack_page_dialogs();   // Remove hack / Add hack or translation: the same, so the page is still there after them
             /* B / Esc over a popup above the page (the More menu, a confirm, a picker) closes that popup only, also on the frame it closed */
             ImGuiContext& g = *ImGui::GetCurrentContext();
             ImGuiWindow* me = g.CurrentWindow;
@@ -334,6 +369,14 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
             const bool above = at >= 0 && at + 1 < g.OpenPopupStack.Size;
             F.so.back_closes = !(above || v.popup_above);
             v.popup_above = above;
+        };
+    } else if (settings_tab) {
+        parts.footer = [&F] {   // the desk pane: a slim help strip at the bottom of the pane (its hints are in the hub's footer)
+            ui::OptionHelp h;
+            if (!F.ctx || F.gone || shown_tab(*F.ctx) != TabSettings || !ui::option_help(&h)) return;
+            const float w = std::max(1.f, ImGui::GetContentRegionAvail().x);
+            const int mx = hubui::gp::help_lines_max(hubui::gp::tier_for(F.size.y, sp(1.f)));
+            ui::option_help_strip(h, w, ui::option_help_lines(w, ui::StripStyle::RunIn, mx), ui::StripStyle::RunIn);
         };
     }
     if (F.ctx) F.so.body_key = kTabKeys[std::max(0, std::min(3, shown_tab(*F.ctx)))];

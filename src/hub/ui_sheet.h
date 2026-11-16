@@ -88,6 +88,7 @@ struct SheetOpts {
     bool separators = true;         // hairlines under the header and above the footer
     const char* body_key = nullptr; // optional: a separate scroll position per key (e.g. the tab's name)
     bool nav_flatten = true;        // Pane: the D-pad moves freely between the pane and the items around it
+    float gap = -1.f;               // space between header, body and footer; -1 = sp(1.5)
 };
 
 struct SheetResult {
@@ -120,7 +121,8 @@ void dialog_same_line(float next_w, float gap = -1.f);
 float dialog_button_w(const char* label, bool icon = false);   // the width ui::button() gives `label` with size.x = 0
 
 /* One line of controller / keyboard hints ("(A) Select  (B) Close"). Pad glyphs while a pad is in use, key caps otherwise; a hint
- * with no key is shown only with a pad. Stops at the right edge rather than overflow. */
+ * with no key is shown only with a pad. A hint with no label sits tight against the next one, as a pair ({"LB", "[", ""},
+ * {"RB", "]", "Tabs"}), shown whole or not at all. Stops at the right edge rather than overflow. */
 struct KeyHint { const char* pad; const char* key; const char* label; };
 void hint_bar(const KeyHint* hints, int n);
 float hint_bar_width(const KeyHint* hints, int n);   // the width hint_bar() needs right now (e.g. to right-align it with SameLine)

@@ -8,8 +8,11 @@
  *   - the status pill words, the same on a game's page and in Game defaults. */
 #include "game_settings.h"
 
+#include <algorithm>
+#include <climits>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace hubui {
 
@@ -32,6 +35,58 @@ inline std::string option_section_summary(int rows, int changed) {
     std::string s = std::to_string(rows < 0 ? 0 : rows) + (rows == 1 ? " setting" : " settings");
     if (changed > 0) s += ", " + std::to_string(changed) + " changed";
     return s;
+}
+
+/* ---- two columns on a wide body (a game's Settings tab) ---- */
+
+/* Every length in spacing units u (ui::sp(1)): a column is at least kOptColMinU wide (about 610 px at 100 %, where a label and a control
+ * still read well side by side) and at most kOptColMaxU (the kit's row width, about 900 px). */
+constexpr float kOptColMinU = 76.f, kOptColMaxU = 112.f, kOptColGapU = 4.f;
+
+struct OptionFlow {
+    int cols = 1;          // 1 or 2
+    float col_w = 0.f;     // each column's width
+    float gap = 0.f;       // between the columns
+};
+
+/* Two columns when the body (avail px wide) holds two columns of the minimum width with the gap between them, else one. 1920x1080 at
+ * 100 % gets two (the full-window page and the desk pane), 1280x720 and 1920x1080 at 150 % one. */
+inline OptionFlow option_flow(float avail, float u) {
+    OptionFlow f;
+    f.gap = kOptColGapU * u;
+    if (avail >= 2.f * kOptColMinU * u + f.gap) {
+        f.cols = 2;
+        f.col_w = std::min(kOptColMaxU * u, (avail - f.gap) * 0.5f);
+    } else {
+        f.col_w = std::max(0.f, std::min(avail, kOptColMaxU * u));
+    }
+    return f;
+}
+
+/* Whole sections, in order, split between two columns: the first k go left, the rest right. `rows` = each section's height in rows as
+ * drawn (its header counts as one; a closed section is only its header). The taller column is as short as it can be; when two splits
+ * tie, the left column is the taller one (it is read first). Fewer than two sections: k = n (one column). */
+inline int option_flow_split(const std::vector<int>& rows) {
+    const int n = (int)rows.size();
+    if (n < 2) return n;
+    long total = 0;
+    for (int r : rows) total += std::max(0, r);
+    int best = 1;
+    long best_max = LONG_MAX;
+    bool best_left = false;
+    long left = 0;
+    for (int k = 1; k < n; ++k) {
+        left += std::max(0, rows[(size_t)k - 1]);
+        const long right = total - left;
+        const long mx = std::max(left, right);
+        const bool left_taller = left >= right;
+        if (mx < best_max || (mx == best_max && left_taller && !best_left)) {
+            best = k;
+            best_max = mx;
+            best_left = left_taller;
+        }
+    }
+    return best;
 }
 
 /* ---- open / closed memory (hub.json "option_sections": "Advanced=0,Audio=1") ---- */

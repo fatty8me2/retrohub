@@ -443,11 +443,13 @@ bool hack_ensure_rom(const hub::GameEntry& e, std::string* patched_path) {
     return false;
 }
 
-void hack_draw() {
-    poll_add();
-    poll_prep();
-    prep_card();
+namespace {
+/* The file picker and both dialogs. Drawn by the full-window game page from inside its sheet (hack_page_dialogs) while it is open, so
+ * they stack on top of it and the page is still there after them; otherwise at the hub's level (hack_draw). */
+int g_page_dialogs_frame = -10;
+void draw_dialogs() {
     if (AD.want_pick) {   // the pad file browser / Windows dialog for "Add a hack or translation"
+        if (g_headless && !A.pad_mode) AD.pick_click = false;   // a screenshot run never opens the Windows dialog (it would be a visible window)
         std::string p = osk::file("hack_patch", AD.pick_click, {".ips", ".ups", ".bps", ".xdelta", ".vcdiff", ".delta"});
         AD.pick_click = false;
         if (!p.empty()) {
@@ -459,6 +461,20 @@ void hack_draw() {
     }
     if (AD.st != Add::Closed) add_modal();
     if (RM.open) remove_modal();
+}
+
+}  // namespace
+
+void hack_page_dialogs() {
+    g_page_dialogs_frame = ImGui::GetFrameCount();
+    draw_dialogs();
+}
+
+void hack_draw() {
+    poll_add();
+    poll_prep();
+    prep_card();
+    if (g_page_dialogs_frame != ImGui::GetFrameCount()) draw_dialogs();   // (the page drew them this frame: draw_overlays runs it first)
 }
 
 void hack_shot_init() {
@@ -507,6 +523,7 @@ void hack_add_patch(const std::string& path, const hub::GameEntry* hint) {
 
 bool hack_can_add(const hub::GameEntry& e) {
     if (is_native(e) || is_kanto(e)) return false;
+    if (g_shot && e.key.rfind("fake:", 0) == 0) return true;   // HUB_SHOT_HACKS: the made-up games (no file) offer it too, for screenshots of its picker
     bool ok = false;
     hub::GameEntry b = base_of(e, &ok);
     if (!ok) return false;

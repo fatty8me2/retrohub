@@ -62,9 +62,119 @@ struct GroupState {
     std::unordered_map<ImGuiID, ImVec2> rows;   // row id -> (label + pill width, natural control width), kept while the group lives
     float label_w = 0.f, ctl_w = 0.f;
     int frame = -10;
+    HelpMode help = HelpMode::Inline;           // Strip: compact rows, the help in option_help_strip()
 };
 std::unordered_map<ImGuiID, GroupState> g_groups;
 GroupState* g_group = nullptr;
+bool compact_rows() { return g_group && g_group->help == HelpMode::Strip; }
+
+/* The help strip: what the Strip group drawn this frame says about its rows. */
+struct HelpTrack {
+    ImGuiID group = 0;                 // the Strip group (another one starts afresh: no last row, no texts)
+    int frame = -10;                   // the frame it was drawn (option_group_end)
+    OptionHelp live, first, last;
+    int live_prio = 0;                 // this frame: 2 = a row has the focus (or its open list does), 1 = the mouse
+    bool has_first = false, has_last = false;
+    std::vector<std::pair<std::string, std::string>> texts;   // every (label, help) of the group seen so far: the strip's height
+    float lines_w = -1.f;
+    size_t lines_n = 0;
+    int lines_style = -1, lines_max = 0;
+    int lines = 1;
+} g_help;
+
+void help_track(const OptionHelp& h, int prio, bool visible = true) {
+    if (!compact_rows()) return;
+    if (visible && (!g_help.has_first || (g_help.first.help.empty() && !h.help.empty()))) { g_help.first = h; g_help.has_first = true; }   // the first row in view that has a help
+    if (prio > g_help.live_prio) { g_help.live = h; g_help.live_prio = prio; }
+    if (!h.help.empty()) {
+        const std::pair<std::string, std::string> t(h.label, h.help);
+        if (std::find(g_help.texts.begin(), g_help.texts.end(), t) == g_help.texts.end()) g_help.texts.push_back(t);
+    }
+}
+
+/* Word wrap whose first line is first_w wide and the rest w (a run-in heading takes the start of the first line). At most max_lines; the
+ * last line takes the rest, cut with "...". The first line may stay empty when not even one word fits after the heading. */
+std::vector<std::string> wrap_after(ImFont* f, float fs, const std::string& s, float first_w, float w, int max_lines) {
+    std::vector<std::string> words;
+    for (size_t a = 0; a < s.size();) {
+        size_t b = s.find(' ', a);
+        if (b == std::string::npos) b = s.size();
+        if (b > a) words.push_back(s.substr(a, b - a));
+        a = b + 1;
+    }
+    std::vector<std::string> lines(1);
+    size_t k = 0;
+    for (; k < words.size(); ++k) {
+        std::string& cur = lines.back();
+        const std::string cand = cur.empty() ? words[k] : cur + " " + words[k];
+        const float lim = lines.size() == 1 ? first_w : w;
+        if ((cur.empty() && lines.size() > 1) || f->CalcTextSizeA(fs, FLT_MAX, 0.f, cand.c_str()).x <= lim) { cur = cand; continue; }
+        if ((int)lines.size() >= max_lines) break;
+        lines.emplace_back();
+        --k;   // this word starts the next line
+    }
+    if (k < words.size()) {   // more than max_lines
+        std::string rest = lines.back();
+        for (; k < words.size(); ++k) rest += (rest.empty() ? "" : " ") + words[k];
+        lines.back() = ellipsize(f, fs, rest, lines.size() == 1 ? first_w : w);
+    }
+    return lines;
+}
+
+float run_in_label_w(const std::string& label) { return label.empty() ? 0.f : text_w(F.bold, label.c_str()) + sp(1.f); }
+
+/* ---------------- columns of sections ---------------- */
+
+struct FlowItem { ImGuiID id = 0; ImRect r; ImGuiID scope = 0; };
+struct Flow {
+    bool on = false;
+    ImGuiWindow* win = nullptr;
+    int cols = 1, cur = 0;
+    float x0 = 0.f, y0 = 0.f, col_w = 0.f, gap = 0.f, bottom = 0.f;
+    float work_max = 0.f, content_max = 0.f;   // the window's region, put back at the end
+    int fcol = -1;                             // the column the focus is in (from its last frame's rect), -1 = none
+    bool vertical = false;                     // an Up / Down move this frame: the other columns are left out of it
+    bool nonav = false;                        // ImGuiItemFlags_NoNav pushed for the current column
+    std::vector<std::vector<FlowItem>> items;  // the kit rows and section headers of each column, this frame
+    /* last frame's flow, relative to the window's content start (scroll-proof) */
+    ImGuiID prev_win = 0;
+    int prev_frame = -10;
+    ImRect prev_rel;
+} g_flow;
+
+void flow_record(ImGuiID id, ImVec2 p0, ImVec2 p1) {
+    if (!g_flow.on || g_flow.win != ImGui::GetCurrentWindow() || g_flow.cur >= (int)g_flow.items.size()) return;
+    g_flow.items[(size_t)g_flow.cur].push_back(FlowItem{id, ImRect(p0, p1), GImGui->CurrentFocusScopeId});
+}
+
+/* The plain D-pad / arrow move of this frame (not tabbing, not a focus request), page moves included. */
+bool flow_move(ImGuiDir* dir) {
+    ImGuiContext& g = *GImGui;
+    if (!g.NavMoveSubmitted || (g.NavMoveFlags & (ImGuiNavMoveFlags_IsTabbing | ImGuiNavMoveFlags_FocusApi))) return false;
+    *dir = g.NavMoveDir;
+    return true;
+}
+
+void flow_column_start(int c) {
+    ImGuiWindow* win = g_flow.win;
+    const float x = g_flow.x0 + (float)c * (g_flow.col_w + g_flow.gap);
+    const float r = std::min(g_flow.work_max, x + std::max(1.f, g_flow.col_w));
+    win->WorkRect.Max.x = r;
+    win->ContentRegionRect.Max.x = r;
+    ImGui::SetCursorScreenPos(ImVec2(x, g_flow.y0));
+    g_flow.cur = c;
+    if (g_flow.vertical && g_flow.fcol >= 0 && c != g_flow.fcol) {   // Up / Down stay in the focus's column
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+        g_flow.nonav = true;
+    }
+    ImGui::BeginGroup();
+}
+
+void flow_column_end() {
+    ImGui::EndGroup();
+    g_flow.bottom = std::max(g_flow.bottom, ImGui::GetItemRectMax().y);
+    if (g_flow.nonav) { ImGui::PopItemFlag(); g_flow.nonav = false; }
+}
 
 /* ---------------- one option row ---------------- */
 
@@ -81,6 +191,7 @@ struct RowFrame {
     ImVec2 p0, p1;            // row
     ImVec2 c0, c1;            // control
     std::vector<std::string> vlines;   // value text, wrapped to the control
+    OptionHelp help;          // what the help strip says about this row (Strip groups)
 };
 
 void row_begin(const char* label, const RowOpts& o, const CtlSpec& cs, RowFrame& rf) {
@@ -91,15 +202,17 @@ void row_begin(const char* label, const RowOpts& o, const CtlSpec& cs, RowFrame&
     const char* lend = ImGui::FindRenderedTextEnd(label);
     const std::string text(label, lend);
     rf.id = win->GetID(label);
+    const bool compact = compact_rows();   // one line, tight padding; the help goes to the strip
 
     const float pill_gap = sp(1.f);
     const bool pill_btn = o.pill && o.pill_pressed;
     const float glyph_w = key_hint_width(true, "X", "", "") - sp(0.75f);
     const float xslot = pill_btn ? std::max(sp(2.f), glyph_w) : 0.f;   // the pill button's x (the pad's X glyph while focused)
     const float pill_w = o.pill ? text_w(fc, o.pill) + sp(2.5f) + xslot : 0.f;
-    const float pill2_w = o.pill2 ? text_w(fc, o.pill2) + sp(2.5f) : 0.f;
-    const bool pills = o.pill || o.pill2;
-    const float pills_w = pill_w + pill2_w + (o.pill && o.pill2 ? pill_gap : 0.f);
+    const char* pill2 = o.pill2;
+    float pill2_w = pill2 ? text_w(fc, pill2) + sp(2.5f) : 0.f;
+    bool pills = o.pill || pill2;
+    float pills_w = pill_w + pill2_w + (o.pill && pill2 ? pill_gap : 0.f);
     const float pill_h = cfs + sp(1.f);
     const float label_tw = text_w(fb, text.c_str());
     const float label_need = label_tw + (pills ? pill_gap + pills_w : 0.f);
@@ -109,31 +222,48 @@ void row_begin(const char* label, const RowOpts& o, const CtlSpec& cs, RowFrame&
         L = std::max(L, g_group->label_w);
         C = std::max(C, g_group->ctl_w);
     }
-    const float padx = sp(1.25f), pady = sp(1.f), gl = sp(0.25f);
+    const float padx = sp(1.25f), pady = compact ? sp(0.375f) : sp(1.f), gl = sp(0.25f);
+    const float under = compact ? sp(0.5f) : sp(1.f);   // label to control when the control goes under it
+    const float min_h = compact ? std::min(cs.min_h, sp(4.f)) : cs.min_h;
     const float avail = std::max(1.f, std::min(ImGui::GetContentRegionAvail().x, max_row_w()));
     hubui::kit::RowIn in;
     in.avail = std::max(0.f, avail - 2.f * padx);
     in.label_w = L;
     in.ctl_w = C;
-    in.ctl_min = sp(22.f);
-    in.label_min = sp(20.f);
+    in.ctl_min = compact ? sp(16.f) : sp(22.f);     // compact: the row stays on one line longer (a cut label is whole in the strip)
+    in.label_min = compact ? sp(14.f) : sp(20.f);
     in.gap = sp(2.f);
     const hubui::kit::RowOut lay = hubui::kit::option_columns(in);
 
     const float lw = std::max(1.f, lay.label_w);
-    const std::vector<std::string> llines = wrap_lines(fb, fs, text, lw, 3);
-    const bool pill_inline = pills && llines.size() == 1 && text_w(fb, llines[0].c_str()) + pill_gap + pills_w <= lw + 0.5f;
-    const bool pills_stack = pills && !pill_inline && o.pill && o.pill2 && pills_w > lw + 0.5f;   // under the label, one per line
+    std::vector<std::string> llines;
+    bool pill_inline = false, pills_stack = false;
+    if (compact) {   // one line: the label, cut with "..." when it must be (the strip's heading shows it whole), then its pills
+        if (pill2 && label_tw + pill_gap + pills_w > lw + 0.5f) {   // no room for the second pill: the strip says it instead
+            rf.help.note = pill2;
+            pill2 = nullptr;
+            pill2_w = 0.f;
+            pills = o.pill != nullptr;
+            pills_w = pill_w;
+        }
+        const float room = std::max(sp(4.f), lw - (pills ? pill_gap + pills_w : 0.f));
+        llines.push_back(label_tw <= room + 0.5f ? text : ellipsize(fb, fs, text, room));
+        pill_inline = pills;
+    } else {
+        llines = wrap_lines(fb, fs, text, lw, 3);
+        pill_inline = pills && llines.size() == 1 && text_w(fb, llines[0].c_str()) + pill_gap + pills_w <= lw + 0.5f;
+        pills_stack = pills && !pill_inline && o.pill && pill2 && pills_w > lw + 0.5f;   // under the label, one per line
+    }
     std::vector<std::string> hlines;
-    if (o.help && *o.help) hlines = wrap_lines(fc, cfs, o.help, lw, 3);
+    if (!compact && o.help && *o.help) hlines = wrap_lines(fc, cfs, o.help, lw, 3);
     float text_h = llines.size() * fs + (llines.size() - 1) * gl;
     if (pills && !pill_inline) text_h += sp(0.5f) + pill_h + (pills_stack ? gl + pill_h : 0.f);
     if (!hlines.empty()) text_h += sp(0.5f) + hlines.size() * cfs + (hlines.size() - 1) * gl;
 
     const float ctl_w = lay.ctl_w;
     if (!cs.value.empty()) rf.vlines = wrap_lines(fb, fs, cs.value, std::max(1.f, ctl_w - cs.chrome), 2);
-    const float ctl_h = std::max(cs.min_h, rf.vlines.size() > 1 ? rf.vlines.size() * fs + gl * (rf.vlines.size() - 1) + sp(2.f) : cs.min_h);
-    const float h = lay.wrap ? pady * 2.f + text_h + sp(1.f) + ctl_h : pady * 2.f + std::max(text_h, ctl_h);
+    const float ctl_h = std::max(min_h, rf.vlines.size() > 1 ? rf.vlines.size() * fs + gl * (rf.vlines.size() - 1) + (compact ? sp(1.f) : sp(2.f)) : min_h);
+    const float h = lay.wrap ? pady * 2.f + text_h + under + ctl_h : pady * 2.f + std::max(text_h, ctl_h);
 
     ImGui::BeginDisabled(!o.enabled);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.5f)));
@@ -148,6 +278,12 @@ void row_begin(const char* label, const RowOpts& o, const CtlSpec& cs, RowFrame&
     rf.hv = *hv;
     rf.p0 = ImGui::GetItemRectMin();
     rf.p1 = ImGui::GetItemRectMax();
+    flow_record(rf.id, rf.p0, rf.p1);
+    if (compact) {
+        rf.help.label = text;
+        if (o.help) rf.help.help = o.help;
+        help_track(rf.help, rf.focused ? 2 : rf.hovered ? 1 : 0, ImGui::IsItemVisible());
+    }
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float rd = sp(1.25f);
@@ -169,9 +305,9 @@ void row_begin(const char* label, const RowOpts& o, const CtlSpec& cs, RowFrame&
                 else icon(dl, Icon::Close, ImVec2(sx + xslot * 0.5f, y + pill_h * 0.5f), sp(1.5f), al(IM_COL32_WHITE));
             } else pill_at(dl, ImVec2(x, y), o.pill, bg, al(IM_COL32_WHITE), fc);
         }
-        if (o.pill2) {
+        if (pill2) {
             const ImVec2 p2 = !o.pill ? ImVec2(x, y) : stack ? ImVec2(x, y + pill_h + gl) : ImVec2(x + pill_w + pill_gap, y);
-            pill_at(dl, p2, o.pill2, al(PANEL3), al(TEXT2), fc);
+            pill_at(dl, p2, pill2, al(PANEL3), al(TEXT2), fc);
         }
     };
     const float tx = rf.p0.x + padx;
@@ -209,7 +345,7 @@ void row_begin(const char* label, const RowOpts& o, const CtlSpec& cs, RowFrame&
 
     rf.c0.x = rf.p0.x + padx + lay.ctl_x;
     rf.c1.x = rf.c0.x + ctl_w;
-    rf.c0.y = lay.wrap ? rf.p0.y + pady + text_h + sp(1.f) : rf.p0.y + (h - ctl_h) * 0.5f;
+    rf.c0.y = lay.wrap ? rf.p0.y + pady + text_h + under : rf.p0.y + (h - ctl_h) * 0.5f;
     rf.c1.y = rf.c0.y + ctl_h;
     if (o.tooltip && rf.hovered && !rf.focused) ImGui::SetTooltip("%s", o.tooltip);
 }
@@ -270,7 +406,8 @@ bool dropdown_impl(const char* label, int* idx, int n, const std::function<const
     if (st.refocus) { st.refocus = false; ImGui::SetFocusID(rf.id, win); ImGui::ScrollToRect(win, ImRect(rf.p0, rf.p1)); }   // (scrolls only when not in view)
     bool changed = false;
     const bool in_list = st.list_focus_frame >= fc - 1;
-    const bool back = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    if (open && in_list) help_track(rf.help, 2);   // the open list has the focus: the strip keeps this row's help
+    const bool back =ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
     if (open && back && (g.NavId == rf.id || in_list)) {   // B / Esc closes only the list
         ImGui::SetKeyOwner(ImGuiKey_GamepadFaceRight, rf.id, ImGuiInputFlags_LockThisFrame);   // the sheet / dialog / page "back" reads the same press
         ImGui::SetKeyOwner(ImGuiKey_Escape, rf.id, ImGuiInputFlags_LockThisFrame);
@@ -467,13 +604,25 @@ bool owns_shoulders(ImGuiID bid) {
 
 /* ================= public ================= */
 
-void option_group_begin(const char* id) {
+void option_group_begin(const char* id) { option_group_begin(id, GroupOpts()); }
+
+void option_group_begin(const char* id, const GroupOpts& opts) {
     const int fc = ImGui::GetFrameCount();
     if ((fc & 255) == 0)   // forget groups unused for about a minute (pages that are gone)
         for (auto it = g_groups.begin(); it != g_groups.end();) it = it->second.frame < fc - 3600 ? g_groups.erase(it) : std::next(it);
-    GroupState& gs = g_groups[ImGui::GetID(id)];
+    const ImGuiID gid = ImGui::GetID(id);
+    GroupState& gs = g_groups[gid];
     gs.frame = fc;
+    gs.help = opts.help;
     g_group = &gs;
+    if (opts.help == HelpMode::Strip) {
+        if (g_help.group != gid) {   // another page (another game): nothing carries over
+            g_help = HelpTrack();
+            g_help.group = gid;
+        }
+        g_help.live_prio = 0;
+        g_help.has_first = false;
+    }
 }
 
 void option_group_end() {
@@ -482,7 +631,200 @@ void option_group_end() {
     for (auto& kv : g_group->rows) { l = std::max(l, kv.second.x); c = std::max(c, kv.second.y); }
     g_group->label_w = l;
     g_group->ctl_w = c;
+    if (g_group->help == HelpMode::Strip) {
+        g_help.frame = ImGui::GetFrameCount();
+        if (g_help.live_prio > 0) { g_help.last = g_help.live; g_help.has_last = true; }
+    }
     g_group = nullptr;
+}
+
+bool option_help(OptionHelp* out) {
+    if (g_help.frame != ImGui::GetFrameCount()) return false;
+    if (g_help.live_prio > 0) { *out = g_help.live; out->live = true; }
+    else if (g_help.has_last) { *out = g_help.last; out->live = false; }
+    else if (g_help.has_first) { *out = g_help.first; out->live = false; }
+    else *out = OptionHelp();
+    return true;
+}
+
+int option_help_lines(float w, StripStyle style, int max_lines) {
+    const int mx = std::max(1, std::min(3, max_lines));
+    if (std::fabs(w - g_help.lines_w) > 0.5f || g_help.lines_n != g_help.texts.size() || g_help.lines_style != (int)style || g_help.lines_max != mx) {
+        int n = 1;
+        const float ww = std::max(1.f, w);
+        for (const auto& t : g_help.texts) {
+            const int k = style == StripStyle::RunIn ? (int)wrap_after(F.cap, F.cap->FontSize, t.second, ww - run_in_label_w(t.first), ww, 3).size()
+                                                     : (int)wrap_lines(F.cap, F.cap->FontSize, t.second, ww, 3).size();
+            n = std::max(n, k);
+        }
+        g_help.lines = std::min(mx, n);
+        g_help.lines_w = w;
+        g_help.lines_n = g_help.texts.size();
+        g_help.lines_style = (int)style;
+        g_help.lines_max = mx;
+    }
+    return g_help.lines;
+}
+
+namespace {
+float strip_head_h() { return std::max(F.bold->FontSize, F.cap->FontSize + sp(0.75f)); }   // the heading line also holds key hints
+float run_in_pitch() { return F.cap->FontSize + sp(0.375f); }
+}  // namespace
+
+float option_help_strip_h(int lines, StripStyle style) {
+    const int n = std::max(1, lines);
+    if (style == StripStyle::RunIn) return F.bold->FontSize + (float)(n - 1) * run_in_pitch();
+    return strip_head_h() + sp(0.5f) + (float)n * F.cap->FontSize + (float)(n - 1) * sp(0.25f);
+}
+
+void option_help_strip(const OptionHelp& h, float w, int lines, StripStyle style, float heading_w) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImFont* fb = F.bold;
+    ImFont* fc = F.cap;
+    const int n = std::max(1, lines);
+    const float total = option_help_strip_h(n, style);
+    w = std::max(1.f, w);
+    std::vector<std::string> ls;
+    float help_y0 = p.y;
+    if (style == StripStyle::RunIn) {   // "Label  help that wraps on, ..." in one slim block
+        float x = p.x;
+        if (!h.label.empty()) {
+            const std::string t = ellipsize(fb, fb->FontSize, h.label, w * 0.6f);
+            dl->AddText(fb, fb->FontSize, p, TEXT, t.c_str());
+            x += text_w(fb, t.c_str()) + sp(1.f);
+            if (!h.note.empty() && x + text_w(fc, h.note.c_str()) + sp(2.5f) <= p.x + w * 0.8f) {   // the second pill the row had no room for
+                x += pill_at(dl, ImVec2(x, p.y + (fb->FontSize - fc->FontSize - sp(1.f)) * 0.5f), h.note.c_str(), PANEL3, TEXT2, fc) + sp(1.f);
+            }
+        }
+        if (!h.help.empty()) {
+            ls = wrap_after(fc, fc->FontSize, h.help, p.x + w - x, w, n);
+            const float base = (fb->FontSize - fc->FontSize) * 0.8f;   // the first line sits on the label's baseline
+            for (size_t i = 0; i < ls.size(); ++i) {
+                const float y = i == 0 ? p.y + base : p.y + fb->FontSize + sp(0.375f) + (float)(i - 1) * run_in_pitch();
+                dl->AddText(fc, fc->FontSize, ImVec2(i == 0 ? x : p.x, y), TEXT2, ls[i].c_str());
+            }
+        }
+    } else {
+        const float head = strip_head_h(), hw = heading_w > 0.f ? std::min(w, heading_w) : w;
+        if (!h.label.empty()) {
+            const std::string t = ellipsize(fb, fb->FontSize, h.label, hw);
+            dl->AddText(fb, fb->FontSize, ImVec2(p.x, p.y + (head - fb->FontSize) * 0.5f), TEXT, t.c_str());
+            const float x = p.x + text_w(fb, t.c_str()) + sp(1.f);
+            if (!h.note.empty() && x + text_w(fc, h.note.c_str()) + sp(2.5f) <= p.x + hw)   // the second pill the compact row had no room for
+                pill_at(dl, ImVec2(x, p.y + (head - fc->FontSize - sp(1.f)) * 0.5f), h.note.c_str(), PANEL3, TEXT2, fc);
+        }
+        help_y0 = p.y + head;
+        if (!h.help.empty()) {
+            ls = wrap_lines(fc, fc->FontSize, h.help, w, n);
+            float y = p.y + head + sp(0.5f);
+            for (const std::string& l : ls) {
+                dl->AddText(fc, fc->FontSize, ImVec2(p.x, y), TEXT2, l.c_str());
+                y += fc->FontSize + sp(0.25f);
+            }
+        }
+    }
+    const bool cut = !ls.empty() && ls.back().size() >= 3 && ls.back().compare(ls.back().size() - 3, 3, "...") == 0 &&
+                     !(h.help.size() >= 3 && h.help.compare(h.help.size() - 3, 3, "...") == 0);
+    if (cut && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImVec2(p.x, help_y0), ImVec2(p.x + w, p.y + total))) ImGui::SetTooltip("%s", h.help.c_str());
+    ImGui::Dummy(ImVec2(w, total));
+}
+
+/* ---------------- columns of sections ---------------- */
+
+void option_columns_begin(int cols, float col_w, float gap) {
+    ImGuiContext& g = *GImGui;
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    Flow& f = g_flow;
+    if (f.on) option_columns_end();   // (a missing end)
+    const int fc = ImGui::GetFrameCount();
+    f.on = true;
+    f.win = win;
+    f.cols = std::max(1, cols);
+    f.cur = 0;
+    f.col_w = std::max(1.f, col_w);
+    f.gap = std::max(0.f, gap);
+    const ImVec2 o = ImGui::GetCursorScreenPos();
+    f.x0 = o.x;
+    f.y0 = o.y;
+    f.bottom = o.y;
+    f.work_max = win->WorkRect.Max.x;
+    f.content_max = win->ContentRegionRect.Max.x;
+    f.items.assign((size_t)f.cols, std::vector<FlowItem>());
+    f.nonav = false;
+    /* the column the focus is in: its rect (last frame's, scroll-proof) inside last frame's columns */
+    f.fcol = -1;
+    if (g.NavWindow == win && g.NavId && g.NavLayer == ImGuiNavLayer_Main && f.prev_win == win->ID && f.prev_frame >= fc - 1) {
+        const ImRect nr = win->NavRectRel[ImGuiNavLayer_Main];
+        const ImVec2 base = win->DC.CursorStartPos;
+        const float cx = (nr.Min.x + nr.Max.x) * 0.5f, cy = (nr.Min.y + nr.Max.y) * 0.5f;
+        if (!nr.IsInverted() && cy >= f.prev_rel.Min.y && cy <= f.prev_rel.Max.y) {
+            const float rx = cx + base.x - f.x0;   // from the left edge of the first column, this frame
+            if (rx >= -1.f && rx <= f.cols * f.col_w + (f.cols - 1) * f.gap + 1.f)
+                f.fcol = std::max(0, std::min(f.cols - 1, (int)std::floor(rx / (f.col_w + f.gap))));
+        }
+    }
+    ImGuiDir dir = ImGuiDir_None;
+    f.vertical = f.cols > 1 && f.fcol >= 0 && flow_move(&dir) && (dir == ImGuiDir_Up || dir == ImGuiDir_Down);
+    flow_column_start(0);
+}
+
+void option_columns_next() {
+    Flow& f = g_flow;
+    if (!f.on || f.win != ImGui::GetCurrentWindow()) return;
+    flow_column_end();
+    if (f.cur + 1 < f.cols) flow_column_start(f.cur + 1);
+    else flow_column_start(f.cur);   // (more columns than asked for: the last one goes on)
+}
+
+void option_columns_end() {
+    ImGuiContext& g = *GImGui;
+    Flow& f = g_flow;
+    if (!f.on) return;
+    ImGuiWindow* win = f.win;
+    flow_column_end();
+    win->WorkRect.Max.x = f.work_max;
+    win->ContentRegionRect.Max.x = f.content_max;
+    f.on = false;
+    /* Left / Right: the row beside in the next column when ImGui found nothing there (the columns' rows do not line up) */
+    ImGuiDir dir = ImGuiDir_None;
+    if (f.cols > 1 && f.fcol >= 0 && g.NavWindow == win && flow_move(&dir) && !(g.NavMoveFlags & ImGuiNavMoveFlags_IsPageMove) &&
+        (dir == ImGuiDir_Left || dir == ImGuiDir_Right)) {
+        const int tc = f.fcol + (dir == ImGuiDir_Right ? 1 : -1);
+        if (tc >= 0 && tc < f.cols && !f.items[(size_t)tc].empty()) {
+            const float tx0 = f.x0 + (float)tc * (f.col_w + f.gap), tx1 = tx0 + f.col_w;
+            auto in_target = [&](const ImGuiNavItemData& r) {
+                if (!r.ID || r.Window != win) return false;
+                const ImRect a = ImGui::WindowRectRelToAbs(win, r.RectRel);
+                const float cx = (a.Min.x + a.Max.x) * 0.5f;
+                return cx >= tx0 && cx <= tx1;
+            };
+            if (!in_target(g.NavMoveResultLocal) && !in_target(g.NavMoveResultLocalVisible)) {
+                const ImRect nr = ImGui::WindowRectRelToAbs(win, win->NavRectRel[ImGuiNavLayer_Main]);
+                const float cy = (nr.Min.y + nr.Max.y) * 0.5f;
+                const FlowItem* best = nullptr;
+                float bd = FLT_MAX;
+                for (const FlowItem& it : f.items[(size_t)tc]) {
+                    const float d = std::fabs((it.r.Min.y + it.r.Max.y) * 0.5f - cy);
+                    if (d < bd) { bd = d; best = &it; }
+                }
+                if (best) {
+                    ImGui::NavMoveRequestCancel();
+                    ImGui::SetNavID(best->id, ImGuiNavLayer_Main, best->scope, ImGui::WindowRectAbsToRel(win, best->r));
+                    g.NavCursorVisible = true;
+                    g.NavHighlightItemUnderNav = true;
+                }
+            }
+        }
+    }
+    /* where the next frame finds the columns (relative to the content start: scrolling does not move it) */
+    const ImVec2 base = win->DC.CursorStartPos;
+    f.prev_win = win->ID;
+    f.prev_frame = ImGui::GetFrameCount();
+    const float x1 = f.x0 + f.cols * f.col_w + (f.cols - 1) * f.gap;
+    f.prev_rel = ImRect(ImVec2(f.x0 - base.x, f.y0 - base.y), ImVec2(x1 - base.x, f.bottom - base.y));
+    ImGui::SetCursorScreenPos(ImVec2(f.x0, f.bottom));
+    ImGui::Dummy(ImVec2(0.f, 0.f));   // a submitted item: the scroll area counts the taller column
 }
 
 bool dropdown(const char* label, int* idx, const char* const* items, int n, const RowOpts& opts) {
@@ -490,6 +832,12 @@ bool dropdown(const char* label, int* idx, const char* const* items, int n, cons
 }
 bool dropdown(const char* label, int* idx, const std::vector<std::string>& items, const RowOpts& opts) {
     return dropdown_impl(label, idx, (int)items.size(), [&](int i) { return items[i].c_str(); }, opts);
+}
+
+bool dropdown_list_open() {
+    if (!g_dd_open) return false;
+    auto it = g_dd.find(g_dd_open);
+    return it != g_dd.end() && it->second.frame >= ImGui::GetFrameCount() - 1;
 }
 
 bool toggle(const char* label, bool* v, const RowOpts& opts) {
@@ -552,16 +900,25 @@ bool section(const char* label, const SectionOpts& o) {
         if (s >= 0) st.open = s == 1;
         else if (!st.touched) st.open = o.default_open;
     }
-    if (win->DC.CursorPos.y > win->DC.CursorStartPos.y + 1.f) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + sp(1.f));   // air above every section but the first
+    const bool compact = compact_rows();   // inside a Strip group: a lower header, like its rows
+    const bool first_in_column = g_flow.on && g_flow.win == win && std::fabs(win->DC.CursorPos.y - g_flow.y0) < 1.f;
+    if (win->DC.CursorPos.y > win->DC.CursorStartPos.y + 1.f && !first_in_column)
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (compact ? sp(0.5f) : sp(1.f)));   // air above every section but the first
     const char* lend = ImGui::FindRenderedTextEnd(label);
-    const float h = sp(5.5f);
+    const float h = compact ? sp(4.5f) : sp(5.5f);
     const float avail = std::max(1.f, std::min(ImGui::GetContentRegionAvail().x, max_row_w()));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.75f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, compact ? sp(0.5f) : sp(0.75f)));
     const bool pressed = ImGui::InvisibleButton(label, ImVec2(avail, h), ImGuiButtonFlags_EnableNav);
     ImGui::PopStyleVar();
+    flow_record(id, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     const bool hov = ImGui::IsItemHovered();
     const bool focus = ImGui::IsItemFocused() && nav_visible();
     item_sound(focus, pressed);
+    if (compact && (focus || hov)) {   // the help strip names the header that has the focus (it has no help of its own)
+        OptionHelp sh;
+        sh.label.assign(label, lend);
+        help_track(sh, focus ? 2 : 1);
+    }
     bool toggle_now = pressed;
     if (g.NavId == id) {   // Left closes an open section, Right opens a closed one (otherwise the D-pad moves on as usual)
         const ImGuiDir md = pad_move_dir();
@@ -618,9 +975,12 @@ bool tab_bar(const char* id, const char* const* labels, int n, int* cur, const T
     int sel = std::max(0, std::min(*cur, n - 1));
     bool changed = false, focus_sel = false;
     if (n > 1 && !g.IO.WantTextInput) {
-        const int dir = ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? -1 : (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? +1 : 0);
+        ImGuiKey used = ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? ImGuiKey_GamepadL1 : ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? ImGuiKey_GamepadR1 : ImGuiKey_None;
+        if (used == ImGuiKey_None && !g.IO.KeyCtrl && !g.IO.KeyAlt)   // [ and ] on a keyboard, as LB / RB (the Cases view's keys)
+            used = ImGui::IsKeyPressed(ImGuiKey_LeftBracket, false) ? ImGuiKey_LeftBracket : ImGui::IsKeyPressed(ImGuiKey_RightBracket, false) ? ImGuiKey_RightBracket : ImGuiKey_None;
+        const int dir = (used == ImGuiKey_GamepadL1 || used == ImGuiKey_LeftBracket) ? -1 : used != ImGuiKey_None ? +1 : 0;
         if (dir && owns_shoulders(bid)) {
-            ImGui::SetKeyOwner(dir < 0 ? ImGuiKey_GamepadL1 : ImGuiKey_GamepadR1, bid, ImGuiInputFlags_LockThisFrame);   // the hub's global LB / RB page switch reads the same press
+            ImGui::SetKeyOwner(used, bid, ImGuiInputFlags_LockThisFrame);   // the hub's global LB / RB page switch reads the same press
             const int t = hubui::kit::tab_step(sel, n, dir, o.wrap);
             if (t >= 0) {
                 sel = t;
@@ -632,7 +992,7 @@ bool tab_bar(const char* id, const char* const* labels, int n, int* cur, const T
     }
 
     ImFont* fb = F.bold;
-    const float fs = fb->FontSize, h = sp(5.f);
+    const float fs = fb->FontSize, h = o.height > 0.f ? std::max(fs + sp(1.f), o.height) : sp(5.f);
     const bool hints = o.show_hints && A.pad_mode && n > 1;
     const float hint_w = hints ? key_hint_width(true, "LB", "", "") : 0.f;
     const float avail = std::max(1.f, ImGui::GetContentRegionAvail().x);

@@ -11,6 +11,7 @@
 #include "hookshot_ui.h"
 #include "hidden_ui.h"
 #include "playtime_logic.h"
+#include "option_sections.h"
 
 #include <algorithm>
 #include <cstring>
@@ -397,18 +398,26 @@ void select_tab(Ctx& c, int id) {
     c.st.tab = c.tab_shown = id;
 }
 
-/* About: the play-time stats and the description first, then the game's sections. On a wide body the stats and the facts (developer,
- * publisher, ...) move to a side column (game_page_layout.h about_columns). */
+/* About: the play-time stats and the description first, then the game's sections. On a wide body the stats and the controllers move to a
+ * side column (game_page_layout.h about_columns); the description and the facts (developer, publisher, ...) lead the main column. */
 static void draw_about(Ctx& c) {
     const hub::GameEntry& e = c.e;
     const float x0 = ImGui::GetCursorScreenPos().x, y0 = ImGui::GetCursorScreenPos().y;
     const float avail = ImGui::GetContentRegionAvail().x;
     hubui::gp::AboutCols cols = hubui::gp::about_columns(avail, sp(1.f));
     float side_bottom = y0;
+    auto players = [&](bool side) {   // offline local multiplayer: who holds which port before Play (the strip wraps in a narrow column)
+        if (local_players_for(e) < 2) return;
+        if (!side) ImGui::Dummy(ImVec2(0, sp(0.5f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(1.f)));   // wrapped lines sit close together
+        const bool reassign = draw_players_strip(local_players_for(e));
+        ImGui::PopStyleVar();
+        if (reassign) { c.host.close(); open_port_assign(); }
+    };
     if (cols.side) {   // side column first: its height does not depend on the main column
         Column sc = column_begin(x0 + cols.side_x, y0, cols.side_w);
         if (draw_play_time(c, cols.side_w)) ImGui::Dummy(ImVec2(0, sp(1.f)));
-        gameinfo_ui_section_held(e, catalog_title(c), 2, nullptr);   // facts + ratings
+        players(true);
         side_bottom = column_end(sc);
         if (side_bottom <= y0 + 1.f) cols.main_w = hubui::gp::readable_w(avail, sp(1.f));   // nothing to show there: one column after all
     }
@@ -417,7 +426,7 @@ static void draw_about(Ctx& c) {
     draw_description(c);
     dumpwarn_details_section(e);   // a copy that looks incomplete must be seen without scrolling
     nuprepair_details_section(e);   // a damaged .nup copy RetroHub fills in at launch
-    if (!cols.side) gameinfo_ui_section_held(e, catalog_title(c), 2, nullptr);
+    gameinfo_ui_section_held(e, catalog_title(c), 2, nullptr);   // facts + ratings
     achievements_ui_section(e);   // RetroAchievements progress (only when signed in)
     if (e.system == hub::System::WiiU) {
         for (const std::string& l : wiiu_info_lines(e)) ImGui::TextDisabled("%s", l.c_str());
@@ -425,10 +434,7 @@ static void draw_about(Ctx& c) {
     }
     { std::string fl = fr_playtime_line(e.key); if (!fl.empty()) ImGui::TextDisabled("Friends: %s", fl.c_str()); }
     if (c.native) ImGui::TextDisabled("Smash Classic keeps its own saves.");
-    if (local_players_for(e) >= 2) {   // offline local multiplayer: who holds which port before Play
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        if (draw_players_strip(local_players_for(e))) { c.host.close(); open_port_assign(); }
-    }
+    if (!cols.side) players(false);
     dupes_details_section(e);
     hack_details_section(e);   // Versions row (Original + hacks) and Remove hack
     progress_details_section(e);   // Wave 3: completion + notes
@@ -438,8 +444,12 @@ static void draw_about(Ctx& c) {
     verify_details_section(e);
     hookshot_details_section(e);   // Ocarina of Time (Switch 2) only: build the native version
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    if (gamepack_owns(e)) {   // installed from a shared pack: its folder (full path on hover) + Uninstall; the archive file name inside is not interesting
-        const std::string ft = hubgp::installed_folder_title(e.path, hubgp::pack_root());
+    /* screenshot aid HUB_SHOT_PACKGAME=<key> (headless only): that game shows as installed from a shared pack, so its Uninstall button and
+     * confirm can be captured. Its path is not in the pack folder, so a confirmed Uninstall finds nothing to delete (gamepack_uninstall) */
+    static const char* shot_pack = g_headless ? std::getenv("HUB_SHOT_PACKGAME") : nullptr;
+    const bool fake_pack = shot_pack && e.key == shot_pack;
+    if (gamepack_owns(e) || fake_pack) {   // installed from a shared pack: its folder (full path on hover) + Uninstall; the archive file name inside is not interesting
+        const std::string ft = fake_pack ? e.title : hubgp::installed_folder_title(e.path, hubgp::pack_root());
         const std::string full = hubgp::install_dir(sys_short(e), ft);
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
         ImGui::TextUnformatted(ui::ellipsize(ui::F.cap, ImGui::GetFontSize(), "Installed in " + sys_short(e) + "\\" + ft + "  (RetroHub games folder)", ImGui::GetContentRegionAvail().x).c_str());
@@ -478,9 +488,12 @@ static void draw_saves(Ctx& c) {
 void draw_tab(Ctx& c, int id) {
     if (id == TabAbout) { draw_about(c); return; }
     if (id == TabShots) { shots_gallery(c.e); return; }   // a grid that fills the width
-    /* Saves and Settings: text and option rows at a readable width on a wide body */
+    /* Saves and Settings: text and option rows at a readable width on a wide body; Settings uses the whole width when its sections flow
+     * into two columns (option_sections.h option_flow) */
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    Column col = column_begin(p.x, p.y, hubui::gp::readable_w(ImGui::GetContentRegionAvail().x, sp(1.f)));
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const bool two = id == TabSettings && hubui::option_flow(avail, sp(1.f)).cols > 1;
+    Column col = column_begin(p.x, p.y, two ? avail : hubui::gp::readable_w(avail, sp(1.f)));
     if (id == TabSaves) draw_saves(c);
     else if (id == TabSettings) gs_draw_game_section(c.e);
     const float bottom = column_end(col);
@@ -678,7 +691,7 @@ std::vector<Action> secondary_actions(Ctx& c) {
         a.id = "hack";
         a.label = "Add hack or translation";
         a.icon = ui::Icon::Plus;
-        a.run = [host, &e] { host.close(); hack_add_open(e); };
+        a.run = [&e] { hack_add_open(e); };   // the page stays: its picker and dialog open on top of it (hack_page_dialogs)
         add(std::move(a));
     }
     if (!c.native) {   // Hide game (library-12): one press, Undo card after; synced like the Hidden games list
