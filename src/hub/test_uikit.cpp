@@ -60,6 +60,55 @@ int main() {
         CHECK(near(d.y1, 400.f));                                       // over-scrolled: clamped
     }
 
+    /* ---- eased scroll: ImGui's scroll requests resolved like ImGui does, then a glide that always comes to rest ---- */
+    {
+        CHECK(near(resolve_scroll_target(300.f, 0.f, 400.f, 0.f, 1000.f), 300.f));           // SetScrollY(300)
+        CHECK(near(resolve_scroll_target(1300.f, 0.f, 400.f, 0.f, 1000.f), 1000.f));         // clamped to the end
+        CHECK(near(resolve_scroll_target(-50.f, 0.f, 400.f, 0.f, 1000.f), 0.f));             // and to the top
+        CHECK(near(resolve_scroll_target(700.f, 0.5f, 400.f, 0.f, 1000.f), 500.f));          // centre ratio: that point of the view lands on it
+        CHECK(near(resolve_scroll_target(700.f, 1.f, 400.f, 0.f, 1000.f), 300.f));           // bottom-aligned
+        CHECK(near(resolve_scroll_target(10.f, 0.f, 400.f, 16.f, 1000.f), 0.f));             // edge snap: close to the top snaps onto it
+        CHECK(near(resolve_scroll_target(1390.f, 1.f, 400.f, 16.f, 1000.f), 1000.f));        // close to the end snaps onto it
+        CHECK(near(resolve_scroll_target(500.f, 0.f, 400.f, 16.f, 1000.f), 500.f));          // far from both: untouched
+        CHECK(near(resolve_scroll_target(300.4f, 0.f, 400.f, 0.f, 1000.f), 300.f));          // whole pixels, like ImGui
+
+        Glide gl;
+        gl.reset(100.f);
+        CHECK(!gl.moving() && near(gl.pos, 100.f));
+        gl.by(80.f, 1000.f);
+        gl.by(80.f, 1000.f);                                            // quick wheel notches add up on the target
+        CHECK(near(gl.target, 260.f));
+        bool mono = true;
+        float prev = gl.pos;
+        int frames = 0;
+        while (gl.step(1.f / 60.f, 1000.f, false) && frames < 600) { if (gl.pos < prev - 1e-3f || gl.pos > 260.5f) mono = false; prev = gl.pos; ++frames; }
+        CHECK(mono);                                                     // eases out, never overshoots
+        CHECK(frames > 3 && frames < 120);                               // takes a moment, and then it stops: nothing animates forever
+        CHECK(gl.pos == 260.f && gl.vel == 0.f && !gl.moving());         // exactly at rest on the target
+        gl.to(5000.f, 1000.f);
+        CHECK(near(gl.target, 1000.f));                                  // targets stay inside the content
+        gl.by(-3000.f, 1000.f);
+        CHECK(near(gl.target, 0.f));
+        gl.to(700.f, 1000.f);
+        CHECK(!gl.step(1.f / 60.f, 1000.f, true) && gl.pos == 700.f);   // Reduce motion: there at once
+        gl.to(900.f, 1000.f);
+        gl.step(1.f / 60.f, 400.f, false);                               // the content shrank: target and position clamp to the new end
+        CHECK(gl.target <= 400.f && gl.pos <= 400.f);
+        Glide ga, gb;                                                    // frame-rate independent
+        ga.reset(0.f); gb.reset(0.f); ga.to(500.f, 1000.f); gb.to(500.f, 1000.f);
+        for (int i = 0; i < 12; ++i) ga.step(1.f / 60.f, 1000.f, false);
+        for (int i = 0; i < 29; ++i) gb.step(1.f / 144.f, 1000.f, false);
+        CHECK(std::fabs(ga.pos - gb.pos) < 8.f);
+    }
+
+    /* ---- flow rows and pinned headers ---- */
+    CHECK(flow_fits(100.f, 8.f, 50.f, 200.f));                          // 100 + 8 + 50 <= 200
+    CHECK(flow_fits(100.f, 8.f, 92.f, 200.f));                          // exactly to the edge
+    CHECK(!flow_fits(100.f, 8.f, 93.f, 200.f));                         // a pixel over: new line
+    CHECK(!pin_header(600.f, -1.f, 100.f));                             // not measured yet: scroll together
+    CHECK(pin_header(600.f, 200.f, 300.f));                             // 400 left for the body
+    CHECK(!pin_header(600.f, 350.f, 300.f));                            // 250 left: too little, scroll together
+
     /* ---- sheet split: the body takes all remaining height ---- */
     {
         Split s = sheet_split(0.f, 700.f, 120.f, 60.f, 10.f);

@@ -4,6 +4,8 @@
 #include "discover_logic.h"
 #include "gameinfo.h"
 #include "gamepack.h"
+#include "ui_layout_logic.h"
+#include "ui_scroll.h"
 
 #include <algorithm>
 #include <sstream>
@@ -577,12 +579,27 @@ void toolbar()
 
 void discover_shot_console(const std::string& sys) { g_f.sys = sys == "all" ? std::string() : sys; g_inited = true; }
 
+/* The cards (or the "no match" note) and what follows them. */
+static void discover_body();
+
+/* Discover scrolls itself (frame.cpp gives it a plain page). The header and the filters stay put above a scroll area of cards when at
+ * least one and a half rows of cards fit under them; on a short window (1024x600 at 150 %) the whole page scrolls as one, as it always
+ * did. Both are kit areas with ImGui's own gutter only while they overflow, so a page that fits looks exactly as before. */
 void page_discover()
 {
+    static float top_h = -1.f;   // header + filters, measured last frame
+    static int last_pin = -1;
+    const float page_h = ImGui::GetContentRegionAvail().y;
+    const bool pin = hubui::kit::pin_header(page_h, top_h, (sp(19.5f) + sp(1.5f)) * 1.5f);
+    if (last_pin >= 0 && last_pin != (int)pin) A.page_focus_req = true;   // the filters moved in or out of the scroll area (new items): seed the focus again
+    last_pin = pin ? 1 : 0;
+    if (!pin) ui::scroll_begin("disc_page", ImVec2(0.f, 0.f), ui::ScrollFlags_AutoGutter, ImVec2(0.f, 0.f));
+    const float y0 = ImGui::GetCursorPosY();
     page_header("Discover", "Highly rated games for each console. Add your own copy, or install from your shared packs.");
     ensure_browser();
     if (g_br.size() == 0) {
         text_wrapped_disabled("The recommendations list is missing from this install. Reinstall RetroHub to restore it.");
+        if (!pin) ui::scroll_end();
         return;
     }
     if (!g_inited) {   // first visit: the console you own the most games for
@@ -601,7 +618,15 @@ void page_discover()
     ImGui::PopStyleVar();
     sync_results();   // a toolbar change shows in this same frame
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    top_h = ImGui::GetCursorPosY() - y0;
+    /* PadOwner: LT / RT page the cards from the filters above them too */
+    if (pin) ui::scroll_begin("disc_cards", ImVec2(0.f, 0.f), ui::ScrollFlags_AutoGutter | ui::ScrollFlags_PadOwner, ImVec2(0.f, 0.f));
+    discover_body();
+    ui::scroll_end();
+}
 
+static void discover_body()
+{
     const size_t total = g_res.ids.size();
     if (total == 0 && g_res.pending == 0) {
         ImGui::Dummy(ImVec2(0, sp(2.f)));

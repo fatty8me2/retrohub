@@ -20,6 +20,8 @@
 #include "addgames.h"
 #include "desk_view.h"
 #include "game_page.h"
+#include "ui_scroll.h"
+#include "ui_layout_logic.h"
 
 /* help_ui.cpp: the scan result toast, the last result line and the scan caption's clock */
 const std::string& scan_last_line();
@@ -342,8 +344,9 @@ void empty_library_state() {
         for (auto& ln : ui::wrap_lines(ui::F.cap, ui::F.cap->FontSize, hubhelp::file_types_line(hub::addgames::supported_exts()), nw, 4)) note_lines.push_back(ln);
     }
     const float note_h = note_lines.empty() ? 0.f : (float)note_lines.size() * ui::F.cap->FontSize * 1.3f + sp(1.5f);
-    float h = std::min(ImGui::GetContentRegionAvail().y,
-                       sp(53.f) + note_h + (suggestions.empty() ? 0.f : sp(10.f) + sp(6.f) * (float)suggestions.size()));
+    /* the card is as tall as what it holds; page_library() puts it in a scroll area, so a short window (1024x600, 150 %) scrolls to the
+     * buttons instead of cutting the card off above them */
+    float h = sp(53.f) + note_h + (suggestions.empty() ? 0.f : sp(10.f) + sp(6.f) * (float)suggestions.size());
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
     dl->AddRectFilled(p0, p1, ui::PANEL, sp(2.5f));
     dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.5f), 0, 1.f);
@@ -793,9 +796,11 @@ void lib_menu_overlay_body(bool* close) {
     static const struct { Page p; const char* label; } pages[] = {{Page::Discover, "Discover"}, {Page::Online, "Play Online"}, {Page::Saves, "Saves"},
                                                                   {Page::Controllers, "Controllers"}, {Page::Settings, "Settings"}, {Page::About, "Updates"}};
     ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, false);
+    const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;   // the row wraps here (a narrow window, a big UI size)
     if (ui::button("Back to the carousel", ImVec2(0, sp(4.f)), true, true)) *close = true;
     for (const auto& pg : pages) {
-        ImGui::SameLine(0, sp(1.f));
+        const float bw = ImGui::CalcTextSize(pg.label).x + sp(5.f);   // ui::button's own width for a label without an icon
+        if (hubui::kit::flow_fits(ImGui::GetItemRectMax().x, sp(1.f), bw, right)) ImGui::SameLine(0, sp(1.f));
         if (ui::button(pg.label, ImVec2(0, sp(4.f)), false, true)) { A.page = pg.p; *close = true; }
     }
     ImGui::PopItemFlag();
@@ -966,13 +971,25 @@ void page_library() {
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     ensure_selection();
     if (desk_layout_on()) { desk_page(); return; }   // Settings > Layout: Library desk (desk_view.cpp)
+    if (A.lib.empty() && A.ghosts.empty() && !A.scanning) {
+        /* First run, nothing at all to list: the whole page (top bar and card) is one scroll area, so a short window (1024x600, 150 %)
+         * scrolls to the folder buttons, by wheel, thumb or D-pad. It reaches sp(1.5) into the margin on both sides as padding: the
+         * content stays exactly where it was and the thumb sits beside the page. */
+        const float bleed = sp(1.5f);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() - bleed);
+        ui::scroll_begin("empty_lib", ImVec2(ImGui::GetContentRegionAvail().x + bleed, 0.f), ui::ScrollFlags_OverlayBar, ImVec2(bleed, 0.f));
+        if (!lib_cases_active()) library_top_bar();
+        A.page_scrollable = false;
+        empty_library_state();
+        ui::scroll_end();
+        return;
+    }
     if (!lib_cases_active()) library_top_bar();   // Cases hides it (its menu overlay shows it)
     A.page_scrollable = false;
 
     if (A.lib.empty() && A.ghosts.empty()) {   // nothing of your own and no friends' games either
         if (A.scanning && !A.scanned_once) skeleton_home();
-        else if (A.scanning) {}   // rescan of an empty library: top bar shows the progress line
-        else empty_library_state();
+        // else: a rescan of an empty library: the top bar shows the progress line
         return;
     }
     if (A.view == LibView::All) {
@@ -1018,16 +1035,12 @@ void page_library() {
      * headers and the first cover start on the same left edge as the hero and the top bar. */
     const float lib_bleed = sp(1.5f);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() - lib_bleed);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     home_note_page();
-    home_scroll_pre();
-    ImGui::BeginChild("shelves", ImVec2(ImGui::GetContentRegionAvail().x + lib_bleed, 0), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
-    home_scroll_post();
-    ImGui::PopStyleVar();
+    home_shelves_begin(ImGui::GetContentRegionAvail().x + lib_bleed);   // shelves.cpp: a kit scroll area (eased, thumb over the right edge)
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(sp(2.f), 0));
     A.page_scrollable = ImGui::GetScrollMaxY() > 0;
     home_shelves();
     ImGui::PopStyleVar();
-    ImGui::EndChild();
+    home_shelves_end();
 }
 

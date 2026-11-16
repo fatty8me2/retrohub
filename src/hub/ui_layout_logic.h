@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "homescroll_logic.h"   // hs::spring_step: the eased scroll's spring
+
 namespace hubui {
 namespace kit {
 
@@ -83,6 +85,52 @@ inline Thumb scrollbar_thumb(float track_top, float track_bot, float view_h, flo
     t.y1 = t.y0 + grab;
     return t;
 }
+
+/* ---------------- eased scroll (ScrollFlags_Eased) ---------------- */
+
+/* The offset ImGui itself would scroll to for a pending ScrollTarget (one axis of CalcNextScrollFromScrollTargetAndClamp, edge snap
+ * included): target = the requested content position, center_ratio = the point of the view that lands on it (0 top, 1 bottom),
+ * view_full = the window's full height minus its decorations, snap = ImGui's edge snap distance (0 = none). */
+inline float resolve_scroll_target(float target, float center_ratio, float view_full, float snap, float scroll_max) {
+    const float mx = std::max(0.f, scroll_max);
+    if (snap > 0.f) {
+        const float snap_max = mx + view_full;
+        if (target <= snap) target = target * center_ratio;                                     // close to the top: onto it
+        else if (target >= snap_max - snap) target = target + (snap_max - target) * center_ratio;   // close to the end: onto it
+    }
+    const float s = std::floor(std::max(0.f, target - center_ratio * view_full) + 0.5f);
+    return std::min(s, mx);
+}
+
+/* The motion of an eased area: wheel notches, LT / RT pages and focus moves set `target`; every frame step() carries `pos` toward it on
+ * a critically damped spring (hs::spring_step: frame-rate independent, eases out with a little momentum). It always comes to rest
+ * exactly on the target, so nothing animates forever. `snap` (Reduce motion, a dragged scrollbar) jumps. */
+struct Glide {
+    float pos = 0.f, vel = 0.f, target = 0.f;
+    void reset(float at) { pos = target = std::max(0.f, at); vel = 0.f; }
+    void to(float t, float scroll_max) { target = clampf(t, 0.f, std::max(0.f, scroll_max)); }
+    void by(float d, float scroll_max) { to(target + d, scroll_max); }
+    bool moving() const { return pos != target || vel != 0.f; }
+    /* Returns true while it is still moving. */
+    bool step(float dt, float scroll_max, bool snap) {
+        const float mx = std::max(0.f, scroll_max);
+        target = clampf(target, 0.f, mx);
+        pos = clampf(pos, 0.f, mx);
+        if (snap) { pos = target; vel = 0.f; }
+        else hs::spring_step(pos, vel, target, dt);
+        return moving();
+    }
+};
+
+/* ---------------- flow rows ---------------- */
+
+/* A row of buttons that wraps: does the next one (width w) still fit after the previous one, which ends at prev_end, with `gap` between
+ * them, inside a row that ends at `right`? False = start a new line. */
+inline bool flow_fits(float prev_end, float gap, float w, float right) { return prev_end + gap + w <= right + 0.5f; }
+
+/* A header that stays put above a scrolling body (e.g. filters above results) only when the body keeps at least min_body of height under
+ * it; otherwise everything scrolls together. header_h < 0 = not measured yet (scroll together until it is). */
+inline bool pin_header(float view_h, float header_h, float min_body) { return header_h >= 0.f && view_h - header_h >= min_body; }
 
 /* ---------------- page sheet ---------------- */
 

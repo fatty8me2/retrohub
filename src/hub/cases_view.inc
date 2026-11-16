@@ -576,14 +576,18 @@ void cases_menu_overlay(ImVec2 org, ImVec2 sz) {
     ImGui::SetNextWindowPos(ImVec2(org.x, org.y - h * (1.f - t)));
     ImGui::SetNextWindowSizeConstraints(ImVec2(sz.x, 0.f), ImVec2(sz.x, FLT_MAX));
     if (CS.menu_focus_req) { ImGui::SetNextWindowFocus(); CS.menu_focus_req = false; }
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(2.f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));   // the padding is the scroll area's below: the same place on screen
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::with_alpha(ui::PANEL, 0.98f));
     ImGui::Begin("##casesmenu", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar);
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
     bool close = false;
+    /* As tall as its content, but never past the carousel's bottom: a short window or a big UI size scrolls it (the thumb floats in the
+     * right padding, so the menu looks exactly the same when it fits). */
+    ui::scroll_begin("menu_body", ImVec2(0.f, sz.y), ui::ScrollFlags_AutoHeight | ui::ScrollFlags_OverlayBar, ImVec2(sp(3.f), sp(2.f)));
     lib_menu_overlay_body(&close);
+    ui::scroll_end();
     CS.menu_h = ImGui::GetWindowHeight();
     const float bottom = ImGui::GetWindowPos().y + CS.menu_h;
     const bool inside = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
