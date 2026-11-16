@@ -1,4 +1,5 @@
 #include "app.h"
+#include "ui_sheet.h"
 #include "username_logic.h"
 #include "winutil.h"
 
@@ -9,7 +10,7 @@
  * Everything works with the on-screen keyboard and the pad (osk::input; suggestions are normal focusable buttons).
  *
  * Screenshot aids (headless, no network): HUB_SHOT_USERNAME=empty|invalid|checking|available|taken|notallowed|offline|claiming
- *   [HUB_SHOT_USERNAME_TEXT=<text>], HUB_SHOT_USERNAME_PROMPT=1 (the one-time prompt), HUB_SHOT_USERNAME_BANNER=1 (the banner),
+ *   [HUB_SHOT_USERNAME_TEXT=<text>], HUB_SHOT_USERNAME_PROMPT=1|late (the one-time prompt; late = after start-up), HUB_SHOT_USERNAME_BANNER=1 (the banner),
  *   HUB_SHOT_USERNAME_CHANGE=1 (Settings > Account change panel open), HUB_SHOT_USERNAME_CLAIMED=<name> (pretend this PC owns it). */
 
 using namespace hubui::un;
@@ -30,6 +31,7 @@ struct UnState {
     bool was_connected = false;
     bool seeded = false, shot = false;
     bool popup_now = false, popup_last = false;   // the prompt modal was drawn this / last frame (QA reads popup_last between frames)
+    bool dlg_open = false;           // the prompt dialog is up (prompt_open asks for it, once)
     double t_start = 0;
 } UN;
 
@@ -54,7 +56,8 @@ void seed_shot() {
     std::string claimed;
     if (env_utf8(L"HUB_SHOT_USERNAME_CLAIMED", &claimed)) { A.st.name = claimed; A.st.username_claimed = true; UN.chk.mine_key = hubnet::username_fold_key(claimed); }
     const char* s = std::getenv("HUB_SHOT_USERNAME");
-    UN.prompt_open = std::getenv("HUB_SHOT_USERNAME_PROMPT") != nullptr;
+    const char* pr = std::getenv("HUB_SHOT_USERNAME_PROMPT");   // "late": opens after start-up, like a real prompt (gets its first focus)
+    UN.prompt_open = pr != nullptr && std::string(pr) != "late";
     UN.change_open = std::getenv("HUB_SHOT_USERNAME_CHANGE") != nullptr;
     if (!s) return;
     UN.shot = true;
@@ -204,7 +207,11 @@ bool un_picker(const char* id, float width) {
     if (!st.empty()) {
         ImGui::SetCursorScreenPos(ImVec2(p.x + ix, p.y));
         ImGui::PushStyleColor(ImGuiCol_Text, col);
-        ImGui::PushTextWrapPos(p.x + (width > 0 ? width : sp(46.f)));
+        {   /* wrap `width` from the box's left edge, never past the window's edge (the wrap position is in window coordinates: a screen x
+             * wrapped past the edge of a dialog's middle) */
+            const float x = ImGui::GetCursorPosX();
+            ImGui::PushTextWrapPos(std::min(x - ix + (width > 0 ? width : sp(46.f)), x + ImGui::GetContentRegionAvail().x));
+        }
         ImGui::TextUnformatted(st.c_str());
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
@@ -213,7 +220,7 @@ bool un_picker(const char* id, float width) {
         ImGui::TextDisabled("Try one of these:");
         for (size_t i = 0; i < UN.chk.suggestions.size(); ++i) {
             ImGui::PushID((int)i);
-            if (i) ImGui::SameLine(0, sp(1.f));
+            if (i) ui::dialog_same_line(ui::dialog_button_w(UN.chk.suggestions[i].c_str()), sp(1.f));   // the chips wrap instead of running off the edge
             if (ui::button(UN.chk.suggestions[i].c_str(), ImVec2(0, sp(4.25f)))) set_text(UN.chk.suggestions[i]);
             ImGui::PopID();
         }
@@ -266,8 +273,13 @@ void draw_username_overlays() {
     UN.popup_last = UN.popup_now;
     UN.popup_now = false;
     if (wizard_state() != -1) return;   // the wizard has its own Name step
+    if (g_headless && ImGui::GetTime() - UN.t_start > 2.5) {   // HUB_SHOT_USERNAME_PROMPT=late
+        static bool s_late = false;
+        const char* pr = std::getenv("HUB_SHOT_USERNAME_PROMPT");
+        if (!s_late && pr && std::string(pr) == "late") { s_late = true; un_seed_text(); UN.prompt_open = true; }
+    }
     const bool show_shot = g_headless && std::getenv("HUB_SHOT_USERNAME_BANNER");
-    if (g_headless && !show_shot && !UN.prompt_open && !ImGui::IsPopupOpen("Pick your username##un")) return;
+    if (g_headless && !show_shot && !UN.prompt_open && !UN.dlg_open && !ImGui::IsPopupOpen("Pick your username##un")) return;
     const ImGuiViewport* vp = ImGui::GetMainViewport();
 
     const bool online = fr_connected();
@@ -297,32 +309,26 @@ void draw_username_overlays() {
         ImGui::PopStyleVar(2);
     }
 
-    if (UN.prompt_open) { ImGui::OpenPopup("Pick your username##un"); UN.prompt_open = false; UN.change_open = false; }
-    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(2.5f)));
-    bool open = true;
-    if (ImGui::BeginPopupModal("Pick your username##un", &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+    /* The one-time prompt: a ui::dialog (ui_sheet.h) under its old popup name, with the old title-bar close button as the title row's X
+     * (mouse; it never takes the first focus). B / Esc / X / Later all close it without claiming. */
+    if (UN.prompt_open) { UN.dlg_open = true; UN.prompt_open = false; UN.change_open = false; }
+    ui::DialogOpts o;
+    o.keep_id = true;
+    o.close_x = true;
+    if (ui::dialog_begin("Pick your username##un", UN.needs_new ? "Time for a username" : "Pick your username", &UN.dlg_open, ui::DialogSize::Small, o)) {
         UN.popup_now = true;
-        if (ui::modal_back()) ImGui::CloseCurrentPopup();
-        ImGui::PushTextWrapPos(sp(46.f));
-        ImGui::PushFont(ui::F.h2);
-        ImGui::TextUnformatted(UN.needs_new ? "Time for a username" : "Pick your username");
-        ImGui::PopFont();
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
         ImGui::TextWrapped("%s", UN.needs_new
             ? "RetroHub now gives everyone a unique username. It replaces the old display name: friends find you by it and your cloud saves follow it to any PC. Your friends and saves stay exactly as they are."
             : "Your username is your RetroHub account. Friends find you by it and your cloud saves follow it to any PC. Only you can use it.");
-        ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, sp(1.f)));
-        const bool enter = un_picker("prompt", sp(34.f));
+        const bool enter = un_picker("prompt", std::min(sp(34.f), ImGui::GetContentRegionAvail().x - sp(6.f)));
         const NameAction act = name_action(UN.chk.state, false, UN.claiming);
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
         const bool can = act == NameAction::Claim;
+        ui::dialog_buttons();
         if (ui::button(name_action_label(act == NameAction::Disabled ? NameAction::Claim : act, UN.claiming).c_str(), ImVec2(sp(18.f), sp(5.f)), true, can) || (enter && can)) un_claim_start();
-        ImGui::SameLine();
-        if (ui::button("Later", ImVec2(sp(12.f), sp(5.f)))) ImGui::CloseCurrentPopup();
-        if (UN.claimed_event && A.st.username_claimed) { UN.claimed_event = false; ImGui::CloseCurrentPopup(); }
-        ImGui::EndPopup();
+        ui::dialog_same_line(sp(12.f));
+        if (ui::button("Later", ImVec2(sp(12.f), sp(5.f)))) UN.dlg_open = false;
+        if (UN.claimed_event && A.st.username_claimed) { UN.claimed_event = false; UN.dlg_open = false; }
+        ui::dialog_end();
     }
-    ImGui::PopStyleVar();
 }

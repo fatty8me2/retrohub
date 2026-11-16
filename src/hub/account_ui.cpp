@@ -2,6 +2,7 @@
 #include "identity_link.h"
 #include "u8file.h"
 #include "cloud_ui_logic.h"
+#include "ui_sheet.h"
 
 #include <cstdio>
 #include <fstream>
@@ -442,45 +443,40 @@ void draw_account_section() {
         else account_text_error(AC.io_msg);
     }
 
+    /* The two confirms below guard account actions. They are ui::dialogs (ui_sheet.h) under their old popup names: pinned title, the text
+     * scrolls on a short window, the buttons stay. Same buttons, same order, same first focus (the first button), B / Esc = Cancel.
+     * confirm_open asks for the dialog and stays true while it is up. */
+
     /* ---- confirmation before stopping sync on another PC ---- */
-    if (PC.confirm_open) { ImGui::OpenPopup("Stop syncing on this PC?##pc"); PC.confirm_open = false; }
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.5f)));
-    if (ImGui::BeginPopupModal("Stop syncing on this PC?##pc", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
-        if (ui::modal_back()) ImGui::CloseCurrentPopup();
-        ImGui::PushFont(ui::F.bold);
-        ImGui::TextUnformatted(hubui::cloudui::pc_revoke_title(PC.pending).c_str());
-        ImGui::PopFont();
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        ImGui::PushTextWrapPos(sp(44.f));
-        ImGui::TextUnformatted(hubui::cloudui::pc_revoke_body(PC.pending).c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
-        if (button("Stop syncing", ImVec2(sp(16.f), sp(5.f)), true, !PC.revoke_job)) { pcs_start_revoke(PC.pending); ImGui::CloseCurrentPopup(); }
-        ImGui::SameLine();
-        if (button("Cancel", ImVec2(sp(12.f), sp(5.f)))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+    {
+        ui::DialogOpts o;
+        o.keep_id = true;   // B / Esc: the kit's back_closes = Cancel
+        const std::string title = hubui::cloudui::pc_revoke_title(PC.pending);   // was the bold first line under the title bar ("Stop syncing on this PC?")
+        if (ui::dialog_begin("Stop syncing on this PC?##pc", title.c_str(), &PC.confirm_open, ui::DialogSize::Small, o)) {
+            ImGui::TextWrapped("%s", hubui::cloudui::pc_revoke_body(PC.pending).c_str());
+            ui::dialog_buttons();
+            if (button("Stop syncing", ImVec2(sp(16.f), sp(5.f)), true, !PC.revoke_job)) { pcs_start_revoke(PC.pending); PC.confirm_open = false; }
+            ui::dialog_same_line(sp(12.f));
+            if (button("Cancel", ImVec2(sp(12.f), sp(5.f)))) PC.confirm_open = false;
+            ui::dialog_end();
+        }
     }
-    ImGui::PopStyleVar();
 
     /* ---- confirmation before replacing this PC's account ---- */
-    if (AC.confirm_open) { ImGui::OpenPopup("Replace the account on this PC?##acct"); AC.confirm_open = false; }
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.5f)));
-    if (ImGui::BeginPopupModal("Replace the account on this PC?##acct", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
-        if (ui::modal_back()) ImGui::CloseCurrentPopup();
-        ImGui::PushTextWrapPos(sp(44.f));
-        ImGui::Text("Account to sign in with: %s", hubnet::friend_code(AC.pending.user_id).c_str());
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        ImGui::TextUnformatted("This replaces the account on this PC; the current one is backed up. If another PC still uses the current account, it will stop connecting to friends until you sign it in again with your account code.");
-        ImGui::PopTextWrapPos();
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
-        if (button("Replace account", ImVec2(sp(16.f), sp(5.f)), true)) { adopt_pending(); ImGui::CloseCurrentPopup(); }
-        ImGui::SameLine();
-        if (button("Cancel", ImVec2(sp(12.f), sp(5.f)))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+    {
+        ui::DialogOpts o;
+        o.keep_id = true;
+        if (ui::dialog_begin("Replace the account on this PC?##acct", "Replace the account on this PC?", &AC.confirm_open, ui::DialogSize::Small, o)) {
+            ImGui::TextWrapped("Account to sign in with: %s", hubnet::friend_code(AC.pending.user_id).c_str());
+            ImGui::Dummy(ImVec2(0, sp(0.5f)));
+            ImGui::TextWrapped("%s", "This replaces the account on this PC; the current one is backed up. If another PC still uses the current account, it will stop connecting to friends until you sign it in again with your account code.");
+            ui::dialog_buttons();
+            if (button("Replace account", ImVec2(sp(16.f), sp(5.f)), true)) { adopt_pending(); AC.confirm_open = false; }
+            ui::dialog_same_line(sp(12.f));
+            if (button("Cancel", ImVec2(sp(12.f), sp(5.f)))) AC.confirm_open = false;
+            ui::dialog_end();
+        }
     }
-    ImGui::PopStyleVar();
 
     achievements_account_section();
 

@@ -107,6 +107,7 @@ B, a long middle scrolling under pinned buttons), from a sandbox copy. Output an
 standings, your profile editor, the remove / block question, Plan a session, the three Kanto Together dialogs, the admin question, and the
 game night card's row in the Friends list (focus, A opens its dialog, B fires nothing, Dismiss). Output: `build\qa_dialogs2b_out\<tag>`.
 With the focus in a dialog's scrolling middle the trace's `win=` is the middle (`<popup name>/##dlg_body_...`): match it with `-like '<name>*'`.
+`qa\dialogs2a_shots.ps1` does the same for batch 2a (Customize and the shelf dialogs, a friend's game, the pack Uninstall confirm, the username prompt, the account confirms, Find my games) in both layouts. Aids it adds: `HUB_SHOT_CUSTOM_SHELVES=<n>` (made-up shelves, screenshot vault only), `HUB_SHOT_GP_UNINSTALL=<key>[:pad]` (that game shows as installed from a pack; the confirm opens by itself, or by pad with `:pad`; nothing is deleted), `HUB_SHOT_GHOST_OPEN=<title>` (as well as an index). **`HUB_SHOT_FINDGAMES` never scans this PC:** without `HUB_FINDGAMES_HOME` it shows made-up folders.
 
 ## Matrix
 

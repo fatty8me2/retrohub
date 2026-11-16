@@ -3,6 +3,7 @@
 #include "gamepack.h"
 #include "art.h"
 #include "cases_audit.h"
+#include "ui_sheet.h"
 #include <chrono>
 
 #include <map>
@@ -186,7 +187,24 @@ static void gamepack_start_next() {
     GP.start(GA.sys, GA.title, hubgp::parse_links(A.st.pack_links), true);
 }
 
-bool gamepack_owns(const hub::GameEntry& e) { return !hubgp::installed_folder_title(e.path, hubgp::pack_root()).empty(); }
+/* Screenshot aid (headless only): HUB_SHOT_GP_UNINSTALL=<game key> shows that game's page as if it came from a shared pack (Installed in ...,
+ * Uninstall) and opens the Uninstall confirm once; <game key>:pad leaves the opening to a pad walk (A on Uninstall). Uninstall there only
+ * writes a trace line: nothing is deleted. */
+static std::string shot_pack_key(bool* pad) {
+    const char* k = g_headless ? std::getenv("HUB_SHOT_GP_UNINSTALL") : nullptr;
+    std::string s = k ? k : "";
+    *pad = s.size() > 4 && s.compare(s.size() - 4, 4, ":pad") == 0;
+    if (*pad) s.resize(s.size() - 4);
+    return s;
+}
+static bool shot_pack_owned(const hub::GameEntry& e, bool* auto_open = nullptr) {
+    bool pad = false;
+    const std::string k = shot_pack_key(&pad);
+    if (auto_open) *auto_open = !pad;
+    return !k.empty() && e.key == k;
+}
+
+bool gamepack_owns(const hub::GameEntry& e) { return shot_pack_owned(e) || !hubgp::installed_folder_title(e.path, hubgp::pack_root()).empty(); }
 
 void gamepack_merge_added(std::vector<hub::GameEntry>* lib) {
     for (auto it = g_pack_added.begin(); it != g_pack_added.end();) {
@@ -377,28 +395,35 @@ void gamepack_uninstall(const hub::GameEntry& e) {
     set_toast(e.title + " uninstalled. It is back in the shared packs; your saves are kept.", true, 8.0);
 }
 
-/* "Uninstall" button + its confirm popup (details of a pack-installed game). Returns true when the game was removed. */
+/* "Uninstall" button + its confirm (details of a pack-installed game). Returns true when the game was removed. The confirm is a ui::dialog
+ * (ui_sheet.h) under its old popup name, opened from inside the game page's body so it stacks on the page; whether it is up is kept in the
+ * calling window's storage (the Traditional page and the Library desk pane each have their own). B / Esc = Keep it. */
 bool gamepack_uninstall_ui(const hub::GameEntry& e, float bh) {
     bool removed = false;
-    const bool running_this = pack_uninstall_blocked(e);   // the running game (or a hack on it) has these files open; other games can be uninstalled
-    if (button("Uninstall", ImVec2(0, bh), false, !running_this, ui::Icon::Close)) ImGui::OpenPopup("##gp_uninstall");
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(running_this ? "This game is running. Close it to uninstall it." : "Delete this game's files from RetroHub's games folder. It goes back to the shared packs; saves are kept.");
-    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(c, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(std::min(sp(66.f), ImGui::GetIO().DisplaySize.x * 0.92f), 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
-    bool open = ImGui::BeginPopupModal("##gp_uninstall", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-    ImGui::PopStyleVar();
-    if (open) {
-        if (ui::modal_back()) ImGui::CloseCurrentPopup();
-        ImGui::TextWrapped("Uninstall %s?", e.title.c_str());
-        text_wrapped_disabled("This deletes the game's files from RetroHub's games folder. Your saves stay in the vault. You can install it again from the shared packs at any time.");
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
-        if (button("Uninstall", ImVec2(sp(18.f), sp(5.5f)), true)) { removed = true; ImGui::CloseCurrentPopup(); }
-        ImGui::SameLine(0, sp(1.5f));
-        if (button("Keep it", ImVec2(sp(14.f), sp(5.5f)))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+    ImGuiStorage* st = ImGui::GetStateStorage();   // (a copy, written back below: a Ref into the storage would dangle once a widget adds to it)
+    const ImGuiID sid = ImGui::GetID("##gp_uninstall_open");
+    bool open = st->GetBool(sid, false);
+    bool shot_open = false;
+    if (shot_pack_owned(e, &shot_open) && shot_open) {   // HUB_SHOT_GP_UNINSTALL: the confirm opens by itself, once
+        static bool s_shot_done = false;
+        if (!s_shot_done) { s_shot_done = true; open = true; }
     }
+    const bool running_this = pack_uninstall_blocked(e);   // the running game (or a hack on it) has these files open; other games can be uninstalled
+    if (button("Uninstall", ImVec2(0, bh), false, !running_this, ui::Icon::Close)) open = true;
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(running_this ? "This game is running. Close it to uninstall it." : "Delete this game's files from RetroHub's games folder. It goes back to the shared packs; saves are kept.");
+    ui::DialogOpts o;
+    o.keep_id = true;
+    const std::string title = "Uninstall " + e.title + "?";
+    if (ui::dialog_begin("##gp_uninstall", title.c_str(), &open, ui::DialogSize::Medium, o)) {
+        text_wrapped_disabled("This deletes the game's files from RetroHub's games folder. Your saves stay in the vault. You can install it again from the shared packs at any time.");
+        ui::dialog_buttons();
+        if (button("Uninstall", ImVec2(sp(18.f), sp(5.5f)), true)) { removed = true; open = false; }
+        ui::dialog_same_line(sp(14.f), sp(1.5f));
+        if (button("Keep it", ImVec2(sp(14.f), sp(5.5f)))) open = false;
+        ui::dialog_end();
+    }
+    st->SetBool(sid, open);
+    if (removed && shot_pack_owned(e)) { shot_trace("gp-uninstall", e.key + " (screenshot run: nothing deleted)"); return false; }
     if (removed) { g_pending_uninstall = e; g_has_pending_uninstall = true; }   // done next frame: the library list is rebuilt, `e` would dangle
     return removed;
 }
@@ -520,7 +545,10 @@ void ghost_tick() {
         static bool done = false;
         if (!done) {
             done = true;
-            size_t ix = std::min<size_t>((size_t)std::max(0, std::atoi(std::getenv("HUB_SHOT_GHOST_OPEN"))), A.ghosts.size() - 1);
+            const std::string want = std::getenv("HUB_SHOT_GHOST_OPEN");   // an index, or a title to look for (the order of the list can vary)
+            size_t ix = std::min<size_t>((size_t)std::max(0, std::atoi(want.c_str())), A.ghosts.size() - 1);
+            if (!want.empty() && !std::isdigit((unsigned char)want[0]))
+                for (size_t i = 0; i < A.ghosts.size(); ++i) if (A.ghosts[i].title.find(want) != std::string::npos) { ix = i; break; }
             A.sel_ghost = A.ghosts[ix].id; A.sel_game.clear(); A.show_ghost = true;
         }
     }
@@ -692,23 +720,21 @@ static std::string ghost_size_text(const hubui::fg::Ghost& g, bool want) {
     return SP.key == key && SP.state == 1 ? "checking size..." : "";
 }
 
+/* A friend's game you do not own: a ui::dialog (ui_sheet.h) under its old popup name. The game's name is the pinned title, the actions are the
+ * pinned button row (they wrap on a narrow window) and everything between them scrolls. B / Esc close it. */
 void draw_ghost_modal() {
+    static bool s_open = false;
     g_ghost_popup_open = false;
     if (A.show_ghost) {
         A.show_ghost = false;
-        if (find_ghost(A.sel_ghost)) ImGui::OpenPopup("##ghost");
+        if (find_ghost(A.sel_ghost)) s_open = true;
     }
     const hubui::fg::Ghost* gp = find_ghost(A.sel_ghost);
-    ImGuiIO& io = ImGui::GetIO();
-    float w = std::min(sp(84.f), io.DisplaySize.x * 0.92f);
-    ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(w, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
-    bool open = ImGui::BeginPopupModal("##ghost", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
-    ImGui::PopStyleVar(2);
-    if (!open) return;
-    if (!gp || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    ui::DialogOpts dopt;
+    dopt.keep_id = true;
+    dopt.back_closes = false;   // read below, like before
+    if (!ui::dialog_begin("##ghost", gp ? gp->title.c_str() : "", &s_open, ui::DialogSize::Large, dopt)) return;
+    if (!gp || ui::modal_back()) { s_open = false; ui::dialog_end(); return; }
     g_ghost_popup_open = true;
     const hubui::fg::Ghost& g = *gp;
     const GameInfo* cat = g.cid.empty() ? nullptr : hub::find_game(g.cid);
@@ -734,13 +760,7 @@ void draw_ghost_modal() {
     ImGui::SetCursorScreenPos(ImVec2(o.x + tx, o.y));
     ImGui::BeginGroup();
     float tw = avail - tx;
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
-    ImGui::PushFont(ui::F.title);
-    ImGui::TextWrapped("%s", g.title.c_str());
-    ImGui::PopFont();
-    ImGui::PopTextWrapPos();
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    pill(hub::console_name(g.sys), mix(c0, IM_COL32_BLACK, 0.2f));
+    pill(hub::console_name(g.sys), mix(c0, IM_COL32_BLACK, 0.2f));   // (the game's name is the pinned title above)
     if (cat && cat->year) { ImGui::SameLine(0, sp(0.75f)); pill(std::to_string(cat->year).c_str(), ui::PANEL2, ui::PILL_FG); }
     int players = cat ? cat->max_players : 0;
     if (players > 0) {
@@ -834,18 +854,18 @@ void draw_ghost_modal() {
             ImGui::PopStyleColor();
         }
         if (installable && !size_txt.empty()) text_wrapped_disabled("Download size: " + size_txt + ". It is kept in RetroHub's games folder and shows up in your library right away.");
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
     }
 
-    /* actions: Play / Play Online are shown but disabled (you cannot play what you do not have) */
+    /* actions (the pinned button row): Play / Play Online are shown but disabled (you cannot play what you do not have) */
+    ui::dialog_buttons();
     float bh = sp(5.5f);
     button("Play", ImVec2(sp(12.f), bh), false, false, ui::Icon::Play);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("You don't have this game");
-    ImGui::SameLine(0, sp(1.5f));
+    ui::dialog_same_line(sp(16.f), sp(1.5f));
     button("Play Online", ImVec2(sp(16.f), bh), false, false, ui::Icon::Globe);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("You don't have this game");
     if (can_show) {
-        ImGui::SameLine(0, sp(1.5f));
+        ui::dialog_same_line(sp(ist_run ? 12.f : reinstallable ? 14.f : 12.f), sp(1.5f));
         if (ist_run) {
             if (button("Cancel", ImVec2(sp(12.f), bh), false, true, ui::Icon::Close)) gamepack_cancel(g.id);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel this install");
@@ -859,9 +879,9 @@ void draw_ghost_modal() {
             else if (!in_pack) ImGui::SetTooltip("Not in any shared pack yet. The owner can add it to their Google Drive and send the link so everyone can install it.");
         }
     }
-    ImGui::SameLine(0, sp(1.5f));
-    if (button("Add your own copy", ImVec2(sp(20.f), bh), !installable && !ist_run, true, ui::Icon::Plus)) { ImGui::CloseCurrentPopup(); add_games_open(); }
-    ImGui::SameLine(0, sp(1.5f));
-    if (button("Close", ImVec2(sp(8.f), bh))) ImGui::CloseCurrentPopup();
-    ImGui::EndPopup();
+    ui::dialog_same_line(sp(20.f), sp(1.5f));
+    if (button("Add your own copy", ImVec2(sp(20.f), bh), !installable && !ist_run, true, ui::Icon::Plus)) { s_open = false; add_games_open(); }
+    ui::dialog_same_line(sp(8.f), sp(1.5f));
+    if (button("Close", ImVec2(sp(8.f), bh))) s_open = false;
+    ui::dialog_end();
 }
