@@ -149,6 +149,48 @@ int main() {
     }
     CHECK(std::string(option_online_pill(hub::gs::Scope::Sync)) != option_online_pill(hub::gs::Scope::Locked));
 
+    /* ---- two columns on a wide body ---- */
+    {
+        const float u = 8.f;
+        OptionFlow f = option_flow(1858.f, u);          // the full-window page at 1920x1080, 100 %
+        CHECK(f.cols == 2 && f.col_w == 896.f && f.gap == 32.f);
+        f = option_flow(1290.f, u);                     // the desk pane at 1920x1080: two narrower columns
+        CHECK(f.cols == 2 && f.col_w == (1290.f - 32.f) * 0.5f && f.col_w >= kOptColMinU * u);
+        CHECK(option_flow(1248.f, u).cols == 2 && option_flow(1247.f, u).cols == 1);   // boundary: two columns of 76 units and the gap
+        f = option_flow(1218.f, u);                     // 1280x720: one column at the kit's row width
+        CHECK(f.cols == 1 && f.col_w == 896.f);
+        CHECK(option_flow(700.f, u).cols == 1 && option_flow(700.f, u).col_w == 700.f);
+        CHECK(option_flow(1858.f, 12.f).cols == 1);     // 1080p at 150 %: one column
+        CHECK(option_flow(2500.f, 12.f).cols == 2);     // 1440p at 150 %
+        for (float w = 200.f; w < 4000.f; w += 41.f) {  // never wider than the body, never narrower than the minimum when split
+            const OptionFlow k = option_flow(w, u);
+            CHECK(k.cols * k.col_w + (k.cols - 1) * k.gap <= w + 0.01f);
+            if (k.cols == 2) CHECK(k.col_w >= kOptColMinU * u - 0.01f && k.col_w <= kOptColMaxU * u + 0.01f);
+        }
+
+        /* the split: whole sections in order, the taller column as short as it can be, the left one taller on a tie */
+        CHECK(option_flow_split({}) == 0);
+        CHECK(option_flow_split({9}) == 1);                       // one section: one column
+        CHECK(option_flow_split({5, 5}) == 1);
+        CHECK(option_flow_split({10, 2, 3, 4}) == 1);             // 10 | 9
+        CHECK(option_flow_split({4, 4, 4, 4}) == 2);              // 8 | 8
+        CHECK(option_flow_split({3, 3, 3}) == 2);                 // 6 | 3 beats 3 | 6 (left taller on a tie)
+        CHECK(option_flow_split({1, 1, 12}) == 2);                // 2 | 12: the long one alone on the right
+        CHECK(option_flow_split({12, 1, 1}) == 1);                // 12 | 2
+        CHECK(option_flow_split({2, 9, 1, 3, 1}) == 2);           // 11 | 5 (vs 2 | 14)
+        CHECK(option_flow_split({1, 0, 1}) >= 1);                 // an empty section never breaks it
+        /* Ocarina of Time with Fritchii: Graphics 13 rows, Performance 5, Advanced closed, Plays with 2 */
+        CHECK(option_flow_split({14, 6, 1, 3}) == 1);             // 14 | 10
+        for (int n = 2; n <= 7; ++n) {                            // brute force: no split has a shorter taller column
+            std::vector<int> r;
+            for (int i = 0; i < n; ++i) r.push_back((i * 7 + 3) % 6 + 1);
+            const int k = option_flow_split(r);
+            CHECK(k >= 1 && k < n);
+            auto taller = [&](int s) { int a = 0, b = 0; for (int i = 0; i < n; ++i) (i < s ? a : b) += r[(size_t)i]; return a > b ? a : b; };
+            for (int s = 1; s < n; ++s) CHECK(taller(k) <= taller(s));
+        }
+    }
+
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("hub_option_sections_test: all passed\n");
     return 0;

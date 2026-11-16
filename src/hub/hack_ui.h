@@ -10,5 +10,9 @@ void hack_add_open(const hub::GameEntry& e);
 bool hack_can_add(const hub::GameEntry& e);   // false for consoles whose images cannot be patched here, and for the native port
 /* Game page > About: the "Versions" row (Original + each hack) and, on a hack, Remove hack. */
 void hack_details_section(const hub::GameEntry& e);
+/* The full-window game page calls this from INSIDE its sheet every frame it is open: the patch file picker, "Add a hack or translation"
+ * and "Remove this hack?" then open on top of the page and give it back when they close (opened from outside, a dialog replaces an
+ * Overlay sheet). Any other frame hack_draw() draws them at the hub's level as before. */
+void hack_page_dialogs();
 /* "HACK" / "TRANSLATION" for a hack entry, "" for everything else. Tiles show it as their corner tag. */
 std::string hack_ribbon(const hub::GameEntry& e);

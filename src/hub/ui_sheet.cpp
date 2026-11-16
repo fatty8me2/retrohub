@@ -63,7 +63,7 @@ bool modal_gate(const char* name, bool* open, ImGuiWindowFlags flags, ModalMemo&
 /* Header, body and footer inside the current host window (popup or pane child). */
 ScrollInfo sheet_contents(const SheetParts& parts, const SheetOpts& opts, float pad, ModalMemo& m) {
     ImGuiWindow* hw = ImGui::GetCurrentWindow();
-    const float gap = sp(1.5f);
+    const float gap = opts.gap >= 0.f ? opts.gap : sp(1.5f);
     const ImVec2 wp = hw->Pos, ws = hw->Size;
     const float x0 = wp.x + pad, x1 = wp.x + ws.x - pad, top = wp.y + pad, bottom = wp.y + ws.y - pad;
     ImDrawList* dl = hw->DrawList;
@@ -283,15 +283,25 @@ float dialog_button_w(const char* label, bool icon) {   // mirrors ui::button():
     return ts.x + (icon ? sp(2.25f) : 0.f) + (icon && text ? sp(1.f) : 0.f) + sp(5.f);
 }
 
+namespace {
+bool hint_shown(const KeyHint& h, bool pad) { return pad || (h.key && h.key[0]); }
+bool hint_paired(const KeyHint* hints, int n, int i, bool pad) {   // no label: it sits tight against the next one ("LB RB Tabs")
+    return !(hints[i].label && hints[i].label[0]) && i + 1 < n && hint_shown(hints[i + 1], pad);
+}
+float one_hint_w(const KeyHint& h, bool pad) { return key_hint_width(pad, h.pad ? h.pad : "", h.key ? h.key : "", h.label ? h.label : ""); }
+}  // namespace
+
 float hint_bar_width(const KeyHint* hints, int n) {
     const bool pad = A.pad_mode;
     float x = 0.f;
+    bool tight = false;
     int k = 0;
     for (int i = 0; i < n; ++i) {
         const KeyHint& h = hints[i];
-        if (!pad && (!h.key || !h.key[0])) continue;
-        if (k) x += sp(3.f);
-        x += key_hint_width(pad, h.pad ? h.pad : "", h.key ? h.key : "", h.label ? h.label : "");
+        if (!hint_shown(h, pad)) continue;
+        if (k) x += tight ? sp(0.5f) : sp(3.f);
+        x += one_hint_w(h, pad);
+        tight = hint_paired(hints, n, i, pad);
         ++k;
     }
     return x;
@@ -307,11 +317,12 @@ void hint_bar(const KeyHint* hints, int n) {
     bool any = false;
     for (int i = 0; i < n; ++i) {
         const KeyHint& hn = hints[i];
-        const char* key = hn.key ? hn.key : "";
-        if (!pad && !key[0]) continue;
-        const float need = key_hint_width(pad, hn.pad ? hn.pad : "", key, hn.label ? hn.label : "");
+        if (!hint_shown(hn, pad)) continue;
+        const bool pair = hint_paired(hints, n, i, pad);
+        float need = one_hint_w(hn, pad);
+        if (pair) need += sp(0.5f) + one_hint_w(hints[i + 1], pad);   // a pair shows whole or not at all
         if (x + need > p.x + w + 0.5f) break;
-        x += key_hint(dl, ImVec2(x, p.y), pad, hn.pad ? hn.pad : "", key, hn.label ? hn.label : "") + sp(3.f);
+        x += key_hint(dl, ImVec2(x, p.y), pad, hn.pad ? hn.pad : "", hn.key ? hn.key : "", hn.label ? hn.label : "") + (pair ? sp(0.5f) : sp(3.f));
         any = true;
     }
     ImGui::Dummy(ImVec2(any ? std::max(1.f, x - sp(3.f) - p.x) : 1.f, h));

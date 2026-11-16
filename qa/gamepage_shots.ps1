@@ -2,11 +2,16 @@
 # Runs a SANDBOX COPY of a build's bin\Release (no userdata) with a scratch vault, muted, SDL dummy driver: no window is ever shown and
 # nothing is launched (spawn() refuses in screenshot mode). Waits while the owner is gaming. One hub at a time; a hub that hangs is ended
 # by its PID.
-# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File qa\gamepage_shots.ps1 [-Out dir] [-Only regex] [-Bin dir] [-Tag name] [-Set all|base]
+# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File qa\gamepage_shots.ps1 [-Out dir] [-Only regex] [-Bin dir] [-Tag name] [-Set all|base|dense|densewalk]
 #   -Bin  a build's bin\Release (default: this worktree's); -Tag names the sandbox (build\qa_<Tag>) and the shot names
 #   -Set  base = the small set that also runs on an older build (the "before" shots)
+#         dense = the Settings tab density matrix (Ocarina of Time idle / done_fritchii, a fake N64 and PS1 game, About, Saves) at
+#                 1024x600, 1280x720, 1920x1080, 2560x1440, UI size 125 % / 150 %, Light, in both hosts; runs on an older build too.
+#                 The trace's last "gs-visible <rows>" line is the number of whole option rows (section headers count) in view.
+#         densewalk = pad walks and mouse shots of the compact rows: down both columns, across, a dropdown in the right column, a
+#                 section closed, RT, the help strip following the focus, a hover, the hack and uninstall confirms over the page
 # Output: <name>.png (+ .bmp), <name>.trace (HUB_SHOT_TRACE: pad lines, act lines, "captured ... details=yes"), index-<Tag>.txt.
-param([string]$Out = '', [string]$Only = '', [string]$Bin = '', [string]$Tag = 'gp', [ValidateSet('all', 'base')][string]$Set = 'all')
+param([string]$Out = '', [string]$Only = '', [string]$Bin = '', [string]$Tag = 'gp', [ValidateSet('all', 'base', 'dense', 'densewalk')][string]$Set = 'all')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 . (Join-Path $PSScriptRoot '_gamecheck.ps1')
@@ -27,8 +32,8 @@ $oot = @{ HUB_SHOT_FAKE_LIB = '1'; HUB_SHOT_HOOKSHOT = 'idle' }
 $sizes = @(@('1024', '1024x600', @{}), @('1280', '1280x720', @{}), @('1920', '1920x1080', @{}), @('s150', '1920x1080', @{ HUB_UI_SCALE = '150' }),
            @('s150-1280', '1280x720', @{ HUB_UI_SCALE = '150' }), @('light', '1280x720', @{ HUB_THEME = 'light' }))
 $shots = @()
-function Add-Shot($n, $layout, $size, $vars, $base = $false) {
-    $script:shots += @{ n = $n; layout = $layout; size = $size; v = $vars; base = $base }
+function Add-Shot($n, $layout, $size, $vars, $base = $false, $set = 'all') {
+    $script:shots += @{ n = $n; layout = $layout; size = $size; v = $vars; base = $base; set = $set }
 }
 function Merge($a, $b) { $r = @{}; foreach ($k in $a.Keys) { $r[$k] = $a[$k] }; foreach ($k in $b.Keys) { $r[$k] = $b[$k] }; return $r }
 
@@ -84,10 +89,61 @@ foreach ($a in @('play', 'online', 'favorite', 'savefolder', 'cheats', 'controls
     Add-Shot "desk-act-$a" 'desk' '1280x720' (Merge $lib @{ HUB_SHOT_DETAILS = 'fake:2'; HUB_SHOT_ACT = $a; HUB_BOOTANIM_FORCE = '1' })
 }
 
+# Settings tab density (-Set dense): rows in view per size and host, before / after
+$dsizes = @(@('1024', '1024x600', @{}), @('1024-s125', '1024x600', @{ HUB_UI_SCALE = '125' }), @('1280', '1280x720', @{}),
+            @('1280-s125', '1280x720', @{ HUB_UI_SCALE = '125' }), @('1280-s150', '1280x720', @{ HUB_UI_SCALE = '150' }),
+            @('1920', '1920x1080', @{}), @('1920-s150', '1920x1080', @{ HUB_UI_SCALE = '150' }), @('2560', '2560x1440', @{}),
+            @('1280-light', '1280x720', @{ HUB_THEME = 'light' }))
+foreach ($layout in @('trad', 'desk')) {
+    foreach ($sz in $dsizes) {
+        $stag = $sz[0]; $size = $sz[1]; $extra = $sz[2]
+        Add-Shot "d-$layout-$stag-oot" $layout $size (Merge (Merge $oot $extra) @{ HUB_SHOT_TAB = '3' }) $false 'dense'
+        Add-Shot "d-$layout-$stag-ootfr" $layout $size (Merge (Merge $extra @{ HUB_SHOT_FAKE_LIB = '1'; HUB_SHOT_HOOKSHOT = 'done_fritchii' }) @{ HUB_SHOT_TAB = '3' }) $false 'dense'
+        if ($stag -in @('1024', '1280', '1920', '1280-s150')) {
+            Add-Shot "d-$layout-$stag-n64" $layout $size (Merge $extra @{ HUB_SHOT_FAKE_LIB = 'all'; HUB_SHOT_DETAILS = 'fake:n64-plain'; HUB_SHOT_TAB = '3' }) $false 'dense'
+            Add-Shot "d-$layout-$stag-ps1" $layout $size (Merge $extra @{ HUB_SHOT_FAKE_LIB = 'all'; HUB_SHOT_DETAILS = 'fake:ps1-plain'; HUB_SHOT_TAB = '3' }) $false 'dense'
+            Add-Shot "d-$layout-$stag-about" $layout $size (Merge (Merge $lib $extra) @{ HUB_SHOT_DETAILS = 'fake:0'; HUB_SHOT_TAB = '0'; HUB_SHOT_PLAYTIME = '1' }) $false 'dense'
+            Add-Shot "d-$layout-$stag-saves" $layout $size (Merge (Merge $lib $extra) @{ HUB_SHOT_DETAILS = 'fake:1'; HUB_SHOT_STATES = '1'; HUB_SHOT_TAB = '1' }) $false 'dense'
+        }
+    }
+}
+# pad walks and mouse (-Set densewalk). Ocarina of Time's Settings tab (done_fritchii: the most rows). The page opens with Play focused.
+$fr = @{ HUB_SHOT_FAKE_LIB = '1'; HUB_SHOT_HOOKSHOT = 'done_fritchii'; HUB_SHOT_TAB = '3'; HUB_SHOT_SECS = '7' }
+$d6 = (1..6 | ForEach-Object { 'down' }) -join ','
+foreach ($layout in @('trad', 'desk')) {
+    $into = 'down,down'   # Play -> the tab bar -> the first section header (the desk pane already has the focus on Play)
+    foreach ($size in @('1280x720', '1920x1080')) {
+        $st = $size.Split('x')[0]
+        Add-Shot "w-$layout-$st-down" $layout $size (Merge $fr @{ HUB_SHOT_PAD = "$into,shot:first,down,shot:row1,down,down,shot:row3,$d6,shot:row9,$d6,shot:deep" }) $false 'densewalk'
+        Add-Shot "w-$layout-$st-rt" $layout $size (Merge $fr @{ HUB_SHOT_PAD = "$into,down,shot:at,rt,shot:rt1,rt,shot:rt2,lt,shot:lt1" }) $false 'densewalk'
+        Add-Shot "w-$layout-$st-close" $layout $size (Merge $fr @{ HUB_SHOT_PAD = "$into,shot:hdr,a,shot:closed,a,shot:open" }) $false 'densewalk'
+    }
+    # two columns (1920): across to the right column, down it, a dropdown there, back left
+    Add-Shot "w-$layout-1920-cols" $layout '1920x1080' (Merge $fr @{ HUB_SHOT_PAD = "$into,down,shot:l1,right,shot:r1,down,down,shot:r3,a,shot:dd_open,down,shot:dd_moved,b,shot:dd_closed,left,shot:back_left,down,down,down,down,down,down,down,down,down,down,shot:l_end,down,shot:past_end" }) $false 'densewalk'
+    Add-Shot "w-$layout-2560-cols" $layout '2560x1440' (Merge $fr @{ HUB_SHOT_PAD = "$into,down,right,shot:r1,up,shot:up_top,up,shot:up_out" }) $false 'densewalk'
+    # the mouse over a row: the strip shows that row (HUB_SHOT_HOVER parks the pointer)
+    $hov = if ($layout -eq 'trad') { '400,420' } else { '760,470' }
+    Add-Shot "w-$layout-1280-hover" $layout '1280x720' (Merge $fr @{ HUB_SHOT_HOVER = $hov }) $false 'densewalk'
+    # keyboard hints (no pad) and the pad hints
+    Add-Shot "w-$layout-1280-keys" $layout '1280x720' (Merge $fr @{ HUB_SHOT_KEYS = 'down,down,down' }) $false 'densewalk'
+    # ROM hack: Remove hack... opens its dialog over the page; Cancel gives the page back
+    $torm = if ($layout -eq 'trad') { 'down,down,down,left' } else { 'down,down,down,down,left' }   # (Traditional: the controllers sit in the side column)
+    Add-Shot "w-$layout-hackrm" $layout '1280x720' (Merge $lib @{ HUB_SHOT_HACKS = '1'; HUB_SHOT_DETAILS = 'fake:0+h00000000'; HUB_SHOT_SECS = '7'; HUB_SHOT_PAD = "$torm,shot:at,a,shot:remove,down,down,shot:cancel_at,a,shot:after_cancel" }) $false 'densewalk'
+    # Add hack or translation (More menu): the pad file browser opens over the page, B gives the page back
+    # (HUB_SHOT_DETAILS puts the focus on Play in both hosts; Up from the menu's first item wraps to the last, Hide game: up twice)
+    Add-Shot "w-$layout-hackadd" $layout '1280x720' (Merge $lib @{ HUB_SHOT_HACKS = '1'; HUB_SHOT_DETAILS = 'fake:0'; HUB_SHOT_SECS = '7'; HUB_SHOT_PAD = 'right,right,a,up,up,shot:menu_at,a,shot:picker,b,shot:after_b' }) $false 'densewalk'
+    # a game installed from a shared pack (HUB_SHOT_PACKGAME): Uninstall's confirm over the page; Keep it gives the page back
+    Add-Shot "w-$layout-uninstall" $layout '1280x720' (Merge $lib @{ HUB_SHOT_DETAILS = 'fake:3'; HUB_SHOT_PACKGAME = 'fake:3'; HUB_SHOT_TAB = '0'; HUB_SHOT_SECS = '8'; HUB_SHOT_PAD = 'down,down,rt,rt,rt,shot:at,a,shot:confirm,right,a,shot:after_keep' }) $false 'densewalk'
+    # small sizes: the pane / page at 1280x720 150 % and 1024x600 125 %
+    Add-Shot "w-$layout-s150-walk" $layout '1280x720' (Merge $fr @{ HUB_UI_SCALE = '150'; HUB_SHOT_PAD = "$into,down,down,shot:rows" }) $false 'densewalk'
+}
+
 $index = @()
 foreach ($s in $shots) {
     if ($Only -and $s.n -notmatch $Only) { continue }
     if ($Set -eq 'base' -and -not $s.base) { continue }
+    if ($Set -in @('dense', 'densewalk') -and $s.set -ne $Set) { continue }
+    if ($Set -in @('all', 'base') -and $s.set -ne 'all') { continue }
     Wait-NoGame
     Get-ChildItem env: | Where-Object { $_.Name -like 'HUB_*' } | ForEach-Object { Remove-Item ("env:" + $_.Name) }
     Remove-Item -Recurse -Force (Join-Path $sandbox 'userdata') -ErrorAction SilentlyContinue   # every shot starts from a fresh install

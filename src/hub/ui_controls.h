@@ -34,11 +34,31 @@
  *   Text entry is not part of the kit: keep using osk::input for it.
  *   Hosting kit controls in your OWN modal: call ui::modal_back() after drawing them, so an open dropdown takes B first.
  *
+ * ---- COMPACT ROWS AND THE HELP STRIP -------------------------------------------------------------------------------------------
+ * A group can draw its rows compact (one line: label left, control right, tight padding, the same click and focus target) and leave the
+ * help out of the rows. The help of the row that has the focus (or the mouse) then shows in ONE pinned strip, with the row's label as
+ * its heading, e.g. in the sheet footer. The strip keeps one height while the focus moves (the most lines any row's help needs at that
+ * width), so nothing jumps:
+ *       ui::GroupOpts go; go.help = ui::HelpMode::Strip;
+ *       ui::option_group_begin("graphics", go); ...sections and rows...; ui::option_group_end();
+ *       ...later in the same frame (the sheet footer is drawn after the body):
+ *       ui::OptionHelp h;
+ *       if (ui::option_help(&h)) { const int n = ui::option_help_lines(w); ui::option_help_strip(h, w, n); }
+ *   With nothing focused or hovered the strip keeps the last row's help (at first: the first row in view that has one). HelpMode::Inline (the default) is
+ *   the help under each label, as before.
+ *
+ * ---- COLUMNS OF SECTIONS -----------------------------------------------------------------------------------------------------
+ * Whole sections side by side on a wide body (the page decides the count and the split; option_sections.h has the rules):
+ *       ui::option_columns_begin(2, col_w, gap);  ...left sections...;  ui::option_columns_next();  ...right sections...;
+ *       ui::option_columns_end();                  // the cursor goes under the taller column
+ *   The D-pad: Up / Down stay in their column and cross its sections (past the end of a column: what is under the columns), Left /
+ *   Right go to the row beside in the next column. A stepper keeps Left / Right for its value, an open section header for closing.
+ *
  * ---- TAB BAR -----------------------------------------------------------------------------------------------------------------
  *       static int tab = 0;
  *       const char* tabs[] = {"About", "Saves", "Settings"};
  *       if (ui::tab_bar("game_tabs", tabs, 3, &tab)) { ... the tab changed ... }
- *   Mouse, D-pad + A, and LB / RB. LB / RB work while the focus is anywhere in the tab bar's window (also inside a popup, where the
+ *   Mouse, D-pad + A, and LB / RB ([ and ] on a keyboard). LB / RB work while the focus is anywhere in the tab bar's window (also inside a popup, where the
  *   hub's global LB / RB is off); the press is taken so the hub does not also switch pages. The innermost tab bar around the focus
  *   wins. TabBarOpts::shoulders_anywhere also takes LB / RB when the focus is elsewhere (a desk pane next to a list).
  *
@@ -92,12 +112,44 @@ bool dropdown(const char* label, int* idx, const std::vector<std::string>& items
 bool toggle(const char* label, bool* v, const RowOpts& opts = RowOpts());
 bool stepper(const char* label, int* idx, const char* const* items, int n, const RowOpts& opts = RowOpts());   // steps through named values
 bool stepper_int(const char* label, int* v, int lo, int hi, int step, const char* fmt = "%d", const RowOpts& opts = RowOpts());
+/* A dropdown's list is open (it was drawn open last frame): its B / Esc closes only the list. A host that turns ImGui's own "leave this
+ * child window" (B in a child) into its own back action checks this first (the dropdown puts the focus back on its row). */
+bool dropdown_list_open();
+
+/* ---- compact rows and the help strip (see the guide above) ---- */
+enum class HelpMode { Inline, Strip };
+struct GroupOpts {
+    HelpMode help = HelpMode::Inline;   // Strip: compact one-line rows, the help goes to option_help_strip()
+};
+void option_group_begin(const char* id, const GroupOpts& opts);
+struct OptionHelp {
+    std::string label;    // the row's label: the strip's heading
+    std::string help;     // its help ("" = none)
+    std::string note;     // its second pill when the compact row had no room for it ("Host's choice online")
+    bool live = false;    // a row has the focus or the mouse right now (false: the last one that had, or the first row)
+};
+bool option_help(OptionHelp* out);                 // a Strip group was drawn this frame: what its strip shows
+/* Heading: the label on a line of its own above the help (room at its right end for the caller, e.g. key hints). RunIn: a slim strip,
+ * the label in bold starts the first help line. */
+enum class StripStyle { Heading, RunIn };
+/* Help lines the strip keeps at width w: the most any row's help needs (1..max_lines; the last line is cut with "..." past that). */
+int option_help_lines(float w, StripStyle style = StripStyle::Heading, int max_lines = 3);
+float option_help_strip_h(int lines, StripStyle style = StripStyle::Heading);   // the strip's height with that many help lines
+/* Draws the strip at the cursor, exactly option_help_strip_h(lines, style) tall and w wide. heading_w > 0 (Heading): the heading stops
+ * there (the caller draws something else at the right end of that line). */
+void option_help_strip(const OptionHelp& h, float w, int lines, StripStyle style = StripStyle::Heading, float heading_w = -1.f);
+
+/* ---- columns of sections (see the guide above) ---- */
+void option_columns_begin(int cols, float col_w, float gap);
+void option_columns_next();
+void option_columns_end();
 
 /* ---- tab bar ---- */
 struct TabBarOpts {
     bool wrap = false;                 // LB on the first tab goes to the last (and back)
     bool shoulders_anywhere = false;   // take LB / RB even when the focus is outside this window (no popup above it)
     bool show_hints = true;            // LB / RB glyphs at the ends while a pad is in use
+    float height = -1.f;               // the bar's height; -1 = sp(5)
 };
 bool tab_bar(const char* id, const char* const* labels, int n, int* cur, const TabBarOpts& opts = TabBarOpts());
 

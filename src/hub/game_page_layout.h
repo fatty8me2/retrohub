@@ -12,14 +12,17 @@
 
 namespace hubui::gp {
 
-enum class Tier { Full, Compact, Tight };
+enum class Tier { Full, Compact, Tight, Mini };
 
 /* How roomy the header may be, from the sheet's height. Full: 1080p (and 900p) at 100 %. Compact: 720p and 600p at 100 %, 1080p at
- * 150 % and 200 %. Tight: 720p and 600p at 150 %, 900p at 200 %, and the desk pane on a 1024x600 window. */
+ * 150 % and 200 %. Tight: 720p and 600p at 150 %, 900p at 200 %, and the desk pane on a 1024x600 window. Mini: the desk pane at 150 % on
+ * a 1280x720 window, or at 125 % on 1024x600: one header line (the title in the body font, icon buttons), lower tabs, less padding, so
+ * the body keeps about half the pane. */
 inline Tier tier_for(float sheet_h, float u) {
     if (sheet_h >= 95.f * u) return Tier::Full;
     if (sheet_h >= 64.f * u) return Tier::Compact;
-    return Tier::Tight;
+    if (sheet_h >= 48.f * u) return Tier::Tight;
+    return Tier::Mini;
 }
 
 struct HeaderIn {
@@ -45,7 +48,25 @@ struct HeaderPlan {
     float buttons_w = 0.f; // the button row's width as planned
     int title_lines = 1;   // the title wraps to at most this many lines (then "...")
     bool time_line = true; // the play-time line has a line of its own (false: it joins the facts line)
+    /* Tight and Mini only (the defaults keep the other tiers as they were) */
+    bool play_icon = false;   // Play is a round icon button too (its name in the tooltip)
+    bool facts = true;        // the facts line shows (Mini: the title's tooltip carries it)
+    bool small_title = false; // the title in the bold body font
+    float tabs_h = 0.f;       // tab bar height (5 units; Tight 4.5, Mini 4)
+    float pad = -1.f;         // the sheet's padding (-1 = the sheet's own choice; Tight 2 units, Mini 1.5)
+    float body_gap = -1.f;    // between header, body and footer (-1 = the sheet's own; Tight 1.25 units, Mini 1)
+    int help_lines_max = 3;   // the Settings tab's help strip keeps at most this many lines (Tight and Mini 2)
 };
+
+/* The most lines the Settings tab's help strip keeps (the rest of a long help is cut with "..."): 3, or 2 on a short sheet. */
+inline int help_lines_max(Tier t) { return (t == Tier::Tight || t == Tier::Mini) ? 2 : 3; }
+
+/* The sheet padding and gaps of a tier (they are set before the header is laid out): Tight 2 and 1.25 units, Mini 1.5 and 1, the
+ * others the sheet's own (-1). */
+inline void sheet_spacing(Tier t, float u, float* pad, float* body_gap) {
+    *pad = t == Tier::Mini ? 1.5f * u : t == Tier::Tight ? 2.f * u : -1.f;
+    *body_gap = t == Tier::Mini ? 1.f * u : t == Tier::Tight ? 1.25f * u : -1.f;
+}
 
 inline float title_min_w(float u) { return 28.f * u; }   // the title column never gets narrower than this beside the buttons
 
@@ -53,6 +74,20 @@ inline HeaderPlan plan_header(const HeaderIn& in) {
     const float u = in.u;
     HeaderPlan p;
     p.tier = tier_for(in.sheet_h, u);
+    p.tabs_h = 5.f * u;
+    if (p.tier == Tier::Mini) {   // one line: the title (cut with "...") and round icon buttons beside it, Play included
+        p.btn_h = 4.f * u;
+        p.gap = 1.f * u;
+        p.beside = p.icons = p.play_icon = true;
+        p.facts = p.time_line = false;
+        p.small_title = true;
+        const int n = in.close_w > 0.f ? 4 : 3;
+        p.buttons_w = (float)n * p.btn_h + (float)(n - 1) * p.gap;
+        p.tabs_h = 4.f * u;
+        sheet_spacing(p.tier, u, &p.pad, &p.body_gap);
+        p.help_lines_max = 2;
+        return p;
+    }
     p.cover_h = p.tier == Tier::Full ? 16.f * u : p.tier == Tier::Compact ? 8.5f * u : 0.f;
     if (in.avail_w < 60.f * u) p.cover_h = 0.f;   // a very narrow sheet: the title gets the width
     p.cover_w = p.cover_h * in.aspect;
@@ -81,6 +116,11 @@ inline HeaderPlan plan_header(const HeaderIn& in) {
     }
     p.buttons_w = p.icons ? icons : full;
     p.time_line = p.tier != Tier::Tight;
+    if (p.tier == Tier::Tight) {   // a little lower tab bar and less padding; the help strip keeps two lines
+        p.tabs_h = 4.5f * u;
+        p.help_lines_max = 2;
+        sheet_spacing(p.tier, u, &p.pad, &p.body_gap);
+    }
     return p;
 }
 
