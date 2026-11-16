@@ -1,7 +1,7 @@
-/* The game page as host-independent pieces (see game_page.h). Moved out of page_library.cpp's ##details modal without changing what it
- * draws or does; the modal is now one host of these pieces. */
+/* The game page as host-independent pieces (see game_page.h). game_page_view.cpp lays them out inside a ui::sheet for both hosts. */
 #include "app.h"
 #include "game_page.h"
+#include "game_page_layout.h"
 #include "winutil.h"
 #include "launch_guard_logic.h"
 #include "wave3_hooks.h"
@@ -11,7 +11,6 @@
 #include "hookshot_ui.h"
 #include "hidden_ui.h"
 #include "playtime_logic.h"
-#include "lib_compact_logic.h"
 
 #include <algorithm>
 #include <cstring>
@@ -19,7 +18,7 @@
 #include <mutex>
 #include <thread>
 
-/* gameinfo_ui.cpp: the info block with a caller-owned "keep scrolled to the top" time (the game page keeps it in its State) */
+/* gameinfo_ui.cpp: the info block; scroll_hold nullptr = never touch the window's scroll (the page body opens at the top anyway) */
 bool gameinfo_ui_section_held(const hub::GameEntry& e, const std::string& catalog_title, int part, double* scroll_hold);
 
 namespace {
@@ -227,12 +226,30 @@ void draw_playtime_strip(const std::vector<hubui::pt::Cell>& cells, float max_w)
     }
 }
 
-/* the width ui::button() gives a label: text + icon + gap + 2.5sp padding each side */
-float label_w(const char* label, bool icon) {
-    return ImGui::CalcTextSize(label).x + (icon ? sp(2.25f) + sp(1) : 0.f) + sp(5);
-}
-
 std::string catalog_title(const gamepage::Ctx& c) { return c.cat ? c.cat->title : std::string(); }
+
+/* A column of the current window: the items between column_begin and column_end start at screen x and lay out (wrap, fill, align) as if
+ * the region were w wide, so the game's sections need no width parameter. Restores the window's region afterwards. */
+struct Column {
+    float work_max = 0.f, content_max = 0.f;
+};
+Column column_begin(float x, float y, float w) {
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    Column c{win->WorkRect.Max.x, win->ContentRegionRect.Max.x};
+    const float r = std::min(win->WorkRect.Max.x, x + std::max(1.f, w));
+    win->WorkRect.Max.x = r;
+    win->ContentRegionRect.Max.x = r;
+    ImGui::SetCursorScreenPos(ImVec2(x, y));
+    ImGui::BeginGroup();
+    return c;
+}
+float column_end(const Column& c) {   // returns the column's bottom (screen y)
+    ImGui::EndGroup();
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    win->WorkRect.Max.x = c.work_max;
+    win->ContentRegionRect.Max.x = c.content_max;
+    return ImGui::GetItemRectMax().y;
+}
 
 }  // namespace
 
@@ -275,45 +292,31 @@ std::string facts_line(const Ctx& c) {
     return facts;
 }
 
-void draw_play_time(Ctx& c, float w) {
-    /* Steam-style play time: prominent header line, then (when played) the stats strip */
-    const int64_t pt_now = (int64_t)std::time(nullptr);
+static void pt_refresh_tz(Ctx& c) {
     if (ImGui::GetTime() - c.st.pt_tz_at > 30.0) { c.st.pt_tz = pt_local_tz(); c.st.pt_tz_at = ImGui::GetTime(); }   // mktime twice: not every frame
-    const hubui::pt::GameStats& pst = pt_stats_for(c.st.pt, c.e, c.gs, pt_now);
-    if (!pst.played()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-        ImGui::TextUnformatted("Not played yet");
-        ImGui::PopStyleColor();
-    } else {
-        /* The stats strip below says it all (Play time, Last played, ...): no extra bold hours line above it. */
-        const std::vector<hubui::pt::Cell> cells = hubui::pt::strip_cells(pst, pt_now, c.st.pt_tz);
-        if (!cells.empty()) {
-            ImGui::Dummy(ImVec2(0, sp(0.75f)));
-            draw_playtime_strip(cells, w);
-        }
-    }
 }
 
-void draw_title_block(Ctx& c, float tw) {
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
-    ImGui::PushFont(ui::F.title);
-    ImGui::TextWrapped("%s", c.e.title.c_str());
-    ImGui::PopFont();
-    ImGui::PopTextWrapPos();
-    {   /* one short line of key facts */
-        const std::string facts = facts_line(c);
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
-        ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-        ImGui::TextWrapped("%s", facts.c_str());
-        ImGui::PopStyleColor();
-        ImGui::PopTextWrapPos();
-        draw_play_time(c, tw);
-    }
+std::string play_time_line(Ctx& c) {
+    pt_refresh_tz(c);
+    return hubui::pt::header_line(c.gs.play_seconds, c.gs.last_played, (int64_t)std::time(nullptr), c.st.pt_tz, "  \xC2\xB7  ");
+}
+
+bool draw_play_time(Ctx& c, float w) {
+    /* Steam-style play time: the stats strip (Play time, Last played, Sessions, ...); nothing for a game never played here (the header's
+     * play-time line already says "Not played yet") */
+    const int64_t pt_now = (int64_t)std::time(nullptr);
+    pt_refresh_tz(c);
+    const hubui::pt::GameStats& pst = pt_stats_for(c.st.pt, c.e, c.gs, pt_now);
+    if (!pst.played()) return false;
+    const std::vector<hubui::pt::Cell> cells = hubui::pt::strip_cells(pst, pt_now, c.st.pt_tz);
+    if (cells.empty()) return false;
+    draw_playtime_strip(cells, w);
+    return true;
 }
 
 void draw_description(Ctx& c) {
     /* short description (clamped, More expands); falls back to the built-in blurb when nothing loaded */
-    bool drew = gameinfo_ui_section_held(c.e, catalog_title(c), 1, &c.st.desc_hold);
+    bool drew = gameinfo_ui_section_held(c.e, catalog_title(c), 1, nullptr);
     if (!drew && c.cat && !c.cat->blurb.empty()) {
         ImGui::PushTextWrapPos(0.f);
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
@@ -321,23 +324,6 @@ void draw_description(Ctx& c) {
         ImGui::PopStyleColor();
         ImGui::PopTextWrapPos();
     }
-}
-
-void draw_header(Ctx& c) {
-    ImGuiIO& io = ImGui::GetIO();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 o = ImGui::GetCursorScreenPos();
-    float avail = ImGui::GetContentRegionAvail().x;
-    bool with_art = avail > sp(62.f);
-    float aw = with_art ? (io.DisplaySize.y < hubui::lc::kShortWindowPx ? sp(14.f) : sp(20.f)) : 0, ah = aw / kTileAspect;   // slimmer header on a short window
-    if (with_art) draw_cover(c, dl, o, ImVec2(o.x + aw, o.y + ah));
-    float tx = with_art ? aw + sp(3.f) : 0;
-    ImGui::SetCursorScreenPos(ImVec2(o.x + tx, o.y));
-    ImGui::BeginGroup();
-    draw_title_block(c, avail - tx);
-    ImGui::EndGroup();
-    if (with_art) ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(ah, ImGui::GetItemRectSize().y) + sp(1.f)));
-    draw_description(c);
 }
 
 void draw_notices(Ctx& c) {
@@ -411,22 +397,27 @@ void select_tab(Ctx& c, int id) {
     c.st.tab = c.tab_shown = id;
 }
 
-void draw_tab_pills(Ctx& c) {
-    const std::vector<TabInfo>& tl = tabs(c);
-    for (size_t i = 0; i < tl.size(); ++i) {
-        float w = label_w(tl[i].label.c_str(), false) - sp(1.5f);
-        if (i) ImGui::SameLine(0, sp(1.f));
-        ImGui::PushID((int)i);
-        if (button(tl[i].label.c_str(), ImVec2(w, sp(4.f)), c.tab_shown == tl[i].id)) select_tab(c, tl[i].id);
-        ImGui::PopID();
-    }
-}
-
+/* About: the play-time stats and the description first, then the game's sections. On a wide body the stats and the facts (developer,
+ * publisher, ...) move to a side column (game_page_layout.h about_columns). */
 static void draw_about(Ctx& c) {
     const hub::GameEntry& e = c.e;
-    dumpwarn_details_section(e);   // first: a copy that looks incomplete must be seen without scrolling
+    const float x0 = ImGui::GetCursorScreenPos().x, y0 = ImGui::GetCursorScreenPos().y;
+    const float avail = ImGui::GetContentRegionAvail().x;
+    hubui::gp::AboutCols cols = hubui::gp::about_columns(avail, sp(1.f));
+    float side_bottom = y0;
+    if (cols.side) {   // side column first: its height does not depend on the main column
+        Column sc = column_begin(x0 + cols.side_x, y0, cols.side_w);
+        if (draw_play_time(c, cols.side_w)) ImGui::Dummy(ImVec2(0, sp(1.f)));
+        gameinfo_ui_section_held(e, catalog_title(c), 2, nullptr);   // facts + ratings
+        side_bottom = column_end(sc);
+        if (side_bottom <= y0 + 1.f) cols.main_w = hubui::gp::readable_w(avail, sp(1.f));   // nothing to show there: one column after all
+    }
+    Column mc = column_begin(x0, y0, cols.main_w);
+    if (!cols.side && draw_play_time(c, cols.main_w)) ImGui::Dummy(ImVec2(0, sp(0.75f)));
+    draw_description(c);
+    dumpwarn_details_section(e);   // a copy that looks incomplete must be seen without scrolling
     nuprepair_details_section(e);   // a damaged .nup copy RetroHub fills in at launch
-    gameinfo_ui_section_held(e, catalog_title(c), 2, &c.st.desc_hold);
+    if (!cols.side) gameinfo_ui_section_held(e, catalog_title(c), 2, nullptr);
     achievements_ui_section(e);   // RetroAchievements progress (only when signed in)
     if (e.system == hub::System::WiiU) {
         for (const std::string& l : wiiu_info_lines(e)) ImGui::TextDisabled("%s", l.c_str());
@@ -463,6 +454,9 @@ static void draw_about(Ctx& c) {
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
     }
+    const float main_bottom = column_end(mc);
+    ImGui::SetCursorScreenPos(ImVec2(x0, std::max(main_bottom, side_bottom)));
+    ImGui::Dummy(ImVec2(0, 0));   // a submitted item, so the cursor move counts for the scroll area
 }
 
 static void draw_saves(Ctx& c) {
@@ -482,24 +476,28 @@ static void draw_saves(Ctx& c) {
 }
 
 void draw_tab(Ctx& c, int id) {
-    if (id == TabAbout) draw_about(c);
-    else if (id == TabSaves) draw_saves(c);
-    else if (id == TabShots) shots_gallery(c.e);
+    if (id == TabAbout) { draw_about(c); return; }
+    if (id == TabShots) { shots_gallery(c.e); return; }   // a grid that fills the width
+    /* Saves and Settings: text and option rows at a readable width on a wide body */
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    Column col = column_begin(p.x, p.y, hubui::gp::readable_w(ImGui::GetContentRegionAvail().x, sp(1.f)));
+    if (id == TabSaves) draw_saves(c);
     else if (id == TabSettings) gs_draw_game_section(c.e);
+    const float bottom = column_end(col);
+    ImGui::SetCursorScreenPos(ImVec2(p.x, bottom));
+    ImGui::Dummy(ImVec2(0, 0));
 }
-
-void draw_tab_body(Ctx& c) { draw_tab(c, shown_tab(c)); }
 
 /* ---------- actions ---------- */
 
 bool shot_forced(Ctx& c, const char* name) {
     static const char* act = std::getenv("HUB_SHOT_ACT");   // reachability QA (qa/reach_matrix.ps1): HUB_SHOT_ACT=<name> presses that action once
-    if (!act || !name || std::strcmp(act, name) != 0 || c.st.act_done == c.e.key + name) return false;
-    c.st.act_done = c.e.key + name;
+    static std::string done;   // the game + action already pressed: once per run, whichever host draws the page (pane, then the full-window page)
+    if (!act || !name || std::strcmp(act, name) != 0 || done == c.e.key + name) return false;
+    if (!SH.details_key.empty() && c.e.key != SH.details_key) return false;   // HUB_SHOT_DETAILS names the game (the desk pane shows another one first)
+    done = c.e.key + name;
     return true;
 }
-
-float action_width(const Action& a) { return a.width > 0.f ? a.width : label_w(a.label.c_str(), a.icon != ui::Icon::None); }
 
 static void trace_action(Ctx& c, const Action& a) {
     for (const std::string& t : a.traces) shot_trace_once("act", c.e.key + " " + t);   // every action reports whether it is offered
@@ -694,29 +692,6 @@ std::vector<Action> secondary_actions(Ctx& c) {
         add(std::move(a));
     }
     return v;
-}
-
-Row draw_action_row(Ctx& c, const std::vector<Action>& actions, float h) {
-    /* each button joins the row only if it fits the region's width, otherwise it wraps to the next line */
-    const float row_gap = sp(1.5f), row_avail = ImGui::GetContentRegionAvail().x;
-    float row_used = 0.f;
-    bool row_started = false;
-    for (const Action& a : actions) {
-        trace_action(c, a);
-        const float w = action_width(a);
-        if (!row_started) { row_started = true; row_used = w; }
-        else if (row_used + row_gap + w <= row_avail) { ImGui::SameLine(0, row_gap); row_used += row_gap + w; }
-        else row_used = w;   // no SameLine: this button starts a new row
-        const bool pressed = button(a.label.c_str(), ImVec2(a.width, h), a.primary, a.enabled, a.icon);
-        if (a.poll) a.poll(pressed);
-        else if (a.run && (pressed || (a.act && shot_forced(c, a.act)))) {
-            a.run();
-            if (a.ends_page) return Row::Gone;
-        }
-        if (!a.tooltip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", a.tooltip.c_str());
-        if (a.default_focus) ImGui::SetItemDefaultFocus();
-    }
-    return Row::Drawn;
 }
 
 }  // namespace gamepage

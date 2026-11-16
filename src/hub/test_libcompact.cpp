@@ -42,9 +42,6 @@ int main() {
     CHECK(chips_row_h(30.f, 6.f, false) == 30.f);
     CHECK(chips_row_h(30.f, 6.f, true) == 36.f);
 
-    CHECK(body_room(660.f, 400.f, 100.f, 24.f, 60.f) == 136.f);
-    CHECK(body_room(660.f, 600.f, 100.f, 24.f, 60.f) == 60.f);   // never below the floor
-
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("hub_libcompact_test ok\n");
     return 0;

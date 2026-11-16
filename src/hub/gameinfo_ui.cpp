@@ -258,11 +258,12 @@ void fact(const char* label, const std::string& value, float col_w) {
 static double g_scroll_hold = 0;
 
 /* Draws the info block for any game (library entry or a friend's game). `id` only disambiguates widget ids. `hold`: the ImGui time until
- * which the current window stays scrolled to the top (the game page keeps its own in gamepage::State). */
+ * which the current window stays scrolled to the top; nullptr = never touch the scroll (the game page: its Play button is pinned above
+ * a body that opens at the top anyway). */
 bool gameinfo_ui_section_query_held(const Query& q, const std::string& id, int part, double* hold) {   // part: 0 all, 1 description only, 2 facts + ratings only
     bool drew_desc = false;
     drain_results();
-    {   /* A tall modal opens scrolled to its default-focused Play button (at the bottom); keep the info block in view for the first frames. */
+    if (hold) {   /* A tall modal opens scrolled to its default-focused Play button (at the bottom); keep the info block in view for the first frames. */
         double& keep_until = *hold;
         if (ImGui::IsWindowAppearing()) keep_until = ImGui::GetTime() + 3.0;
         if (ImGui::GetIO().MouseWheel != 0.f) keep_until = 0;   // the player scrolled or moved the focus: hands off
@@ -375,8 +376,9 @@ bool gameinfo_ui_section_held(const hub::GameEntry& e, const std::string& catalo
     q.serial = e.serial;
     q.alt_title = e.catalog_id == "smash64" ? "Super Smash Bros." : catalog_title;
     if (q.system.empty()) return false;
+    const float y0 = ImGui::GetCursorPosY();
     bool d = gameinfo_ui_section_query_held(q, e.key, part, scroll_hold);
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (ImGui::GetCursorPosY() > y0 + 0.5f) ImGui::Dummy(ImVec2(0, sp(0.5f)));   // air under the block, only when it drew something
     return d;
 }
 

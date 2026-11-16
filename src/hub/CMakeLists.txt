@@ -111,6 +111,11 @@ add_executable(hub_libcompact_test test_libcompact.cpp)
 target_include_directories(hub_libcompact_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hub_libcompact_test PRIVATE cxx_std_17)
 
+# Game page layout (game_page_layout.h): header tiers, buttons beside / under the title, icon fallback, readable width, About columns.
+add_executable(hub_gamepage_test test_gamepage_layout.cpp)
+target_include_directories(hub_gamepage_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(hub_gamepage_test PRIVATE cxx_std_17)
+
 # Game option rows (option_rows.h): label / control widths, heading order, the "Plays with" value shown; plus the option table's headings and help texts.
 add_executable(hub_option_rows_test test_option_rows.cpp)
 target_include_directories(hub_option_rows_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -173,7 +178,7 @@ set(RETROHUB_UI_SOURCES
     lockout.cpp icon_refresh.cpp discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp   # Plan 4 Wave 2 C (convenience)
     transferpak.cpp gba_link.cpp palpark.cpp resume_more.cpp progress_ui.cpp verify_ui.cpp save_import_ui.cpp   # Plan 4 Wave 3
     desk_view.cpp)   # UI overhaul: the Library desk layout
-list(APPEND RETROHUB_UI_SOURCES game_page.cpp)   # the game page as host-independent pieces; hosted by the details modal (page_library.cpp)
+list(APPEND RETROHUB_UI_SOURCES game_page.cpp game_page_view.cpp)   # the game page: its pieces, and their one layout in a ui::sheet (full-window page + Library desk pane)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)

@@ -1563,21 +1563,29 @@ void shots_gallery(const hub::GameEntry& e) {
         if (!once) { once = true; std::vector<std::string> all; for (auto& f : s_files) all.push_back(dir + "\\" + f);
             shot_viewer_open(e, all, 1, [](const std::string& p, int* w, int* h) -> SDL_Texture* { Tex* t = tex_for(p); if (!t) return nullptr; *w = t->w; *h = t->h; return t->t; }); }
     }
-    if (ImGui::SmallButton("Open folder")) ShellExecuteW(nullptr, L"open", std::filesystem::u8path(dir).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    const float th = sp(13.f), tw = th * 1.6f;
-    ImGui::BeginChild("##shots", ImVec2(0, th + sp(7.f)), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_HorizontalScrollbar);
+    if (ImGui::SmallButton("Open folder")) {
+        shot_trace("shots-folder", dir);
+        if (!g_headless) ShellExecuteW(nullptr, L"open", std::filesystem::u8path(dir).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);   // screenshot runs never open a window
+    }
+    /* a grid that wraps to the width of the page's Screenshots tab (the page body scrolls it; the D-pad moves in 2D) */
+    const float gap = sp(1.25f), avail = std::max(1.f, ImGui::GetContentRegionAvail().x);
+    const float tw0 = sp(13.f) * 1.6f;
+    const int cols = std::max(1, (int)((avail + gap) / (tw0 + gap)));
+    const float tw = std::min(tw0 * 1.3f, (avail - gap * (float)(cols - 1)) / (float)cols), th = tw / 1.6f;   // pictures grow a little to fill the row
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, sp(1.f)));
     for (size_t i = 0; i < s_files.size() && i < 60; ++i) {
         std::string path = dir + "\\" + s_files[i];
         ImGui::PushID((int)i);
+        if (i % (size_t)cols) ImGui::SameLine(0, gap);
         ImGui::BeginGroup();
         ImVec2 p = ImGui::GetCursorScreenPos();
-        bool open_it = ImGui::InvisibleButton("shot", ImVec2(tw, th), ImGuiButtonFlags_EnableNav);   // EnableNav: the D-pad reaches each picture (ImGui scrolls the strip to it), A = click
+        bool open_it = ImGui::InvisibleButton("shot", ImVec2(tw, th), ImGuiButtonFlags_EnableNav);   // EnableNav: the D-pad reaches each picture (the page scrolls to it), A = click
         bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
         const bool pad_focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
-        if (pad_focus && g_headless) {   // QA trace (HUB_SHOT_TRACE): which picture has the focus and whether the strip shows all of it
-            const ImVec2 c0 = ImGui::GetWindowPos(), c1(c0.x + ImGui::GetWindowWidth(), c0.y + ImGui::GetWindowHeight());
-            const bool vis = p.x >= c0.x - 0.5f && p.x + tw <= c1.x + 0.5f;
-            shot_trace_once("shots-focus", "i=" + std::to_string(i) + " sx=" + std::to_string((int)ImGui::GetScrollX()) + "/" + std::to_string((int)ImGui::GetScrollMaxX()) + " visible=" + (vis ? "1" : "0"));
+        if (pad_focus && g_headless) {   // QA trace (HUB_SHOT_TRACE): which picture has the focus and whether the view shows all of it
+            const ImRect clip = ImGui::GetCurrentWindow()->InnerClipRect;
+            const bool vis = p.x >= clip.Min.x - 0.5f && p.x + tw <= clip.Max.x + 0.5f && p.y >= clip.Min.y - 0.5f && p.y + th <= clip.Max.y + 0.5f;
+            shot_trace_once("shots-focus", "i=" + std::to_string(i) + " sx=" + std::to_string((int)ImGui::GetScrollY()) + "/" + std::to_string((int)ImGui::GetScrollMaxY()) + " visible=" + (vis ? "1" : "0"));
         }
         if (open_it) shot_trace("shots-open", "i=" + std::to_string(i));
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1609,9 +1617,8 @@ void shots_gallery(const hub::GameEntry& e) {
                 Tex* t = tex_for(p); if (!t) return nullptr; *w = t->w; *h = t->h; return t->t; });
         }
         ImGui::PopID();
-        ImGui::SameLine(0, sp(1.f));
     }
-    ImGui::EndChild();
+    ImGui::PopStyleVar();
     if (shot_viewer_draw()) s_at = -10;   // a picture was deleted: rescan
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 }

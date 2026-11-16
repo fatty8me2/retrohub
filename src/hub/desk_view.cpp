@@ -1,25 +1,24 @@
-/* Library desk: the second library layout (Settings > General > Layout), stage 1.
+/* Library desk: the second library layout (Settings > General > Layout).
  *
- *   [ icon sidebar ][ list column            ][ game pane                                   ]
- *                   [ search box             ][ cover  title / console and players / time   ]
- *                   [ Recent        - ]      ][        Play  Play Online  Options  star      ]
- *                   [   game rows            ][ about this game, screenshots                ]
+ *   [ icon sidebar ][ list column            ][ game page (game_page.h, SheetHost::Pane)     ]
+ *                   [ search box             ][ cover  title / facts / play time   Play More  ]
+ *                   [ Recent        - ]      ][ About  Saves  Screenshots  Settings           ]
+ *                   [   game rows            ][ the tab, scrolling                           ]
  *                   [ Nintendo 64 . 19  + ]  ][                                             ]
  *                   [ Add games              ][                                             ]
  *
  * The list is ONE focusable item: the cursor row, the groups and the scrolling are ours (desk_logic.h), so the pad / keyboard moves are
  * read from ImGui's own move requests (same repeat rate as everywhere) and turned into row moves. Up on the first row and Down on the
  * last one let ImGui move the focus out (search box / Add games); Left on a closed group lets it reach the sidebar. Right on a game
- * enters the pane (its first focusable item), Left with nothing further left in the pane, or B, comes back to the same row.
- * Selection follows the cursor (A.sel_game), so every library shortcut keeps working: Y / I opens the game page popup (##details),
- * X / F favourites, R3 / S adds to a shelf. Enter / A / double-click plays through play_entry_anim, exactly like the game page's Play.
- * Colours are theme tokens only. Nothing here animates on its own once the list has stopped scrolling. */
+ * enters the pane (Play gets the focus), Left with nothing further left in the pane, or B, comes back to the same row.
+ * Selection follows the cursor (A.sel_game), so every library shortcut keeps working: Y / I and right-click move the focus into the
+ * pane, X / F favourites, R3 / S adds to a shelf. Enter / A / double-click plays through play_entry_anim, exactly like the game page's
+ * Play. Colours are theme tokens only. Nothing here animates on its own once the list has stopped scrolling. */
 #include "desk_view.h"
 #include "desk_logic.h"
+#include "game_page.h"
 #include "console_names.h"
 #include "convenience.h"
-#include "launch_guard_logic.h"
-#include "playtime_logic.h"
 #include "ui_sound.h"
 
 #include <algorithm>
@@ -61,26 +60,18 @@ struct DeskState {
     float view_h = 0.f;
     float thumb_grab = 0.f;
     /* focus */
-    bool focus_list = false, focus_list_visible = false, focus_pane = false;
+    bool focus_list = false, focus_list_visible = false, focus_pane = false, focus_pane_visible = true;
     bool list_focused = false, pane_focused = false;
     bool list_tip = false;              // the list is hovered long enough for a tooltip
     ImGuiID list_id = 0, pane_child = 0;
+    /* the game page in the pane */
+    gamepage::View page;
+    std::string want_page;              // desk_show_game_page: select this game and enter the pane (next frame, after the model is built)
+    std::string pane_shown;             // the game whose page the pane drew this frame
+    int pane_shown_frame = -10;
 } D;
 
 /* ---------- small helpers ---------- */
-
-int local_tz() {   // local time minus UTC in seconds (the recipe page_library.cpp and wrapped_ui.cpp use)
-    static const int tz = [] {
-        std::time_t t = std::time(nullptr);
-        std::tm lt{}, gm{};
-        localtime_s(&lt, &t);
-        gmtime_s(&gm, &t);
-        int z = (int)std::difftime(std::mktime(&lt), std::mktime(&gm));
-        if (lt.tm_isdst > 0) z += 3600;
-        return z;
-    }();
-    return tz;
-}
 
 bool any_popup() { return ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel); }
 
@@ -123,8 +114,6 @@ const char* not_ready_reason(const hub::GameEntry& e) {
     if (e.issue == "keys") return "This game needs decryption keys before it can be played.";
     return "";
 }
-
-bool launch_idle() { return hubui::launch_allowed(A.proc != nullptr, session_active()); }
 
 /* Play: the game page's Play button, exactly (play_entry_anim checks for a running game, the lock, missing files, the cloud...).
  * Headless runs never start anything: spawn() refuses there and traces it. */
@@ -457,7 +446,7 @@ void draw_list(const ImRect& vp) {
         hover_row = hubdesk::row_at(D.L, rows, D.mt, io.MousePos.y - vp.Min.y + D.scroll);
         if (hover_row >= 0) {
             const bool head = rows[(size_t)hover_row].header();
-            if (ImGui::IsMouseClicked(1) && !head) { set_cursor(hover_row, false); A.show_details = true; }   // right-click: the game page popup
+            if (ImGui::IsMouseClicked(1) && !head) { set_cursor(hover_row, false); D.focus_pane = true; D.focus_pane_visible = false; }   // right-click: into the game's page
             if (ImGui::IsMouseClicked(0)) {
                 const bool twice = ImGui::IsMouseDoubleClicked(0);   // the second press of a double-click is a click too
                 if (head) { if (!twice) set_group_open(rows[(size_t)hover_row].group, !D.model.groups[(size_t)rows[(size_t)hover_row].group].open); }
@@ -621,28 +610,6 @@ void pane_message(const ImRect& r, const char* title, const char* body) {
     if (ui::button("Add games", ImVec2(bw, sp(5.5f)), true, true, ui::Icon::Plus)) { shot_trace("desk-add-games", "pane"); add_games_open(); }
 }
 
-/* The description shown in the pane: the cached / fetched one (gameinfo), else the catalog's blurb. Refreshed when a lookup lands. */
-struct PaneInfo { std::string key, desc, facts; uint64_t gen = ~0ull; };
-const PaneInfo& pane_info(const hub::GameEntry& e) {
-    static PaneInfo P;
-    const uint64_t gen = gameinfo_generation();
-    if (P.key == e.key && P.gen == gen) return P;
-    P = PaneInfo();
-    P.key = e.key;
-    P.gen = gen;
-    const GameInfo* cat = catalog_for(e);
-    CaseInfo ci;
-    gameinfo_case_info(e, cat ? cat->title : std::string(), true, &ci);   // never blocks; queues the usual background lookup (none headless)
-    P.desc = !ci.desc.empty() ? ci.desc : (cat ? cat->blurb : std::string());
-    std::vector<std::string> f;
-    if (!ci.genre.empty()) f.push_back(ci.genre);
-    if (ci.year > 0) f.push_back(std::to_string(ci.year));
-    else if (cat && cat->year) f.push_back(std::to_string(cat->year));
-    if (!ci.maker.empty()) f.push_back(ci.maker);
-    for (size_t i = 0; i < f.size(); ++i) P.facts += (i ? "  \xC2\xB7  " : "") + f[i];
-    return P;
-}
-
 const hub::GameEntry* shown_game() {
     if (A.lib.empty()) return nullptr;
     const hub::GameEntry* e = find_entry(A.sel_game);
@@ -657,16 +624,24 @@ void pane_host(const ImRect& r) {
     ImGui::BeginChild("##desk_pane", r.GetSize(), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
     ImGui::PopStyleVar();
     D.pane_child = ImGui::GetCurrentWindow()->ChildId;
-    if (D.focus_pane) { D.focus_pane = false; focus_first_item_here(); shot_trace("desk-focus", "pane"); }
-    if (const hub::GameEntry* e = shown_game()) desk_draw_game_pane(*e, r);
+    const hub::GameEntry* shown = shown_game();
+    if (D.focus_pane) {   // entering the pane: the game page puts the focus on Play when it draws it
+        D.focus_pane = false;
+        if (shown) { D.page.focus_play = true; D.page.focus_visible = D.focus_pane_visible; }
+        else focus_first_item_here();
+        D.focus_pane_visible = true;
+        shot_trace("desk-focus", "pane");
+    }
+    if (shown) desk_draw_game_pane(*shown, r);
     else if (A.lib.empty()) pane_message(r, A.scanning ? "Looking for your games" : "No games yet",
                                          A.scanning ? "RetroHub is looking through your folders. Your games show up in the list as they are found."
                                                     : "RetroHub doesn't include any games. Add your own game files and they show up in the list.");
     else pane_message(r, "No game selected", "Pick a game from the list.");
     D.pane_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
     ImGui::EndChild();
-    /* Left with nothing further left inside the pane: back to the list, on the same row (instead of the sidebar) */
-    if (D.pane_focused && g.NavMoveSubmitted && g.NavMoveDir == ImGuiDir_Left &&
+    /* Left with nothing further left inside the pane: back to the list, on the same row (instead of the sidebar). Not inside a menu or
+     * dialog opened from the pane (they count as "in the pane" for ImGui): there Left belongs to them. */
+    if (D.pane_focused && !any_popup() && g.NavMoveSubmitted && g.NavMoveDir == ImGuiDir_Left &&
         !(g.NavMoveFlags & (ImGuiNavMoveFlags_IsTabbing | ImGuiNavMoveFlags_FocusApi | ImGuiNavMoveFlags_IsPageMove | ImGuiNavMoveFlags_ScrollToEdgeY)) &&
         g.NavMoveResultLocal.ID == 0 && g.NavMoveResultLocalVisible.ID == 0 && g.NavMoveResultOther.ID == 0) {
         ImGui::NavMoveRequestCancel();
@@ -697,11 +672,41 @@ void desk_pre_frame() {
     if (A.page != Page::Library) A.lib_pg = false;         // the list pages itself only while it is showing
 }
 
+/* A page request (desk_show_game_page): the game becomes the selection, in view in the list, and the focus goes into the pane. */
+void apply_page_request() {
+    if (D.want_page.empty()) return;
+    const std::string key = D.want_page;
+    D.want_page.clear();
+    if (!find_entry(key)) return;
+    if (!hubdesk::has_game(D.model, D.games, key) && A.search_buf[0]) {   // a search hides it: clear the search
+        A.search_buf[0] = 0;
+        rebuild();
+    }
+    if (hubdesk::row_of_key(D.model, D.games, key) < 0) {   // its group is closed: open one that holds it (its console's first)
+        int gi = -1;
+        const hub::GameEntry* e = find_entry(key);
+        const std::string console = e ? hub::console_id(*e) : std::string();
+        for (size_t i = 0; i < D.model.groups.size(); ++i)
+            for (int k : D.model.groups[i].items)
+                if (D.games[(size_t)k].key == key && (gi < 0 || D.model.groups[i].id == console)) gi = (int)i;
+        if (gi >= 0) set_group_open(gi, true);
+    }
+    A.sel_game = key;
+    A.sel_ghost.clear();
+    const int row = hubdesk::row_of_key(D.model, D.games, key);
+    if (row >= 0) set_cursor(row, false);
+    D.seen_sel = A.sel_game;
+    sync_sel_row();
+    if (!D.pane_focused) D.focus_pane = true;
+    shot_trace("desk-page", key);
+}
+
 void desk_page() {
     ImGuiContext& g = *ImGui::GetCurrentContext();
     A.page_scrollable = false;
     rebuild();
     follow_outside_selection();
+    apply_page_request();
     /* B / Esc inside the pane: ImGui leaves the pane window (the focus lands on the pane itself, as an item of the page). Back to the list.
      * The same item reached by a move from outside (Right from the search box): into the pane instead. */
     if (g.NavId != 0 && g.NavId == D.pane_child) {
@@ -728,14 +733,17 @@ void desk_page() {
 bool desk_footer_hints(std::vector<Hint>* out) {
     if (!desk_layout_on() || A.page != Page::Library) return false;
     if (A.lib.empty() || D.model.rows.empty()) { *out = {{"A", "Enter", "Select"}}; return true; }   // nothing listed (no games, or a search with no match)
-    if (D.pane_focused) { *out = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}, {"Y", "I", "Options"}, {"X", "F", "Favorite"}}; return true; }
+    if (D.pane_focused) {   // the game page in the pane: its hints live here (the pane has no footer of its own)
+        *out = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}, {"LB", "", "Tabs"}, {"LT", "", "Page up"}, {"RT", "", "Page down"}, {"X", "F", "Favorite"}};
+        return true;
+    }
     const bool header = D.cursor >= 0 && D.cursor < (int)D.model.rows.size() && D.model.rows[(size_t)D.cursor].header();
     if (header && D.list_focused) {
         const bool open = D.model.groups[(size_t)D.model.rows[(size_t)D.cursor].group].open;
-        *out = {{"A", "Enter", open ? "Close" : "Open"}, {"Y", "I", "Options"}, {"X", "F", "Favorite"}};
+        *out = {{"A", "Enter", open ? "Close" : "Open"}, {"Y", "I", "Details"}, {"X", "F", "Favorite"}};
         return true;
     }
-    *out = {{"A", "Enter", "Play"}, {"Y", "I", "Options"}, {"X", "F", "Favorite"}, {"R3", "S", "Add to shelf"}};
+    *out = {{"A", "Enter", "Play"}, {"Y", "I", "Details"}, {"X", "F", "Favorite"}, {"R3", "S", "Add to shelf"}};
     return true;
 }
 
@@ -750,139 +758,24 @@ void desk_shot_seed() {
     }
 }
 
-/* ---------- the selected game's pane (stage 1: a summary; the next stage puts the real game page here) ---------- */
+/* ---------- the selected game's page in the pane ---------- */
 
 void desk_draw_game_pane(const hub::GameEntry& e, const ImRect& r) {
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float rad = sp(2.f);
-    const hub::GameState& gs = gstate(e.key);
-    ImU32 c0, c1;
-    entry_colors(e, &c0, &c1);
-    dl->AddRectFilled(r.Min, r.Max, ui::PANEL, rad);
-
-    /* header band: a soft wash of the game's colours behind the cover, the title and the actions */
-    const bool short_pane = r.GetHeight() < sp(56.f);
-    const float pad = short_pane ? sp(2.f) : sp(2.5f);
-    const float bh = short_pane ? sp(4.5f) : sp(5.f);
-    const float cover_h = std::max(sp(13.f), std::min(sp(24.f), r.GetHeight() * 0.3f));
-    const float cover_w = std::floor(cover_h * 0.75f);
-    const float tx = r.Min.x + pad + cover_w + pad, tw = std::max(sp(10.f), r.Max.x - pad - tx);
-    ImFont* tf = ui::F.title;
-    const std::vector<std::string> lines = ui::wrap_lines(tf, tf->FontSize, e.title, tw, short_pane ? 1 : 2);
-    const float text_h = (float)lines.size() * tf->FontSize * 1.1f + sp(0.5f) + ui::F.body->FontSize + sp(0.5f) + ui::F.cap->FontSize;
-    const float band_h = std::max(cover_h, text_h + sp(1.5f) + bh) + pad * 2.f;   // tall enough for the text AND the buttons at any UI size
-    const ImVec2 b0 = r.Min, b1(r.Max.x, r.Min.y + band_h);
-    dl->AddRectFilled(b0, b1, mix(ui::PANEL, c0, 0.16f), rad, ImDrawFlags_RoundCornersTop);
-    ui::hfade_round_rect(dl, b0, b1, mix(ui::PANEL, c1, 0.28f), rad, ImDrawFlags_RoundCornersTop, 0.f, 1.f);
-    dl->AddLine(ImVec2(b0.x, b1.y), ImVec2(b1.x, b1.y), ui::HAIRLINE, 1.f);
-    dl->AddRect(r.Min, r.Max, ui::HAIRLINE, rad, 0, 1.f);
-
-    const ImVec2 a0(r.Min.x + pad, r.Min.y + pad), a1(a0.x + cover_w, a0.y + cover_h);
-    const float arad = sp(1.25f);
-    const ArtRef art = art_for_entry(e);
-    ui::shadow(dl, a0, a1, arad, 1.f);
-    if (art.tex) ui::draw_art(dl, art.tex, art.w, art.h, a0, a1, arad);
-    else { TileSpec ts; ts.title = e.title; ts.c0 = c0; ts.c1 = c1; draw_no_art(dl, ts, a0, a1, arad, 1.f); }
-    if (art.loading) ui::shimmer(dl, a0, a1, arad, ui::with_alpha(ui::PANEL, 0.f));
-    dl->AddRect(a0, a1, ui::HAIRLINE, arad, 0, 1.f);
-
-    float ty = a0.y;
-    const float title_y0 = ty;
-    for (const std::string& ln : lines) { dl->AddText(tf, tf->FontSize, ImVec2(tx, ty), ui::TEXT, ln.c_str()); ty += tf->FontSize * 1.1f; }
-    const bool cut = !lines.empty() && lines.back().size() >= 3 && lines.back().compare(lines.back().size() - 3, 3, "...") == 0 &&
-                     !(e.title.size() >= 3 && e.title.compare(e.title.size() - 3, 3, "...") == 0);   // wrap_lines cut the title short
-    if (cut && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImVec2(tx, title_y0), ImVec2(tx + tw, ty))) ImGui::SetTooltip("%s", e.title.c_str());
-    ty += sp(0.5f);
-    {   // "Nintendo 64  ·  1-4 players"
-        const int pl = local_players_for(e);
-        std::string meta = hub::console_name(e);
-        meta += "  \xC2\xB7  ";
-        meta += pl >= 2 ? "1-" + std::to_string(pl) + " players" : std::string("1 player");
-        dl->AddText(ui::F.body, ui::F.body->FontSize, ImVec2(tx, ty), ui::TEXT2, ui::ellipsize(ui::F.body, ui::F.body->FontSize, meta, tw).c_str());
-        ty += ui::F.body->FontSize + sp(0.5f);
+    const gamepage::Drawn d = gamepage::draw_view(D.page, &e, gamepage::HostKind::Pane, r.Min, r.GetSize(), nullptr);
+    if (d.gone) return;   // Hide game: the entry left the library; the list picks the next selection on its next frame
+    if (d.shown) {
+        D.pane_shown = D.page.shown;
+        D.pane_shown_frame = ImGui::GetFrameCount();
+        ImGui::GetWindowDrawList()->AddRect(r.Min, r.Max, ui::HAIRLINE, sp(2.f), 0, 1.f);   // the same edge as the list column
     }
-    {   // the game page's play-time line: "4.5 hours played  ·  Last played: Today" (this PC's numbers)
-        const std::string pt = hubui::pt::header_line(gs.play_seconds, gs.last_played, (int64_t)unix_now(), local_tz(), "  \xC2\xB7  ");
-        dl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, ty), ui::TEXT2, ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, pt, tw).c_str());
-    }
-
-    /* actions along the bottom of the band: Play, Play Online (when the game has it), Options, favourite */
-    const bool idle = launch_idle();
-    const bool online = supports_online(e);
-    const float gap = sp(1.25f);
-    const char* play_label = has_resume(e) ? "Resume" : "Play";
-    auto text_w = [&](const char* s, bool icon) { return ImGui::CalcTextSize(s).x + (icon ? sp(2.25f) + sp(1.f) : 0.f) + sp(5.f); };   // ui::button's own sizing
-    const float play_w = std::max(sp(14.f), text_w(play_label, true));
-    const float online_w = text_w("Play Online", true), opt_w = text_w("Options", true);
-    const float full = play_w + (online ? gap + online_w : 0.f) + gap + opt_w + gap + bh;
-    const bool icons = full > tw;   // a narrow pane: Play Online and Options become round icon buttons (their names in the tooltip)
-    const float by = b1.y - pad - bh;
-    ImGui::SetCursorScreenPos(ImVec2(tx, by));
-    if (ui::button(play_label, ImVec2(play_w, bh), true, idle, ui::Icon::Play)) desk_play(e);
-    if (!idle && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", hubui::launch_busy_reason(A.proc != nullptr));
-    if (online) {
-        ImGui::SameLine(0, gap);
-        bool go = false;
-        if (icons) { ImGui::BeginDisabled(!idle); go = ui::icon_button("desk_online", ui::Icon::Globe, bh, false, idle ? "Play Online" : nullptr); ImGui::EndDisabled(); }
-        else go = ui::button("Play Online", ImVec2(online_w, bh), false, idle, ui::Icon::Globe);
-        if (!idle && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", hubui::launch_busy_reason(A.proc != nullptr));
-        if (go && idle) {   // the game page's Play Online: host a new room with this game picked
-            A.pending_room_game = room_id(e);
-            shot_trace("play-online", "pending_room_game=" + A.pending_room_game);
-            if (!g_headless) enter_room(true, hubnet::new_room_code());
-        }
-    }
-    ImGui::SameLine(0, gap);
-    const bool opt = icons ? ui::icon_button("desk_options", ui::Icon::Dots, bh, false, "Options") : ui::button("Options", ImVec2(opt_w, bh), false, true, ui::Icon::Dots);
-    if (!icons && ImGui::IsItemHovered()) ImGui::SetTooltip("Saves, settings and everything else for this game");
-    if (opt) { A.sel_game = e.key; A.show_details = true; shot_trace("desk-options", e.key); }
-    ImGui::SameLine(0, gap);
-    if (ui::icon_button("desk_fav", gs.favorite ? ui::Icon::StarFilled : ui::Icon::Star, bh, gs.favorite, gs.favorite ? "Remove from favorites" : "Add to favorites", ui::WARN))
-        toggle_favorite(e.key);
-
-    /* below the band: what is cheap and already here. It scrolls on its own; the band stays. */
-    const float body_top = b1.y + sp(0.5f);
-    if (r.Max.y - body_top < sp(4.f)) return;
-    ImGui::SetCursorScreenPos(ImVec2(r.Min.x, body_top));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, short_pane ? sp(1.25f) : sp(2.f)));
-    ImGui::BeginChild("##desk_body", ImVec2(r.GetWidth(), r.Max.y - body_top - sp(0.5f)), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding,
-                      ImGuiWindowFlags_NoBackground);
-    ImGui::PopStyleVar();
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.5f)));
-    const float w = ImGui::GetContentRegionAvail().x;
-    const PaneInfo& info = pane_info(e);
-    auto heading = [&](const char* s) {
-        ImGui::PushFont(ui::F.bold);
-        ImGui::TextUnformatted(s);
-        ImGui::PopFont();
-    };
-    if (!info.desc.empty() || !info.facts.empty()) {
-        heading("About this game");
-        if (!info.facts.empty()) {
-            ImGui::PushFont(ui::F.cap);
-            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
-            ImGui::TextUnformatted(ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, info.facts, w).c_str());
-            ImGui::PopStyleColor();
-            ImGui::PopFont();
-        }
-        if (!info.desc.empty()) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
-            for (const std::string& ln : ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), info.desc, w, 8)) ImGui::TextUnformatted(ln.c_str());
-            ImGui::PopStyleColor();
-        }
-        ImGui::Dummy(ImVec2(0, sp(1.5f)));
-    }
-    qm_seed_gallery(e);   // HUB_SHOT_GALLERY screenshot aid (headless only)
-    if (const int n = shots_count(e); n > 0) {
-        const std::string h = "Screenshots (" + std::to_string(n) + ")";
-        heading(h.c_str());
-        shots_gallery(e);   // the game page popup's own strip
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
-    }
-    ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
-    for (const std::string& ln : ui::wrap_lines(ImGui::GetFont(), ImGui::GetFontSize(), "Saves, settings and everything else for this game are under Options.", w, 3))
-        ImGui::TextUnformatted(ln.c_str());
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
-    ImGui::EndChild();
 }
+
+bool desk_show_game_page(const std::string& key) {
+    if (!desk_layout_on() || A.page != Page::Library || !find_entry(key)) return false;
+    D.want_page = key;   // applied on the desk's next frame, once its list model is current (desk_page)
+    A.sel_game = key;
+    A.sel_ghost.clear();
+    return true;
+}
+
+std::string desk_pane_shown() { return D.pane_shown_frame == ImGui::GetFrameCount() ? D.pane_shown : std::string(); }

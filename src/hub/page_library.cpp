@@ -840,77 +840,36 @@ void all_games_view() {
     else if (selg) selected_bar_ghost(*selg);
 }
 
-/* ---------- details modal (Y / right-click / "..."): one host of the game page (game_page.cpp) ---------- */
+/* ---------- the game page (Y / I / right-click / "..." / a tile in Traditional): the full-window page over the hub ----------
+ * One host of the game page layout (game_page_view.cpp): a SheetHost::Overlay sheet named "details" that covers the whole window. With the
+ * Library desk on and its Library page showing, a request for a game's page goes to the desk's pane instead (desk_show_game_page). */
 
 std::string g_details_shown;
-static gamepage::State g_details_page;   // the modal's game page state: tab, description scroll hold, footer height, ...
+static gamepage::View g_details_view;   // the full-window page's state: tab, scroll, focus, ...
+static bool g_details_open = false;
+static std::string g_details_key;       // the game the open page shows: the selection (a Versions button on the page switches it)
 
 void draw_details_modal() {
     draw_ghost_modal();   // a friend's game you do not own (friend_games_ui.cpp)
-    g_details_shown.clear();
+    g_details_shown = desk_pane_shown();   // the desk pane drew a game's page this frame (or "")
     if (g_headless && A.show_details && !A.lib.empty() && !A.env_select.empty() && find_entry(A.env_select)) { A.sel_game = A.env_select; A.env_select.clear(); }   // HUB_SHOT_DETAILS: select the named game before opening
     if (A.show_details && !(g_headless && A.lib.empty())) {   // headless aids (HUB_SHOT_DETAILS) set this before the library exists: keep it pending until then
         A.show_details = false;
-        if (find_entry(A.sel_game)) ImGui::OpenPopup("##details");
+        if (find_entry(A.sel_game)) {
+            if (!g_details_open && desk_show_game_page(A.sel_game)) {}   // Library desk with its Library page showing: the pane shows it
+            else {
+                if (!g_details_open || g_details_key != A.sel_game) gamepage::view_reset(g_details_view);
+                g_details_open = true;
+                g_details_key = A.sel_game;
+                shot_trace("gamepage-open", g_details_key);
+            }
+        }
     }
-    const hub::GameEntry* ep = find_entry(A.sel_game);
-    ImGuiIO& io = ImGui::GetIO();
-    float w = std::min(sp(104.f), io.DisplaySize.x * 0.92f);
-    ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    const float win_max_h = io.DisplaySize.y * 0.92f;
-    ImGui::SetNextWindowSize(ImVec2(w, 0));
-    ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0), ImVec2(w, win_max_h));   // never taller than the window: the tab body scrolls above a fixed footer
-    const bool short_win = io.DisplaySize.y < hubui::lc::kShortWindowPx;   // short window: tighter padding and gaps so the body keeps some height
-    const float win_pad = short_win ? sp(2.f) : sp(3.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(win_pad, win_pad));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
-    bool open = ImGui::BeginPopupModal("##details", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
-    ImGui::PopStyleVar(2);
-    if (!open) return;
-    if (!ep || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    if (short_win) ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp(0.75f)));
-    const hub::GameEntry& e = *ep;
-    g_details_shown = e.key;
-    gamepage::Host host;
-    host.close = [] { ImGui::CloseCurrentPopup(); };
-    gamepage::Ctx c = gamepage::begin(g_details_page, e, host, ImGui::IsWindowAppearing());
-
-    gamepage::draw_header(c);   // cover, title, facts, play time, description
-    gamepage::draw_notices(c);
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
-
-    const float bh = sp(5.5f);
-    const float bh2 = sp(4.5f);
-    gamepage::draw_action_row(c, gamepage::primary_actions(c), bh);   // Play / Resume (default focus), Play Online, Close
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
-
-    gamepage::draw_tab_pills(c);   // only the tabs that have something to show
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    /* the content area keeps one height for every tab so the page does not jump; it scrolls inside if needed */
-    /* The footer (secondary actions, wraps to several rows) keeps its measured height from the last frame; the body takes what is left of the
-     * window's maximum height and scrolls inside it, so nothing is ever hidden behind the buttons. */
-    const float footer_est = g_details_page.footer_h > 0.f ? g_details_page.footer_h : bh2 * 2.f + sp(1.5f);
-    float room = hubui::lc::body_room(win_max_h, ImGui::GetCursorPosY(), footer_est + sp(1.f), win_pad, sp(6.f));
-    float tabh = std::min(sp(36.f), room);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(0, std::min(tabh, sp(15.f))), ImVec2(FLT_MAX, tabh));
-    ImGui::BeginChild("##tabbody", ImVec2(0, 0), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AutoResizeY);
-    gamepage::draw_tab_body(c);
-    ImGui::EndChild();
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
-
-    /* secondary actions */
-    const float footer_y0 = ImGui::GetCursorPosY();
-    if (gamepage::draw_action_row(c, gamepage::secondary_actions(c), bh2) == gamepage::Row::Gone) {   // Hide game: e is gone from the library
-        A.show_details = false;
-        ImGui::CloseCurrentPopup();
-        if (short_win) ImGui::PopStyleVar();
-        ImGui::EndPopup();
-        return;   // nothing after this touches the (now removed) entry
-    }
-    g_details_page.footer_h = ImGui::GetCursorPosY() - footer_y0 + ImGui::GetStyle().ItemSpacing.y;
-    custom_draw(1);   // Customize / Add to shelf modals nest inside this one
-    if (short_win) ImGui::PopStyleVar();
-    ImGui::EndPopup();
+    if (g_details_open && A.sel_game != g_details_key && find_entry(A.sel_game)) g_details_key = A.sel_game;   // e.g. a hack's Versions row picked another version
+    const hub::GameEntry* ep = g_details_open ? find_entry(g_details_key) : nullptr;
+    const gamepage::Drawn d = gamepage::draw_view(g_details_view, ep, gamepage::HostKind::Overlay, ImVec2(0, 0), ImGui::GetIO().DisplaySize, &g_details_open);
+    if (d.shown) g_details_shown = g_details_view.shown;
+    if (d.gone) A.show_details = false;   // Hide game: the entry is gone from the library; nothing after this touches it
 }
 
 /* ---------- the page ---------- */
