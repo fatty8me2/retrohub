@@ -219,6 +219,24 @@ int main() {
         f5.choose_here(); CHECK(!f5.done);
         f5.sel = (int)f5.entries.size() - 1; f5.activate();
         CHECK(f5.done && f5.result.find("c.json") != std::string::npos);
+        /* screenshot runs: made-up entries only, whatever folder it is asked to start in (a real one here) */
+        FolderBrowser f6;
+        f6.made_up = true;
+        f6.open(root.string());
+        CHECK(f6.cwd.empty() && f6.entries.size() == 5);   // Desktop, Documents, Downloads, C:\, D:\ .
+        CHECK(f6.entries[0].type == FolderEntry::Shortcut && f6.entries[0].path == "C:\\Users\\Player\\Desktop" && f6.entries[4].path == "D:\\");
+        f6.sel = 3; f6.activate();   // C:\ .
+        CHECK(f6.cwd == "C:\\" && f6.entries.size() == 5 && f6.entries[2].name == "Emulation" && f6.entries[2].path == "C:\\Emulation");
+        f6.sel = 3; f6.activate();   // C:\Games
+        CHECK(f6.cwd == "C:\\Games" && f6.entries[0].type == FolderEntry::Select && f6.entries[2].path == "C:\\Games\\Emulation");
+        for (const auto& e : f6.entries) CHECK(e.name != "alpha" && e.name != "Bravo");
+        FolderBrowser f7;
+        f7.made_up = true;
+        f7.pick_files = true;
+        f7.filters = {".z64"};
+        f7.open("");
+        f7.sel = 4; f7.activate();   // D:\ .
+        CHECK(f7.entries.back().type == FolderEntry::File && f7.entries.back().name == "Example game.z64");
         fs::remove_all(root, ec);
     }
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }

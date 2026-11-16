@@ -266,13 +266,26 @@ void FolderBrowser::open(const std::string& start) {
     done = cancelled = false;
     result.clear();
     std::error_code ec;
-    cwd = (!start.empty() && fs::is_directory(P(start), ec)) ? start : "";
+    cwd = (!made_up && !start.empty() && fs::is_directory(P(start), ec)) ? start : "";
     sel = 0;
     refresh();
 }
 void FolderBrowser::refresh() {
     entries.clear();
     std::error_code ec;
+    if (made_up) {   // screenshot runs: the same shapes as a real PC, nothing read from the disk
+        if (cwd.empty()) {
+            for (const char* n : {"Desktop", "Documents", "Downloads"}) entries.push_back({FolderEntry::Shortcut, n, std::string("C:\\Users\\Player\\") + n});
+            for (const char* d : {"C:\\", "D:\\"}) entries.push_back({FolderEntry::Drive, d, d});
+        } else {
+            if (!pick_files) entries.push_back({FolderEntry::Select, "Select this folder", cwd});
+            entries.push_back({FolderEntry::Up, "..  (up one level)", parent_of(cwd)});
+            for (const char* n : {"Emulation", "Games", "ROMs"}) entries.push_back({FolderEntry::Dir, n, cwd + (cwd.back() == '\\' ? "" : "\\") + n});
+            if (pick_files) entries.push_back({FolderEntry::File, "Example game" + (filters.empty() ? std::string(".zip") : filters[0]), cwd + "\\Example game"});
+        }
+        if (sel >= (int)entries.size()) sel = 0;
+        return;
+    }
     if (cwd.empty()) {
 #ifdef _WIN32
         const std::string up_s = winutil::getenv_utf8("USERPROFILE"); const char* up = up_s.empty() ? nullptr : up_s.c_str();

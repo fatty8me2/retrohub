@@ -77,7 +77,10 @@ foreach ($layout in @('trad', 'desk')) {
     Add-Shot "$layout-pop-stateresume" $layout '1280x720' (Merge $lib @{ HUB_SHOT_STATES = '1'; HUB_SHOT_DETAILS = 'fake:1'; HUB_SHOT_TAB = '1'; HUB_SHOT_PAD = 'down,down,down,down,down,left,shot:at,a,shot:resumed' })
     Add-Shot "$layout-pop-history" $layout '1280x720' (Merge $lib @{ HUB_SHOT_STATES = '1'; HUB_SHOT_DETAILS = 'fake:1'; HUB_SHOT_TAB = '1'; HUB_SHOT_PAD = 'down,down,shot:at,a,shot:history' })
     Add-Shot "$layout-pop-verify" $layout '1280x720' (Merge $lib @{ HUB_SHOT_VERIFY = '1'; HUB_SHOT_DETAILS = 'fake:0' })
-    Add-Shot "$layout-pop-hackrm" $layout '1280x720' (Merge $lib @{ HUB_SHOT_HACKS = '1'; HUB_SHOT_DETAILS = 'fake:0+h00000000'; HUB_SHOT_PAD = 'down,down,down,down,left,shot:at,a,shot:remove,b,shot:after_b' })
+    # Remove hack... by pad. Traditional at 1280x720 lays About out in two columns: Down from the tabs reaches the side column's Reassign
+    # first (it sits a little higher than the Versions row), the next Down "Send this hack to a friend", Left "Remove hack..."
+    $hackWalk = if ($layout -eq 'trad') { 'down,down,down,left,shot:at,a,shot:remove,b,shot:after_b' } else { 'down,down,down,down,left,shot:at,a,shot:remove,b,shot:after_b' }
+    Add-Shot "$layout-pop-hackrm" $layout '1280x720' (Merge $lib @{ HUB_SHOT_HACKS = '1'; HUB_SHOT_DETAILS = 'fake:0+h00000000'; HUB_SHOT_PAD = $hackWalk })
     Add-Shot "$layout-pop-versions" $layout '1280x720' (Merge $lib @{ HUB_SHOT_HACKS = '1'; HUB_SHOT_DETAILS = 'fake:0+h00000000'; HUB_SHOT_PAD = 'down,down,down,shot:at,a,shot:switched' })
     Add-Shot "$layout-pop-smash" $layout '1280x720' @{ HUB_SHOT_FAKE_LIB = 'native'; HUB_SHOT_DETAILS = 'native:smash64'; HUB_SHOT_PAD = 'right,right,a,down,shot:menu,a,shot:browser,back,shot:after_back,b,shot:after_b' }
     Add-Shot "$layout-pop-hsdropdown" $layout '1280x720' (Merge $oot @{ HUB_SHOT_SECS = '6'; HUB_SHOT_CLICK = $(if ($layout -eq 'trad') { '240,427' } else { '650,505' }); HUB_SHOT_PAD = 'wait,wait,wait,wait,wait,wait,wait,wait,wait,shot:list,b,shot:after_b' })

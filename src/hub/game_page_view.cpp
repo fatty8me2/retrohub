@@ -184,7 +184,9 @@ bool draw_page_header(Frame& F) {
             tooltip_for(*play);
         }
         ImGui::SetItemDefaultFocus();
-        if (v.focus_play || (ImGui::GetFrameCount() <= v.focus_until && !nav_inside)) {
+        /* The pane waits while a popup is up (a dialog the page opened, the friends panel's menus ...): focusing the pane would close it */
+        const bool popup_up = F.host == HostKind::Pane && ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        if ((v.focus_play && !popup_up) || (ImGui::GetFrameCount() <= v.focus_until && !nav_inside)) {
             focus_last_item(v.focus_play ? v.focus_visible : A.pad_mode);
             if (v.focus_play) shot_trace("gamepage-focus", "play " + c.e.key);
             v.focus_play = false;

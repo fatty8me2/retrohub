@@ -87,6 +87,7 @@ struct FolderBrowser {
     std::string result;
     bool pick_files = false;                // file mode: list matching files, no "Select this folder"
     std::vector<std::string> filters;       // file mode: extensions incl. dot (".json"); empty = every file
+    bool made_up = false;                   // screenshot runs: made-up shortcuts, drives and folders; the disk is never read
 
     bool matches(const std::string& filename) const;
     void open(const std::string& start);   // falls back to the drive list when start is not a folder

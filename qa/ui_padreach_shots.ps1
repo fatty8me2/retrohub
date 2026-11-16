@@ -81,12 +81,18 @@ function Has($r, $pattern) { return @($r.lines | Where-Object { $_ -match $patte
 # 1. Save-state cells (Saves tab of fake:1 with fake states): down from Play into the cells, right to the next one, A selects it.
 if (-not $Only -or "states" -match $Only) {
     Write-Host "states (Saves tab cells)"
-    # Resume -> Saves tab -> first control of the tab -> the Auto cell; right = Slot 0; A selects it; down = Slot 6 (focus only, Slot 0
-    # stays selected); down = "Resume from this" for Slot 0 (look at states-resume.png)
-    $r = Run "states" "wait,down,down,down,shot:cell,right,shot:cell_right,a,shot:after_a,down,shot:below,down,shot:resume" @{ HUB_SHOT_STATES = "1"; HUB_SHOT_DETAILS = "fake:1"; HUB_SHOT_TAB = "1" } "5"
+    # Resume -> Saves tab -> History... (the tab's first control, on the "Save history" line) -> the cell under it (Slot 0); left = the
+    # Auto cell; right = Slot 0; A selects it; down = Slot 7 (focus only, Slot 0 stays selected); down = "Resume from this" for Slot 0
+    # (look at states-resume.png). Since the game page became a full-window page, History... sits above Slot 0, not above Auto.
+    $r = Run "states" "wait,down,down,down,left,shot:cell,right,shot:cell_right,a,shot:after_a,down,shot:below,down,shot:resume" @{ HUB_SHOT_STATES = "1"; HUB_SHOT_DETAILS = "fake:1"; HUB_SHOT_TAB = "1" } "5"
     Check "states: the D-pad focuses the Auto cell" (Has $r '^state-focus fake:1 slot=-1') "no 'state-focus fake:1 slot=-1' trace line"
     Check "states: right moves to Slot 0" (Has $r '^state-focus fake:1 slot=0') "no 'state-focus fake:1 slot=0' trace line"
     Check "states: A on Slot 0 selects it" (Has $r '^state-pick fake:1 slot=0') "no 'state-pick fake:1 slot=0' trace line"
+    # The same in the Library desk's pane: Resume sits at the pane's right, and ImGui keeps that column when moving down (its preferred
+    # x), so the third Down lands on Slot 2; left x3 = Slot 1, Slot 0, Auto; right = Slot 0; A selects it
+    $r = Run "states_desk" "wait,down,down,down,left,left,left,shot:cell,right,shot:cell_right,a,shot:after_a" @{ HUB_SHOT_LAYOUT = "desk"; HUB_SHOT_STATES = "1"; HUB_SHOT_DETAILS = "fake:1"; HUB_SHOT_TAB = "1" } "6"
+    Check "states (desk): the D-pad reaches the Auto cell" (Has $r '^state-focus fake:1 slot=-1') "no 'state-focus fake:1 slot=-1' trace line"
+    Check "states (desk): A on Slot 0 selects it" (Has $r '^state-pick fake:1 slot=0') "no 'state-pick fake:1 slot=0' trace line"
 }
 
 # 2. Screenshot thumbnails (Screenshots tab of fake:0 with six fake pictures): focus walks right along the strip, which scrolls; A opens the viewer.

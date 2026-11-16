@@ -1175,10 +1175,10 @@ void pane_ghost(const ImRect& r, const hubui::fg::Ghost& g) {
 }
 
 /* What Traditional's Home asks for with its setup cards, as ONE slim banner above the game page: "Add your game folders" while only the
- * bundled game is here, otherwise "Finish setup" with the steps still open. The title and one short line on the left, the two buttons on
- * the right; when that does not fit (a narrow pane, a big UI size) the buttons go on a line of their own under the text, one under the
- * other if even that is too narrow, and the text is cut with "..." (the whole text in its tooltip). Not now hides it for this run (Finish
- * setup: on Home too). Returns the height it takes, gap under it included (0 = none). */
+ * bundled game is here, otherwise "Finish setup" with the steps still open. The title and one short line on the left (cut with "...", or
+ * left out when there is too little room; the whole text is in its tooltip), the two buttons on the right. When even the title and the
+ * buttons do not fit (a narrow pane at a big UI size) the buttons go on a line of their own under the text, sharing its width, or one
+ * under the other. Not now hides it for this run (Finish setup: on Home too). Returns the height it takes, gap under it included. */
 float pane_banner(const ImRect& r) {
     if (A.lib.empty()) return 0.f;   // the empty-library pane shows Traditional's cards itself
     bool own_empty = true;
@@ -1201,7 +1201,7 @@ float pane_banner(const ImRect& r) {
     const float btns = w1 + gap + w2;
     const float inner = std::max(1.f, r.GetWidth() - padx * 2.f);
     const float title_w = tf->CalcTextSizeA(tf->FontSize, FLT_MAX, 0.f, title).x, sep = sp(1.5f);
-    const bool one = title_w + sep + sp(14.f) + gap * 2.f + btns <= inner;   // one line: the title, some of the line, the buttons
+    const bool one = title_w + gap * 2.f + btns <= inner;                     // one line: the title, what fits of the line, the buttons
     int rows = 1;                                                             // otherwise the buttons go on a line under the text:
     if (!one && btns > inner) {
         const float c1 = w1 - sp(5.f), c2 = w2 - sp(5.f);                    // (the labels, without the buttons' side padding)
@@ -1224,7 +1224,7 @@ float pane_banner(const ImRect& r) {
     dl->AddText(tf, tf->FontSize, ImVec2(tx0, ty + (text_h - tf->FontSize) * 0.5f), ui::TEXT, t.c_str());
     const float lx = tx0 + tf->CalcTextSizeA(tf->FontSize, FLT_MAX, 0.f, t.c_str()).x + sep;
     bool cut = t != title;
-    if (lx < tx1 - sp(4.f)) {
+    if (lx < tx1 - sp(10.f)) {   // (less room than that: the title alone, the line in its tooltip)
         const std::string l = ui::ellipsize(bf, bf->FontSize, line, tx1 - lx);
         dl->AddText(bf, bf->FontSize, ImVec2(lx, ty + (text_h - bf->FontSize) * 0.5f), ui::TEXT2, l.c_str());
         cut = cut || l != line;
