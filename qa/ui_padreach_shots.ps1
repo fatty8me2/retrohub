@@ -117,9 +117,10 @@ if (-not $Only -or "gamenight" -match $Only) {
     $extra = @{ HUB_SHOT_FAKE_FRIENDS = "1"; HUB_SHOT_FRIENDS = "1"; HUB_SHOT_CHAT = "1"; HUB_SHOT_CLICK = "1153,40" }
     $r = Run "gamenight" "wait,wait,wait,wait,wait,wait,wait,wait,wait,wait,wait,wait,shot:open,a,shot:list,b,shot:list_closed,b,shot:closed" $extra "5"
     $open = @($r.pad | Where-Object { $_.tok -eq "shot:open" })
-    Check "gamenight: the dialog opens" ($open.Count -ge 1 -and $open[-1].popup -eq 1 -and $open[-1].win -eq "##plan_night") "row=$(if ($open.Count) { "popup=$($open[-1].popup) win=$($open[-1].win)" } else { 'none' })"
+    # -like: on ui::dialog the focus sits in the dialog's scrolling middle, a child window named "##plan_night/##dlg_body_..."
+    Check "gamenight: the dialog opens" ($open.Count -ge 1 -and $open[-1].popup -eq 1 -and $open[-1].win -like "##plan_night*") "row=$(if ($open.Count) { "popup=$($open[-1].popup) win=$($open[-1].win)" } else { 'none' })"
     $b = @($r.pad | Where-Object { $_.tok -eq "b" })
-    Check "gamenight: the first B only closes the Game list" ($b.Count -ge 1 -and $b[0].popup -eq 1 -and $b[0].win -eq "##plan_night") "row=$(if ($b.Count) { "popup=$($b[0].popup) win=$($b[0].win)" } else { 'none' })"
+    Check "gamenight: the first B only closes the Game list" ($b.Count -ge 1 -and $b[0].popup -eq 1 -and $b[0].win -like "##plan_night*") "row=$(if ($b.Count) { "popup=$($b[0].popup) win=$($b[0].win)" } else { 'none' })"
     Check "gamenight: the second B closes the dialog" ($b.Count -ge 2 -and $b[-1].popup -eq 0) "popup after the second B=$(if ($b.Count -ge 2) { $b[-1].popup } else { 'no row' })"
     Check "gamenight: the chat stays open with focus on its header" ($b.Count -ge 2 -and $b[-1].win -eq "##friends" -and $b[-1].nav -ne "00000000") "row=$(if ($b.Count -ge 2) { "win=$($b[-1].win) nav=$($b[-1].nav)" } else { 'none' })"
 }

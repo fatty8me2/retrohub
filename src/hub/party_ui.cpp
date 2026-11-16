@@ -823,7 +823,7 @@ void partyui_qa_drive(unsigned long long now) {
 }
 
 /* ================================================================== screenshot aid (HUB_SHOT_PARTY) */
-/* HUB_SHOT_PARTY=panel|lobbyguest|playing|standings|winner|vote|tie|podium|update|couch|couchround|off|offmenu|setup|plan|stand|playingmenu  (+ HUB_SHOT_PARTY_GUEST=1 for the guest's view)
+/* HUB_SHOT_PARTY=panel|lobbyguest|playing|standings|winner|vote|tie|podium|update|couch|couchpick|couchround|off|offmenu|setup|plan|stand|playingmenu  (+ HUB_SHOT_PARTY_GUEST=1 for the guest's view)
  * Fakes a room of four (Mia, Jake, Kai and "You"/"Ana") and a party State of that mode; no network, nothing written. */
 void party_shot_init() {
     const char* m = std::getenv("HUB_SHOT_PARTY");
@@ -838,6 +838,8 @@ void party_shot_init() {
     else if (mode == "playingmenu") { mode = "playing2"; view = "menu"; }        // the strip's menu (End the party)
     else if (mode == "off") { mode = "panel"; strip_off = true; }
     else if (mode == "offmenu") { mode = "panel"; strip_off = true; view = "menu"; }
+    const bool couch_pick = mode == "couchpick";                                // the couch setup on "I'll pick" (with HUB_SHOT_FAKE_LIB=30: 24 game chips)
+    if (couch_pick) mode = "couch";
     const bool guest = std::getenv("HUB_SHOT_PARTY_GUEST") != nullptr || mode == "lobbyguest";
     const bool couch = mode == "couch" || mode == "couchround";
     if (A.st.name.empty()) A.st.name = "Ana";
@@ -930,6 +932,7 @@ void party_shot_init() {
             R.couch.players = 3;
             R.couch.names[0] = "Ana"; R.couch.names[1] = "Ben"; R.couch.names[2] = "Cleo";
             R.couch.rounds = 5;
+            if (couch_pick) R.couch.shuffle = false;
         }
     }   // (the room page picks the fake room's game itself: whatever online game the scratch library has, else a fake Smash)
     if (!s.poll.empty()) {   // what this PC voted: the State's own record of its seat

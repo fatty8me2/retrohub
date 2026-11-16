@@ -12,6 +12,8 @@
 #include "challenge_ui.h"
 #include "friend_pick_ui.h"
 #include "hack_ui.h"
+#include "ui_sheet.h"
+#include "dialogs2b_logic.h"
 
 #include <shellapi.h>
 
@@ -917,6 +919,14 @@ void fr_fake_init() {
     o.uid = "rinuid"; o.name = "Rin"; o.code = "RH-ZX5C-VB6N"; o.at = now;
     FR.f_out.push_back(o);
     if (std::getenv("HUB_SHOT_FAKE_NIGHT")) gn_fake_seed();
+    if (std::getenv("HUB_SHOT_PLAN_NIGHT")) {   // screenshot aid: Mia's chat with the "Plan a session" dialog open (needs HUB_SHOT_FRIENDS)
+        void gn_plan_open_shot(const std::string& uid);   // gamenight_ui.cpp
+        fr_open_chat("miauid");
+        gn_plan_open_shot("miauid");
+    }
+    if (const char* cf = std::getenv("HUB_SHOT_FRCONF")) {   // screenshot aid: the remove / block question for Mia (needs HUB_SHOT_FRIENDS); nothing is sent
+        for (const hubnet::Friend& f : FR.f_friends) if (f.uid == "miauid") { fr_confirm(std::strcmp(cf, "block") == 0 ? "block" : "remove", f); break; }
+    }
     if (std::getenv("HUB_SHOT_FAKE_DUPES")) {   // screenshot aid: the same people repeated in every way; the panel must still show each once
         mk("oldkai", "Kai", PS::Offline, "", "", "", "", false, 0, 0, now - 20 * 86400 * 1000LL);   // Kai's old identity (never retired), same name
         mk("miauid", "Mia", PS::Offline, "", "", "", "", false, 0, 0, now - 86400 * 1000LL);   // second row, same uid
@@ -1178,7 +1188,7 @@ void fr_draw_toasts(float right_x, float bottom_y) {
         if (n.invite && n.night_id.empty() && A.popup_last_frame) continue;   // the bell / a menu / a modal is open: the floating invite card or pill is hidden (it is in the bell list), never over the panel
         if (FR.fake && g_headless) n.t0 = std::max(n.t0, now - 1.0);   // screenshots: the toast must outlive a slow library scan
         if (FR.fake && g_headless && std::getenv("HUB_SHOT_INVITE_AGE")) n.t0 = now - std::atof(std::getenv("HUB_SHOT_INVITE_AGE"));   // screenshot aid: age the invite toast (>10 = shrunk pill)
-        double life = !n.night_id.empty() ? 120.0 : (n.invite || n.ask) ? 30.0 : 20.0, age = now - n.t0;
+        double life = !n.night_id.empty() ? hubui::dlg2b::kNightCardLife : (n.invite || n.ask) ? 30.0 : 20.0, age = now - n.t0;   // a night card's Friends-list row follows the same life
         if (age > life) { n.toast = false; continue; }
         float in = (float)std::min(1.0, age / 0.3);
         in = 1.f - (1.f - in) * (1.f - in);
@@ -1781,12 +1791,15 @@ static void fr_view_modal() {
 }
 
 /* ---- profile editor (S1) ---- */
+/* A ui::dialog (ui_sheet.h) under its old popup name: the title is pinned, the avatars / favourite game / status line scroll in the middle
+ * on a short window or a big UI size, and Done stays put. Changes save as they are made; B / Esc close (the typed status line is kept
+ * only by Done or by finishing the edit, as before). */
+static bool g_prof_open = false;
 static void fr_profile_modal() {
-    if (FR.open_prof) { ImGui::OpenPopup("Your profile##frprof"); FR.open_prof = false; FR.prof_buf_init = false; }
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.5f)));
-    if (ImGui::BeginPopupModal("Your profile##frprof", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
-        if (ui::modal_back()) ImGui::CloseCurrentPopup();
+    if (FR.open_prof) { g_prof_open = true; FR.open_prof = false; FR.prof_buf_init = false; }
+    ui::DialogOpts po;
+    po.keep_id = true;
+    if (ui::dialog_begin("Your profile##frprof", "Your profile", &g_prof_open, ui::DialogSize::Medium, po)) {
         hub::profile::Profile pr = fr_my_profile();
         if (!FR.prof_buf_init) { std::snprintf(FR.prof_status_buf, sizeof FR.prof_status_buf, "%s", pr.status.c_str()); FR.prof_buf_init = true; }
         bool changed = false;
@@ -1796,7 +1809,7 @@ static void fr_profile_modal() {
         std::vector<std::string> opts{""};
         for (auto k : hub::profile::kConsoles) opts.push_back(std::string("c:") + k);
         if (!pr.fav_game.empty()) opts.push_back("g:" + pr.fav_game);
-        int per_row = 7;
+        const int per_row = hubui::dlg2b::cells_per_row(ImGui::GetContentRegionAvail().x, cell, sp(0.75f), 7);   // 7 a row, fewer when the dialog is narrow
         for (size_t i = 0; i < opts.size(); i++) {
             if (i % per_row) ImGui::SameLine(0, sp(0.75f));
             ImGui::PushID((int)i);
@@ -1815,7 +1828,7 @@ static void fr_profile_modal() {
         ImGui::TextUnformatted("Favourite game");
         std::string cur = "None";
         for (const auto& e : A.lib) if (e.key == pr.fav_game) cur = e.title;
-        ImGui::SetNextItemWidth(sp(40.f));
+        ImGui::SetNextItemWidth(std::min(sp(40.f), ImGui::GetContentRegionAvail().x));
         if (ImGui::BeginCombo("##favgame", cur.c_str())) {
             if (ImGui::Selectable("None", pr.fav_game.empty())) { pr.fav_game.clear(); if (pr.avatar.rfind("g:", 0) == 0) pr.avatar.clear(); changed = true; }
             for (const auto& e : A.lib) {
@@ -1826,22 +1839,22 @@ static void fr_profile_modal() {
         }
         ImGui::Dummy(ImVec2(1, sp(0.75f)));
         ImGui::TextUnformatted("Status line");
-        ImGui::SetNextItemWidth(sp(40.f));
+        ImGui::SetNextItemWidth(std::min(sp(40.f), ImGui::GetContentRegionAvail().x));
         if (osk::input("##profstatus", "what are you playing?", FR.prof_status_buf, (int)hub::profile::kStatusMax + 1, ImGuiInputTextFlags_EnterReturnsTrue)) changed = true;
         if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
         if (changed) { pr.status = hub::profile::clean_status(FR.prof_status_buf); fr_my_profile_save(pr); }
         ImGui::Dummy(ImVec2(1, sp(0.75f)));
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
-        ImGui::TextUnformatted("Friends see this on your row and in rooms.");
+        ImGui::TextWrapped("Friends see this on your row and in rooms.");
         ImGui::PopStyleColor();
+        ui::dialog_buttons();
         if (ui::button("Done", ImVec2(sp(10.f), sp(3.5f)), true, true)) {
             pr.status = hub::profile::clean_status(FR.prof_status_buf);
             fr_my_profile_save(pr);
-            ImGui::CloseCurrentPopup();
+            g_prof_open = false;
         }
-        ImGui::EndPopup();
+        ui::dialog_end();
     }
-    ImGui::PopStyleVar();
 }
 
 /* ---- reactions (S4) ---- */
@@ -2169,6 +2182,78 @@ void fr_chat_view(float cw) {
 }
 
 /* ---- the panel ---- */
+/* ---- game night card: its controller entry in the Friends list ----
+ * The card (fr_draw_toasts) is a toast in its own window that never takes the focus, so a controller could not reach Host / Join. While
+ * it is up, the list shows one focusable row for it (with a focus ring); A or a click opens a small ui::dialog with exactly the card's
+ * actions, Host or Join, and Dismiss. B closes that dialog and does nothing. Start keeps its meaning (join an invite / the panel). */
+static int g_gn_dlg_notif = 0;      // Notif id whose dialog is up
+static bool g_gn_dlg_open = false;
+
+static bool fr_night_card_up(const Notif& n) {
+    return hubui::dlg2b::night_card_up(!n.night_id.empty(), n.done, n.toast, ImGui::GetTime() - n.t0);
+}
+
+static void fr_night_rows(float lw) {
+    bool any = false;
+    for (const Notif& n : FR.notifs) {
+        if (!fr_night_card_up(n)) continue;
+        std::string tt, ss;
+        const char* act = "Host";
+        if (!gn_card_info(n.night_id, &tt, &ss, &act)) continue;   // over: the toast drops it this frame
+        if (!any) { fr_section("GAME NIGHT"); any = true; }
+        ImGui::PushID(n.id);
+        const float h = sp(6.f);
+        const ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + lw, p0.y + h);
+        const bool hit = ImGui::InvisibleButton("##gnrow", ImVec2(lw, h), ImGuiButtonFlags_EnableNav);
+        const bool focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;   // the ring is for D-pad / keyboard focus only
+        const bool show = focus || ImGui::IsItemHovered();
+        ImDrawList* ldl = ImGui::GetWindowDrawList();
+        if (show) ldl->AddRectFilled(p0, p1, ui::PANEL2, sp(1.5f));
+        fr_avatar(ldl, ImVec2(p0.x + sp(3.f), p0.y + h * 0.5f), sp(2.f), n.name, hubui::FS_Online, show ? ui::PANEL2 : ui::PANEL);
+        ui::icon(ldl, ui::Icon::ChevronR, ImVec2(p1.x - sp(2.f), p0.y + h * 0.5f), sp(2.f), ui::TEXT3);   // opens a choice
+        const float tx = p0.x + sp(6.f), tw = std::max(sp(6.f), p1.x - sp(4.f) - tx);
+        ldl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, p0.y + sp(0.75f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, tt, tw).c_str());
+        ldl->AddText(ui::F.cap, ui::F.cap->FontSize, ImVec2(tx, p0.y + sp(0.75f) + ui::F.bold->FontSize * 1.25f), ui::TEXT2, ui::ellipsize(ui::F.cap, ui::F.cap->FontSize, ss, tw).c_str());
+        if (focus) {
+            ui::focus_ring(ldl, p0, p1, sp(1.5f));
+            if (g_headless) shot_trace_once("gn-card-focus", n.night_id);   // QA trace (HUB_SHOT_TRACE)
+        }
+        if (hit) { g_gn_dlg_notif = n.id; g_gn_dlg_open = true; shot_trace("gn-card-open", n.night_id); }
+        ImGui::PopID();
+    }
+    if (any) ImGui::Dummy(ImVec2(0, sp(0.5f)));
+}
+
+/* The small dialog the row opens (drawn inside the Friends panel window, like the other panel dialogs). */
+static void fr_night_card_dialog() {
+    Notif* n = nullptr;
+    std::string tt, ss;
+    const char* act = "Host";
+    if (g_gn_dlg_open) {
+        for (Notif& x : FR.notifs) if (x.id == g_gn_dlg_notif) { n = &x; break; }
+        if (!n || !fr_night_card_up(*n) || !gn_card_info(n->night_id, &tt, &ss, &act)) { n = nullptr; g_gn_dlg_open = false; }   // the card went away: close, do nothing
+    }
+    if (!ui::dialog_begin("gn_card", tt.c_str(), &g_gn_dlg_open, ui::DialogSize::Small)) return;
+    if (!n) { g_gn_dlg_open = false; ui::dialog_end(); return; }   // (not reached: no card means the dialog was closed above)
+    ImGui::TextWrapped("%s", ss.c_str());
+    ui::dialog_buttons();
+    const std::string id = n->night_id;
+    if (ui::button(act, ImVec2(std::max(sp(14.f), ui::dialog_button_w(act)), sp(5.f)), true)) {   // the card's first button: Host or Join
+        shot_trace("gn-card-act", std::string(act) + " " + id);
+        n->done = true;   // as the card does (before the action, which may add notifications)
+        g_gn_dlg_open = false;
+        gn_card_action(id);
+    }
+    ui::dialog_same_line(std::max(sp(14.f), ui::dialog_button_w("Dismiss")));
+    if (ui::button("Dismiss", ImVec2(std::max(sp(14.f), ui::dialog_button_w("Dismiss")), sp(5.f)))) {
+        shot_trace("gn-card-dismiss", id);
+        n->done = true;
+        g_gn_dlg_open = false;
+        gn_card_dismiss(id);
+    }
+    ui::dialog_end();
+}
+
 void fr_draw_panel(float disp_w, float disp_h) {
     float pw = fr_panel_w(disp_w);
     float shown = FR.panel_t;
@@ -2292,6 +2377,7 @@ void fr_draw_panel(float disp_w, float disp_h) {
         ImGui::PopStyleVar();
         ImGui::PopStyleColor();
         float lw = ImGui::GetContentRegionAvail().x - sp(0.5f);
+        fr_night_rows(lw);   // a game night card that is up: reachable with the D-pad here
         std::vector<hubnet::Request> in = fr_incoming(), out = fr_outgoing();
         if (!in.empty() || !out.empty()) {
             fr_section("REQUESTS " + std::to_string(in.size() + out.size()));
@@ -2398,30 +2484,30 @@ void fr_draw_panel(float disp_w, float disp_h) {
     fr_profile_modal();
     fr_view_modal();
 
-    // remove / block confirmation
-    if (FR.confirm_open) { ImGui::OpenPopup("Are you sure?##frconf"); FR.confirm_open = false; }
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.5f)));
-    if (ImGui::BeginPopupModal("Are you sure?##frconf", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
-        if (ui::modal_back()) ImGui::CloseCurrentPopup();
+    // remove / block confirmation: a ui::dialog under its old popup name. The first button (Remove / Block) keeps the default focus it
+    // always had; B / Esc close it and do nothing.
+    static bool conf_open = false;
+    if (FR.confirm_open) { conf_open = true; FR.confirm_open = false; }
+    ui::DialogOpts co;
+    co.keep_id = true;
+    if (ui::dialog_begin("Are you sure?##frconf", "Are you sure?", &conf_open, ui::DialogSize::Small, co)) {
         bool block = FR.confirm_kind == "block";
-        ImGui::PushTextWrapPos(sp(36.f));
-        ImGui::TextUnformatted((std::string(block ? "Block " : "Remove ") + FR.confirm_name + (block ? "? They will be removed from your friends and can't contact you." : " from your friends?")).c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        ImGui::TextWrapped("%s", (std::string(block ? "Block " : "Remove ") + FR.confirm_name + (block ? "? They will be removed from your friends and can't contact you." : " from your friends?")).c_str());
+        ui::dialog_buttons();
         if (ui::button(block ? "Block" : "Remove", ImVec2(sp(14.f), sp(5.f)), true)) {
             if (FR.fake) {
                 for (size_t i = 0; i < FR.f_friends.size(); ++i) if (FR.f_friends[i].uid == FR.confirm_uid) { FR.f_friends.erase(FR.f_friends.begin() + i); break; }
             } else if (block) FR.cli.block(FR.confirm_uid);
             else FR.cli.remove_friend(FR.confirm_uid);
             if (FR.chat_uid == FR.confirm_uid) FR.chat_uid.clear();
-            ImGui::CloseCurrentPopup();
+            conf_open = false;
         }
-        ImGui::SameLine();
-        if (ui::button("Cancel", ImVec2(sp(14.f), sp(5.f)))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        ui::dialog_same_line(sp(14.f));
+        if (ui::button("Cancel", ImVec2(sp(14.f), sp(5.f)))) conf_open = false;
+        ui::dialog_end();
     }
-    ImGui::PopStyleVar();
+
+    fr_night_card_dialog();
     ImGui::End();
 }
 

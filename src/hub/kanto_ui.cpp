@@ -2,6 +2,8 @@
 #include "kanto_pad.h"
 #include <shlobj.h>
 #include "winutil.h"
+#include "ui_sheet.h"
+#include "dialogs2b_logic.h"
 
 /* Kanto Together inside RetroHub (see src/common/kanto.h and docs/KANTO_TOGETHER.md).
  * Library card -> first Play installs + builds the game -> rooms: the host's Launch starts the package's launcher HIDDEN (kanto::Session),
@@ -551,95 +553,78 @@ void kt_room_panel(float width, bool early) {
     end_panel();
 }
 
-static void modal_begin(const char* name, bool* open) {
-    ImGui::OpenPopup(name);
-    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(c, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(std::min(sp(78.f), ImGui::GetIO().DisplaySize.x * 0.94f), 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
-    *open = ImGui::BeginPopupModal(name, nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-    ImGui::PopStyleVar(2);
+/* The three dialogs are ui::dialogs (ui_sheet.h) under their old popup names: a pinned title, a middle that scrolls on a short window or
+ * a big UI size (How to play used to scroll in a nested area), and a pinned button row. Each is up while its state says so; B / Esc are
+ * read here, as before (Cancel the setup, Got it, Close). */
+static bool kt_dialog_begin(const char* name, const char* title, bool* shown, const char* subtitle = nullptr) {
+    ui::DialogOpts o;
+    o.keep_id = true;         // the old popup names
+    o.back_closes = false;    // B / Esc: see each dialog
+    o.subtitle = subtitle;
+    return ui::dialog_begin(name, title, shown, ui::DialogSize::Large, o);
 }
 
 void kt_draw_modals() {
+    namespace d2 = hubui::dlg2b;
+    const d2::KtDialog which = d2::kt_dialog(KT.show_install && (KT.fake || KT.prep.busy()), KT.intro, KT.howto);
     /* install / build progress (library Play) */
-    if (KT.show_install && (KT.fake || KT.prep.busy())) {
-        bool open = false;
-        modal_begin("Kanto Together setup", &open);
-        if (open) {
-            ImGui::TextWrapped("Setting up Kanto Together. RetroHub copies your package into its own data folder (your zip is not changed) and builds the game from your own FireRed ROM. This happens once.");
-            ImGui::Dummy(ImVec2(0, sp(1.f)));
-            float pr = KT.fake ? KT.fake_prog : (KT.prep.stage() == kanto::Prep::Stage::Installing ? KT.prep.progress() : -1.0f * (float)ImGui::GetTime());
-            ImGui::ProgressBar(pr, ImVec2(-1, 0));
-            text_wrapped_disabled(KT.fake ? KT.fake_prep : KT.prep.message());
-            ImGui::Dummy(ImVec2(0, sp(1.f)));
-            if ((button("Cancel", ImVec2(sp(14.f), sp(5.f))) || ui::modal_back()) && !KT.fake) { KT.prep.cancel(); KT.play_wait = false; KT.show_install = false; }
-            ImGui::EndPopup();
-        }
-        return;
+    bool setup = which == d2::KtDialog::Setup;
+    if (kt_dialog_begin("Kanto Together setup", "Kanto Together setup", &setup)) {
+        ImGui::TextWrapped("Setting up Kanto Together. RetroHub copies your package into its own data folder (your zip is not changed) and builds the game from your own FireRed ROM. This happens once.");
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        float pr = KT.fake ? KT.fake_prog : (KT.prep.stage() == kanto::Prep::Stage::Installing ? KT.prep.progress() : -1.0f * (float)ImGui::GetTime());
+        ImGui::ProgressBar(pr, ImVec2(-1, 0));
+        text_wrapped_disabled(KT.fake ? KT.fake_prep : KT.prep.message());
+        ui::dialog_buttons();
+        if ((button("Cancel", ImVec2(sp(14.f), sp(5.f))) || ui::modal_back()) && !KT.fake) { KT.prep.cancel(); KT.play_wait = false; KT.show_install = false; setup = false; }
+        ui::dialog_end();
     }
     /* first-session note, once */
-    if (KT.intro && !KT.howto) {
-        bool open = false;
-        modal_begin("Kanto Together first session", &open);
-        if (open) {
-            ImGui::PushFont(ui::F.h2);
-            ImGui::TextUnformatted("Your first session");
-            ImGui::PopFont();
-            ImGui::TextWrapped("%s", kanto::first_session_text(KT.host).c_str());
-            ImGui::Dummy(ImVec2(0, sp(1.f)));
-            if (button("Got it", ImVec2(sp(14.f), sp(5.f)), true) || ui::modal_back()) {
-                KT.intro = false;
-                A.st.kt_intro_seen = true;
-                mark_dirty();
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
+    bool intro = which == d2::KtDialog::Intro;
+    if (kt_dialog_begin("Kanto Together first session", "Your first session", &intro, "Kanto Together")) {
+        ImGui::TextWrapped("%s", kanto::first_session_text(KT.host).c_str());
+        ui::dialog_buttons();
+        if (button("Got it", ImVec2(sp(14.f), sp(5.f)), true) || ui::modal_back()) {
+            KT.intro = false;
+            A.st.kt_intro_seen = true;
+            mark_dirty();
+            intro = false;
         }
-        return;
+        ui::dialog_end();
     }
-    if (KT.howto) {
-        bool open = false;
-        modal_begin("How to play Kanto Together", &open);
-        if (open) {
-            ImGui::PushFont(ui::F.h2);
-            ImGui::TextUnformatted("How to play Kanto Together");
-            ImGui::PopFont();
-            ImGui::BeginChild("kt_howto_body", ImVec2(0, std::min(sp(46.f), ImGui::GetIO().DisplaySize.y * 0.6f)), ImGuiChildFlags_None);
-            std::stringstream ss(kanto::howto_text());
-            std::string line;
-            while (std::getline(ss, line)) {
-                if (line.compare(0, 2, "# ") == 0) {
-                    ImGui::Dummy(ImVec2(0, sp(0.75f)));
-                    ImGui::PushFont(ui::F.bold);
-                    ImGui::PushStyleColor(ImGuiCol_Text, COL_ACCENT);
-                    ImGui::TextUnformatted(line.c_str() + 2);
-                    ImGui::PopStyleColor();
-                    ImGui::PopFont();
-                } else {
-                    ImGui::PushTextWrapPos(0.f);
-                    ImGui::TextUnformatted(line.c_str());
-                    ImGui::PopTextWrapPos();
-                }
+    bool howto = which == d2::KtDialog::Howto;
+    if (kt_dialog_begin("How to play Kanto Together", "How to play Kanto Together", &howto)) {
+        std::stringstream ss(kanto::howto_text());
+        std::string line;
+        while (std::getline(ss, line)) {
+            if (line.compare(0, 2, "# ") == 0) {
+                ImGui::Dummy(ImVec2(0, sp(0.75f)));
+                ImGui::PushFont(ui::F.bold);
+                ImGui::PushStyleColor(ImGuiCol_Text, COL_ACCENT);
+                ImGui::TextWrapped("%s", line.c_str() + 2);
+                ImGui::PopStyleColor();
+                ImGui::PopFont();
+            } else {
+                ImGui::PushTextWrapPos(0.f);
+                ImGui::TextUnformatted(line.c_str());
+                ImGui::PopTextWrapPos();
             }
-            ImGui::Dummy(ImVec2(0, sp(1.f)));
-            text_wrapped_disabled(kanto::credit_text());
-            ImGui::EndChild();
-            ImGui::Dummy(ImVec2(0, sp(1.f)));
-            if (button("Close", ImVec2(sp(14.f), sp(5.f)), true) || ui::modal_back()) {
-                KT.howto = false;
-                A.st.kt_intro_seen = true;
-                mark_dirty();
-                ImGui::CloseCurrentPopup();
-            }
-            std::string lic = KT.prep.dir() + "LICENSES.txt";
-            if (!KT.fake && file_exists(lic)) {
-                ImGui::SameLine();
-                if (button("Open licences", ImVec2(sp(16.f), sp(5.f)))) ShellExecuteW(nullptr, L"open", W(lic).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-            }
-            ImGui::EndPopup();
         }
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        text_wrapped_disabled(kanto::credit_text());
+        ui::dialog_buttons();
+        if (button("Close", ImVec2(sp(14.f), sp(5.f)), true) || ui::modal_back()) {
+            KT.howto = false;
+            A.st.kt_intro_seen = true;
+            mark_dirty();
+            howto = false;
+        }
+        std::string lic = KT.prep.dir() + "LICENSES.txt";
+        if (!KT.fake && file_exists(lic)) {
+            ui::dialog_same_line(sp(16.f));
+            if (button("Open licences", ImVec2(sp(16.f), sp(5.f)))) ShellExecuteW(nullptr, L"open", W(lic).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        ui::dialog_end();
     }
 }
 
