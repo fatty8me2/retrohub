@@ -138,6 +138,7 @@ bool up_into_middle_begin(ModalMemo& m) {
     if (cur.IsInverted() || cur.Min.y < m.btn_top - sp(0.5f) || cur.Min.y > m.btn_top + sp(1.f)) { m.up_search = false; return false; }   // not the buttons' first line
     if (mid->Scroll.y < mid->ScrollMax.y - 0.5f) scroll_set(mid->ID, mid->ScrollMax.y);   // applied when the middle begins, below
     m.up_search = true;
+    shot_trace("dlg-up-search", std::to_string((int)mid->Scroll.y));   // QA (HUB_SHOT_TRACE): the middle is searched for an item above the buttons
     return true;
 }
 
@@ -153,6 +154,7 @@ void up_into_middle_end(ModalMemo& m) {
         res = &oth;
     if ((res && res->Window && ImGui::IsWindowChildOf(res->Window, mid, false)) || mid->Scroll.y <= 0.5f) { m.up_search = false; return; }
     scroll_set(mid->ID, std::max(0.f, mid->Scroll.y - std::max(sp(4.f), mid->InnerRect.GetHeight() * 0.8f)));
+    shot_trace("dlg-up-page", std::to_string((int)mid->Scroll.y));
     ImGui::NavMoveRequestForward(g.NavMoveDir, g.NavMoveClipDir, g.NavMoveFlags & ~ImGuiNavMoveFlags_Forwarded, g.NavMoveScrollFlags);
 }
 

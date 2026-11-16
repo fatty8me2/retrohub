@@ -1190,13 +1190,29 @@ static bool fr_invite_pill(const Notif& n, float w, float frac) {
 
 /* Toast cards (top right, below the top bar). */
 /* Friend request / invite cards stack upward from `bottom_y` (bottom right, clear of the page header buttons such as "Invite friends"). */
+/* Screenshot runs (HUB_SHOT_TRACE): one line each time a card starts or stops being drawn. */
+static void fr_card_trace(const Notif& n, bool shown, double age) {
+    if (!g_headless) return;
+    static std::map<int, int> state;   // notif id -> 1 drawn, 2 hidden
+    int& s = state[n.id];
+    if (s == (shown ? 1 : 2)) return;
+    s = shown ? 1 : 2;
+    const char* kind = !n.night_id.empty() ? "night" : n.invite ? "invite" : n.ask ? "ask" : "request";
+    char a[32];
+    std::snprintf(a, sizeof a, " age=%.1f", age);
+    shot_trace(shown ? "card-shown" : "card-hidden", std::string(kind) + (shown ? std::string(a) : std::string()));
+}
+
 void fr_draw_toasts(float right_x, float bottom_y) {
     double now = ImGui::GetTime();
     float y = bottom_y, w = std::min(sp(45.f), right_x - sp(2.f));
+    /* screenshot aid: HUB_SHOT_CARD_AT=<s> = the made-up friends' cards (invite, ask, game night) arrive that many seconds into the run */
+    static const double card_at = (g_headless && std::getenv("HUB_SHOT_CARD_AT")) ? std::atof(std::getenv("HUB_SHOT_CARD_AT")) : -1.0;
     for (auto& n : FR.notifs) {
         if (n.done || !n.toast) continue;
-        if (A.popup_last_frame) continue;   // the bell / a menu / a dialog is open: no floating card over it (invites and asks are in the bell, a game night in the Friends list, requests in the requests list)
-        if (FR.fake && g_headless) n.t0 = std::max(n.t0, now - 1.0);   // screenshots: the toast must outlive a slow library scan
+        if (FR.fake && card_at > 0.0 && now < card_at) { n.t0 = now; continue; }
+        if (A.popup_last_frame) { fr_card_trace(n, false, now - n.t0); continue; }   // the bell / a menu / a dialog is open: no floating card over it (invites and asks are in the bell, a game night in the Friends list, requests in the requests list)
+        if (FR.fake && g_headless && card_at <= 0.0) n.t0 = std::max(n.t0, now - 1.0);   // screenshots: the toast must outlive a slow library scan
         if (FR.fake && g_headless && std::getenv("HUB_SHOT_INVITE_AGE")) n.t0 = now - std::atof(std::getenv("HUB_SHOT_INVITE_AGE"));   // screenshot aid: age the invite toast (>10 = shrunk pill)
         double life = !n.night_id.empty() ? hubui::dlg2b::kNightCardLife : (n.invite || n.ask) ? 30.0 : 20.0, age = now - n.t0;   // a night card's Friends-list row follows the same life
         if (age > life) { n.toast = false; continue; }
@@ -1205,6 +1221,7 @@ void fr_draw_toasts(float right_x, float bottom_y) {
         const bool pill = n.invite && n.night_id.empty() && !n.expanded && (age > kInvitePillAfter || A.popup_last_frame);   // a modal or menu is open: the card shrinks to the one-line pill so it never sits over its buttons (a click expands it)
         float h = pill ? fr_invite_pill_h() : n.invite ? fr_invite_card_h(n, w) : fr_request_card_h();
         if (y - h < sp(1.f)) break;   // no room above (a short window, a big UI size): the rest wait in the bell, never cut by the top edge
+        fr_card_trace(n, true, age);
         float cw = pill ? std::min(w, fr_tw(ui::F.bold, fr_invite_pill_text(n)) + sp(3.5f)) : w;
         ImGui::SetNextWindowPos(ImVec2(right_x - cw + (1.f - in) * sp(8.f), y - h));
         ImGui::SetNextWindowSize(ImVec2(cw, h));
@@ -1243,6 +1260,20 @@ void fr_draw_toasts(float right_x, float bottom_y) {
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(2);
         y -= h + sp(1.f);
+    }
+}
+
+/* Screenshot aid (HUB_SHOT_PAD token toast:leave:<age>, with HUB_SHOT_FAKE_ROOM): the "Leave and join" question for Jake's room, asked the
+ * way X on his row asks it, made <age> seconds old, so a pad walk can press Y at a known age. */
+void fr_shot_confirm_toast(double age) {
+    if (!g_headless || !FR.fake) return;
+    auto find = []() -> Toast* { for (Toast& t : A.toasts) if (t.action_label == "Leave and join") return &t; return nullptr; };
+    if (!find()) fr_join_lobby("QW8R2T", "smash64", "Smash Classic", "Jake", 0);
+    if (Toast* t = find()) {
+        const double now = ImGui::GetTime();
+        t->t0 = now - age;
+        t->until = t->t0 + 12.0;
+        shot_trace("toast-age", std::to_string(age));
     }
 }
 

@@ -146,8 +146,10 @@ float draw_toasts(float bottom, float right, float top) {
         if (avoid && dialog.Overlaps(ImRect(ImVec2(right - w, y0), ImVec2(right, y0 + h)))) {   // waits for the dialog to close
             t.t0 += dt;
             t.until += dt;
+            if (g_headless) shot_trace_once("toast-held", t.text);
             continue;
         }
+        if (g_headless) shot_trace_once("toast-drawn", "default " + t.text);
         ui::shadow(dl, p0, p1, sp(1.5f), a);
         dl->AddRectFilled(p0, p1, ui::scale_alpha(ui::PANEL2, a), sp(1.5f));
         dl->AddRect(p0, p1, ui::scale_alpha(ui::HAIRLINE, a), sp(1.5f), 0, 1.f);

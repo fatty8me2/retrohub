@@ -8,8 +8,11 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <string>
 #include <unordered_map>
 #include <vector>
+
+void shot_trace(const char* what, const std::string& arg);   // shot.cpp: a HUB_SHOT_TRACE line (screenshot runs only)
 
 /* UI kit scroll area (see ui_scroll.h). Native ImGui scrolling (wheel, drag, ScrollMax), with:
  *   - ImGui's own scrollbar kept for interaction but drawn transparent; a themed thumb is drawn over the same geometry;
@@ -292,7 +295,10 @@ ScrollInfo scroll_end() {
         view.TranslateY(fr.page_off);
         const bool in_view = res && res->Window && (res->Window == cw || ImGui::IsWindowChildOf(res->Window, cw, false)) &&
                              ImGui::WindowRectRelToAbs(res->Window, res->RectRel).Overlaps(view);
-        if (!in_view) ImGui::NavMoveRequestCancel();
+        if (!in_view) {
+            ImGui::NavMoveRequestCancel();
+            shot_trace("page-keep-focus", "");   // QA (HUB_SHOT_TRACE): nothing focusable in the new view
+        }
     }
     si.window_id = cw->ID;
     si.visible = !cw->SkipItems;

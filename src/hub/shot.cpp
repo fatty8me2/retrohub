@@ -359,6 +359,7 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
                 pad_last = tok;
                 A.pad_mode = true;
                 if (tok.rfind("shot:", 0) == 0) pending_shot = tok.substr(5);
+                else if (tok.rfind("toast:leave:", 0) == 0) { void fr_shot_confirm_toast(double); fr_shot_confirm_toast(std::atof(tok.c_str() + 12)); }   // friends_ui.cpp
                 else if (osk::inject(tok.c_str())) {}   // the on-screen keyboard owns the pad while it is open (it reads the SDL pad itself)
                 else if (ImGuiKey k = pad_token_key(tok); k != ImGuiKey_None) {
                     io.AddKeyAnalogEvent(k, true, 1.f);
@@ -368,6 +369,16 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
         }
     }
     ++frames;
+    if (path) {   // HUB_SHOT_TOAST / HUB_SHOT_TOAST_BAD=<text>: that notice arrives HUB_SHOT_TOAST_AT s into the run (default 2.5: a dialog another aid opens is up by then) and lasts HUB_SHOT_TOAST_SECS (default 8)
+        static bool toast_done = false;
+        static const double toast_at = std::getenv("HUB_SHOT_TOAST_AT") ? std::atof(std::getenv("HUB_SHOT_TOAST_AT")) : 2.5;
+        if (!toast_done && el >= toast_at) {
+            toast_done = true;
+            const double ts = std::getenv("HUB_SHOT_TOAST_SECS") ? std::atof(std::getenv("HUB_SHOT_TOAST_SECS")) : 8.0;
+            if (const char* t = std::getenv("HUB_SHOT_TOAST")) push_toast(t, ui::WARN, ts);
+            if (const char* t = std::getenv("HUB_SHOT_TOAST_BAD")) push_toast(t, ui::BAD, ts);
+        }
+    }
     if (path && !details_key.empty() && A.scanned_once && !A.scanning && !fail && !find_entry(details_key) && !find_entry(A.env_select)) {
         std::fprintf(stderr, "HUB_SHOT_DETAILS: game key '%s' is not in the library (%d games); no screenshot taken\n", details_key.c_str(), (int)A.lib.size());
         shot_trace("details-missing", details_key);
