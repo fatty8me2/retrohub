@@ -15,6 +15,7 @@
 #include "hidden_ui.h"
 #include "playtime_logic.h"
 #include "lib_compact_logic.h"
+#include "padspots_logic.h"
 #include "help_logic.h"
 #include "library_scan_info.h"
 #include "addgames.h"
@@ -481,7 +482,7 @@ void library_top_bar() {
          * the compact bar may also turn Add games into an icon. The words never change. */
         const float min_search = ImGui::CalcTextSize("Search games").x + sp(9.f);
         const std::string sort_nm = hubui::sort_label(hubui::SortSpec(hubui::sort_from_key(A.st.library_sort), A.st.library_sort_rev, A.st.library_favs_first));
-        lib_sort_label = "Sort: " + sort_nm;
+        lib_sort_label = "Sort: " + sort_nm + std::string((size_t)hubui::padspots::arrow_pad_spaces(ImGui::CalcTextSize(" ").x, sp(1.75f)), ' ');   // room for the direction arrow
         lib_friends_label = "Friends' games";
         const float chip_h = ImGui::GetFontSize() + sp(1.75f);
         const float sort_w = ImGui::CalcTextSize(lib_sort_label.c_str()).x + sp(3.25f), fr_w = ImGui::CalcTextSize(lib_friends_label.c_str()).x + sp(3.25f);
@@ -521,9 +522,21 @@ void library_top_bar() {
         std::string sl = lib_sort_label;
         const bool sort_on = hubui::sort_from_key(A.st.library_sort) != hubui::SortMode::Title || A.st.library_sort_rev || A.st.library_favs_first;
         const bool sort_icon = plan.sort_icon() && !wrap_chips;
-        const char* sort_tip = "Change the order of your games  (RT on a controller)\nRight-click: reverse the order";
-        if (sort_icon ? tb_icon_chip("##sort_icon", 0, sort_on, ui::ACCENT, sl + "\n" + sort_tip) : chip(sl.c_str(), sort_on, ui::ACCENT)) cycle_sort(1);
-        if (ImGui::IsItemClicked(1)) { A.st.library_sort_rev = !A.st.library_sort_rev; sort_changed(); }
+        const char* sort_tip = "Change the order of your games  (RT on a controller)\nRight-click, X on a controller or Shift+F10: reverse the order";
+        static bool sort_refocus = false;   // the words (so the chip's id) changed under the D-pad focus: keep the focus on the chip
+        const bool arrow_down = hubui::padspots::sort_arrow_down(hubui::SortSpec(hubui::sort_from_key(A.st.library_sort), A.st.library_sort_rev));
+        const bool sort_pressed = sort_icon ? tb_icon_chip("##sort_icon", 0, sort_on, ui::ACCENT, sl + "\n" + sort_tip) : chip(sl.c_str(), sort_on, ui::ACCENT);
+        if (sort_refocus) { sort_refocus = false; set_nav_here(); }
+        const bool ring = ImGui::IsItemFocused() && io.NavVisible, rev = hubui::padspots::sort_reverse_press({ImGui::IsItemFocused(), io.NavVisible, io.WantTextInput,
+            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false), ImGui::IsKeyPressed(ImGuiKey_Menu, false), io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F10, false)});
+        if (ring && g_headless) shot_trace_once("sort-focus", sl);   // QA trace (HUB_SHOT_TRACE)
+        if (rev) ImGui::SetKeyOwner(ImGuiKey_GamepadFaceLeft, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);   // this X reverses: the library's X (Favorite) must not also fire
+        if (sort_pressed) { cycle_sort(1); sort_refocus = ring; }
+        if (ImGui::IsItemClicked(1) || rev) { A.st.library_sort_rev = !A.st.library_sort_rev; sort_changed(); sort_refocus = rev; }
+        if (!sort_icon) {   // direction arrow after the words: down = newest / most / Z first (as the List view's column arrows)
+            const ImVec2 q0 = ImGui::GetItemRectMin(), q1 = ImGui::GetItemRectMax(); const float s = sp(0.5f), ax = q1.x - sp(1.625f) - s, ay = (q0.y + q1.y) * 0.5f, d = arrow_down ? 1.f : -1.f;
+            ImGui::GetWindowDrawList()->AddTriangleFilled(ImVec2(ax - s, ay - d * s * 0.6f), ImVec2(ax + s, ay - d * s * 0.6f), ImVec2(ax, ay + d * s * 0.8f), sort_on ? IM_COL32_WHITE : ui::TEXT2);
+        }
         if (!sort_icon && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sort_tip);
     }
     if (A.view == LibView::All) {   // layout switcher: grid / list / compact / showcase

@@ -1801,10 +1801,12 @@ static void fr_profile_modal() {
             if (i % per_row) ImGui::SameLine(0, sp(0.75f));
             ImGui::PushID((int)i);
             ImVec2 p = ImGui::GetCursorScreenPos();
-            if (ImGui::InvisibleButton("av", ImVec2(cell, cell))) { pr.avatar = opts[i]; changed = true; }
+            if (ImGui::InvisibleButton("av", ImVec2(cell, cell), ImGuiButtonFlags_EnableNav)) { pr.avatar = opts[i]; changed = true; shot_trace("prof-avatar", opts[i]); }   // EnableNav: the D-pad walks the cells, A picks
             bool sel = pr.avatar == opts[i];
+            const bool pad_focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;   // the ring is for D-pad / keyboard focus only
             ImVec2 c = p + ImVec2(cell, cell) * 0.5f;
             if (ImGui::IsItemHovered() || sel) dl->AddCircle(c, cell * 0.5f + 1.f, sel ? ui::ACCENT : ui::HILITE, 24, sel ? 2.f : 1.f);
+            if (pad_focus) { ui::focus_ring(dl, p, p + ImVec2(cell, cell), cell * 0.5f); if (g_headless) shot_trace_once("prof-avatar-focus", opts[i].empty() ? std::string("initial") : opts[i]); }
             if (opts[i].empty()) { fr_avatar_col(A.st.name); dl->AddCircleFilled(c, cell * 0.42f, fr_avatar_col(A.st.name), 24); fr_text_c(dl, ui::F.bold, c, IM_COL32_WHITE, std::string(1, hubnet::username_initial(A.st.name)).c_str()); }
             else fr_profile_avatar_disc(dl, c, cell * 0.42f, opts[i], ui::PANEL2);
             ImGui::PopID();
@@ -2211,8 +2213,12 @@ void fr_draw_panel(float disp_w, float disp_h) {
             dl->AddRect(c0, c0 + ImVec2(cw, ch), ui::HAIRLINE, sp(1.75f), 0, 1.f);
             fr_avatar(dl, c0 + ImVec2(sp(3.f), ch * 0.5f), sp(2.25f), A.st.name, fr_connected() ? hubui::FS_Online : hubui::FS_Offline, ui::PANEL2);
             ImGui::SetCursorScreenPos(c0 + ImVec2(sp(0.5f), ch * 0.5f - sp(2.5f)));
-            if (ImGui::InvisibleButton("myprof", ImVec2(sp(5.f), sp(5.f)))) fr_view_profile("");
+            if (ImGui::InvisibleButton("myprof", ImVec2(sp(5.f), sp(5.f)), ImGuiButtonFlags_EnableNav)) { shot_trace("myprof-open", ""); fr_view_profile(""); }   // EnableNav: the D-pad reaches your avatar, A opens your profile
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Your profile");
+            if (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible) {   // the ring is for D-pad / keyboard focus only (a click also sets focus)
+                ui::focus_ring(dl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sp(2.5f));
+                if (g_headless) shot_trace_once("myprof-focus", "");   // QA trace (HUB_SHOT_TRACE)
+            }
             const float cbw = std::max(sp(7.25f), fr_tw(ui::F.bold, "Copy") + sp(3.5f)), cbx = c0.x + cw - sp(1.25f) - cbw;   // the Copy button is reserved first; text gets what is left
             float tx = c0.x + sp(6.5f), tw = std::max(sp(6.f), cbx - sp(1.f) - tx);
             dl->AddText(ui::F.bold, ui::F.bold->FontSize, ImVec2(tx, c0.y + sp(1.25f)), ui::TEXT, ui::ellipsize(ui::F.bold, ui::F.bold->FontSize, A.st.name, tw).c_str());

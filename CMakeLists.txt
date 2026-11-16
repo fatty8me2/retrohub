@@ -225,6 +225,7 @@ add_test(NAME hub_shell_test COMMAND hub_shell_test)
 add_test(NAME hub_changelog_test COMMAND hub_changelog_test ${CMAKE_SOURCE_DIR}/data/changelog.json)   # patch notes parser + show-once rule
 add_test(NAME hub_welcome_test COMMAND hub_welcome_test)   # Welcome back card: versions since, collapse/cap, labels, keyword->page, show/defer rules
 add_test(NAME hub_gamenight_test COMMAND hub_gamenight_test)     # game night plans: DM tag, reminder timing, persistence
+add_test(NAME hub_padspots_test COMMAND hub_padspots_test)       # controller reach: which toast Y presses, Sort chip arrow and reverse keys
 add_test(NAME hub_group_test COMMAND hub_group_test)             # recent groups + notification history persistence/expiry
 add_test(NAME hub_rivals_test COMMAND hub_rivals_test)         # rivalry result parsing, ranking, storage union, head-to-head
 add_test(NAME hub_results_test COMMAND hub_results_test)       # Plan 4: match results (ranks, mid-run watcher) + auto-resume guard (saves-F1)

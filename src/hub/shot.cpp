@@ -45,6 +45,7 @@ ImGuiKey shot_key(const std::string& n) {
     if (n == "pgup") return ImGuiKey_PageUp;
     if (n == "home") return ImGuiKey_Home;
     if (n == "end") return ImGuiKey_End;
+    if (n == "menu") return ImGuiKey_Menu;         // the keyboard's context-menu key (library Sort chip: reverse the order)
     if (n.size() == 1 && n[0] >= 'a' && n[0] <= 'z') return (ImGuiKey)(ImGuiKey_A + (n[0] - 'a'));   // typed letters (quick-jump)
     return ImGuiKey_None;
 }

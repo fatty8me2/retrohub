@@ -240,6 +240,8 @@ target_include_directories(hub_wizard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/.
 
 add_executable(hub_gamenight_test test_gamenight.cpp)
 target_link_libraries(hub_gamenight_test PRIVATE hublogic)
+add_executable(hub_padspots_test test_padspots.cpp)   # controller paths onto mouse-only controls (padspots_logic.h)
+target_link_libraries(hub_padspots_test PRIVATE hublogic)
 
 add_executable(hub_group_test test_group.cpp)
 target_link_libraries(hub_group_test PRIVATE hublogic)

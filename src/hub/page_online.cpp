@@ -630,15 +630,19 @@ void page_online_room() {
     // chat
     ImGui::SameLine(0, 20 * S);
     static float chat_used = 0.f;   // the log's content height last frame: an empty chat stays a small box and grows with the messages
+    static ImRect chat_rect;        // the chat panel on screen, and: a Right press from the players column found nothing, the chat box takes the focus
+    static bool chat_focus_req = false;
     const float chat_h = std::min(h, std::max(190 * S, std::min(h, chat_used + 118 * S)));
     begin_panel("chat", ImVec2(chat_w, chat_h));
+    chat_rect = ImRect(ImGui::GetWindowPos(), ImGui::GetWindowPos() + ImGui::GetWindowSize());
     ImGui::PushFont(ui::F.h2);
     ImGui::TextUnformatted("Chat");
     ImGui::PopFont();
     float input_h = ImGui::GetFrameHeight() + 8 * S;
-    ImGui::BeginChild("chatlog", ImVec2(0, -input_h), ImGuiChildFlags_None);
+    ImGui::BeginChild("chatlog", ImVec2(0, -input_h), ImGuiChildFlags_NavFlattened);   // flattened: the D-pad moves from the chat box onto the lines
     for (auto& l : A.chat) {
         if (l.who.empty()) { text_wrapped_disabled(l.text); continue; }   // system line (e.g. host change)
+        const float line_x0 = ImGui::GetCursorScreenPos().x;
         ImGui::PushStyleColor(ImGuiCol_Text, COL_ACCENT);
         ImGui::TextUnformatted(l.who.c_str());
         ImGui::PopStyleColor();
@@ -649,7 +653,18 @@ void page_online_room() {
             ImGui::PushID((int)(&l - &A.chat[0]) + 7000);
             ImVec2 save = ImGui::GetCursorScreenPos();
             ImGui::SetCursorScreenPos(a0);
-            if (ImGui::InvisibleButton("rx", ImVec2(std::max(1.f, ImGui::GetContentRegionAvail().x), std::max(1.f, a1.y - a0.y)))) ImGui::OpenPopup("rxp");
+            ImGui::PushStyleColor(ImGuiCol_NavCursor, 0);   // one ring, around the name and the text (drawn below), not ImGui's box around the text only
+            const bool rx_pressed = ImGui::InvisibleButton("rx", ImVec2(std::max(1.f, ImGui::GetContentRegionAvail().x), std::max(1.f, a1.y - a0.y)), ImGuiButtonFlags_EnableNav);   // EnableNav: the D-pad reaches the line, A opens the reactions
+            ImGui::PopStyleColor();
+            if (rx_pressed) { ImGui::OpenPopup("rxp"); shot_trace("rx-open", l.who + " " + std::to_string(l.seq)); }
+            if (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible) {   // the ring is for D-pad / keyboard focus only (a click also sets focus)
+                ImDrawList* cdl = ImGui::GetWindowDrawList();
+                const ImVec2 c0 = cdl->GetClipRectMin(), c1 = cdl->GetClipRectMax();
+                cdl->PushClipRect(c0 - ImVec2(sp(1.25f), sp(1.25f)), c1 + ImVec2(sp(1.25f), sp(1.25f)), false);   // the log has no padding: let the ring's edge show (the focused line is scrolled into view)
+                ui::focus_ring(cdl, ImVec2(line_x0, a0.y), ImGui::GetItemRectMax(), sp(0.75f));
+                cdl->PopClipRect();
+                if (g_headless) shot_trace_once("rx-focus", l.who + " " + std::to_string(l.seq));   // QA trace (HUB_SHOT_TRACE)
+            }
             ImGui::SetCursorScreenPos(save);
             if (ImGui::BeginPopup("rxp")) {
                 for (size_t ri = 0; ri < 6; ri++) {
@@ -660,6 +675,7 @@ void page_online_room() {
                         if (on) l.rx[A.st.name] = hub::profile::kReactions[ri]; else l.rx.erase(A.st.name);
                         A.lobby.send_msg(std::string("{\"kind\":\"react\",\"to\":") + std::to_string(l.slot) + ",\"n\":" + std::to_string(l.seq) +
                                          ",\"e\":\"" + hub::profile::kReactions[ri] + "\",\"on\":" + (on ? "1" : "0") + "}");
+                        shot_trace("rx-pick", std::string(hub::profile::kReactions[ri]) + (on ? " on" : " off"));
                         ImGui::CloseCurrentPopup();
                     }
                 }
@@ -702,9 +718,28 @@ void page_online_room() {
         }
         if (!osk::hub_input_blocked()) ImGui::SetKeyboardFocusHere(-1);
     }
+    if (chat_focus_req) {   // the chat box takes the D-pad focus (Up from it reaches the lines; it opens the keyboard only on A, as before)
+        chat_focus_req = false;
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        ImGuiWindow* w = g.CurrentWindow;
+        if (g.NavWindow != w) ImGui::FocusWindow(w);
+        const ImVec2 off = w->DC.CursorStartPos;
+        ImGui::SetNavID(ImGui::GetItemID(), ImGuiNavLayer_Main, g.CurrentFocusScopeId, ImRect(ImGui::GetItemRectMin() - off, ImGui::GetItemRectMax() - off));
+        g.NavCursorVisible = true;
+        shot_trace("chat-enter", "");
+    }
     end_panel();
     ImGui::Dummy(ImVec2(0, 2 * S));
     room_footer(total_w);
+    {   // Right from the players column: ImGui's scoring hardly ever picks the chat beside it (its lines sit lower than the rows), so a Right
+        // press that found nothing, made level with the chat, moves to the chat box
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        if (g.NavMoveSubmitted && g.NavMoveDir == ImGuiDir_Right && g.NavMoveResultLocal.ID == 0 && g.NavMoveResultOther.ID == 0 && g.NavWindow && !g.IO.WantTextInput &&
+            !ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+            const ImRect r = ImGui::WindowRectRelToAbs(g.NavWindow, g.NavWindow->NavRectRel[g.NavLayer]);
+            if (r.Max.x <= chat_rect.Min.x && r.Min.y < chat_rect.Max.y && r.Max.y > chat_rect.Min.y) chat_focus_req = true;
+        }
+    }
 }
 
 void page_online() {
