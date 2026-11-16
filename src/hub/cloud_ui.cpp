@@ -1,11 +1,12 @@
 #include "app.h"
+#include "ui_sheet.h"
 
 /* ---------- Cloud saves v2 UI (docs/CLOUD_SAVES_V2.md section 2, Lane U) ----------
  * Everything here talks to the engine only through cloud_engine.h. Pure rules (labels, tones, dialog text) live in
  * cloud_ui_logic.h and are unit tested. Screenshot aids (no network):
  *   HUB_SHOT_CLOUD2=ok|mixed|offline|over|attention|paused|fresh   fake engine data (cloud_engine_stub.cpp)
  *   HUB_SHOT_CLOUD_OPEN=<system/key>        expand that game's history panel
- *   HUB_SHOT_CLOUD_DIALOG=conflict|lease|checking|pulled|offline   launch-time dialogs / notices
+ *   HUB_SHOT_CLOUD_DIALOG=conflict|conflictmany|lease|checking|waiting|pulled|offline   launch-time dialogs / notices
  *   HUB_SHOT_CLOUD_CODE=1                   reveal the recovery code (Account section) */
 
 namespace {
@@ -120,13 +121,13 @@ struct ConflictDlg {
     std::function<void(hs::ConflictChoice)> done;
 } CD;
 struct LeaseDlg {
-    bool want_open = false;
+    bool want_open = false, open = false;
     hs::GameId id;
     std::string title, by;
     int64_t since = 0;
     std::function<void(hs::LeaseChoice)> done;
 } LD;
-struct Checking { bool on = false; std::string title; double t0 = 0; } CK;
+struct Checking { bool on = false; std::string title; double t0 = 0; bool cancel_shown = false; } CK;
 
 /* ---- Saves page pieces ---- */
 void quota_bar(float w) {
@@ -454,96 +455,113 @@ void cloud_ui_overlays() {
             ImVec2 us = s->CalcTextSizeA(s->FontSize, FLT_MAX, 0.f, CK.title.c_str());
             dl->AddText(s, s->FontSize, ImVec2((p0.x + p1.x - us.x) * 0.5f, p1.y + sp(0.5f)), ui::TEXT2, CK.title.c_str());
         }
-        if (A.cloud_gate.waiting) {   // waiting for the previous session's cloud work: offer a way out
+        if (A.cloud_gate.waiting) {   // waiting for the previous session's cloud work: offer a way out (click, Esc, B, or A on the focused control)
             ImFont* s = ui::F.cap;
+            const bool padm = A.pad_mode;
             const char* ct = "Cancel (Esc)";
-            ImVec2 cs = s->CalcTextSizeA(s->FontSize, FLT_MAX, 0.f, ct);
+            const ImVec2 cs = padm ? ImVec2(ui::key_hint_width(true, "B", "Esc", "Cancel"), s->FontSize + sp(0.75f)) : s->CalcTextSizeA(s->FontSize, FLT_MAX, 0.f, ct);
             ImVec2 q0((p0.x + p1.x - cs.x) * 0.5f, p1.y + sp(2.6f)), q1(q0.x + cs.x, q0.y + cs.y);
-            const bool hov = ImGui::IsMouseHoveringRect(ImVec2(q0.x - sp(1.f), q0.y - sp(0.5f)), ImVec2(q1.x + sp(1.f), q1.y + sp(0.5f)), false);
-            dl->AddText(s, s->FontSize, q0, hov ? ui::TEXT : ui::ACCENT, ct);
-            if ((hov && ImGui::IsMouseClicked(0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) cloud_gate_cancel();
-        }
-    }
+            const ImVec2 r0(q0.x - sp(1.f), q0.y - sp(0.5f)), r1(q1.x + sp(1.f), q1.y + sp(0.5f));
+            const bool no_popup = !ImGui::IsPopupOpen((const char*)nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+            /* A real control in a tiny window of its own, so the D-pad / keyboard focus can sit on it; a pad player lands on it when it appears. */
+            const bool grab = !CK.cancel_shown && padm && no_popup;
+            if (grab) ImGui::SetNextWindowFocus();
+            CK.cancel_shown = true;
+            ImGui::SetNextWindowPos(r0, ImGuiCond_Always);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1.f, 1.f));
+            ImGui::Begin("##cloud_wait_cancel", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBackground);
+            ImGui::PopStyleVar(2);
+            if (grab) ImGui::SetKeyboardFocusHere();   // the window has no remembered item the first time: put the focus on the control itself
+            const bool pressed = ImGui::InvisibleButton("##cancel", ImVec2(r1.x - r0.x, r1.y - r0.y), ImGuiButtonFlags_EnableNav) && !ImGui::IsMouseReleased(ImGuiMouseButton_Left);   // A / Enter (a click counts on press, below)
+            const bool focused = ImGui::IsItemFocused() && GImGui->NavCursorVisible;
+            ImGui::End();
+            const bool hov = ImGui::IsMouseHoveringRect(r0, r1, false);
+            if (padm) ui::key_hint(dl, q0, true, "B", "Esc", "Cancel");
+            else dl->AddText(s, s->FontSize, q0, (hov || focused) ? ui::TEXT : ui::ACCENT, ct);
+            if (focused) ui::focus_ring(dl, r0, r1, sp(1.f));
+            const bool b_press = no_popup && A.focused && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+            if (pressed || (hov && ImGui::IsMouseClicked(0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false) || b_press) {
+                if (b_press) ImGui::SetKeyOwner(ImGuiKey_GamepadFaceRight, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);   // this B is spent: not also the page's "back" (global_input runs after the overlays)
+                cloud_gate_cancel();
+                shot_trace("cloud-wait-cancel", b_press ? "b" : pressed ? "a" : "esc-or-click");
+            }
+        } else CK.cancel_shown = false;
+    } else CK.cancel_shown = false;
+    /* The two launch-time dialogs are ui::dialogs (ui_sheet.h): title and buttons pinned, the middle scrolls on a short window. Only the
+     * presentation changed: the same buttons in the same order, the same default focus, B / Esc give the same answer as before (Decide later /
+     * Cancel), and every answer goes to the same callback. Their popup names are kept. */
+    ui::DialogOpts dopt;
+    dopt.back_closes = false;   // B / Esc answer through finish() below, like the buttons
+    dopt.keep_id = true;
     /* conflict dialog */
-    if (CD.want_open) { CD.want_open = false; ImGui::OpenPopup("Saves differ##cloud_conflict"); }
-    ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
-    if (ImGui::BeginPopupModal("Saves differ##cloud_conflict", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+    if (CD.want_open) { CD.want_open = false; CD.open = true; }
+    if (ui::dialog_begin("Saves differ##cloud_conflict", conflict_summary(CD.title).c_str(), &CD.open, ui::DialogSize::Medium, dopt)) {
         auto finish = [&](hs::ConflictChoice c) {
             auto cb = CD.done;
             CD.done = nullptr;
-            ImGui::CloseCurrentPopup();
+            CD.open = false;   // dialog_end() closes the popup
             if (cb) cb(c);
         };
         if (ui::modal_back()) finish(hs::ConflictChoice::DecideLater);
-        const float wrap_w = std::min(sp(58.f), io.DisplaySize.x * 0.85f);
-        ImGui::PushTextWrapPos(wrap_w);
-        ImGui::PushFont(ui::F.title);
-        ImGui::TextWrapped("%s", conflict_summary(CD.title).c_str());
-        ImGui::PopFont();
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
         text_wrapped_disabled(conflict_intro());
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         const int64_t now_t = (int64_t)std::time(nullptr);
-        for (size_t i = 0; i < CD.items.size() && i < 3; ++i) {
+        for (size_t i = 0; i < CD.items.size(); ++i) {   // every file (it was the first 3 and "and N more"): the middle scrolls
             const auto& it = CD.items[i];
             ImGui::PushFont(ui::F.bold);
-            ImGui::TextUnformatted(cap_first(conflict_what(it)).c_str());
+            ImGui::TextWrapped("%s", cap_first(conflict_what(it)).c_str());
             ImGui::PopFont();
             const bool ln = local_is_newer(it);
-            ImGui::TextColored(ImColor(ln ? ui::GOOD : ui::TEXT2), "%s%s", conflict_side_line(it.local, false, now_t).c_str(), ln ? "  (newer)" : "");
-            ImGui::TextColored(ImColor(!ln ? ui::GOOD : ui::TEXT2), "%s%s", conflict_side_line(it.cloud, true, now_t).c_str(), !ln ? "  (newer)" : "");
-            ImGui::Dummy(ImVec2(0, sp(0.75f)));
+            ImGui::PushStyleColor(ImGuiCol_Text, ln ? ui::GOOD : ui::TEXT2);
+            ImGui::TextWrapped("%s%s", conflict_side_line(it.local, false, now_t).c_str(), ln ? "  (newer)" : "");
+            ImGui::PopStyleColor();
+            ImGui::PushStyleColor(ImGuiCol_Text, !ln ? ui::GOOD : ui::TEXT2);
+            ImGui::TextWrapped("%s%s", conflict_side_line(it.cloud, true, now_t).c_str(), !ln ? "  (newer)" : "");
+            ImGui::PopStyleColor();
+            if (i + 1 < CD.items.size()) ImGui::Dummy(ImVec2(0, sp(0.75f)));
         }
-        if (CD.items.size() > 3) ImGui::TextDisabled("and %zu more", CD.items.size() - 3);
-        ImGui::Dummy(ImVec2(0, sp(0.75f)));
+        ui::dialog_buttons();
         static hs::ConflictChoice hint = hs::ConflictChoice::UseNewer;
         const hs::ConflictChoice order[] = {hs::ConflictChoice::UseNewer, hs::ConflictChoice::UseLocal, hs::ConflictChoice::UseCloud, hs::ConflictChoice::DecideLater};
-        const float gap = sp(1.f), bw = (wrap_w - gap) * 0.5f;
+        const float gap = sp(1.f), avail = ImGui::GetContentRegionAvail().x;
+        float need = 0.f;   // two per row when the longest label fits, else one per row (a big UI size): the row wraps, nothing clips
+        for (const auto c : order) need = std::max(need, ui::dialog_button_w(conflict_button(c)));
+        const float bw = 2.f * need + gap <= avail ? (avail - gap) * 0.5f : avail;
         for (int i = 0; i < 4; ++i) {
-            if (i % 2) ImGui::SameLine(0, gap);
+            if (i % 2) ui::dialog_same_line(bw, gap);
             ImGui::PushID(i);
             if (button(conflict_button(order[i]), ImVec2(bw, sp(5.f)), i == 0, true)) finish(order[i]);
             if (i == 0) ImGui::SetItemDefaultFocus();
             if (ImGui::IsItemFocused() || ImGui::IsItemHovered()) hint = order[i];
             ImGui::PopID();
         }
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
         text_wrapped_disabled(conflict_hint(hint));
-        ImGui::PopTextWrapPos();
-        ImGui::EndPopup();
+        ui::dialog_end();
     }
     /* "open on another PC" dialog */
-    if (LD.want_open) { LD.want_open = false; ImGui::OpenPopup("Open on another PC##cloud_lease"); }
-    ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("Open on another PC##cloud_lease", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+    if (LD.want_open) { LD.want_open = false; LD.open = true; }
+    if (ui::dialog_begin("Open on another PC##cloud_lease", "Already playing elsewhere", &LD.open, ui::DialogSize::Medium, dopt)) {
         auto finish = [&](hs::LeaseChoice c) {
             auto cb = LD.done;
             LD.done = nullptr;
-            ImGui::CloseCurrentPopup();
+            LD.open = false;   // dialog_end() closes the popup
             if (cb) cb(c);
         };
         if (ui::modal_back()) finish(hs::LeaseChoice::Cancel);
-        ImGui::PushTextWrapPos(std::min(sp(50.f), io.DisplaySize.x * 0.85f));
-        ImGui::PushFont(ui::F.title);
-        ImGui::TextUnformatted("Already playing elsewhere");
-        ImGui::PopFont();
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
         ImGui::TextWrapped("%s", lease_text(LD.title, LD.by, LD.since).c_str());
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
         text_wrapped_disabled("Play anyway keeps both saves if they end up different. Take over makes the other PC step aside.");
-        ImGui::Dummy(ImVec2(0, sp(1.5f)));
+        ui::dialog_buttons();
         if (button(lease_button(hs::LeaseChoice::Cancel), ImVec2(sp(12.f), sp(5.5f)), true, true)) finish(hs::LeaseChoice::Cancel);
         ImGui::SetItemDefaultFocus();
-        ImGui::SameLine();
+        ui::dialog_same_line(sp(14.f));
         if (button(lease_button(hs::LeaseChoice::PlayAnyway), ImVec2(sp(14.f), sp(5.5f)), false, true)) finish(hs::LeaseChoice::PlayAnyway);
-        ImGui::SameLine();
+        ui::dialog_same_line(sp(14.f));
         if (button(lease_button(hs::LeaseChoice::TakeOver), ImVec2(sp(14.f), sp(5.5f)), false, true)) finish(hs::LeaseChoice::TakeOver);
-        ImGui::PopTextWrapPos();
-        ImGui::EndPopup();
+        ui::dialog_end();
     }
-    ImGui::PopStyleVar(2);
 }
 
 void cloud_ui_shot_init() {
@@ -553,7 +571,7 @@ void cloud_ui_shot_init() {
     if (!d) return;
     std::string m = d;
     hs::GameId id{"n64", "mario-kart-64"};
-    if (m == "conflict" || m == "lease") {
+    if (m == "conflict" || m == "conflictmany" || m == "lease") {
         // the dialogs need an ImGui frame to open; seed through the ask-APIs on first overlay draw
         static bool once = false;
         (void)once;
@@ -561,11 +579,23 @@ void cloud_ui_shot_init() {
         ci.path = "battery/mk64.eep";
         ci.local = {true, "a", 412 * 1024, now_s() - 5 * 86400 - 3600, "PC-DESK"};
         ci.cloud = {true, "b", 410 * 1024, now_s() - 3 * 86400, "PC-LIVINGROOM"};
-        if (m == "conflict") cloud_ui_ask_conflict(id, "Mario Kart 64", {ci}, nullptr);
+        std::vector<hs::ConflictItem> items{ci};
+        if (m == "conflictmany") {   // eight files: more than the window holds at a big UI size, so the middle scrolls
+            for (int k = 1; k <= 7; ++k) {
+                hs::ConflictItem c = ci;
+                c.path = "states/mk64.st" + std::to_string(k);
+                c.cls = hs::FileClass::State;
+                c.local = {true, "a", (int64_t)k * 96 * 1024, now_s() - k * 7200, "PC-DESK"};
+                c.cloud = {true, "b", (int64_t)k * 96 * 1024, now_s() - k * 5000 - (k % 2 ? 9000 : 0), "PC-LIVINGROOM"};
+                items.push_back(c);
+            }
+        }
+        if (m != "lease") cloud_ui_ask_conflict(id, "Mario Kart 64", items, nullptr);
         else cloud_ui_ask_lease(id, "Mario Kart 64", "PC-LIVINGROOM", now_s() - 1500, nullptr);
-    } else if (m == "checking") {
+    } else if (m == "checking" || m == "waiting") {   // waiting: the strip with its Cancel control (an earlier session's cloud work still runs)
         CK.on = true;
         CK.title = "Pokemon Emerald";
+        if (m == "waiting") A.cloud_gate.waiting = true;   // headless: no gate thread runs, so Cancel only sets the flag (trace "cloud-wait-cancel")
     } else if (m == "pulled" || m == "offline") {
         hs::PrelaunchResult r;
         r.files_pulled = 2;

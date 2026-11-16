@@ -163,6 +163,8 @@ inline float dialog_max_h(float display_h) { return std::max(1.f, display_h * 0.
 inline float dialog_body_max(float max_h, float pad_y, float title_h, float buttons_h, float gaps, float min_body) {
     return std::max(min_body, max_h - 2.f * pad_y - title_h - buttons_h - gaps);
 }
+/* A wrapping button row: does an item `next_w` wide still fit after the last one (right edge `item_right`, then `gap`) before `right_edge`? */
+inline bool fits_on_line(float item_right, float gap, float next_w, float right_edge) { return item_right + gap + next_w <= right_edge + 0.5f; }
 
 /* ---------------- option rows ---------------- */
 

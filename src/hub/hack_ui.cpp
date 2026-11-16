@@ -6,6 +6,7 @@
 #include "savestore.h"
 #include "attach_xfer.h"
 #include "friend_pick_ui.h"
+#include "ui_sheet.h"
 
 #include <atomic>
 #include <ctime>
@@ -14,7 +15,7 @@
 #include <thread>
 
 /* ROM hacks and translations in the library (Plan 4 H2-H4). Contract: hack_logic.h (identity), hack_core.h (files), common/patcher.h (patch engine),
- * GameEntry::hack_patch / hack_base. Screenshot aid: HUB_SHOT_HACKS=add|versions|tile (with HUB_SHOT_FAKE_LIB=6). */
+ * GameEntry::hack_patch / hack_base. Screenshot aid: HUB_SHOT_HACKS=add|choose|fail|remove|versions|tile (with HUB_SHOT_FAKE_LIB=6). */
 
 namespace fs = std::filesystem;
 namespace hk = hubui::hacks;
@@ -206,37 +207,29 @@ void poll_add() {
     if (AD.st == Add::Building && AD.done) finish_build();
 }
 
-void modal_frame_begin(const char* id, float w) {
-    ImGui::OpenPopup(id);
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(std::min(sp(w), ImGui::GetIO().DisplaySize.x * 0.94f), 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
+/* Both hack dialogs are ui::dialogs (ui_sheet.h) shown while their state says so (open = nullptr), under their old popup names. */
+bool hack_dialog_begin(const char* id, const char* title, ui::DialogSize size) {
+    ui::DialogOpts o;
+    o.back_closes = false;   // B is read below: it never closes the add dialog while it works
+    o.keep_id = true;
+    return ui::dialog_begin(id, title, nullptr, size, o);
 }
 
 void add_modal() {
-    modal_frame_begin("##hackadd", 84.f);
-    bool open = ImGui::BeginPopupModal("##hackadd", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings);
-    ImGui::PopStyleVar(2);
-    if (!open) return;
-    const float bh = sp(5.f), bw = ImGui::GetContentRegionAvail().x;
+    const char* title = AD.st == Add::Fail ? "Can't add this patch" : AD.st == Add::Building ? "Building your game" : "Add a hack or translation";
+    if (!hack_dialog_begin("##hackadd", title, ui::DialogSize::Large)) return;
+    const float bh = sp(5.f);
     const bool busy = AD.st == Add::Working || AD.st == Add::Building;
-    if (!busy && ui::modal_back()) { add_reset(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    if (!busy && ui::modal_back()) { add_reset(); ImGui::CloseCurrentPopup(); ui::dialog_end(); return; }
     auto focus_first = [&]() { if (AD.focus_first) { ImGui::SetKeyboardFocusHere(0); AD.focus_first = false; } };
-
-    ImGui::PushFont(ui::F.title);
-    ImGui::TextUnformatted(AD.st == Add::Fail ? "Can't add this patch" : AD.st == Add::Building ? "Building your game" : "Add a hack or translation");
-    ImGui::PopFont();
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
 
     if (AD.st == Add::Working) {
         text_wrapped_disabled("Looking for the original game this patch is for...");
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         ImGui::ProgressBar(-1.f * (float)ImGui::GetTime(), ImVec2(-1, sp(1.5f)), "");
-    } else if (AD.st == Add::Choose) {
+    } else if (AD.st == Add::Choose) {   // the list is the dialog's scrolling middle (it was a nested list with its own scrollbar)
         text_wrapped_disabled("This kind of patch does not say which game it is for. Pick the game it was made for. RetroHub only lists games it could fit.");
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        ImGui::BeginChild("##hackbase", ImVec2(0, sp(28.f)), ImGuiChildFlags_NavFlattened);
         for (size_t i = 0; i < AD.fr.choices.size(); ++i) {
             const hk::Cand& c = AD.fr.choices[i];
             std::string label = c.title + "   -   " + cand_console(c);
@@ -249,8 +242,7 @@ void add_modal() {
             }
             ImGui::PopID();
         }
-        ImGui::EndChild();
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        ui::dialog_buttons();
         if (button("Cancel", ImVec2(sp(14.f), bh), false, true, ui::Icon::Close)) { add_reset(); ImGui::CloseCurrentPopup(); }
     } else if (AD.st == Add::Details) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT2);
@@ -263,14 +255,14 @@ void add_modal() {
         ImGui::Dummy(ImVec2(0, sp(1.f)));
         focus_first();   // a pad lands on Hack, not on the name field (that would open the on-screen keyboard at once)
         if (button("Hack", ImVec2(sp(14.f), sp(4.5f)), !AD.translation)) AD.translation = false;
-        ImGui::SameLine(0, sp(1.f));
+        ui::dialog_same_line(sp(14.f), sp(1.f));
         if (button("Translation", ImVec2(sp(14.f), sp(4.5f)), AD.translation)) AD.translation = true;
         if (AD.translation) {
             ImGui::Dummy(ImVec2(0, sp(0.5f)));
             ImGui::TextUnformatted("Language");
             static const char* langs[][2] = {{"English", "en"}, {"Spanish", "es"}, {"French", "fr"}, {"German", "de"}, {"Portuguese", "pt-br"}, {"Japanese", "ja"}};
             for (int i = 0; i < 6; ++i) {
-                if (i) ImGui::SameLine(0, sp(0.75f));
+                if (i) ui::dialog_same_line(ui::dialog_button_w(langs[i][0]), sp(0.75f));
                 ImGui::PushID(i);
                 if (button(langs[i][0], ImVec2(0, sp(4.f)), std::string(AD.lang) == langs[i][1])) std::snprintf(AD.lang, sizeof AD.lang, "%s", langs[i][1]);
                 ImGui::PopID();
@@ -284,10 +276,10 @@ void add_modal() {
         ImGui::TextUnformatted("It becomes its own game in your library, with its own saves. Your original game is not changed. Cheats and achievements start empty.");
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
-        ImGui::Dummy(ImVec2(0, sp(1.5f)));
         bool ok = AD.title[0] != 0 && (!AD.translation || AD.lang[0] != 0);
+        ui::dialog_buttons();
         if (button("Add to library", ImVec2(sp(18.f), bh), true, ok && !g_shot, ui::Icon::Plus)) start_build();
-        ImGui::SameLine(0, sp(1.f));
+        ui::dialog_same_line(sp(14.f), sp(1.f));
         if (button("Cancel", ImVec2(sp(14.f), bh), false, true, ui::Icon::Close)) { add_reset(); ImGui::CloseCurrentPopup(); }
     } else if (AD.st == Add::Building) {
         text_wrapped_disabled("Applying the patch. This takes a few seconds, longer for big games.");
@@ -295,7 +287,7 @@ void add_modal() {
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ui::ACCENT);
         ImGui::ProgressBar((float)AD.prog.load(), ImVec2(-1, sp(2.5f)), "");
         ImGui::PopStyleColor();
-        ImGui::Dummy(ImVec2(0, sp(1.5f)));
+        ui::dialog_buttons();
         if (button("Cancel", ImVec2(sp(14.f), bh), false, true, ui::Icon::Close)) AD.cancel = true;
     } else {   // Fail
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
@@ -303,11 +295,11 @@ void add_modal() {
         ImGui::TextUnformatted(AD.msg.c_str());
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
-        ImGui::Dummy(ImVec2(0, sp(1.5f)));
+        ui::dialog_buttons();
         focus_first();
         if (button("OK", ImVec2(sp(14.f), bh), true)) { add_reset(); ImGui::CloseCurrentPopup(); }
     }
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 /* ---------------- removing a hack ---------------- */
@@ -318,6 +310,7 @@ void do_remove(bool with_saves) {
     /* Only the running hack itself is blocked. A hack's key is "<base key>+h<crc>", so its game_dir (patch folder, saves / battery), its rom-cache
      * folder and its states are all its own: the base game and other hacks never share a save, battery or cache dir with it, and the running
      * base game plays the unpatched ROM, not the hack's cached copy. Removing one hack while another game runs touches none of the runner's files. */
+    if (g_shot) return;   // screenshot runs (HUB_SHOT_HACKS) never delete anything
     if (A.proc && A.run.key == RM.key) { set_notice("That game is running. Close it first."); return; }
     std::string gd = hub::saves::game_dir(RM.system, RM.key);
     hk::remove_hack_files(gd);
@@ -330,25 +323,18 @@ void do_remove(bool with_saves) {
 }
 
 void remove_modal() {
-    modal_frame_begin("##hackrm", 64.f);
-    bool open = ImGui::BeginPopupModal("##hackrm", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings);
-    ImGui::PopStyleVar(2);
-    if (!open) return;
-    if (ui::modal_back()) { RM.open = false; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    ImGui::PushFont(ui::F.title);
-    ImGui::TextUnformatted("Remove this hack?");
-    ImGui::PopFont();
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (!hack_dialog_begin("##hackrm", "Remove this hack?", ui::DialogSize::Medium)) return;
+    if (ui::modal_back()) { RM.open = false; ImGui::CloseCurrentPopup(); ui::dialog_end(); return; }
     ImGui::TextWrapped("%s will leave your library. Its patch file is deleted from RetroHub (your original game is not touched).", RM.title.c_str());
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     text_wrapped_disabled("Its saves are kept by default, so adding the same patch again brings them back.");
-    ImGui::Dummy(ImVec2(0, sp(1.5f)));
+    ui::dialog_buttons();
     const ImVec2 bs(ImGui::GetContentRegionAvail().x, sp(5.f));
     if (RM.focus) { ImGui::SetKeyboardFocusHere(0); RM.focus = false; }
     if (button("Remove, keep saves", bs, true)) { do_remove(false); RM.open = false; ImGui::CloseCurrentPopup(); }
     if (button("Remove and delete its saves", bs, false)) { do_remove(true); RM.open = false; ImGui::CloseCurrentPopup(); }
     if (button("Cancel", bs)) { RM.open = false; ImGui::CloseCurrentPopup(); }
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 /* ---------------- preparing the patched image for Play ---------------- */
@@ -486,6 +472,22 @@ void hack_shot_init() {
         AD.base.system = hub::System::GBA;
         std::snprintf(AD.title, sizeof AD.title, "%s", "Emerald Kaizo");
         AD.focus_first = true;
+    } else if (g_shot_mode == "choose") {   // "pick the game it was made for", a list taller than a short window
+        AD.st = Add::Choose;
+        AD.focus_first = true;
+        for (int i = 0; i < 18; ++i) {
+            hk::Cand c;
+            c.key = "fake:" + std::to_string(i % 6);
+            c.title = "Test Game " + std::to_string(i + 1);
+            c.system = i % 3 == 0 ? hub::System::N64 : i % 3 == 1 ? hub::System::GBA : hub::System::SNES;
+            AD.fr.choices.push_back(c);
+        }
+    } else if (g_shot_mode == "fail") {
+        AD.st = Add::Fail;
+        AD.msg = "This patch does not fit Pokemon Emerald.";
+        AD.focus_first = true;
+    } else if (g_shot_mode == "remove") {   // nothing is deleted in a screenshot run (do_remove returns at once)
+        RM.open = true; RM.focus = true; RM.key = "fake:0+h1"; RM.title = "Emerald Kaizo"; RM.system = "gba";
     } else if (g_shot_mode == "versions") {
         A.sel_game = "fake:0";
         A.show_details = true;

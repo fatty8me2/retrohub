@@ -3,6 +3,7 @@
 #include "hang_watchdog.h"
 #include "addgames.h"
 #include "hack_ui.h"
+#include "ui_sheet.h"
 
 #include <shlobj.h>
 
@@ -210,23 +211,16 @@ void add_games_banner() {
 
 /* ---------- the dialog ---------- */
 
+/* A ui::dialog (ui_sheet.h): the title and the Close / Cancel / Done row stay put, the rest scrolls on a short window. Up while AG.st says so
+ * (open = nullptr); B / Esc close it except while copying. The popup name "##addgames" is kept (qa\pad_nav.ps1 matches it). */
 static void add_games_modal() {
-    ImGui::OpenPopup("##addgames");
-    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(c, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(std::min(sp(84.f), ImGui::GetIO().DisplaySize.x * 0.94f), 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
-    bool open = ImGui::BeginPopupModal("##addgames", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings);
-    ImGui::PopStyleVar(2);
-    if (!open) return;
+    ui::DialogOpts o;
+    o.back_closes = false;
+    o.keep_id = true;
+    const char* title = AG.st == AddGames::Done ? "All done" : AG.st == AddGames::Importing ? "Adding your games" : "Add your own games";
+    if (!ui::dialog_begin("##addgames", title, nullptr, ui::DialogSize::Large, o)) return;
     const float bh = sp(5.5f), bw = ImGui::GetContentRegionAvail().x;
-    if (ui::modal_back() && AG.st != AddGames::Importing) { AG.st = AddGames::Closed; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-
-    ImGui::PushFont(ui::F.title);
-    ImGui::TextUnformatted(AG.st == AddGames::Done ? "All done" : AG.st == AddGames::Importing ? "Adding your games" : "Add your own games");
-    ImGui::PopFont();
-    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    if (ui::modal_back() && AG.st != AddGames::Importing) { AG.st = AddGames::Closed; ImGui::CloseCurrentPopup(); ui::dialog_end(); return; }
 
     if (AG.st == AddGames::Choose) {
         text_wrapped_disabled("RetroHub copies your game files into its own games folder, sorted by console. Your original files are never moved or changed.");
@@ -240,7 +234,7 @@ static void add_games_modal() {
             if (ag::is_absolute_path(p)) { A.st.games_dest = p; mark_dirty(); }
         }
         if (!A.st.games_dest.empty()) {
-            ImGui::SameLine(0, sp(1.f));
+            ui::dialog_same_line(sp(14.f), sp(1.f));
             if (button("Use default", ImVec2(sp(14.f), sp(4.f)), false, true)) { A.st.games_dest.clear(); mark_dirty(); }
         }
         ImGui::Dummy(ImVec2(0, sp(1.5f)));
@@ -266,7 +260,7 @@ static void add_games_modal() {
         ImGui::TextUnformatted("Formats: .z64 .n64 .v64 .gba .gb .gbc .nds .3ds .cci .cia .iso .gcm .rvz .ciso .wia .gcz .wua .wud .wux, and .zip / .7z / .rar");
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
-        ImGui::Dummy(ImVec2(0, sp(1.5f)));
+        ui::dialog_buttons();
         if (button("Close", ImVec2(sp(14.f), bh), false, true, ui::Icon::Close)) {
             AG.st = AddGames::Closed;
             ImGui::CloseCurrentPopup();
@@ -283,7 +277,7 @@ static void add_games_modal() {
         ImGui::PopStyleColor();
         ImGui::Text("File %d of %d:  %s", std::max(1, idx), cnt, cur.c_str());
         ImGui::TextDisabled("%s of %s", bytes_text(done).c_str(), bytes_text(total).c_str());
-        ImGui::Dummy(ImVec2(0, sp(2.f)));
+        ui::dialog_buttons();
         if (!AG.fake_progress && button("Cancel", ImVec2(sp(14.f), bh), false, true, ui::Icon::Close)) AG.job.cancel();
     } else {   // Done
         std::string text = ag::summary_text(AG.result);
@@ -302,12 +296,12 @@ static void add_games_modal() {
             pos = nl + 1;
         }
         ImGui::PopTextWrapPos();
-        ImGui::Dummy(ImVec2(0, sp(1.5f)));
+        ui::dialog_buttons();
         if (button("Done", ImVec2(sp(16.f), bh), true)) { AG.st = AddGames::Closed; ImGui::CloseCurrentPopup(); }
-        ImGui::SameLine(0, sp(1.f));
+        ui::dialog_same_line(sp(16.f), sp(1.f));
         if (button("Add more", ImVec2(sp(16.f), bh), false, true, ui::Icon::Plus)) AG.st = AddGames::Choose;
     }
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 void add_games_shutdown() { AG.job.cancel(); AG.job.join(); }

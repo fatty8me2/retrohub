@@ -8,6 +8,7 @@
 #include "glyph_logic.h"
 #include "osk.h"
 #include "library_scan_info.h"
+#include "ui_sheet.h"
 
 
 /* Library file problems: a ROM that vanished (popup at Play) and duplicate copies of one game (details > About).
@@ -110,7 +111,11 @@ struct HiddenList {
 void refresh_hidden() {
     if (HL.loaded > ImGui::GetTime() - 2.0 && HL.loaded <= ImGui::GetTime()) return;
     HL.loaded = ImGui::GetTime();
-    if (g_headless && std::getenv("HUB_SHOT_HIDDEN")) { HL.keys = {"n64:0123456789abcdef0123456789abcdef", "gba:agbj-1a2b3c4d", "gc:gm4e01-0"}; return; }
+    if (g_headless && std::getenv("HUB_SHOT_HIDDEN")) {
+        HL.keys = {"n64:0123456789abcdef0123456789abcdef", "gba:agbj-1a2b3c4d", "gc:gm4e01-0"};
+        if (std::string(std::getenv("HUB_SHOT_HIDDEN")) == "many") for (int i = 4; i <= 18; ++i) HL.keys.push_back("shot:" + std::to_string(i));   // a list taller than the window
+        return;
+    }
     HL.keys = load_prefs().hidden;
     for (const std::string& k : hub::local_removed()) if (std::find(HL.keys.begin(), HL.keys.end(), k) == HL.keys.end()) HL.keys.push_back(k);
 }
@@ -118,6 +123,7 @@ void refresh_hidden() {
 std::string hidden_label(const std::string& key) {
     auto it = g_hidden_titles.find(key);
     if (it != g_hidden_titles.end()) return it->second;
+    if (g_headless && std::getenv("HUB_SHOT_HIDDEN") && key.rfind("shot:", 0) == 0) return "Test Game " + key.substr(5);
     if (g_headless && std::getenv("HUB_SHOT_HIDDEN")) return key == "gba:agbj-1a2b3c4d" ? "Test Game 5" : key == "gc:gm4e01-0" ? "Test Game 3" : "Test Game 1";
     return key;
 }
@@ -194,8 +200,7 @@ static void draw_hidden_list() {
     ImGui::TextWrapped("Games you removed from the library. Unhide brings one back after a rescan.");
     ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
     if (HL.keys.empty()) text_wrapped_disabled("Nothing is hidden.");
-    ImGui::BeginChild("##hiddenlist", ImVec2(0, std::min(ui::sp(28.f), (float)HL.keys.size() * ui::sp(7.f) + ui::sp(1.f))), ImGuiChildFlags_NavFlattened);
-    std::string unhide;
+    std::string unhide;   // the list is the dialog's scrolling middle (it was a nested list with its own scrollbar)
     for (size_t i = 0; i < HL.keys.size(); ++i) {
         ImGui::PushID((int)i);
         ImGui::AlignTextToFramePadding();
@@ -205,7 +210,6 @@ static void draw_hidden_list() {
         if (button("Unhide", ImVec2(ui::sp(10.f), ui::sp(4.f)), false, true)) unhide = HL.keys[i];
         ImGui::PopID();
     }
-    ImGui::EndChild();
     if (!unhide.empty()) {
         if (!(g_headless && std::getenv("HUB_SHOT_HIDDEN"))) unhide_game(unhide);
         HL.keys.erase(std::remove(HL.keys.begin(), HL.keys.end(), unhide), HL.keys.end());
@@ -213,10 +217,10 @@ static void draw_hidden_list() {
         set_notice("Unhid " + hidden_label(unhide) + ". Rescanning...", 4.0);
         if (HL.keys.empty()) HL.open = false;
     }
-    ImGui::Dummy(ImVec2(0, ui::sp(1.f)));
+    ui::dialog_buttons();
     if (button("Close", ImVec2(ui::sp(12.f), ui::sp(4.f)))) HL.open = false;
     if (!HL.open) { ImGui::CloseCurrentPopup(); HL.seen = false; }
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 /* Undo after "Remove from library": a small clickable card above the toasts (the toast list itself is draw-only). */
@@ -260,7 +264,7 @@ void draw_missing_rom_dialog() {
     ImGui::Dummy(ImVec2(0, ui::sp(0.5f)));
     text_wrapped_disabled("The file is gone or its drive is not connected:\n" + MA.path);
     if (!MA.warning.empty()) { ImGui::Dummy(ImVec2(0, ui::sp(0.5f))); ImGui::TextColored(ImColor(ui::WARN), "%s", MA.warning.c_str()); }
-    ImGui::Dummy(ImVec2(0, ui::sp(1.5f)));
+    ui::dialog_buttons();
     ImVec2 bs(ui::sp(20.f), ui::sp(4.f));
     if (!MA.seen) { ImGui::SetKeyboardFocusHere(0); MA.seen = true; }   // a pad lands on "Locate file"
     const bool locate = button("Locate file...", bs, true, true, ui::Icon::Folder);
@@ -277,21 +281,21 @@ void draw_missing_rom_dialog() {
             if (const hub::GameEntry* g = find_entry(key)) { hub::GameEntry copy = *g; play_entry(copy); }
         }
     }
-    ImGui::SameLine();
+    ui::dialog_same_line(bs.x);
     if (button("Rescan", bs, false, !A.scanning, ui::Icon::Refresh)) { start_scan(true); MA.open = false; set_notice("Scanning your games...", 4.0); }
     if (button("Remove from this PC", bs, false, true)) {   // local only: your other PCs keep the game
         remove_here(MA.key, MA.title);
         MA.open = false;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hides it here only. Hidden games (Settings) can bring it back.");
-    ImGui::SameLine();
+    ui::dialog_same_line(bs.x);
     if (button("Hide on all my PCs", bs, false, true)) {
         hide_game(MA.key, MA.title);
         MA.open = false;
     }
     if (button("Cancel", bs)) MA.open = false;
     if (!MA.open) { ImGui::CloseCurrentPopup(); MA.seen = false; }
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 /* Settings > General folder list (library-3): "" when the folder was read in full by the last scan, else a short plain status such as

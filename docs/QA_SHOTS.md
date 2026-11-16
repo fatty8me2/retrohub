@@ -51,7 +51,7 @@ Exit codes: 0 = shot saved. **2 = a requested aid could not be honoured (unknown
 | --- | --- | --- |
 | **`HUB_SHOT_CLOUD2`** | `checking` (the real engine's "Checking your cloud saves..."), `ok`, `mixed` (syncing / waiting / conflict / playing elsewhere / local only), `over` (quota full, games stay local), `attention` (needs sign-in), `offline`, `paused` (sync switched off), `fresh` (signed in, no games). Unknown name exits 2 | the Saves page cloud box + games list with a fake account (`cloud_shot_fake` in cloud_engine.cpp; use with `HUB_SHOT_PAGE=saves`) |
 | `HUB_SHOT_CLOUD_OPEN` | `<system>/<key>` | expand that game's version history |
-| `HUB_SHOT_CLOUD_DIALOG` | `conflict`, `lease`, `checking`, `pulled`, `offline` | launch-time cloud dialogs / notices |
+| `HUB_SHOT_CLOUD_DIALOG` | `conflict`, `conflictmany` (8 files: the middle scrolls), `lease`, `checking`, `waiting` (the strip with its Cancel control; B / Esc / A on it write the trace line `cloud-wait-cancel`), `pulled`, `offline` | launch-time cloud dialogs / notices |
 | `HUB_SHOT_CLOUD_CODE` | any | reveal the recovery code |
 | `HUB_SHOT_HISTORY` | `<system>/<key>` | save history of a game on the Saves page |
 
@@ -78,7 +78,9 @@ Exit codes: 0 = shot saved. **2 = a requested aid could not be honoured (unknown
 
 | Variable | Values | What it shows |
 | --- | --- | --- |
-| `HUB_SHOT_EMU` | `azahar`, `cemu` (download prompt), `lichiiupdate`, `fritchii`, `failed`, `unzip`, `ps2bios`, `switchkeys`, `hookshotav1`, `missingrom`, `hidden`, `ps1bios`, `resume` | emulator dialogs |
+| `HUB_SHOT_EMU` | `azahar`, `cemu` (download prompt), `lichiiupdate`, `fritchii`, `failed`, `unzip`, `ps2bios`, `switchkeys`, `hookshotav1`, `hookshotmissing`, `missingrom`, `hidden` (with `HUB_SHOT_HIDDEN=1`, or `=many` for 18 rows), `ps1bios`, `resume` | emulator dialogs |
+| `HUB_SHOT_NXPREP` | any | the "Getting Fritchii ready" copy dialog frozen half-way (no copy runs) |
+| `HUB_SHOT_HACKS` | `add`, `choose` (18 candidate games), `fail`, `remove` (nothing is deleted), `versions`, `tile` | ROM hack dialogs and views (hack_ui.cpp) |
 | **`HUB_SHOT_EMU=working[:<emu>[:<percent>]]`** | `<emu>` = `azahar`, `cemu`, `dolphin`, `pcsx2`, `ppsspp`, `lichii`, `fritchii` (default `azahar`), percent 0-100 (default 42) | **the install-in-progress dialog frozen at a fixed percentage** (no download runs). Unknown emulator exits 2 |
 | `HUB_SHOT_FRITCHII_PIN` | any | a fake Fritchii pin (96 MB) |
 | `HUB_SHOT_QM*` | | quick menu aids |
@@ -89,6 +91,10 @@ Exit codes: 0 = shot saved. **2 = a requested aid could not be honoured (unknown
 | Variable | Values | What it shows |
 | --- | --- | --- |
 | **`HUB_SHOT_KITDEMO`** | `sheet` (a game-page-like page sheet over the whole window), `pane` (the "Library desk": a game list on the left, the same page in a pane on the right), `dialog` (the sheet with a scrolling dialog on top). Unknown value exits 2 | the UI kit (`ui_scroll.h`, `ui_sheet.h`, `ui_controls.h`) with fake content: tab bar, three sections (Advanced closed), 17 option rows with long labels and values. `HUB_SHOT_KITTAB=0..3` picks the tab (default 3, Settings). Add `HUB_SHOT_PAD=down,down,...,shot:<name>` to watch the focus follow and LT / RT (`lt`, `rt`) page the body. `qa\uikit_shots.ps1` captures the whole set (sizes, 150 %, Light, pad runs) from a sandbox copy |
+
+`qa\dialogs_shots.ps1 [-Bin <build output>] [-Tag before|after] [-Only regex]` captures the dialogs converted to `ui::dialog` (batch 1: emulator
+prompts, Add games, Find my games, ROM hacks, cloud saves) at 1024x600, 1280x720, 1920x1080 and 1024x600 at 150 %, plus pad walks (default focus,
+B, a long middle scrolling under pinned buttons), from a sandbox copy. Output and a `summary.txt` with the pad checks go to `build\qa_dialogs_out\<tag>`.
 
 ## Matrix
 
