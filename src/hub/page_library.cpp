@@ -345,9 +345,30 @@ void empty_library_state() {
         for (auto& ln : ui::wrap_lines(ui::F.cap, ui::F.cap->FontSize, hubhelp::file_types_line(hub::addgames::supported_exts()), nw, 4)) note_lines.push_back(ln);
     }
     const float note_h = note_lines.empty() ? 0.f : (float)note_lines.size() * ui::F.cap->FontSize * 1.3f + sp(1.5f);
+    /* the supported systems: one centred row; a narrow card (the Library desk's pane, a big UI size) wraps it onto more rows */
+    struct Sy { const char* label; const char* con; };   // con: a console id (library.h)
+    static const Sy sys[] = {{"N64", "n64"}, {"GameCube", "gc"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"},
+                            {"Nintendo DS", "nds"},
+                            {"3DS", "3ds"}, {"Wii U", "wiiu"}, {"PS2", "ps2"}, {"PSP", "psp"}, {"Switch", "switch"}, {"Switch 2", "switch2"},
+                            {"NES", "nes"}, {"SNES", "snes"}};
+    const int n_sys = (int)(sizeof sys / sizeof sys[0]);
+    std::vector<std::pair<int, float>> sys_rows;   // (first pill of the next row, this row's width)
+    for (int i0 = 0; i0 < n_sys;) {
+        float tot = 0;
+        int i1 = i0;
+        while (i1 < n_sys) {
+            const float pw = ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, sys[i1].label).x + sp(2.5f) + sp(0.75f);
+            if (i1 > i0 && tot + pw - sp(0.75f) > w - sp(4.f)) break;
+            tot += pw;
+            ++i1;
+        }
+        sys_rows.push_back({i1, tot});
+        i0 = i1;
+    }
+    const float sys_extra = (float)(sys_rows.size() - 1) * (ui::F.cap->FontSize + sp(1.75f));
     /* the card is as tall as what it holds; page_library() puts it in a scroll area, so a short window (1024x600, 150 %) scrolls to the
      * buttons instead of cutting the card off above them */
-    float h = sp(53.f) + note_h + (suggestions.empty() ? 0.f : sp(10.f) + sp(6.f) * (float)suggestions.size());
+    float h = sp(53.f) + note_h + sys_extra + (suggestions.empty() ? 0.f : sp(10.f) + sp(6.f) * (float)suggestions.size());
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
     dl->AddRectFilled(p0, p1, ui::PANEL, sp(2.5f));
     dl->AddRect(p0, p1, ui::HAIRLINE, sp(2.5f), 0, 1.f);
@@ -369,20 +390,17 @@ void empty_library_state() {
         y += ui::F.body->FontSize * 1.3f;
     }
     y += sp(1.5f);
-    // supported systems
-    {
-        struct Sy { const char* label; const char* con; };   // con: a console id (library.h)
-        static const Sy sys[] = {{"N64", "n64"}, {"GameCube", "gc"}, {"GBA", "gba"}, {"GBC", "gbc"}, {"Game Boy", "gb"},
-                                {"Nintendo DS", "nds"},
-                                {"3DS", "3ds"}, {"Wii U", "wiiu"}, {"PS2", "ps2"}, {"PSP", "psp"}, {"Switch", "switch"}, {"Switch 2", "switch2"},
-                                {"NES", "nes"}, {"SNES", "snes"}};
-        float tot = 0;
-        for (auto& s2 : sys) tot += ui::F.cap->CalcTextSizeA(ui::F.cap->FontSize, FLT_MAX, 0.f, s2.label).x + sp(2.5f) + sp(0.75f);
-        float x = cx - (tot - sp(0.75f)) * 0.5f;
-        for (auto& s2 : sys) {
-            ImU32 a, b;
-            console_colors(s2.con, &a, &b);
-            x += pill_at(dl, ImVec2(x, y), s2.label, mix(a, IM_COL32_BLACK, 0.2f)) + sp(0.75f);
+    {   // supported systems (rows worked out above)
+        int i0 = 0;
+        for (const auto& row : sys_rows) {
+            float x = cx - (row.second - sp(0.75f)) * 0.5f;
+            for (int i = i0; i < row.first; ++i) {
+                ImU32 a, b;
+                console_colors(sys[i].con, &a, &b);
+                x += pill_at(dl, ImVec2(x, y), sys[i].label, mix(a, IM_COL32_BLACK, 0.2f)) + sp(0.75f);
+            }
+            if (row.first < n_sys) y += ui::F.cap->FontSize + sp(1.75f);
+            i0 = row.first;
         }
         y += ui::F.cap->FontSize + sp(4.f);
     }
@@ -939,10 +957,32 @@ void sync_card() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
 }
 
+/* Home card while only the bundled game is here: ask for game folders. Library desk shows the same card above the game page. */
+void add_folders_card() {
+    if (!own_library_empty() || A.scanning) return;
+    begin_panel("add_folders_card");
+    ImGui::PushFont(ui::F.bold);
+    ImGui::TextUnformatted("Add your game folders");
+    ImGui::PopFont();
+    text_wrapped_disabled("Only the bundled game is here. Point RetroHub at the folder(s) with your N64, GBA, GB, DS, 3DS and Wii U games and they all show up.");
+    if (!scan_last_line().empty()) text_wrapped_disabled(scan_last_line());
+    ImGui::Dummy(ImVec2(0, sp(0.5f)));
+    add_rom_folder(button("Add ROM folder", ImVec2(0, 0), true, true, ui::Icon::Folder));
+    static const std::vector<std::string> sugg2 = hub::suggest_rom_folders(2);
+    for (const std::string& s : sugg2) {
+        ImGui::SameLine(0, sp(1.f));
+        size_t cut = s.find_last_of('\\');
+        size_t cut2 = cut == std::string::npos || cut == 0 ? std::string::npos : s.find_last_of('\\', cut - 1);
+        if (button(("Add  " + (cut2 == std::string::npos ? s : s.substr(cut2 + 1))).c_str(), ImVec2(0, 0))) add_rom_folder_path(s);
+    }
+    end_panel();
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
+}
+
 void page_library() {
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     ensure_selection();
-    if (desk_layout_on()) { desk_page(); return; }   // Settings > Layout: Library desk (desk_view.cpp)
+    if (desk_layout_on() && !lib_cases_active()) { desk_page(); return; }   // Settings > Layout: Library desk (desk_view.cpp); its Coverflow button shows the Cases carousel below
     if (A.lib.empty() && A.ghosts.empty() && !A.scanning) {
         /* First run, nothing at all to list: the whole page (top bar and card) is one scroll area, so a short window (1024x600, 150 %)
          * scrolls to the folder buttons, by wheel, thumb or D-pad. It reaches sp(1.5) into the margin on both sides as padding: the
@@ -968,29 +1008,12 @@ void page_library() {
         all_games_view();
         return;
     }
-    if (own_library_empty() && !A.scanning) {   // only the bundled game: ask for game folders
-        begin_panel("add_folders_card");
-        ImGui::PushFont(ui::F.bold);
-        ImGui::TextUnformatted("Add your game folders");
-        ImGui::PopFont();
-        text_wrapped_disabled("Only the bundled game is here. Point RetroHub at the folder(s) with your N64, GBA, GB, DS, 3DS and Wii U games and they all show up.");
-        if (!scan_last_line().empty()) text_wrapped_disabled(scan_last_line());
-        ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        add_rom_folder(button("Add ROM folder", ImVec2(0, 0), true, true, ui::Icon::Folder));
-        static const std::vector<std::string> sugg2 = hub::suggest_rom_folders(2);
-        for (const std::string& s : sugg2) {
-            ImGui::SameLine(0, sp(1.f));
-            size_t cut = s.find_last_of('\\');
-            size_t cut2 = cut == std::string::npos || cut == 0 ? std::string::npos : s.find_last_of('\\', cut - 1);
-            if (button(("Add  " + (cut2 == std::string::npos ? s : s.substr(cut2 + 1))).c_str(), ImVec2(0, 0))) add_rom_folder_path(s);
-        }
-        end_panel();
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
-    }
+    add_folders_card();   // only the bundled game: ask for game folders
     // The old "sync through a folder" Home card is gone: cloud saves are automatic (v1.25). Folder sync stays
     // an optional extra on the Saves page.
 
     finish_setup_card();   // Plan 4 W2 C: while first-run steps are open
+    desk_try_card();       // "Try the new Library desk layout": once, after setup, never while a game runs (desk_view.cpp)
 
     const hub::GameEntry* sel = find_entry(A.sel_game);
     if (sel) {

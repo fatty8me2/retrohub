@@ -302,6 +302,17 @@ void tab_general() {
     if (ImGui::RadioButton("Library desk", desk_layout_on())) desk_set_layout(true);
     text_wrapped_disabled("Traditional: shelves and covers, with games opening as a page.");
     text_wrapped_disabled("Library desk: your games in a list, with the selected game always open beside it.");
+    if (desk_layout_on()) {   // desk_list_w: the list column of the Library desk (also set by dragging the line beside the list)
+        ImGui::Dummy(ImVec2(0, sp(1.f)));
+        settings_label("List width");
+        const int lw = desk_list_width_choice();
+        if (ImGui::RadioButton("Narrow", lw == 0)) desk_set_list_width_choice(0);
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Normal", lw == 1)) desk_set_list_width_choice(1);
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Wide", lw == 2)) desk_set_list_width_choice(2);
+        text_wrapped_disabled(lw < 0 ? "You set the width by dragging the line beside the list." : "You can also drag the line beside the list.");
+    }
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     settings_label("Sidebar");
     int sm = A.st.sidebar_mode;
