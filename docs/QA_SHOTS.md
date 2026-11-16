@@ -97,6 +97,7 @@ Exit codes: 0 = shot saved. **2 = a requested aid could not be honoured (unknown
 `qa\dialogs_shots.ps1 [-Bin <build output>] [-Tag before|after] [-Only regex]` captures the dialogs converted to `ui::dialog` (batch 1: emulator
 prompts, Add games, Find my games, ROM hacks, cloud saves) at 1024x600, 1280x720, 1920x1080 and 1024x600 at 150 %, plus pad walks (default focus,
 B, a long middle scrolling under pinned buttons), from a sandbox copy. Output and a `summary.txt` with the pad checks go to `build\qa_dialogs_out\<tag>`.
+`qa\dialogs2a_shots.ps1` does the same for batch 2a (Customize and the shelf dialogs, a friend's game, the pack Uninstall confirm, the username prompt, the account confirms, Find my games) in both layouts. Aids it adds: `HUB_SHOT_CUSTOM_SHELVES=<n>` (made-up shelves, screenshot vault only), `HUB_SHOT_GP_UNINSTALL=<key>[:pad]` (that game shows as installed from a pack; the confirm opens by itself, or by pad with `:pad`; nothing is deleted), `HUB_SHOT_GHOST_OPEN=<title>` (as well as an index). **`HUB_SHOT_FINDGAMES` never scans this PC:** without `HUB_FINDGAMES_HOME` it shows made-up folders.
 
 ## Matrix
 

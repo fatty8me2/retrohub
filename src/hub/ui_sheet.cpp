@@ -225,7 +225,9 @@ bool dialog_begin(const char* id, const char* title, bool* open, DialogSize size
     if (xb > 0.f) {
         const ImVec2 keep = ImGui::GetCursorPos();
         ImGui::SetCursorPos(ImVec2(title_pos.x + avail - xb, title_pos.y));
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);   // like ImGui's own title-bar X: it never takes the dialog's first focus
         if (icon_button("##dlg_close", Icon::Close, xb, false, "Close")) *open = false;
+        ImGui::PopItemFlag();
         ImGui::SetCursorPos(keep);
     }
     const float title_h = ImGui::GetCursorPosY() - y0;

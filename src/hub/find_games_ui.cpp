@@ -1,11 +1,13 @@
 ﻿#include "app.h"
 #include "findgames.h"
+#include "ui_layout_logic.h"
 #include "ui_sheet.h"
 
 /* ---------- "Find my games": first-run folder finder (scan on a worker thread, then a checklist) ----------
  * Shown once when rom_folders is empty and the player has not dismissed it; re-opened from Settings > ROM folders.
  * The scan only reads directory listings (see src/common/findgames.h). Screenshot aids:
- * HUB_SHOT_FINDGAMES=results|scanning opens it on its own, HUB_FINDGAMES_HOME=<dir> points the scan at a fake profile. */
+ * HUB_SHOT_FINDGAMES=results|scanning opens it on its own, HUB_FINDGAMES_HOME=<dir> points the scan at a fake profile.
+ * A screenshot run (headless) NEVER scans this PC: without HUB_FINDGAMES_HOME it shows made-up folders and reads no folder at all. */
 
 namespace {
 
@@ -39,12 +41,44 @@ void finish_scan() {
     FG.st = FindGames::Results;
 }
 
-std::string counts_text(const hub::fg::Counts& c) {
-    std::string s;
+/* A folder's counts as separate pieces ("N64 3", "GBA 2", "7 zips / 7z / rar"), so a row can wrap between them. */
+std::vector<std::string> count_pieces(const hub::fg::Counts& c) {
+    std::vector<std::string> v;
     for (int i = 0; i < hub::fg::kSysCount; ++i)
-        if (c.n[i]) s += (s.empty() ? "" : "   ") + std::string(hub::fg::sys_label(i)) + " " + std::to_string(c.n[i]);
-    if (c.archives) s += (s.empty() ? "" : "   ") + std::to_string(c.archives) + (c.archives == 1 ? " zip / 7z / rar" : " zips / 7z / rar");
-    return s;
+        if (c.n[i]) v.push_back(std::string(hub::fg::sys_label(i)) + " " + std::to_string(c.n[i]));
+    if (c.archives) v.push_back(std::to_string(c.archives) + (c.archives == 1 ? " zip / 7z / rar" : " zips / 7z / rar"));
+    return v;
+}
+
+/* Screenshot runs only: made-up results (a mixed folder with a long row of counts, and enough rows to scroll on a small window). */
+void shot_fake_folders(std::vector<hub::fg::Folder>* out) {
+    namespace f = hub::fg;
+    struct R { const char* path; int sys[3][2]; int arch; bool tick; };
+    static const R rows[] = {
+        {"C:\\Users\\Player\\Documents\\Emulation\\Everything", {{f::N64, 12}, {f::SNES, 21}, {f::NES, 30}}, 7, true},
+        {"C:\\Users\\Player\\Desktop\\N64 Collection", {{f::N64, 24}, {-1, 0}, {-1, 0}}, 0, true},
+        {"C:\\Users\\Player\\Downloads\\Handhelds", {{f::GBA, 6}, {f::NDS, 5}, {f::N3DS, 2}}, 3, true},
+        {"D:\\Games\\PlayStation 2", {{f::PS2, 8}, {-1, 0}, {-1, 0}}, 0, true},
+        {"D:\\ROMs", {{f::SNES, 40}, {f::NES, 52}, {f::GB, 18}}, 12, true},
+        {"C:\\Users\\Player\\Desktop\\Old backups\\GameCube discs", {{f::GC, 5}, {-1, 0}, {-1, 0}}, 0, false},
+        {"C:\\Users\\Player\\Games\\Game Boy Color", {{f::GBC, 14}, {-1, 0}, {-1, 0}}, 0, true},
+        {"C:\\Users\\Player\\Documents\\PS1 discs", {{f::PS1, 4}, {-1, 0}, {-1, 0}}, 0, true},
+        {"E:\\Emulation\\Wii U", {{f::WIIU, 3}, {-1, 0}, {-1, 0}}, 0, true},
+        {"C:\\Users\\Player\\Downloads\\New zips", {{-1, 0}, {-1, 0}, {-1, 0}}, 9, false},
+    };
+    out->clear();
+    for (const R& r : rows) {
+        f::Folder fo;
+        fo.path = r.path;
+        for (const auto& s : r.sys) if (s[0] >= 0) fo.c.n[s[0]] = s[1];
+        fo.c.archives = r.arch;
+        fo.ticked = r.tick;
+        out->push_back(fo);
+    }
+    out->front().c.n[f::GBA] = 9;   // the first row also has Game Boy Advance, Game Boy Color, PlayStation and GameCube games
+    out->front().c.n[f::GBC] = 4;
+    out->front().c.n[f::PS1] = 3;
+    out->front().c.n[f::GC] = 2;
 }
 
 /* "C:\Users\Me\Desktop\Emulation\ROMs" -> name "ROMs" + parent shortened to "...\<folder>" (the last two segments; callers show the full path on hover). */
@@ -60,6 +94,32 @@ void split_label(const std::string& p, float w, std::string* name, std::string* 
     std::string up = cut2 == std::string::npos ? full : full.substr(cut2 + 1);
     *parent = (cut2 == std::string::npos || cut2 == 0) ? full : "...\\" + up;
     (void)w;
+}
+
+/* One checklist row's text: the folder name, its count pieces beside it while they fit and wrapped under it otherwise (one long line ran
+ * past the right edge and was cut off), a muted note, then the parent folder. `right` = the row's right edge (screen x). */
+void row_text(const std::string& path, const std::vector<std::string>& pieces, const char* note, float right) {
+    ImGui::BeginGroup();
+    std::string nm, par;
+    split_label(path, 0.f, &nm, &par);
+    const float x0 = ImGui::GetCursorScreenPos().x, room = std::max(sp(4.f), right - x0);
+    ImGui::PushFont(ui::F.bold);
+    ImGui::TextUnformatted(ui::ellipsize(ui::F.bold, ImGui::GetFontSize(), nm, room).c_str());
+    ImGui::PopFont();
+    float gap = sp(2.f);                                      // name -> first piece (as before)
+    const float gap2 = ImGui::CalcTextSize("   ").x;          // between pieces: the three spaces the one-line text had
+    auto piece = [&](const std::string& s, bool muted) {
+        const float w = ImGui::CalcTextSize(s.c_str()).x;
+        if (hubui::kit::fits_on_line(ImGui::GetItemRectMax().x, gap, w, right)) ImGui::SameLine(0.f, gap);
+        const std::string t = ui::ellipsize(ImGui::GetFont(), ImGui::GetFontSize(), s, std::max(sp(4.f), right - ImGui::GetCursorScreenPos().x));
+        if (muted) ImGui::TextDisabled("%s", t.c_str());
+        else ImGui::TextUnformatted(t.c_str());
+        gap = gap2;
+    };
+    for (const std::string& s : pieces) piece(s, false);
+    if (note) { gap = sp(2.f); piece(note, true); }
+    if (!par.empty()) ImGui::TextDisabled("%s", ui::ellipsize(ImGui::GetFont(), ImGui::GetFontSize(), par, room).c_str());
+    ImGui::EndGroup();
 }
 
 void close_flow(bool done) {
@@ -81,8 +141,18 @@ void find_games_open() {
     FG.run.ctl.done = false;
     FG.run.ctl.dirs = 0;
     FG.run.ctl.games = 0;
-    FG.st = FindGames::Scanning;
     if (FG.run.th.joinable()) FG.run.join();
+    if (g_headless) {   // a screenshot run never reads this PC's folders: a made-up profile (HUB_FINDGAMES_HOME) or made-up results
+        const char* home = std::getenv("HUB_FINDGAMES_HOME");
+        if (!home || !*home) {
+            shot_fake_folders(&FG.found);
+            shot_trace("findgames", "made-up folders (screenshot run: no folder is read)");
+            finish_scan();
+            return;
+        }
+        shot_trace("findgames", std::string("scan of the made-up profile ") + home);
+    }
+    FG.st = FindGames::Scanning;
     FG.run.start([] { FG.found = hub::fg::scan_roots(hub::fg::default_roots(), &FG.run.ctl); });
 }
 
@@ -132,6 +202,7 @@ static void find_games_modal() {
             const float lw = ImGui::GetContentRegionAvail().x;
             ImGui::Dummy(ImVec2(0, sp(0.5f)));
             ImGui::Indent(sp(1.f));
+            const float row_right = lp0.x + lw - sp(1.f);   // the panel's inner right edge (the same margin as on the left)
             for (size_t i = 0; i < FG.found.size(); ++i) {
                 ImGui::PushID((int)i);
                 const bool have = already_added(FG.found[i].path);
@@ -140,17 +211,7 @@ static void find_games_modal() {
                 if (ImGui::Checkbox("##t", &t)) FG.tick[i] = t;
                 ImGui::EndDisabled();
                 ImGui::SameLine();
-                ImGui::BeginGroup();
-                ImGui::PushFont(ui::F.bold);
-                std::string nm, par;
-                split_label(FG.found[i].path, ImGui::GetContentRegionAvail().x - sp(2.f), &nm, &par);
-                ImGui::TextUnformatted(nm.c_str());
-                ImGui::PopFont();
-                ImGui::SameLine(0, sp(2.f));
-                ImGui::TextUnformatted(counts_text(FG.found[i].c).c_str());
-                if (have) { ImGui::SameLine(0, sp(2.f)); ImGui::TextDisabled("already in your library"); }
-                if (!par.empty()) ImGui::TextDisabled("%s", par.c_str());
-                ImGui::EndGroup();
+                row_text(FG.found[i].path, count_pieces(FG.found[i].c), have ? "already in your library" : nullptr, row_right);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", FG.found[i].path.c_str());
                 ImGui::PopID();
             }
@@ -159,16 +220,7 @@ static void find_games_modal() {
                 bool t = FG.extra_tick[i] != 0;
                 if (ImGui::Checkbox("##t", &t)) FG.extra_tick[i] = t;
                 ImGui::SameLine();
-                ImGui::BeginGroup();
-                ImGui::PushFont(ui::F.bold);
-                std::string nm, par;
-                split_label(FG.extra[i], ImGui::GetContentRegionAvail().x - sp(2.f), &nm, &par);
-                ImGui::TextUnformatted(nm.c_str());
-                ImGui::PopFont();
-                ImGui::SameLine(0, sp(2.f));
-                ImGui::TextDisabled("added by you");
-                if (!par.empty()) ImGui::TextDisabled("%s", par.c_str());
-                ImGui::EndGroup();
+                row_text(FG.extra[i], {}, "added by you", row_right);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", FG.extra[i].c_str());
                 ImGui::PopID();
             }

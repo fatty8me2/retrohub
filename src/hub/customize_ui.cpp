@@ -6,6 +6,7 @@
 #include "prefs.h"
 #include "progress_ui.h"
 #include "savestore.h"
+#include "ui_sheet.h"
 
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
@@ -20,8 +21,10 @@
  *    (custom_original_title) for art/genre lookups and so search still matches it (ListItem::alt_title).
  *  - A custom cover replaces the box art in art_for_entry (tiles.cpp).
  *  - User shelves are appended to Home after the built-in shelves (home_shelves hook); the built-ins are not touched.
- * UI = small modals: Customize (rename / cover / reset), Screenshot cover picker, Add to shelf, Manage shelves. Every control is a
- * ui::button / osk::input, so all of it is pad-navigable. Modals are drawn where their opener lives (custom_draw(loc)) so they nest. */
+ * UI = small modals: Customize (rename / cover / reset), Screenshot cover picker, Add to shelf, Manage shelves, Smart shelf. Every control is a
+ * ui::button / osk::input (the screenshot cells are pad stops too), so all of it is pad-navigable. Modals are drawn where their opener lives
+ * (custom_draw(loc)) so they nest. Each is a ui::dialog (ui_sheet.h): pinned title, scrolling middle, pinned button row.
+ * Screenshot aids: HUB_SHOT_CUSTOM=customize|shots|picker|manager|smart|smart_edit|home_smart|cover:<file>, HUB_SHOT_CUSTOM_SHELVES=<n>. */
 
 namespace {
 
@@ -32,7 +35,7 @@ enum Loc { LocRoot = 0, LocDetails = 1, LocCustomize = 2, LocPicker = 3, LocMgr 
 struct Tex { SDL_Texture* t = nullptr; int w = 0, h = 0; std::string stamp; unsigned long long used = 0; };   // used: LRU tick of the last tex_for() hit
 static unsigned long long g_tex_tick = 0;
 
-struct Popup { bool want = false; int parent = LocRoot; };
+struct Popup { bool want = false; int parent = LocRoot; bool open = false; };   // want: open it on its next draw; open: it is up
 
 struct State {
     hub::prefs::Prefs P;
@@ -57,7 +60,7 @@ struct State {
     int edit = -1, del = -1;                   // Manage shelves: row being renamed / awaiting delete confirmation
     std::vector<std::string> shot_files;
     std::string shot_dir;
-    bool shot_once = false;
+    bool shot_once = false, shelves_seeded = false;
 };
 State CU;
 
@@ -264,25 +267,21 @@ void open_smart_editor(int idx, int parent) {
     CU.smart.parent = parent;
 }
 
-/* ---- modal frame ---- */
+/* ---- dialog frame ---- */
 
-bool begin_modal(const char* name, Popup& pp, float width_sp) {
-    if (pp.want) { ImGui::OpenPopup(name); pp.want = false; }
-    ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(io.DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(std::min(sp(width_sp), io.DisplaySize.x * 0.92f), 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(3.f), sp(3.f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sp(2.5f));
-    bool open = ImGui::BeginPopupModal(name, nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
-    ImGui::PopStyleVar(2);
-    return open;
+/* Every modal here is a ui::dialog under its old popup name (QA scripts look the names up). `pp.want` opens it on this draw, `pp.open` keeps it
+ * up; set pp.open = false to close it (dialog_end closes the popup). B / Esc close it through the kit (dialog_end), which runs AFTER the
+ * dialogs nested in it: B on "Cover from a screenshot" or "Add to shelf" opened from Customize now closes only that one (each used to read B at
+ * its top, before its nested dialog, so one B closed both). The old heading is the pinned title, the grey line under it the subtitle. */
+bool begin_dialog(const char* name, const char* title, Popup& pp, ui::DialogSize size, const char* subtitle = nullptr) {
+    if (pp.want) { pp.open = true; pp.want = false; }
+    ui::DialogOpts o;
+    o.keep_id = true;
+    o.back_closes = true;
+    o.subtitle = subtitle;
+    return ui::dialog_begin(name, title, &pp.open, size, o);
 }
 
-void heading(const char* t) {
-    ImGui::PushFont(ui::F.title);
-    ImGui::TextUnformatted(t);
-    ImGui::PopFont();
-}
 void sub_heading(const char* t) {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     ImGui::PushFont(ui::F.bold);
@@ -296,7 +295,7 @@ bool new_shelf_row(char* buf, size_t sz, const char* idsuffix, std::string* made
     ImGui::PushID(idsuffix);
     ImGui::SetNextItemWidth(sp(26.f));
     if (osk::input("##newshelf", "New shelf name", buf, sz, ImGuiInputTextFlags_EnterReturnsTrue)) go = buf[0] != 0;
-    ImGui::SameLine(0, sp(1.f));
+    ui::dialog_same_line(ui::dialog_button_w("Create shelf", true), sp(1.f));   // under the box when the dialog is narrow
     if (ui::button("Create shelf", ImVec2(0, sp(4.f)), false, true, ui::Icon::Plus)) go = true;
     ImGui::PopID();
     if (!go) return false;
@@ -311,27 +310,26 @@ bool new_shelf_row(char* buf, size_t sz, const char* idsuffix, std::string* made
 /* ---------- screenshot cover picker ---------- */
 
 void draw_shots() {
-    if (!begin_modal("Cover from a screenshot##cust", CU.shots, 96.f)) return;
     const hub::GameEntry* e = entry_of(CU.key);
-    if (!e || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    heading("Cover from a screenshot");
-    ImGui::TextDisabled("%s", e->title.c_str());
-    if (CU.shot_files.empty()) {
-        ImGui::Dummy(ImVec2(0, sp(1.f)));
+    if (!begin_dialog("Cover from a screenshot##cust", "Cover from a screenshot", CU.shots, ui::DialogSize::Large, e ? e->title.c_str() : nullptr)) return;
+    if (!e) { CU.shots.open = false; ui::dialog_end(); return; }
+    if (CU.shot_files.empty())
         ImGui::TextWrapped("No screenshots yet. Take one in game from the quick menu (View + Y), then come back.");
-    }
     const float tw = sp(18.f), th = tw / 1.6f;
     const float avail = ImGui::GetContentRegionAvail().x;
     const int per_row = std::max(1, (int)((avail + sp(1.f)) / (tw + sp(1.f))));
-    ImGui::BeginChild("##cust_shots", ImVec2(0, std::min(sp(40.f), (th + sp(1.f)) * 3.4f)), ImGuiChildFlags_NavFlattened);
+    /* The pictures are the dialog's scrolling middle (they were a nested list with its own scrollbar). Each one is a pad stop (EnableNav: the
+     * D-pad walks the grid, A picks it like a click); the focus ring shows for the pad / keyboard focus and under the mouse. */
     for (size_t i = 0; i < CU.shot_files.size() && i < 40; ++i) {
         const std::string path = CU.shot_dir + "\\" + CU.shot_files[i];
         ImGui::PushID((int)i);
         if (i % per_row) ImGui::SameLine(0, sp(1.f));
         ImVec2 p = ImGui::GetCursorScreenPos();
-        bool pick = ImGui::InvisibleButton("shot", ImVec2(tw, th));
-        bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+        bool pick = ImGui::InvisibleButton("shot", ImVec2(tw, th), ImGuiButtonFlags_EnableNav);
+        const bool pad_focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;   // a mouse click also sets the focus: no ring for that
+        const bool hot = ImGui::IsItemHovered() || pad_focus;
         if (i == 0) ImGui::SetItemDefaultFocus();
+        if (pad_focus && g_headless) shot_trace_once("cover-focus", CU.key + " i=" + std::to_string(i));   // QA trace (HUB_SHOT_TRACE)
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p1(p.x + tw, p.y + th);
         dl->AddRectFilled(p, p1, IM_COL32(0, 0, 0, 255), sp(1.f));
@@ -341,13 +339,12 @@ void draw_shots() {
         if (pick) {
             bool ok = set_cover(CU.key, path);
             push_toast(ok ? "Cover set from the screenshot" : "Couldn't save the cover", ok ? COL_GOOD : COL_BAD, 3.0);
-            ImGui::CloseCurrentPopup();
+            CU.shots.open = false;
         }
     }
-    ImGui::EndChild();
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
-    if (ui::button("Cancel", ImVec2(sp(14.f), sp(4.5f)))) ImGui::CloseCurrentPopup();
-    ImGui::EndPopup();
+    ui::dialog_buttons();
+    if (ui::button("Cancel", ImVec2(sp(14.f), sp(4.5f)))) CU.shots.open = false;
+    ui::dialog_end();
 }
 
 /* ---------- Add to shelf ---------- */
@@ -363,12 +360,10 @@ int smart_match_count(const hub::prefs::ShelfRule& r) {
 }
 
 void draw_smart() {
-    if (!begin_modal("Smart shelf##cust", CU.smart, 78.f)) return;
-    if (ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    if (!begin_dialog("Smart shelf##cust", CU.smart_idx >= 0 ? "Edit smart shelf" : "New smart shelf", CU.smart, ui::DialogSize::Large,
+                      "It fills itself with every game that matches. Leave a row alone to ignore it.")) return;
     using hubui::prog::next_players; using hubui::prog::next_days; using hubui::prog::next_decade;
     hub::prefs::ShelfRule& r = CU.smart_rule;
-    heading(CU.smart_idx >= 0 ? "Edit smart shelf" : "New smart shelf");
-    ImGui::TextDisabled("It fills itself with every game that matches. Leave a row alone to ignore it.");
     sub_heading("Name");
     ImGui::SetNextItemWidth(sp(34.f));
     osk::input("##smart_name", "Shelf name", CU.smart_name, sizeof CU.smart_name);
@@ -382,11 +377,11 @@ void draw_smart() {
             for (const auto& e : A.lib) if (hub::console_id(e) == sy) { have = true; break; }
             const bool on = std::find(r.systems.begin(), r.systems.end(), sy) != r.systems.end();
             if (!have && !on) continue;   // only consoles the player has games for
-            if (!first) ImGui::SameLine(0, sp(0.75f));
-            first = false;
             std::string up = sy;
             for (auto& c : up) c = (char)std::toupper((unsigned char)c);
             if (hub::console_is_switch2(sy)) up = "SWITCH 2";
+            if (!first) ui::dialog_same_line(ui::dialog_button_w(up.c_str(), on), sp(0.75f));   // the chips wrap at the dialog's edge
+            first = false;
             ImGui::PushID(sy);
             if (ui::button(up.c_str(), ImVec2(0, sp(3.5f)), on, true, on ? ui::Icon::Check : ui::Icon::None)) hubui::prog::toggle_system(&r, sy);
             ImGui::PopID();
@@ -405,32 +400,34 @@ void draw_smart() {
             else if (it == g.end() || it + 1 == g.end()) r.genre.clear();
             else r.genre = *(it + 1);
         }
-        ImGui::SameLine(0, sp(1.f));
+        ui::dialog_same_line(bw, sp(1.f));
         lbl = r.min_players > 0 ? "Players: " + std::to_string(r.min_players) + " or more" : std::string("Players: any");
         if (ui::button(lbl.c_str(), ImVec2(bw, bh), r.min_players > 0)) r.min_players = next_players(r.min_players);
     }
     {
         std::string lbl = "Status: " + (r.status.empty() ? std::string("any") : hubui::prog::status_label(r.status));
         if (ui::button(lbl.c_str(), ImVec2(bw, bh), !r.status.empty())) r.status = hubui::prog::next_status(r.status);
-        ImGui::SameLine(0, sp(1.f));
+        ui::dialog_same_line(bw, sp(1.f));
         lbl = r.decade > 0 ? "Decade: the " + std::to_string(r.decade) + "s" : std::string("Decade: any");
         if (ui::button(lbl.c_str(), ImVec2(bw, bh), r.decade > 0)) r.decade = next_decade(r.decade);
     }
     {
         std::string lbl = r.not_played_days > 0 ? "Not played in " + std::to_string(r.not_played_days) + " days" : std::string("Last played: any time");
         if (ui::button(lbl.c_str(), ImVec2(bw, bh), r.not_played_days > 0)) r.not_played_days = next_days(r.not_played_days);
-        ImGui::SameLine(0, sp(1.f));
+        ui::dialog_same_line(bw, sp(1.f));
         if (ui::button("Favorites only", ImVec2(bw, bh), r.favorites_only, true, r.favorites_only ? ui::Icon::Check : ui::Icon::None)) r.favorites_only = !r.favorites_only;
     }
 
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     const bool empty = hubui::prog::rule_is_empty(r);
+    ImGui::PushTextWrapPos(0.f);   // a long rule wraps inside the dialog
     if (empty) ImGui::TextDisabled("Pick at least one thing to match.");
     else {
         const int n = smart_match_count(r);
         ImGui::TextDisabled("%s  -  %d game%s right now", hubui::prog::rule_summary(r).c_str(), n, n == 1 ? "" : "s");
     }
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ImGui::PopTextWrapPos();
+    ui::dialog_buttons();
     if (ui::button("Save shelf", ImVec2(sp(16.f), sp(4.5f)), true, !empty, ui::Icon::Check)) {
         const std::string nm = CU.smart_name;
         const hub::prefs::ShelfRule rule = r;
@@ -439,25 +436,21 @@ void draw_smart() {
         bool ok = commit_shelves([&](Shelves* v) {
             return idx >= 0 ? hubui::prog::edit_smart_shelf(v, idx, nm, rule) : hubui::prog::add_smart_shelf(v, nm, rule, &made);
         });
-        if (ok) { push_toast("Smart shelf saved", COL_GOOD, 2.5); CU.smart_hits_at = -100; ImGui::CloseCurrentPopup(); }
+        if (ok) { push_toast("Smart shelf saved", COL_GOOD, 2.5); CU.smart_hits_at = -100; CU.smart.open = false; }
         else push_toast(CU.P.user_shelves.size() >= 24 ? "You can have up to 24 shelves" : "Couldn't save the shelf", COL_BAD, 4.0);
     }
-    ImGui::SameLine(0, sp(1.f));
-    if (ui::button("Cancel", ImVec2(sp(14.f), sp(4.5f)))) ImGui::CloseCurrentPopup();
-    ImGui::EndPopup();
+    ui::dialog_same_line(sp(14.f), sp(1.f));
+    if (ui::button("Cancel", ImVec2(sp(14.f), sp(4.5f)))) CU.smart.open = false;
+    ui::dialog_end();
 }
 
 void draw_picker() {
-    if (!begin_modal("Add to shelf##cust", CU.pick, 56.f)) return;
     const hub::GameEntry* e = entry_of(CU.key);
-    if (!e || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    heading("Add to shelf");
-    ImGui::TextDisabled("%s", e->title.c_str());
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    if (!begin_dialog("Add to shelf##cust", "Add to shelf", CU.pick, ui::DialogSize::Medium, e ? e->title.c_str() : nullptr)) return;
+    if (!e) { CU.pick.open = false; ui::dialog_end(); return; }
     const Shelves shelves = CU.P.user_shelves;
     if (shelves.empty()) ImGui::TextWrapped("You have no shelves yet. Name one below and this game goes in it.");
-    ImGui::BeginChild("##pick_list", ImVec2(0, std::min(sp(30.f), (sp(4.5f) + sp(0.75f)) * (float)std::max<size_t>(1, shelves.size()) + sp(0.5f))), ImGuiChildFlags_NavFlattened);
-    for (size_t i = 0; i < shelves.size(); ++i) {
+    for (size_t i = 0; i < shelves.size(); ++i) {   // the shelves are the dialog's scrolling middle (they were a nested list with its own scrollbar)
         const bool in = hubui::cust::has_game(shelves, (int)i, CU.key);
         std::string lbl = shelves[i].smart ? shelves[i].name + "  (smart: " + hubui::prog::rule_summary(shelves[i].rule) + ")"
                                            : shelves[i].name + "  (" + std::to_string(shelves[i].keys.size()) + ")";
@@ -471,7 +464,6 @@ void draw_picker() {
         if (i == 0) ImGui::SetItemDefaultFocus();
         ImGui::PopID();
     }
-    ImGui::EndChild();
     sub_heading("New shelf");
     std::string made;
     if (new_shelf_row(CU.new_buf, sizeof CU.new_buf, "pick", &made)) {
@@ -479,46 +471,49 @@ void draw_picker() {
         commit_shelves([&](Shelves* v) { int at = hubui::cust::find_shelf(*v, made); return at >= 0 && hubui::cust::add_game(v, at, key); });
         push_toast("Added to " + made, COL_GOOD, 2.5);
     }
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    ui::dialog_buttons();
     if (ui::button("New smart shelf...", ImVec2(0, sp(4.5f)), false, true, ui::Icon::Plus)) open_smart_editor(-1, LocPicker);
-    ImGui::SameLine(0, sp(1.f));
+    ui::dialog_same_line(ui::dialog_button_w("Manage shelves", true), sp(1.f));
     if (ui::button("Manage shelves", ImVec2(0, sp(4.5f)), false, true, ui::Icon::Gear)) { CU.mgr.want = true; CU.mgr.parent = LocPicker; }
-    ImGui::SameLine(0, sp(1.f));
-    if (ui::button("Done", ImVec2(sp(14.f), sp(4.5f)), true)) ImGui::CloseCurrentPopup();
+    ui::dialog_same_line(sp(14.f), sp(1.f));
+    if (ui::button("Done", ImVec2(sp(14.f), sp(4.5f)), true)) CU.pick.open = false;
     if (CU.mgr.parent == LocPicker) draw_manager();   // opened from here: nests inside this modal (see custom_draw)
     if (CU.smart.parent == LocPicker) draw_smart();
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 /* ---------- Manage shelves: new / rename / reorder / delete ---------- */
 
 void draw_manager() {
-    if (!begin_modal("Manage shelves##cust", CU.mgr, 84.f)) return;
-    if (ui::modal_back()) { CU.edit = CU.del = -1; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    heading("Your shelves");
-    ImGui::TextDisabled("They show on Home after the built-in shelves.");
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
+    if (!begin_dialog("Manage shelves##cust", "Your shelves", CU.mgr, ui::DialogSize::Large, "They show on Home after the built-in shelves.")) return;
     std::string made;
     new_shelf_row(CU.new_buf, sizeof CU.new_buf, "mgr", &made);
     if (ui::button("New smart shelf...", ImVec2(0, sp(4.f)), false, true, ui::Icon::Plus)) open_smart_editor(-1, LocMgr);
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     const Shelves shelves = CU.P.user_shelves;
     if (shelves.empty()) ImGui::TextDisabled("No shelves yet.");
-    ImGui::BeginChild("##mgr_list", ImVec2(0, std::min(sp(34.f), (sp(13.5f)) * (float)std::max<size_t>(1, shelves.size()))), ImGuiChildFlags_NavFlattened);
+    /* the shelves are the dialog's scrolling middle (they were a nested list with its own scrollbar); each row's buttons wrap at the edge */
+    auto next = [](const char* label, bool icon) { ui::dialog_same_line(ui::dialog_button_w(label, icon), sp(1.f)); };
     for (int i = 0; i < (int)shelves.size(); ++i) {
         ImGui::PushID(i);
         ImGui::PushFont(ui::F.bold);
         ImGui::Text("%s", shelves[i].name.c_str());
         ImGui::PopFont();
-        ImGui::SameLine();
-        if (shelves[i].smart) ImGui::TextDisabled("smart: %s", hubui::prog::rule_summary(shelves[i].rule).c_str());
-        else ImGui::TextDisabled("%d game%s", (int)shelves[i].keys.size(), shelves[i].keys.size() == 1 ? "" : "s");
+        {
+            char cnt[32];
+            std::snprintf(cnt, sizeof cnt, "%d game%s", (int)shelves[i].keys.size(), shelves[i].keys.size() == 1 ? "" : "s");
+            const std::string what = shelves[i].smart ? "smart: " + hubui::prog::rule_summary(shelves[i].rule) : std::string(cnt);
+            ui::dialog_same_line(ImGui::CalcTextSize(what.c_str()).x);   // beside the name when it fits, else under it (and wrapped)
+            ImGui::PushTextWrapPos(0.f);
+            ImGui::TextDisabled("%s", what.c_str());
+            ImGui::PopTextWrapPos();
+        }
         if (CU.edit == i) {
             ImGui::SetNextItemWidth(sp(26.f));
             bool go = osk::input("##rename_shelf", "Shelf name", CU.edit_buf, sizeof CU.edit_buf, ImGuiInputTextFlags_EnterReturnsTrue);
-            ImGui::SameLine(0, sp(1.f));
+            next("Save", false);
             if (ui::button("Save", ImVec2(0, sp(4.f)), true)) go = true;
-            ImGui::SameLine(0, sp(1.f));
+            next("Cancel", false);
             if (ui::button("Cancel", ImVec2(0, sp(4.f)))) CU.edit = -1;
             if (go) {
                 const std::string nn = CU.edit_buf;
@@ -528,29 +523,29 @@ void draw_manager() {
         } else if (CU.del == i) {
             ImGui::TextWrapped("Delete this shelf? The games stay in your library.");
             if (ui::button("Yes, delete", ImVec2(0, sp(4.f)), true)) { commit_shelves([&](Shelves* v) { return hubui::cust::delete_shelf(v, i); }); CU.del = -1; }
-            ImGui::SameLine(0, sp(1.f));
+            next("Keep it", false);
             if (ui::button("Keep it", ImVec2(0, sp(4.f)))) CU.del = -1;
         } else {
             if (ui::button("Up", ImVec2(0, sp(4.f)), false, i > 0, ui::Icon::ChevronL)) commit_shelves([&](Shelves* v) { return hubui::cust::move_shelf(v, i, -1); });
-            ImGui::SameLine(0, sp(1.f));
+            next("Down", true);
             if (ui::button("Down", ImVec2(0, sp(4.f)), false, i + 1 < (int)shelves.size(), ui::Icon::ChevronR)) commit_shelves([&](Shelves* v) { return hubui::cust::move_shelf(v, i, +1); });
-            ImGui::SameLine(0, sp(1.f));
+            next("Rename", false);
             if (ui::button("Rename", ImVec2(0, sp(4.f)))) { CU.edit = i; CU.del = -1; std::snprintf(CU.edit_buf, sizeof CU.edit_buf, "%s", shelves[i].name.c_str()); }
-            ImGui::SameLine(0, sp(1.f));
             if (shelves[i].smart) {
+                next("Edit rule", true);
                 if (ui::button("Edit rule", ImVec2(0, sp(4.f)), false, true, ui::Icon::Gear)) open_smart_editor(i, LocMgr);
-                ImGui::SameLine(0, sp(1.f));
             }
+            next("Delete", true);
             if (ui::button("Delete", ImVec2(0, sp(4.f)), false, true, ui::Icon::Close)) { CU.del = i; CU.edit = -1; }
         }
         ImGui::Dummy(ImVec2(0, sp(0.75f)));
         ImGui::PopID();
     }
-    ImGui::EndChild();
-    ImGui::Dummy(ImVec2(0, sp(1.f)));
-    if (ui::button("Done", ImVec2(sp(14.f), sp(4.5f)), true)) { CU.edit = CU.del = -1; ImGui::CloseCurrentPopup(); }
+    ui::dialog_buttons();
+    if (ui::button("Done", ImVec2(sp(14.f), sp(4.5f)), true)) { CU.edit = CU.del = -1; CU.mgr.open = false; }
     if (CU.smart.parent == LocMgr) draw_smart();
-    ImGui::EndPopup();
+    ui::dialog_end();
+    if (!CU.mgr.open) CU.edit = CU.del = -1;   // closed (Done, B / Esc): no row stays half-renamed or half-deleted
 }
 
 /* ---------- Customize (rename / cover / reset) ---------- */
@@ -571,29 +566,22 @@ void refresh_shots(const hub::GameEntry& e) {
 }
 
 void draw_customize() {
-    if (!begin_modal("Customize##cust", CU.cust, 64.f)) return;
     const hub::GameEntry* ep = entry_of(CU.key);
-    if (!ep || ui::modal_back()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    const std::string orig = ep ? custom_original_title(*ep) : std::string();
+    /* The middle scrolls and the button row (Reset / Done) stays on screen, so Done is never cut off on a short window. */
+    if (!begin_dialog("Customize##cust", "Customize", CU.cust, ui::DialogSize::Medium, ep ? orig.c_str() : nullptr)) return;
+    if (!ep) { CU.cust.open = false; ui::dialog_end(); return; }
     const hub::GameEntry& e = *ep;
-    const std::string orig = custom_original_title(e);
     if (CU.name_key != e.key) { CU.name_key = e.key; std::snprintf(CU.name_buf, sizeof CU.name_buf, "%s", e.title.c_str()); }
     const bool renamed = custom_is_renamed(e.key);
     auto cit = CU.P.covers.find(e.key);
     const bool has_cover = cit != CU.P.covers.end() && !cit->second.empty();
-
-    /* The body scrolls and the footer (Reset / Done) stays on screen, so Done is never cut off on a short window. */
-    const float footer_h = sp(1.5f) + sp(4.5f);
-    const float max_body = std::max(sp(20.f), ImGui::GetIO().DisplaySize.y * 0.92f - sp(6.f) - footer_h);
-    static float s_body_h = 1e6f;
-    ImGui::BeginChild("##cust_body", ImVec2(0, std::min(s_body_h, max_body)), ImGuiChildFlags_NavFlattened);
     bool hide_now = false;
-    heading("Customize");
-    ImGui::TextDisabled("%s", orig.c_str());
 
     sub_heading("Name");
     ImGui::SetNextItemWidth(sp(34.f));
     bool go = osk::input("##cust_name", "Game name", CU.name_buf, sizeof CU.name_buf, ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine(0, sp(1.f));
+    ui::dialog_same_line(ui::dialog_button_w("Rename"), sp(1.f));
     if (ui::button("Rename", ImVec2(0, sp(4.f)), true)) go = true;
     if (go) {
         const std::string nn = CU.name_buf, key = e.key;
@@ -623,7 +611,7 @@ void draw_customize() {
             }
         }
     }
-    ImGui::SameLine(0, sp(1.f));
+    ui::dialog_same_line(ui::dialog_button_w("Pick a screenshot", true), sp(1.f));
     {   // the screenshot list: re-read every 2 s or when the game changes
         static std::string s_k; static double s_at = -10;
         if (CU.shots.want || s_k != e.key || now_s() - s_at > 2.0) { s_k = e.key; s_at = now_s(); refresh_shots(e); }
@@ -632,7 +620,7 @@ void draw_customize() {
     if (ui::button("Pick a screenshot", ImVec2(0, sp(4.f)), false, have_shots, ui::Icon::Play)) { CU.shots.want = true; CU.shots.parent = LocCustomize; }
     if (!have_shots && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("This game has no screenshots yet. Take one in game, then come back.");
     if (has_cover) {
-        ImGui::SameLine(0, sp(1.f));
+        ui::dialog_same_line(ui::dialog_button_w("Back to box art"), sp(1.f));
         if (ui::button("Back to box art", ImVec2(0, sp(4.f)))) {
             const std::string key = e.key;
             commit([&](hub::prefs::Prefs& p) { auto m = p.covers; m.erase(key); return hub::prefs::set_covers(&p, m); });
@@ -654,17 +642,15 @@ void draw_customize() {
         ImGui::PopStyleColor();
         if (ui::button("Hide game", ImVec2(0, sp(4.f)), false, true, ui::Icon::Close)) hide_now = true;
     }
-    s_body_h = ImGui::GetCursorPosY() + sp(0.5f);
-    ImGui::EndChild();
+    ui::dialog_buttons();
     if (hide_now) {
         const std::string hk = e.key;
         hide_game_now(hk);   // e is gone from the library after this
-        ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        CU.cust.open = false;
+        ui::dialog_end();
         return;
     }
 
-    ImGui::Dummy(ImVec2(0, sp(1.5f)));
     if (renamed || has_cover) {
         if (ui::button("Reset everything", ImVec2(0, sp(4.5f)))) {
             const std::string key = e.key;
@@ -678,12 +664,12 @@ void draw_customize() {
             CU.name_key.clear();
             push_toast("Back to the original name and cover", COL_GOOD, 2.5);
         }
-        ImGui::SameLine(0, sp(1.f));
+        ui::dialog_same_line(sp(14.f), sp(1.f));
     }
-    if (ui::button("Done", ImVec2(sp(14.f), sp(4.5f)), true)) ImGui::CloseCurrentPopup();
+    if (ui::button("Done", ImVec2(sp(14.f), sp(4.5f)), true)) CU.cust.open = false;
     if (CU.shots.parent == LocCustomize) draw_shots();
     if (CU.pick.parent == LocCustomize) draw_picker();
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 }  // namespace
@@ -751,6 +737,29 @@ void custom_open_manager() { CU.mgr.want = true; CU.mgr.parent = LocRoot; }
 void custom_draw(int loc) {
     if (loc == LocRoot) {
         reload(false);
+        if (g_headless && !CU.shelves_seeded && ImGui::GetFrameCount() > 4) {   // screenshot aid: HUB_SHOT_CUSTOM_SHELVES=<n> made-up shelves (screenshot vault only)
+            CU.shelves_seeded = true;
+            if (const char* ns = std::getenv("HUB_SHOT_CUSTOM_SHELVES")) {
+                const int n = std::max(0, std::min(24, std::atoi(ns)));
+                commit_shelves([&](Shelves* v) {
+                    bool any = false;
+                    for (int i = 0; i < n; ++i) {
+                        std::string made;
+                        if (i % 4 == 3) {   // every fourth one is a smart shelf
+                            hub::prefs::ShelfRule r;
+                            r.systems = {"gc", "n64"};
+                            r.min_players = 2;
+                            any = hubui::prog::add_smart_shelf(v, "Party games " + std::to_string(i + 1), r, &made) || any;
+                        } else {
+                            any = hubui::cust::add_shelf(v, "Weekend shelf " + std::to_string(i + 1), &made) || any;
+                            const int at = hubui::cust::find_shelf(*v, made);
+                            if (at >= 0 && i % 2 == 0) hubui::cust::add_game(v, at, "fake:2");
+                        }
+                    }
+                    return any;
+                });
+            }
+        }
         if (g_headless && !CU.shot_once && ImGui::GetFrameCount() > 8) {   // screenshot aid: HUB_SHOT_CUSTOM=customize|picker|manager|shots
             const char* c = std::getenv("HUB_SHOT_CUSTOM");
             if (c && !A.sel_game.empty() && entry_of(A.sel_game)) {
