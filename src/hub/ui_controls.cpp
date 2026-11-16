@@ -93,10 +93,16 @@ void row_begin(const char* label, const RowOpts& o, const CtlSpec& cs, RowFrame&
     rf.id = win->GetID(label);
 
     const float pill_gap = sp(1.f);
-    const float pill_w = o.pill ? text_w(fc, o.pill) + sp(2.5f) : 0.f;
+    const bool pill_btn = o.pill && o.pill_pressed;
+    const float glyph_w = key_hint_width(true, "X", "", "") - sp(0.75f);
+    const float xslot = pill_btn ? std::max(sp(2.f), glyph_w) : 0.f;   // the pill button's x (the pad's X glyph while focused)
+    const float pill_w = o.pill ? text_w(fc, o.pill) + sp(2.5f) + xslot : 0.f;
+    const float pill2_w = o.pill2 ? text_w(fc, o.pill2) + sp(2.5f) : 0.f;
+    const bool pills = o.pill || o.pill2;
+    const float pills_w = pill_w + pill2_w + (o.pill && o.pill2 ? pill_gap : 0.f);
     const float pill_h = cfs + sp(1.f);
     const float label_tw = text_w(fb, text.c_str());
-    const float label_need = label_tw + (o.pill ? pill_gap + pill_w : 0.f);
+    const float label_need = label_tw + (pills ? pill_gap + pills_w : 0.f);
     float L = label_need, C = cs.natural;
     if (g_group) {
         g_group->rows[rf.id] = ImVec2(label_need, cs.natural);
@@ -116,11 +122,12 @@ void row_begin(const char* label, const RowOpts& o, const CtlSpec& cs, RowFrame&
 
     const float lw = std::max(1.f, lay.label_w);
     const std::vector<std::string> llines = wrap_lines(fb, fs, text, lw, 3);
-    const bool pill_inline = o.pill && llines.size() == 1 && text_w(fb, llines[0].c_str()) + pill_gap + pill_w <= lw + 0.5f;
+    const bool pill_inline = pills && llines.size() == 1 && text_w(fb, llines[0].c_str()) + pill_gap + pills_w <= lw + 0.5f;
+    const bool pills_stack = pills && !pill_inline && o.pill && o.pill2 && pills_w > lw + 0.5f;   // under the label, one per line
     std::vector<std::string> hlines;
     if (o.help && *o.help) hlines = wrap_lines(fc, cfs, o.help, lw, 3);
     float text_h = llines.size() * fs + (llines.size() - 1) * gl;
-    if (o.pill && !pill_inline) text_h += sp(0.5f) + pill_h;
+    if (pills && !pill_inline) text_h += sp(0.5f) + pill_h + (pills_stack ? gl + pill_h : 0.f);
     if (!hlines.empty()) text_h += sp(0.5f) + hlines.size() * cfs + (hlines.size() - 1) * gl;
 
     const float ctl_w = lay.ctl_w;
@@ -147,23 +154,50 @@ void row_begin(const char* label, const RowOpts& o, const CtlSpec& cs, RowFrame&
     if (rf.hv > 0.01f) dl->AddRectFilled(rf.p0, rf.p1, al(veil(0.045f * rf.hv)), rd);
     if (rf.focused) focus_ring(dl, rf.p0 + ImVec2(sp(0.25f), sp(0.25f)), rf.p1 - ImVec2(sp(0.25f), sp(0.25f)), rd);
 
-    /* label, pill, help */
+    /* label, pills, help */
+    ImRect pill_r;   // the pill button
+    auto draw_pills = [&](float x, float y, bool stack) {
+        if (o.pill) {
+            const ImU32 bg = al(o.pill_col ? o.pill_col : ACCENT);
+            if (pill_btn) {
+                pill_r = ImRect(ImVec2(x, y), ImVec2(x + pill_w, y + pill_h));
+                const bool ph = rf.hovered && pill_r.Contains(ImGui::GetIO().MousePos);
+                dl->AddRectFilled(pill_r.Min, pill_r.Max, ph ? mix(bg, al(IM_COL32_WHITE), 0.2f) : bg, pill_h * 0.5f);
+                dl->AddText(fc, cfs, ImVec2(x + sp(1.25f), y + sp(0.5f)), al(IM_COL32_WHITE), o.pill);
+                const float sx = x + sp(1.25f) + text_w(fc, o.pill) + sp(0.5f);   // the slot after the text
+                if (rf.focused && A.pad_mode) key_hint(dl, ImVec2(sx + (xslot - glyph_w) * 0.5f, y + (pill_h - cfs - sp(0.75f)) * 0.5f), true, "X", "", "");
+                else icon(dl, Icon::Close, ImVec2(sx + xslot * 0.5f, y + pill_h * 0.5f), sp(1.5f), al(IM_COL32_WHITE));
+            } else pill_at(dl, ImVec2(x, y), o.pill, bg, al(IM_COL32_WHITE), fc);
+        }
+        if (o.pill2) {
+            const ImVec2 p2 = !o.pill ? ImVec2(x, y) : stack ? ImVec2(x, y + pill_h + gl) : ImVec2(x + pill_w + pill_gap, y);
+            pill_at(dl, p2, o.pill2, al(PANEL3), al(TEXT2), fc);
+        }
+    };
     const float tx = rf.p0.x + padx;
     float ty = lay.wrap ? rf.p0.y + pady : rf.p0.y + (h - text_h) * 0.5f;
     const ImU32 tcol = al(TEXT);
     for (size_t i = 0; i < llines.size(); ++i) {
         dl->AddText(fb, fs, ImVec2(tx, ty), tcol, llines[i].c_str());
-        if (i == 0 && pill_inline) {
-            const float px = tx + text_w(fb, llines[0].c_str()) + pill_gap;
-            pill_at(dl, ImVec2(px, ty + (fs - pill_h) * 0.5f), o.pill, al(o.pill_col ? o.pill_col : ACCENT), al(IM_COL32_WHITE), fc);
-        }
+        if (i == 0 && pill_inline) draw_pills(tx + text_w(fb, llines[0].c_str()) + pill_gap, ty + (fs - pill_h) * 0.5f, false);
         ty += fs + gl;
     }
     ty -= gl;
-    if (o.pill && !pill_inline) {
+    if (pills && !pill_inline) {
         ty += sp(0.5f);
-        pill_at(dl, ImVec2(tx, ty), o.pill, al(o.pill_col ? o.pill_col : ACCENT), al(IM_COL32_WHITE), fc);
-        ty += pill_h;
+        draw_pills(tx, ty, pills_stack);
+        ty += pill_h + (pills_stack ? gl + pill_h : 0.f);
+    }
+    if (pill_btn && o.enabled) {   // the pill button: a click on it (not the row's own action), or X / Delete while the row has the focus
+        ImGuiIO& io = ImGui::GetIO();
+        if (rf.mouse && pill_r.Contains(io.MouseClickedPos[0]) && pill_r.Contains(io.MousePos)) {
+            *o.pill_pressed = true;
+            rf.pressed = rf.mouse = false;
+        } else if (rf.focused && !io.WantTextInput && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_Delete, false))) {
+            ImGui::SetKeyOwner(ImGuiKey_GamepadFaceLeft, rf.id, ImGuiInputFlags_LockThisFrame);
+            *o.pill_pressed = true;
+            ui_sound::play(ui_sound::Sfx::Select);
+        }
     }
     if (!hlines.empty()) {
         ty += sp(0.5f);
@@ -220,10 +254,11 @@ bool dropdown_impl(const char* label, int* idx, int n, const std::function<const
     ImFont* fb = F.body;
     float maxw = 0.f;
     for (int i = 0; i < n; ++i) maxw = std::max(maxw, text_w(fb, item(i)));
+    if (o.value_text) maxw = std::max(maxw, text_w(fb, o.value_text));
     CtlSpec cs;
     cs.chrome = sp(2.f) + sp(4.5f);   // left padding + chevron area
     cs.natural = maxw + cs.chrome;
-    cs.value = cur >= 0 ? item(cur) : "";
+    cs.value = o.value_text ? o.value_text : (cur >= 0 ? item(cur) : "");
     cs.min_h = sp(4.5f);
     RowFrame rf;
     row_begin(label, o, cs, rf);
@@ -232,7 +267,7 @@ bool dropdown_impl(const char* label, int* idx, int n, const std::function<const
     bool open = g_dd_open == rf.id && st.frame >= fc - 1;
     if (!open && g_dd_open == rf.id) g_dd_open = 0;
     st.frame = fc;
-    if (st.refocus) { st.refocus = false; ImGui::SetFocusID(rf.id, win); }
+    if (st.refocus) { st.refocus = false; ImGui::SetFocusID(rf.id, win); ImGui::ScrollToRect(win, ImRect(rf.p0, rf.p1)); }   // (scrolls only when not in view)
     bool changed = false;
     const bool in_list = st.list_focus_frame >= fc - 1;
     const bool back = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
@@ -243,6 +278,7 @@ bool dropdown_impl(const char* label, int* idx, int n, const std::function<const
         open = false;
         g_dd_open = 0;
         ImGui::SetFocusID(rf.id, win);
+        ImGui::ScrollToRect(win, ImRect(rf.p0, rf.p1));
     } else if (open && g.NavId && g.NavId != rf.id && !in_list && st.open_frame < fc - 1) {
         open = false;   // the focus went somewhere else (LT / RT page, a click elsewhere)
         g_dd_open = 0;
@@ -271,6 +307,13 @@ bool dropdown_impl(const char* label, int* idx, int n, const std::function<const
             total += hs[i];
         }
         const ImVec2 l0(lx, ImGui::GetCursorScreenPos().y), l1(lx + lw, l0.y + total);
+        if (st.open_frame == fc && n > 0) {   // just opened: bring the row and its list into view (or what fits of it, down to the chosen
+            const int s = std::max(0, cur);   // option), so a host that does not follow the focus never leaves the D-pad on an option it cannot see
+            float sy = l0.y + ipad;
+            for (int i = 0; i < s; ++i) sy += hs[i];
+            const float view = win->InnerRect.GetHeight() - sp(2.f);
+            ImGui::ScrollToRect(win, l1.y - rf.p0.y <= view ? ImRect(rf.p0, l1) : total <= view ? ImRect(l0, l1) : ImRect(ImVec2(lx, sy), ImVec2(lx + lw, sy + hs[s])));
+        }
         const float rd = sp(1.25f);
         shadow(dl, l0, l1, rd, 0.6f);
         dl->AddRectFilled(l0, l1, PANEL2, rd);
@@ -336,11 +379,12 @@ bool stepper_impl(const char* label, int* idx, int n, const std::function<std::s
     float maxw = 0.f;
     if (n <= 64) for (int i = 0; i < n; ++i) maxw = std::max(maxw, text_w(fb, item(i).c_str()));
     else for (int i : {0, n / 2, n - 1}) maxw = std::max(maxw, text_w(fb, item(i).c_str()));
+    if (o.value_text) maxw = std::max(maxw, text_w(fb, o.value_text));
     const float zone = sp(4.f);
     CtlSpec cs;
     cs.chrome = zone * 2.f + sp(1.f);
     cs.natural = maxw + cs.chrome;
-    cs.value = item(cur);
+    cs.value = o.value_text ? std::string(o.value_text) : item(cur);
     cs.min_h = sp(4.5f);
     RowFrame rf;
     row_begin(label, o, cs, rf);
@@ -380,7 +424,7 @@ bool stepper_impl(const char* label, int* idx, int n, const std::function<std::s
 
 /* ---------------- sections ---------------- */
 
-struct SecState { bool init = false, open = true; };
+struct SecState { bool init = false, open = true, touched = false; };
 std::unordered_map<ImGuiID, SecState> g_sec;
 SectionStore g_store;
 
@@ -502,10 +546,11 @@ bool section(const char* label, const SectionOpts& o) {
     if (!st.init) {
         st.init = true;
         st.open = o.default_open;
-        if (o.persist_key && g_store.load) {
-            const int s = g_store.load(o.persist_key);
-            if (s >= 0) st.open = s == 1;
-        }
+    }
+    if (o.persist_key && g_store.load) {   // a remembered section follows the store every frame: one key looks the same on every page
+        const int s = g_store.load(o.persist_key);
+        if (s >= 0) st.open = s == 1;
+        else if (!st.touched) st.open = o.default_open;
     }
     if (win->DC.CursorPos.y > win->DC.CursorStartPos.y + 1.f) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + sp(1.f));   // air above every section but the first
     const char* lend = ImGui::FindRenderedTextEnd(label);
@@ -528,6 +573,7 @@ bool section(const char* label, const SectionOpts& o) {
     }
     if (toggle_now) {
         st.open = !st.open;
+        st.touched = true;
         if (o.persist_key && g_store.save) g_store.save(o.persist_key, st.open);
     }
     float* hv = ImGui::GetStateStorage()->GetFloatRef(id, 0.f);

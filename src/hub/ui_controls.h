@@ -10,7 +10,8 @@
  *   Open / closed is remembered per id for the session. To keep it across runs, install ONE store at startup:
  *       ui::section_set_store({ [](const std::string& k) { return my_load(k); },          // -1 unknown, 0 closed, 1 open
  *                               [](const std::string& k, bool open) { my_save(k, open); } });
- *   Only sections with a persist_key use it (the kit never writes a settings file itself).
+ *   Only sections with a persist_key use it (the kit never writes a settings file itself). Such a section follows the store every
+ *   frame, so one key looks the same on every page that uses it; before the store knows the key, default_open applies.
  *
  * ---- OPTION ROWS -------------------------------------------------------------------------------------------------------------
  * A row = label (+ optional one-line muted help under it, + optional status pill) and a control on the right. Rows between
@@ -80,6 +81,10 @@ struct RowOpts {
     ImU32 pill_col = 0;              // 0 = ACCENT
     bool enabled = true;
     const char* tooltip = nullptr;   // hover text (mouse only)
+    const char* pill2 = nullptr;     // a second, quieter pill after the first ("Host's choice online")
+    bool* pill_pressed = nullptr;    // the first pill becomes a small button with an x: set true when it is clicked, or X / Delete is
+                                     // pressed while the row has the focus (e.g. "Changed": back to the default)
+    const char* value_text = nullptr;   // dropdown / stepper: shown in the control instead of the current item (*idx = -1: nothing ticked)
 };
 
 bool dropdown(const char* label, int* idx, const char* const* items, int n, const RowOpts& opts = RowOpts());
