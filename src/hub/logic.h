@@ -59,6 +59,8 @@ struct Settings {
     int rom_cache_limit_gb = 40;       // unpacked-games cache limit in GB (0 = unlimited)
     bool download_art = true;         // fetch cover art from the libretro-thumbnails project
     int sidebar_mode = 0;              // 0 auto (collapses when narrow), 1 always expanded, 2 always icons-only
+    std::string ui_layout = "traditional";   // Settings > General > Layout: "traditional" (default; a missing / unknown value too) | "desk" (Library desk, desk_view.cpp)
+    std::string desk_groups;           // Library desk: groups the player opened / closed, "recent=1,n64=0" (desk_logic.h; others follow the default)
     bool show_friends = true;          // friends panel open
     bool tv_start = false;             // start RetroHub in TV mode (fullscreen 10-foot layout)
     bool tv_cases = false;             // TV mode opens All Games in the Cases (3D game-case carousel) view

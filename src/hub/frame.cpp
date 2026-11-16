@@ -1,4 +1,5 @@
 #include "app.h"
+#include "desk_view.h"
 #include "../net/username.h"
 #include "homefun.h"
 #include "libview_ui.h"
@@ -157,6 +158,7 @@ void draw_footer(float h) {
         hints = {{"A", "Enter", "Select"}, {"B", "Esc", "Close"}};
     } else if (A.st.show_friends && FR.panel_focused) {
         hints = {{"A", "Enter", "Actions"}, {"X", "", "Join / invite"}, {"Y", "", "Menu"}, {"B", "Esc", "Close"}};
+    } else if (desk_footer_hints(&hints)) {   // Library desk layout: its own words ("A Play", "Y Options")
     } else if (A.page == Page::Library && (!A.lib.empty() || !A.ghosts.empty())) {
         hints = {{"A", "Enter", "Play"}, {"X", "F", "Favorite"}, {"Y", "I", "Details"}, {"R3", "S", "Add to shelf"}};
         if (lib_cases_active()) hints = {{"B", "Esc", "Back"}};   // the Cases view draws its own hint bar (X flips, R3 inspects, LB / RB switch console)
@@ -279,6 +281,7 @@ static void shot_fake_running() {
 
 void draw_frame() {
     ImGuiIO& io = ImGui::GetIO();
+    desk_pre_frame();   // Library desk layout: one library view, the list pages itself
     shot_fake_running();
     theme_tick();
     fr_anim_panel();
@@ -332,7 +335,7 @@ void draw_frame() {
     ImGui::PopStyleVar(2);
 
     /* ---- sidebar (icons + labels; shrinks to icons only when narrow) ---- */
-    bool collapsed = tvmode::force_icon_sidebar() || hubui::sidebar_collapsed(A.st.sidebar_mode, view_w, 1040.f * S);
+    bool collapsed = tvmode::force_icon_sidebar() || desk_layout_on() || hubui::sidebar_collapsed(A.st.sidebar_mode, view_w, 1040.f * S);   // Library desk: always the icon rail
     float full_w = sp(29.f), mini_w = sp(9.f), target = collapsed ? mini_w : full_w;
     if (A.side_w <= 0) A.side_w = target;
     ui::anim(A.side_w, target, 14.f);
@@ -399,7 +402,7 @@ void draw_frame() {
     float bottom = wp.y + ImGui::GetWindowHeight() - sp(3.f);
     float left = wp.x + sp(1.5f);
     float icx = left + sp(3.f);
-    {
+    if (!desk_layout_on()) {   // Library desk keeps the icon rail: no expand button
         float xl = icx - bs * 0.5f, xr = left + iw - bs;
         ImGui::SetCursorScreenPos(ImVec2(xl + (xr - xl) * expand, bottom - card_h - sp(1.f) - bs));
         if (ui::icon_button("side_toggle", collapsed ? ui::Icon::ChevronR : ui::Icon::ChevronL, bs, false, collapsed ? "Expand sidebar" : "Collapse sidebar")) {
