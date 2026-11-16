@@ -241,7 +241,7 @@ struct App {
     uint64_t info_battery_bytes = 0;
     bool info_auto_state = false;
     double info_at = -100;
-    std::vector<hubui::StateSlot> info_states;   // slots of the selected game (details modal), refreshed with the save info
+    std::vector<hubui::StateSlot> info_states;   // slots of the selected game (the game page), refreshed with the save info
     std::string info_states_key;
     int state_sel = -3;                          // slot highlighted in the strip (-1 = Auto)
     int state_confirm = -2;                      // slot awaiting a second Delete press
@@ -325,7 +325,7 @@ struct App {
     std::string pending_play;    // --play <key> (own command line or forwarded by a second launch): started once the library has loaded
     std::string hero_key;        // game the hero header currently shows (for the fade-in)
     float hero_t = 1.f;
-    bool show_details = false;   // request to open the details modal
+    bool show_details = false;   // request to open the selected game's page (draw_details_modal: the desk pane or the full-window page)
     std::map<std::string, ShelfState> shelf_state;
     std::map<std::string, double> art_seen;   // first time art was requested per game (for the loading shimmer)
     bool page_scrollable = false;             // the Home shelves overflow vertically (plain wheel then scrolls the page)
@@ -758,7 +758,7 @@ hub::gs::Values gs_values_for(const hub::GameEntry& e);   // resolved incl. the 
 bool gs_set_game_value(const hub::GameEntry& e, const std::string& key, const std::string& value);   // the per-game override, saved (same path as the Settings rows)
 bool gs_set_system_value(hub::System sys, const std::string& key, const std::string& value);   // the system default (e.g. Switch "switch.runner"), saved
 bool gs_has_game_section(const hub::GameEntry& e);
-void gs_draw_game_section(const hub::GameEntry& e);       // details modal
+void gs_draw_game_section(const hub::GameEntry& e);       // game page, Settings tab
 void gs_draw_defaults_area();                              // Settings page
 
 
@@ -809,7 +809,7 @@ struct QmE2EState { bool open = false; int page = 0; std::string sel; int speed_
 QmE2EState qm_e2e_state();                                                                   // View+Y while a game runs
 void draw_quick_menu();
 int shots_count(const hub::GameEntry& e);
-void shots_gallery(const hub::GameEntry& e);                                            // details modal: screenshots strip
+void shots_gallery(const hub::GameEntry& e);                                            // game page, Screenshots tab
 /* ---- shot_viewer.cpp: full-size screenshot viewer modal (opened from shots_gallery) ---- */
 typedef std::function<SDL_Texture*(const std::string& path, int* w, int* h)> ShotTexFn;
 void shot_viewer_open(const hub::GameEntry& e, const std::vector<std::string>& paths, int idx, ShotTexFn tex);
@@ -886,7 +886,7 @@ void poll_save_info();                                // UI thread: apply a fini
 void resume_entry(const hub::GameEntry& e, int slot);   // slot -1 = auto; loads that state on launch (plain Play when it is missing)
 bool has_resume(const hub::GameEntry& e);               // this game can resume from its auto state right now
 void cycle_sort(int dir);                               // library sort chip / RT
-void draw_state_strip(const hub::GameEntry& e);         // details modal: slots 0-9 + auto
+void draw_state_strip(const hub::GameEntry& e);         // game page, Saves tab: slots 0-9 + auto
 void state_textures_clear();
 void states_shot_seed();                                // HUB_SHOT_STATES=1 (headless): fake states for screenshots
 std::string size_text(uint64_t b);
@@ -918,10 +918,10 @@ std::string custom_original_title(const hub::GameEntry& e);     // the scanned n
 bool custom_is_renamed(const std::string& key);
 bool custom_cover(const std::string& key, SDL_Texture** tex, int* w, int* h);   // the user's cover picture for this game, if set and readable
 bool custom_set_cover(const std::string& key, const std::string& path);   // copies the picture into <vault>/<system>/<key>/cover.png (synced) and stores that path
-void custom_open_customize(const std::string& key);            // details modal: Customize (rename / cover / reset)
+void custom_open_customize(const std::string& key);            // the game page's More menu: Customize (rename / cover / reset)
 void custom_open_picker(const std::string& key, bool from_details);   // "Add to shelf..."
 void custom_open_manager();                                      // new / rename / reorder / delete shelves
-void custom_draw(int loc);                                       // 0 = overlays (also polls prefs), 1 = inside the details modal
+void custom_draw(int loc);                                       // 0 = overlays (also polls prefs), 1 = from the game page (inside its sheet)
 void custom_home_shelves(float avail, float tw, float th, float gap, float bleed);   // Home: user shelves after the built-in ones
 
 /* ---- page_library.cpp ---- */
@@ -937,7 +937,7 @@ void empty_library_state();
 void library_top_bar();
 void selected_bar(const hub::GameEntry& e);
 void all_games_view();
-void draw_details_modal();
+void draw_details_modal();   // every frame: the game page for A.show_details (the desk pane, or the full-window page) and a friend's game
 /* friend_games_ui.cpp: friends' games shown greyed out (metadata only) */
 void rebuild_ghosts();                                                    // A.ghosts from the friends' libraries and A.lib (empty when the chip is off)
 TileSpec spec_for_ghost(const hubui::fg::Ghost& g, const char* shelf, bool show_sys);
@@ -1004,7 +1004,7 @@ void page_settings();
 void settings_open(int tab);   // deep link: show Settings on that tab (hubui::SettingsTab)
 /* achievements_ui.cpp: RetroAchievements (runner writes a local cache; the hub only reads it) */
 std::string achievements_launch_args();                           // " --ra-cfg .. --ra-cache .." for offline retrorun launches ("" when off)
-void achievements_ui_section(const hub::GameEntry& e);            // details modal: progress + list
+void achievements_ui_section(const hub::GameEntry& e);            // game page, About tab: progress + list
 bool achievements_home_strip(float avail, float bleed);           // Home "Recent unlocks" (false = nothing to show)
 void achievements_account_section();                              // Settings > Account sign-in, hardcore toggle
 void draw_account_section();   // account_ui.cpp: Settings > Account (link a PC, export / import)
@@ -1024,8 +1024,8 @@ void cloud_ui_overlays();    // every frame: conflict / lease dialogs, "Getting 
 int cloud_ui_conflict_count();  // games whose saves differ between this PC and the cloud (Saves nav badge)
 void history_ui_open(const std::string& system, const std::string& key);   // Saves page: unified save history of one game
 void history_ui_saves_page();
-void history_ui_details_section(const hub::GameEntry& e);   // details modal: one line + "History..." button
-bool gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_title, int part = 0);   // details modal: part 0 all, 1 description only (returns whether drawn), 2 facts + ratings
+void history_ui_details_section(const hub::GameEntry& e);   // game page, Saves tab: one line + "History..." button
+bool gameinfo_ui_section(const hub::GameEntry& e, const std::string& catalog_title, int part = 0);   // game page, About tab: part 0 all, 1 description only (returns whether drawn), 2 facts + ratings
 void gameinfo_ui_shot_lib();   // HUB_SHOT_INFO screenshot aid
 /* Facts for the back of a game case (Cases library view). Offline facts always; with `with_description` the cached / fetched description too
  * (queues the usual background lookup, never blocks, never touches the network when headless). */
@@ -1043,7 +1043,7 @@ void stats_ui_card();                                       // Home: "Your stats
 void cloud_ui_saves_page();  // Saves page: account status, quota, per-game rows, history
 void cloud_ui_shot_init();   // HUB_SHOT_CLOUD_* seeds (screenshots only, no network)
 std::string cloud_ui_pill(const hub::GameEntry& e, ImU32* col);   // tile pill text ("" = none) + colour
-void cloud_ui_game_line(const hub::GameEntry& e);                  // details modal: status chip + line
+void cloud_ui_game_line(const hub::GameEntry& e);                  // game page, Saves tab: status chip + line
 void cloud_ui_wizard_body(float w);                                // setup wizard "backed up automatically" step
 /* Launch plumbing (called by the Play path once Lane C wires cloud_prelaunch): */
 void cloud_ui_checking(const std::string& title, bool on);         // "Getting your save from the cloud..."

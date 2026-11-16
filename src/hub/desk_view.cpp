@@ -298,7 +298,7 @@ void rebuild() {
                " sort=" + A.st.library_sort + (A.st.library_sort_rev ? "+rev" : "") + (filters_on() ? " filtered" : ""));
 }
 
-/* Something else chose a game (the palette, the start animation, Coverflow, the details popup...): the cursor follows when the game is in
+/* Something else chose a game (the palette, the start animation, Coverflow, the full-window game page...): the cursor follows when the game is in
  * view, in the group the cursor is in when that group shows it (else the game's console group). */
 void follow_outside_selection() {
     if (A.sel_game == D.seen_sel) return;
@@ -1232,7 +1232,10 @@ float pane_banner(const ImRect& r) {
     if (cut && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImVec2(tx0, ty), ImVec2(tx1, ty + text_h)))
         ImGui::SetTooltip("%s: %s", title, line.c_str());
 
-    /* the buttons: at the right end of the line, or on a line of their own under the text */
+    /* the buttons: at the right end of the line, or on a line of their own under the text. Their focus ring and the primary button's glow
+     * reach past the slim banner, above the pane's top edge too: they are not cut there (the clip rect is widened for them) */
+    const float room = sp(3.f);
+    ImGui::PushClipRect(ImVec2(br.Min.x - room, br.Min.y - room), ImVec2(br.Max.x + room, br.Max.y + room), false);
     const float by = one ? br.Min.y + (h - bh) * 0.5f : ty + text_h + lgap;
     ImGui::SetCursorScreenPos(ImVec2(one ? br.Max.x - padx - (w1 + gap + w2) : tx0, by));
     const bool p1 = ui::button(b1, ImVec2(rows == 2 ? std::min(w1, inner) : w1, bh), true, true, i1);
@@ -1240,6 +1243,7 @@ float pane_banner(const ImRect& r) {
     else ImGui::SetCursorScreenPos(ImVec2(tx0, by + bh + lgap));
     const bool p2 = ui::button(b2, ImVec2(rows == 2 ? std::min(w2, inner) : w2, bh));
     const bool p2_pad = p2 && ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
+    ImGui::PopClipRect();
     if (folders) add_rom_folder(p1);   // every frame while shown (the pad folder browser)
     else if (p1) { shot_trace("desk-banner", "continue"); wizard_open(); }
     if (p2) {
@@ -1572,7 +1576,7 @@ void desk_draw_game_pane(const hub::GameEntry& e, const ImRect& r) {
 }
 
 bool desk_show_game_page(const std::string& key) {
-    if (!desk_layout_on() || A.page != Page::Library || lib_cases_active() || !find_entry(key)) return false;
+    if (!desk_layout_on() || A.page != Page::Library || lib_cases_active() || !find_entry(key)) return false;   // Coverflow: the full-window page goes over it
     D.want_page = key;   // applied on the desk's next frame, once its list model is current (desk_page)
     A.sel_game = key;
     A.sel_ghost.clear();

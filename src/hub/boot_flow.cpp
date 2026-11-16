@@ -15,7 +15,7 @@ void boot_sync_options() {
     o.skip_online = A.st.boot_skip_online;
 }
 
-/* User-initiated launch: play the animation (full from the details modal, short from the hero / quick paths), then `launch`
+/* User-initiated launch: play the animation (full from the game page, short from the hero / quick paths), then `launch`
  * (default play_entry) runs exactly as before. */
 void play_entry_anim(const hub::GameEntry& e, bool quick, std::function<void(const hub::GameEntry&)> launch) {
     if (launch_blocked("play_entry_anim")) return;

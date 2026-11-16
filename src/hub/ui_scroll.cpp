@@ -38,6 +38,8 @@ struct Frame {
     int page_dir = 0;
     bool page_scrolled = false;
     ScrollFlags flags = 0;
+    bool page_req = false;     // page_focus() submitted its "first item of the new view" request this frame
+    float page_off = 0.f;      // ... and the new view is this far below this frame's (an eased area still gliding there)
 };
 
 std::unordered_map<ImGuiID, Area> g_areas;          // key: ImGui::GetID(id) in the host window
@@ -90,9 +92,11 @@ float focus_follow(ImGuiWindow* w, Area& a, int fc, float base) {
 
 /* After an LT / RT page: move the focus onto the first item of the new view (the last one when RT is already at the end). `off` is how
  * far the new view still is from this frame's (an eased area is only starting to glide there). */
-void page_focus(ImGuiWindow* cw, const Frame& fr, Area& a, int fc, float off) {
+void page_focus(ImGuiWindow* cw, Frame& fr, Area& a, int fc, float off) {
     ImGuiContext& g = *GImGui;
     if (!g.NavWindow || g.NavMoveSubmitted || g.NavLayer != ImGuiNavLayer_Main) return;
+    fr.page_req = true;
+    fr.page_off = off;
     const ImRect view = cw->InnerRect;
     const ImRect old = ImGui::WindowRectRelToAbs(g.NavWindow, g.NavWindow->NavRectRel[ImGuiNavLayer_Main]);
     /* the centre of the old item's column: an edge point at a row's left end would score a row it overlaps as "to the right" */
@@ -270,9 +274,26 @@ ScrollInfo scroll_end() {
     ImGuiContext& g = *GImGui;
     ScrollInfo si;
     IM_ASSERT(!g_stack.empty() && "ui::scroll_end() without ui::scroll_begin()");
-    const ScrollFlags flags = g_stack.empty() ? 0 : g_stack.back().flags;
+    const Frame fr = g_stack.empty() ? Frame() : g_stack.back();
+    const ScrollFlags flags = fr.flags;
     if (!g_stack.empty()) g_stack.pop_back();
     ImGuiWindow* cw = g.CurrentWindow;
+    /* After an LT / RT page: the "first item of the new view" must be IN the new view. With nothing focusable there (a long text, a tall
+     * panel) ImGui's best guess is an item outside it, and taking it would scroll the view straight back: keep the page, leave the focus
+     * where it was (the next D-pad press starts from the view, as ImGui does for a focus scrolled away). */
+    if (fr.page_req && g.NavMoveSubmitted && g.NavMoveScoringItems) {
+        /* the result ImGui would take so far (NavMoveRequestApplyResult's choice; the area's items are all scored by now) */
+        const ImGuiNavItemData* res = g.NavMoveResultLocal.ID ? &g.NavMoveResultLocal : g.NavMoveResultOther.ID ? &g.NavMoveResultOther : nullptr;
+        const ImGuiNavItemData& oth = g.NavMoveResultOther;
+        if (res && res != &oth && oth.ID && oth.Window && oth.Window->ParentWindow == g.NavWindow &&
+            (oth.DistBox < res->DistBox || (oth.DistBox == res->DistBox && oth.DistCenter < res->DistCenter)))
+            res = &oth;
+        ImRect view = cw->InnerRect;
+        view.TranslateY(fr.page_off);
+        const bool in_view = res && res->Window && (res->Window == cw || ImGui::IsWindowChildOf(res->Window, cw, false)) &&
+                             ImGui::WindowRectRelToAbs(res->Window, res->RectRel).Overlaps(view);
+        if (!in_view) ImGui::NavMoveRequestCancel();
+    }
     si.window_id = cw->ID;
     si.visible = !cw->SkipItems;
     si.scroll = cw->Scroll.y;

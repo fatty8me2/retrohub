@@ -226,7 +226,7 @@ SheetResult sheet(const char* id, SheetHost host, ImVec2 pos, ImVec2 size, bool*
 bool dialog_begin(const char* id, const char* title, bool* open, DialogSize size, const DialogOpts& opts) {
     ImGuiIO& io = ImGui::GetIO();
     const float w = hubui::kit::dialog_width((int)size, sp(1.f), io.DisplaySize.x), max_h = hubui::kit::dialog_max_h(io.DisplaySize.y);
-    const float pad = io.DisplaySize.y < hubui::lc::kShortWindowPx ? sp(2.f) : sp(3.f);   // like the game page modal on a short window
+    const float pad = io.DisplaySize.y < hubui::lc::kShortWindowPx ? sp(2.f) : sp(3.f);   // a short window: less padding, more room for the middle
     const std::string name = opts.keep_id ? std::string(id) : std::string(id) + "##uidlg";
     const ImGuiID mk = ImGui::GetID(name.c_str());
     ModalMemo& m = g_memo[mk];

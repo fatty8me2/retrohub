@@ -393,7 +393,7 @@ void gs_draw_game_section(const hub::GameEntry& e) {   // body of the game page'
 void gs_draw_defaults_area() {
     begin_panel("set_gamedefs");
     section_title("Game defaults");
-    text_wrapped_disabled("Defaults for every game of a system. Any game can override them under Details > Settings. Saved in your save vault, so they follow you to every PC.");
+    text_wrapped_disabled("Defaults for every game of a system. Any game can override them on the Settings tab of its page. Saved in your save vault, so they follow you to every PC.");
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     static const char* const sysl[] = {"n64", "gc", "wiiu", "3ds", "nds", "ps1", "ps2", "psp", "gba", "gb", "gbc", "nes", "snes", "switch", "switch2"};   // console ids: Switch 2 right after Switch
     const int nsys = (int)(sizeof(sysl) / sizeof(sysl[0]));

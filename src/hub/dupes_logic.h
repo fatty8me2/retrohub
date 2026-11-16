@@ -1,6 +1,6 @@
 #pragma once
 /* Duplicate copies of one game (same library key, different files). Pure logic; the hub keeps one copy in the library
- * (the first scanned unless prefs.preferred_copy names another path) and remembers the others for the details modal. */
+ * (the first scanned unless prefs.preferred_copy names another path) and remembers the others for the game page. */
 #include "library.h"
 
 #include <map>

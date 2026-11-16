@@ -36,14 +36,15 @@ function Check($name, $ok, $detail) {
 function Moves($rows) { @($rows | Where-Object { $_.tok -in @("up", "down", "left", "right") }) }
 function Distinct($rows) { @($rows | Where-Object { $_.nav -ne "00000000" } | Select-Object -ExpandProperty nav -Unique).Count }
 
-# 1. LB/RB cycle through every top-level page and wrap (Settings keeps LB/RB for its 6 tabs, then carries on)
+# 1. LB/RB cycle through every top-level page and wrap (Library, Discover, Play Online, Saves, Controllers, Settings, About; Settings keeps
+# LB/RB for its 5 sections, then carries on)
 $r = Run "pages" "rb,rb,rb,rb,rb,rb,rb,rb,rb,rb,rb,lb"
 $seq = ($r.rows | ForEach-Object { $_.page }) -join ","
-Check "rb cycles pages" ($seq -eq "online,saves,controllers,settings,settings,settings,settings,settings,settings,about,library,about") $seq
+Check "rb cycles pages" ($seq -eq "discover,online,saves,controllers,settings,settings,settings,settings,settings,about,library,about") $seq
 Check "page switch keeps a focus" (@($r.rows | Where-Object { $_.nav -eq "00000000" }).Count -eq 0) "focus lost after a page switch"
 
-# 2. every page: first focus exists and D-pad reaches several different items
-$pages = @(@("online", "rb"), @("saves", "rb,rb"), @("controllers", "rb,rb,rb"), @("settings", "rb,rb,rb,rb"), @("about", "rb,rb,rb,rb,rb"))
+# 2. every page: first focus exists and D-pad reaches several different items (RB from the Library: Discover comes first)
+$pages = @(@("online", "rb,rb"), @("saves", "rb,rb,rb"), @("controllers", "rb,rb,rb,rb"), @("settings", "rb,rb,rb,rb,rb"), @("about", "rb,rb,rb,rb,rb,rb,rb,rb,rb,rb"))
 foreach ($pg in $pages) {
   $r = Run "reach_$($pg[0])" "$($pg[1]),down,right,down,down,down,down,up"
   $mv = Moves $r.rows
@@ -130,7 +131,7 @@ $bk = @($rows | Where-Object { $_.tok -eq "shot:w_back" })[0]   # the b row itse
 Check "B returns to the wizard controller step" ($bk.wiz -eq 1 -and $bk.nav -ne "00000000") "wiz=$($bk.wiz) nav=$($bk.nav)"
 
 # 11. LT / RT scroll whole pages (short window so they overflow) and the focus follows
-foreach ($pg in @(@("controllers", "rb,rb,rb"), @("settings", "rb,rb,rb,rb"), @("saves", "rb,rb"))) {
+foreach ($pg in @(@("controllers", "rb,rb,rb,rb"), @("settings", "rb,rb,rb,rb,rb"), @("saves", "rb,rb,rb"))) {
   $r = Run "scroll_$($pg[0])" "$($pg[1]),down,rt,rt,lt,lt" @{ SIZE = "1280x500" }
   $rows = @($r.rows)
   $sc = @($rows | Where-Object { $_.tok -in @("rt", "lt") } | ForEach-Object { if ($_.sy -match '^(\d+)/') { [int]$Matches[1] } else { -1 } })

@@ -79,7 +79,7 @@ void shot_init_ui() {
         if (sl != std::string::npos) { history_ui_open(h.substr(0, sl), h.substr(sl + 1)); A.page = Page::Saves; }
     }
     if (const char* po = std::getenv("HUB_SHOT_PLAYED_ONLINE")) A.st.played_online = std::string(po) != "0";   // screenshot aid: Play Online help collapsed (1) / open (0)
-    if (const char* dk = std::getenv("HUB_SHOT_DETAILS")) { A.env_select = dk; A.show_details = true; SH.details_key = dk; }   // screenshot aid: open the details modal of this game key (kept pending in env_select: ensure_selection() clears sel_game while the library is still empty)
+    if (const char* dk = std::getenv("HUB_SHOT_DETAILS")) { A.env_select = dk; A.show_details = true; SH.details_key = dk; }   // screenshot aid: open the page of this game key (kept pending in env_select: ensure_selection() clears sel_game while the library is still empty)
     if (const char* pg = std::getenv("HUB_SHOT_PAGE")) {   // screenshot aid: open a page directly (see docs/QA_SHOTS.md); an unknown page or Settings section exits 2 with no screenshot
         const std::string p = pg;
         if (p == "library") A.page = Page::Library;

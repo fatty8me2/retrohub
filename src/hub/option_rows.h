@@ -31,8 +31,6 @@ inline std::vector<std::string> option_group_order(const std::vector<std::string
     return out;
 }
 
-/* (Row layout: the UI kit's option groups size the label and control columns themselves, ui_controls.h.) */
-
 /* ---- Switch: which program plays ("switch.runner") ---- */
 
 /* The "Plays with" value to SHOW for one game: what Play starts. `stored` = the resolved setting, `fritchii_planned` = nx_planned_emulator(e,

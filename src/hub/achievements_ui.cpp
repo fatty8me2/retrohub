@@ -14,7 +14,7 @@
  * The runner (retrorun, src/retrorun/cheevos.cpp) does the real work and writes a local cache; the hub only reads it:
  *   - Settings > Account: sign in once with your own RA username + password. The password is sent to RA's server once
  *     (src/cheevos/cheevos_login.cpp) and is never stored or logged; only the returned token is kept in userdata.
- *   - details modal: "Achievements" section with progress (achievements_ui_section)
+ *   - the game page's About tab: "Achievements" section with progress (achievements_ui_section)
  *   - Home: "Recent unlocks" strip (achievements_home_strip)
  * Offline play only for now: the launch args are never added to online sessions (launch.cpp spawn). Headless runs never touch
  * the network; HUB_CHEEVOS_CFG / HUB_CHEEVOS_DIR point the hub at a mocked config and cache for screenshots. */
@@ -129,7 +129,7 @@ std::string achievements_launch_args() {
     return " --ra-cfg " + quote(cfg_path()) + " --ra-cache " + quote(cache_dir());
 }
 
-/* Details modal. Draws nothing unless the player is signed in; an unsupported system gets a one-line note. */
+/* The game page's About tab. Draws nothing unless the player is signed in; an unsupported system gets a one-line note. */
 void achievements_ui_section(const hub::GameEntry& e) {
     load_cfg();
     if (!RA.cfg.enabled || !RA.cfg.signed_in()) return;
