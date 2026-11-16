@@ -37,6 +37,7 @@ Exit codes: 0 = shot saved. **2 = a requested aid could not be honoured (unknown
 | `HUB_SHOT_DETAILS` | game key, e.g. `fake:2`, `switch:0400486024dec000` | open that game's page; a key not in the library exits 2 |
 | `HUB_SHOT_TAB` | 0-3 | tab of the game page (0 About, 1 Saves, ...) |
 | `HUB_SHOT_SEARCH`, `_LIBFILTER` (`fav;group;genre=X`), `_LIBVIEW` (`grid\|list\|compact\|showcase`), `_LIBCOL`, `_SORT`, `_CASES*`, `HUB_START_VIEW=all`, `HUB_START_SYS` | | library views and filters |
+| **`HUB_SHOT_LAYOUT`** | `desk`, `traditional` | **the Settings > General > Layout choice for this run** (`Settings::ui_layout`): `desk` = the Library desk (game list on the left, the selected game's pane on the right, icon sidebar). An unknown value exits 2. `HUB_SHOT_SEARCH` fills its search box; pad walks (`HUB_SHOT_PAD=down,...,right,b,left`) move the list cursor, enter the pane and come back. `HUB_SHOT_TRACE` logs `desk-model`, `desk-cursor`, `desk-group`, `desk-focus`, `desk-play` (A / Enter: the game page's Play path; nothing launches headless). `qa\desk_shots.ps1` captures the set (and `-Bin <other build> -Tag <name>` the Traditional comparison shots) |
 | `HUB_SHOT_CONTINUE` | `1` or `playing` | play history for the Continue hero and Recently played; **assigned, never added, so the fake hours are the same on every run** |
 | `HUB_SHOT_STATES` | any | fake save states with thumbnails for `fake:1` and `fake:4` (same fixed history) |
 | `HUB_SHOT_PLAYTIME` | any | fixed play-time cases for `fake:0..4` and generated sessions |

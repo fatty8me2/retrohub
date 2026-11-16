@@ -3,6 +3,7 @@
 #include "pcsx2.h"
 #include "gamepack.h"
 #include "display.h"
+#include "desk_view.h"
 
 /* ---------- Settings ---------- */
 
@@ -295,6 +296,13 @@ void tab_general() {
     gap();
     display_settings_ui();
     gap();
+    settings_label("Layout");   // ui_layout: applies at once (desk_view.cpp)
+    if (ImGui::RadioButton("Traditional", !desk_layout_on())) desk_set_layout(false);
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Library desk", desk_layout_on())) desk_set_layout(true);
+    text_wrapped_disabled("Traditional: shelves and covers, with games opening as a page.");
+    text_wrapped_disabled("Library desk: your games in a list, with the selected game always open beside it.");
+    ImGui::Dummy(ImVec2(0, sp(1.f)));
     settings_label("Sidebar");
     int sm = A.st.sidebar_mode;
     if (ImGui::RadioButton("Automatic", sm == 0)) { A.st.sidebar_mode = 0; mark_dirty(); }
@@ -303,6 +311,7 @@ void tab_general() {
     ImGui::SameLine();
     if (ImGui::RadioButton("Icons only", sm == 2)) { A.st.sidebar_mode = 2; mark_dirty(); }
     text_wrapped_disabled("Automatic shrinks the sidebar to icons when the window is narrow.");
+    if (desk_layout_on()) text_wrapped_disabled("Library desk always shows the sidebar as icons.");
     ImGui::Dummy(ImVec2(0, sp(1.f)));
     if (ImGui::Checkbox("Show friends panel", &A.st.show_friends)) mark_dirty();
     if (ImGui::Checkbox("Show a Windows notification for invites and game night reminders when no game is running", &A.st.notify_in_game)) mark_dirty();

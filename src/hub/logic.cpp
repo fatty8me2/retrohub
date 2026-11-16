@@ -108,6 +108,8 @@ std::string settings_to_json(const Settings& s) {
       << "  \"rom_cache_limit_gb\": " << s.rom_cache_limit_gb << ",\n"
       << "  \"download_art\": " << (s.download_art ? "true" : "false") << ",\n"
       << "  \"sidebar_mode\": " << s.sidebar_mode << ",\n"
+      << "  \"ui_layout\": \"" << json::escape(s.ui_layout) << "\",\n"
+      << "  \"desk_groups\": \"" << json::escape(s.desk_groups) << "\",\n"
       << "  \"show_friends\": " << (s.show_friends ? "true" : "false") << ",\n"
       << "  \"tv_start\": " << (s.tv_start ? "true" : "false") << ",\n"
       << "  \"tv_cases\": " << (s.tv_cases ? "true" : "false") << ",\n"
@@ -217,6 +219,8 @@ bool settings_from_json(const std::string& text, Settings* out) {
     out->rom_cache_limit_gb = std::max(0, std::min(100000, (int)j.num("rom_cache_limit_gb", out->rom_cache_limit_gb)));
     out->download_art = json_bool(j, "download_art", out->download_art);
     out->sidebar_mode = std::max(0, std::min(2, (int)j.num("sidebar_mode", out->sidebar_mode)));
+    out->ui_layout = j.str("ui_layout", out->ui_layout) == "desk" ? "desk" : "traditional";   // anything else (or nothing) is Traditional
+    out->desk_groups = j.str("desk_groups", out->desk_groups);
     out->show_friends = json_bool(j, "show_friends", out->show_friends);
     out->tv_start = json_bool(j, "tv_start", out->tv_start);
     out->tv_cases = json_bool(j, "tv_cases", out->tv_cases);

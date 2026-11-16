@@ -18,6 +18,7 @@
 #include "help_logic.h"
 #include "library_scan_info.h"
 #include "addgames.h"
+#include "desk_view.h"
 
 /* help_ui.cpp: the scan result toast, the last result line and the scan caption's clock */
 const std::string& scan_last_line();
@@ -1469,6 +1470,7 @@ void sync_card() {
 void page_library() {
     if (added_stamps_changed() || A.vis_dirty || A.vis_filter != A.sys_filter || A.vis_query != A.search_buf) rebuild_vis();
     ensure_selection();
+    if (desk_layout_on()) { desk_page(); return; }   // Settings > Layout: Library desk (desk_view.cpp)
     if (!lib_cases_active()) library_top_bar();   // Cases hides it (its menu overlay shows it)
     A.page_scrollable = false;
 

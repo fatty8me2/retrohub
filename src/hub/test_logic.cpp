@@ -1174,6 +1174,7 @@ int main() {
         for (int i = 0; i < n; ++i) for (int j = i + 1; j < n; ++j) CHECK(std::strcmp(c[i].id, c[j].id) != 0);
         for (int i = 0; i < n; ++i) CHECK((c[i].tab >= 0 && c[i].tab < hubui::ST_Count) || c[i].tab == hubui::kPageSaves || c[i].tab == hubui::kPageControllers);
         CHECK(hubui::settings_control_tab("server_url") == hubui::ST_Online && hubui::settings_control_tab("change_username") == hubui::ST_Account);
+        CHECK(hubui::settings_control_tab("ui_layout") == hubui::ST_General);   // Layout: Traditional / Library desk
         int nx = -1;
         CHECK(hubui::settings_tab_step(0, 1, &nx) == 0 && nx == 1);
         CHECK(hubui::settings_tab_step(0, -1, &nx) == -1 && nx == 0);

@@ -11,6 +11,8 @@ target_link_libraries(hub_logic_test PRIVATE hublogic)
 
 add_executable(hub_libview_test test_libview.cpp)
 target_link_libraries(hub_libview_test PRIVATE hublogic)
+add_executable(hub_desk_test test_desk.cpp)   # Library desk list model (desk_logic.h) + the ui_layout setting
+target_link_libraries(hub_desk_test PRIVATE hublogic)
 
 add_executable(hub_shelf_test test_shelf.cpp)
 target_link_libraries(hub_shelf_test PRIVATE hublogic)
@@ -163,7 +165,8 @@ set(RETROHUB_UI_SOURCES
     attract.cpp continue_ui.cpp hang_watchdog.cpp surprise.cpp wrapped_ui.cpp achievements_ui.cpp page_discover.cpp discover_logic.cpp discover_browse.cpp
     party_ui.cpp party_view.cpp bracket_ui.cpp hack_ui.cpp hack_core.cpp qm_party.cpp   # Plan 4 Wave 1
     lockout.cpp icon_refresh.cpp discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp   # Plan 4 Wave 2 C (convenience)
-    transferpak.cpp gba_link.cpp palpark.cpp resume_more.cpp progress_ui.cpp verify_ui.cpp save_import_ui.cpp)   # Plan 4 Wave 3
+    transferpak.cpp gba_link.cpp palpark.cpp resume_more.cpp progress_ui.cpp verify_ui.cpp save_import_ui.cpp   # Plan 4 Wave 3
+    desk_view.cpp)   # UI overhaul: the Library desk layout
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
 target_include_directories(RetroHub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../net ${CMAKE_CURRENT_SOURCE_DIR}/../common)

@@ -3,6 +3,7 @@
 #include "resume_more.h"
 #include "libview_ui.h"
 #include "continue_ui.h"
+#include "desk_view.h"
 #include <cstring>
 
 /* ============================ main ============================ */
@@ -59,6 +60,7 @@ void shot_init_ui() {
     }
     lib_shot_seed();   // HUB_SHOT_LIBVIEW=grid|list|compact|showcase (+ HUB_SHOT_LIBCOL=last:desc)
     if (const char* sq = std::getenv("HUB_SHOT_SEARCH")) { std::snprintf(A.search_buf, sizeof A.search_buf, "%s", sq); A.vis_dirty = true; }   // screenshot aid: preset the library search text
+    desk_shot_seed();   // HUB_SHOT_LAYOUT=desk|traditional (Settings > Layout); an unknown value exits 2
     if (const char* lf = std::getenv("HUB_SHOT_LIBFILTER")) {   // screenshot aid: "fav", "group" and "genre=Action" (';'-separated) seed the All Games filters
         std::stringstream fs(lf);
         std::string tok;
