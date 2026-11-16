@@ -17,18 +17,40 @@ static bool share_flag_for(hub::System s) {
     return eff;
 }
 
-/* Play Online: friends who are in a joinable room right now (same presence data and join path as the friends panel; no extra traffic). */
+/* Screenshots only (headless): HUB_SHOT_FAKE_ROOMS=<n> adds n made-up friends in open rooms to the list below (never to the friends data). */
+static const std::vector<hubnet::Friend>& shot_fake_rooms() {
+    static std::vector<hubnet::Friend> v;
+    static bool done = false;
+    if (done) return v;
+    done = true;
+    const char* n = g_headless ? std::getenv("HUB_SHOT_FAKE_ROOMS") : nullptr;
+    static const char* names[] = {"Ava", "Ben", "Cleo", "Dan", "Eli", "Fay", "Gus", "Hana", "Ivo", "Jun", "Kit", "Lea"};
+    static const char* games[] = {"Mario Kart 64", "Mario Party 2", "Smash Classic", "Pokemon Stadium 2"};
+    for (int i = 0, c = n ? std::max(0, std::min(40, std::atoi(n))) : 0; i < c; ++i) {
+        hubnet::Friend f;
+        f.uid = "fakeroom" + std::to_string(i);
+        f.name = std::string(names[i % 12]) + (i >= 12 ? std::to_string(i / 12 + 1) : std::string());
+        f.status.game_title = games[i % 4];
+        f.status.lobby_code = "RM" + std::string(1, (char)('A' + i % 8)) + "K" + std::string(1, (char)('2' + i % 8)) + "Q";
+        f.status.players = 1 + i % 3;
+        f.status.max_players = 4;
+        v.push_back(f);
+    }
+    return v;
+}
+
+/* Play Online: friends who are in a joinable room right now (same presence data and join path as the friends panel; no extra traffic).
+ * Every one of them is listed (the page scrolls); none is left out. */
 static void online_friend_rooms_panel(float w) {
     std::vector<const hubnet::Friend*> rooms;
     for (const hubnet::Friend& f : fr_friends())
         if (hubui::friend_can_join(fr_row(f)) && hubnet::valid_room_code(f.status.lobby_code)) rooms.push_back(&f);
+    for (const hubnet::Friend& f : shot_fake_rooms()) rooms.push_back(&f);
     begin_panel("frooms", ImVec2(w, 0));
     section_title("Friends' rooms");
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     if (rooms.empty()) text_wrapped_disabled("None of your friends are in an open room right now. When one hosts, it shows up here.");
-    int shown = 0;
     for (const hubnet::Friend* f : rooms) {
-        if (++shown > 6) break;
         ImGui::PushID(f->uid.c_str());
         std::string game = f->status.game_title.empty() ? std::string("a game") : f->status.game_title;
         std::string line = f->name + " is in a room playing " + game;

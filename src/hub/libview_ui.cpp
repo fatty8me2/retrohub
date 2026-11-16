@@ -23,6 +23,7 @@
 #include "online_caps.h"
 #include "shelf_draw.h"
 #include "shelf_logic.h"
+#include "ui_scroll.h"
 
 #include <SDL.h>
 #include <array>
@@ -1207,7 +1208,12 @@ void lib_body(float bar_h) {
     if (lay == LibLayout::List) wf |= ImGuiWindowFlags_AlwaysVerticalScrollbar;
     if (lay == LibLayout::Showcase || lay == LibLayout::Cases) wf |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground;
     if (!flush) ImGui::SetCursorPosX(ImGui::GetCursorPosX() - pad);
+    /* Grid / List / Compact / Shelf keep ImGui's own scrolling (the virtual rows, jumps and LT / RT paging set this child's scroll
+     * themselves) with the UI kit's thumb on it; Showcase and Cases are carousels without a vertical scrollbar. */
+    const bool kit_bar = lay != LibLayout::Showcase && lay != LibLayout::Cases;
+    if (kit_bar) ui::scrollbar_theme_push();
     ImGui::BeginChild("grid", ImVec2(flush ? full_w - strip_w - strip_gap : child_w, -bar_h), ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding, wf);
+    if (kit_bar) ui::scrollbar_theme_pop();
     ImGui::PopStyleVar();
     A.page_scrollable = true;
     ImGuiContext& g = *ImGui::GetCurrentContext();
@@ -1247,6 +1253,7 @@ void lib_body(float bar_h) {
         }
     }
     else draw_virtual(D, lay);
+    if (kit_bar) ui::scrollbar_theme_draw();
     ImGui::EndChild();
     const ImVec2 csz = ImGui::GetItemRectSize();
     if (strip_on) {

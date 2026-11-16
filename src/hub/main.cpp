@@ -615,7 +615,11 @@ static int hub_main() {
             /* A game is running (or another window has focus): pad buttons belong to that, never to the hub behind it. */
             for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadRStickRight; ++k) io.AddKeyAnalogEvent((ImGuiKey)k, false, 0.f);
         }
-        {   // LT / RT = page up / page down in whatever list has the focus (ImGui moves the focus along with the scroll)
+        {   /* LT / RT = page up / page down in whatever list has the focus (ImGui moves the focus along with the scroll).
+             * A UI kit scroll area around the focus takes the press first (ui_scroll.cpp locks it, so the reads below see nothing): every
+             * page but Library, Discover's cards, the empty library, the Cases menu, sheets and dialogs. What is left comes here: Home (RT
+             * also cycles the Sort order there, frame.cpp) and the rest of Library outside All Games' own paging (A.lib_pg), the friends
+             * panel, and a room (its left column is a plain child: the manual scroll below). */
             static bool pg_up = false, pg_dn = false;
             static ImGuiKey nudge = ImGuiKey_None;   // one-shot d-pad press that lands the focus after a manual page scroll
             struct Pend { int dir = 0, wait = 0, refocus = 0; ImGuiID nav = 0, wid = 0; float scroll = 0; };

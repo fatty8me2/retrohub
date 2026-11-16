@@ -907,8 +907,8 @@ float shelf_arrows_w();
 void shelf_header(const char* title, const std::string& right, float bleed, int count = -1, bool* link_clicked = nullptr, bool arrows = false);
 bool route_wheel(float px, float py, float wx, float wy);
 void home_note_page();     // call inside the library page child while drawing Home (wheel routing hit area)
-void home_scroll_pre();    // before BeginChild("shelves")
-void home_scroll_post();   // right after it
+void home_shelves_begin(float width);   // the Home shelves scroll area (eased, thumb over the right edge): takes the rest of the page
+void home_shelves_end();
 void shelf_strip(const std::string& id, int count, float tw, float th, const std::function<TileResult(int, ImVec2)>& draw_one);
 
 

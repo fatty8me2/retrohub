@@ -5,6 +5,7 @@
 #include "libview_ui.h"
 #include "padspots_logic.h"
 #include "ui_sound.h"
+#include "ui_scroll.h"
 
 /* Startup "new version available" prompt. Shown once per run when the launch
  * check finds a newer release that the player hasn't chosen to skip (a manual
@@ -514,8 +515,12 @@ void draw_frame() {
     }
 
     float footer_h = immersive ? 0.f : sp(5.5f);
-    ImGuiWindowFlags pf = A.page == Page::Library ? (ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse) : ImGuiWindowFlags_None;
-    ImGui::BeginChild("page", ImVec2(0, -footer_h), ImGuiChildFlags_NavFlattened, pf);
+    /* Library and Discover scroll their own parts (Home's shelves, All Games, Discover's cards under its filters). Every other page is one
+     * UI kit scroll area: the kit's thumb while it overflows (ImGui's own gutter, so a page that fits looks exactly as before), the wheel,
+     * LT / RT paging and the controller focus kept in view. A room keeps main.cpp's LT / RT: its left column scrolls on its own. */
+    const bool page_own_scroll = A.page == Page::Library || A.page == Page::Discover;
+    if (page_own_scroll) ImGui::BeginChild("page", ImVec2(0, -footer_h), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    else ui::scroll_begin("page", ImVec2(0.f, -footer_h), ui::ScrollFlags_AutoGutter | (A.page == Page::Online && A.in_room ? ui::ScrollFlags_NoPadPaging : 0), ImVec2(0.f, 0.f));
     if (A.page_focus_req) {   // arrived on a page (LB/RB, sidebar, B): put the focus on its first item unless the user is in the sidebar
         A.page_focus_req = false;
         if (!in_side && !io.WantTextInput) {
@@ -540,7 +545,8 @@ void draw_frame() {
         case Page::About: page_about(); break;
         case Page::Admin: page_admin(); break;
     }
-    ImGui::EndChild();
+    if (page_own_scroll) ImGui::EndChild();
+    else ui::scroll_end();
     if (!immersive) draw_footer(footer_h);
     ImGui::EndChild();
     ImGui::PopItemFlag();

@@ -62,6 +62,7 @@ Exit codes: 0 = shot saved. **2 = a requested aid could not be honoured (unknown
 | **`HUB_SHOT_OFFLINE`** | `home` (the Play Online page with the friends panel "offline") or `room` (a room that is still "Connecting...") | Play Online with no network (headless never connects anyway) |
 | `HUB_SHOT_FRIENDS` | any | friends panel open |
 | `HUB_SHOT_FAKE_FRIENDS` (+ `_CHAT`, `_BELL`, `_PROFILES`, `_LONGNAMES`, ...) | | fake friends, chat, notifications |
+| `HUB_SHOT_FAKE_ROOMS` | `n` (0-40) | n made-up friends in open rooms on Play Online's "Friends' rooms" list (page_online.cpp; the list only, never the friends data). `qa\scroll_shots.ps1` uses it |
 | **`HUB_SHOT_UPDATE_NOTES`** | comma list of `ready`, `failed`, `postponed`, `rollback`, `interrupted` | adds those update notes **and opens the Notifications list (bell panel) with the friends panel** so the notes are readable. `HUB_SHOT_BELL=0` keeps it closed (badge only) |
 | `HUB_SHOT_BELL` | any | open the Notifications list (with `HUB_SHOT_FAKE_FRIENDS`) |
 | `HUB_SHOT_UPDATE` | any | also draw the update prompt |

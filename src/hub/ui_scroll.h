@@ -24,6 +24,15 @@
  *   ScrollFlags_AutoHeight: as tall as the content but at most the height above (dialogs). The first frame measures.
  *   padding: inner padding (default sp(1.5) x sp(1)); focus rings of edge items need about half of it.
  *
+ * OPTIONS (flags, all opt-in; without them the area behaves as described above)
+ *   ScrollFlags_Eased       the view glides (wheel, LT / RT, focus moves, ImGui's own scroll requests) on a spring; Reduce motion jumps.
+ *   ScrollFlags_OverlayBar  no gutter at all: the thumb floats over the area's right edge (keep about sp(1.5) there free, e.g. padding).
+ *                           For a screen that must keep its exact layout whether or not it overflows (Home, the Cases menu).
+ *   ScrollFlags_AutoGutter  ImGui's own gutter, only while the content overflows (the content reflows when it comes and goes, as a plain
+ *                           ImGui child does): for a page that must look exactly as before when it fits.
+ *   scroll_by()             moves an area by pixels from outside (a wheel routed by hand), eased in an Eased area.
+ *   scrollbar_theme_*()     gives a plain ImGui child (a view that keeps its own scrolling) the same thumb, without making it an area.
+ *
  * DO / DON'T
  *   - Give the area a fixed or "rest of the window" height. Do not put it in a host that grows with its content without a cap, or the
  *     host overflows and shows a second scrollbar (ui::sheet and ui::dialog already do this right).
@@ -40,6 +49,9 @@ enum ScrollFlags_ {
     ScrollFlags_PadOwner      = 1 << 1,   // LT / RT page this area while the pad focus is anywhere in its host window (sheet / dialog bodies)
     ScrollFlags_NoFocusFollow = 1 << 2,   // leave the scroll alone when the focus moves (the caller scrolls itself)
     ScrollFlags_NoPadPaging   = 1 << 3,   // do not take LT / RT
+    ScrollFlags_Eased         = 1 << 4,   // glide to every new position (spring; Reduce motion jumps)
+    ScrollFlags_OverlayBar    = 1 << 5,   // no gutter: the thumb floats over the right edge, the content never moves
+    ScrollFlags_AutoGutter    = 1 << 6,   // ImGui's own gutter, only while the content overflows (exactly a plain child's layout)
 };
 typedef int ScrollFlags;
 
@@ -60,5 +72,15 @@ ScrollInfo scroll_end();
 
 /* Ask an area (by the window id from ScrollInfo) to jump to `y` on its next frame, e.g. 0 to go back to the top. */
 void scroll_set(ImGuiID window_id, float y);
+/* Move an area (by the window id from ScrollInfo) by dy pixels on its next frame (+ = down); an Eased area glides there and adds up
+ * quick repeats, like wheel notches. For a wheel routed by hand. */
+void scroll_by(ImGuiID window_id, float dy);
+
+/* The kit's thumb on a plain ImGui child that keeps its own scrolling (a virtualised list that sets its scroll itself): ImGui keeps the
+ * gutter, the wheel and the dragging, only the look changes. Call scrollbar_theme_push() right before ImGui::BeginChild,
+ * scrollbar_theme_pop() right after it, and scrollbar_theme_draw() inside the child just before ImGui::EndChild. */
+void scrollbar_theme_push();
+void scrollbar_theme_pop();
+void scrollbar_theme_draw();
 
 }  // namespace ui

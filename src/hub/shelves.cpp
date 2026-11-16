@@ -1,5 +1,6 @@
 #include "app.h"
 #include "homescroll_logic.h"
+#include "ui_scroll.h"
 
 /* ---------- shelves ---------- */
 
@@ -38,11 +39,14 @@ void shelf_header(const char* title, const std::string& right, float bleed, int 
     ImGui::Dummy(ImVec2(w, f->FontSize + sp(1.25f)));
 }
 
-/* ---- Home wheel routing + eased page scroll (logic: homescroll_logic.h) ----
- * The wheel is routed from the event loop (before ImGui sees it). A vertical wheel / touchpad gesture ALWAYS scrolls the Home page,
- * wherever the pointer is; a row scrolls sideways only for a horizontal gesture or Shift + wheel while hovered. */
+/* ---- Home wheel routing + the shelves scroll area (logic: homescroll_logic.h) ----
+ * The wheel is routed from the event loop (before ImGui sees it). A vertical wheel / touchpad gesture ALWAYS scrolls the Home shelves,
+ * wherever the pointer is on Home (the hero too); a row scrolls sideways only for a horizontal gesture or Shift + wheel while hovered.
+ * The shelves themselves are a UI kit scroll area (ui_scroll.h): Eased (the page glides on hs::spring_step, Reduce motion jumps),
+ * OverlayBar (a thumb over the right edge while they overflow; the shelves keep their exact width) and the kit's focus-follow (the
+ * controller-focused shelf stays in view with a margin). */
 static hubui::hs::WheelRouter g_wheel_router;
-static float g_home_pending = 0.f;                        // notches the page still has to scroll (+ = down)
+static ImGuiID g_home_area = 0;                           // the shelves scroll area's window (vertical wheel notches go there)
 static ImGuiID g_home_page_id = 0;                        // the library "page" child that holds Home
 static int g_home_page_frame = -10;
 
@@ -75,46 +79,17 @@ bool route_wheel(float px, float py, float wx, float wy) {
         ShelfState& s = *rows[i];
         s.target = hubui::shelf_clamp(s.target + hubui::shelf_wheel_delta(r.row, 0.f, s.tw, s.gap), s.max_scroll);
     }
-    g_home_pending += r.page;
+    if (r.page != 0.f && g_home_area) ui::scroll_by(g_home_area, r.page * hubui::hs::notch_px(sp(1.f)));   // eased: quick notches add up
     return true;
 }
 
-/* Eased page scroll for the Home "shelves" child. Call home_scroll_pre() right before BeginChild and home_scroll_post() right after it.
- * Wheel notches move a target; a critically damped spring carries the page there (frame-rate independent, a little momentum). A jump
- * ImGui itself asked for (pad / keyboard focus moving between rows) is taken as the new target and eased to the same way, so the two
- * never fight. Reduce motion snaps. */
-static struct HomeScroll { ImGuiID wid = 0; int frame = -10; float pos = 0, vel = 0, target = 0; } HS;
-
-void home_scroll_pre() {
-    ImGuiWindow* w = HS.wid ? ImGui::FindWindowByID(HS.wid) : nullptr;
-    const int fc = ImGui::GetFrameCount();
-    if (!w || HS.frame != fc - 1) {   // first frame, or Home was away: start from wherever the window is
-        HS.pos = HS.target = w ? w->Scroll.y : 0.f;
-        HS.vel = 0.f;
-        g_home_pending = 0.f;
-        return;
-    }
-    const float maxs = std::max(0.f, w->ScrollMax.y);
-    if (w->ScrollTarget.y < FLT_MAX) {   // ImGui wants to move the page (focus-follow): ease there instead of jumping
-        const float deco = w->DecoOuterSizeY1 + w->DecoInnerSizeY1 + w->DecoOuterSizeY2;
-        HS.target = hubui::hs::clampf(std::round(w->ScrollTarget.y - w->ScrollTargetCenterRatio.y * (w->SizeFull.y - deco)), 0.f, maxs);
-        w->ScrollTarget.y = FLT_MAX;
-        w->ScrollTargetEdgeSnapDist.y = 0.f;
-    }
-    const float notches = g_home_pending;
-    g_home_pending = 0.f;
-    HS.target = hubui::hs::clampf(HS.target + notches * hubui::hs::notch_px(sp(1.f)), 0.f, maxs);
-    HS.pos = hubui::hs::clampf(HS.pos, 0.f, maxs);
-    if (ui::reduce_motion) { HS.pos = HS.target; HS.vel = 0.f; }
-    else hubui::hs::spring_step(HS.pos, HS.vel, HS.target, ImGui::GetIO().DeltaTime);
-    ImGui::SetNextWindowScroll(ImVec2(-1.f, HS.pos));
+/* The Home shelves scroll area: home_shelves_begin() right where the shelves start (it takes the rest of the page), then the shelves,
+ * then home_shelves_end(). NoPadPaging: on Home RT cycles the Sort order (frame.cpp global_input) and LT / RT keep main.cpp's paging. */
+void home_shelves_begin(float width) {
+    ui::scroll_begin("shelves", ImVec2(width, 0.f), ui::ScrollFlags_Eased | ui::ScrollFlags_OverlayBar | ui::ScrollFlags_NoPadPaging, ImVec2(0.f, 0.f));
+    g_home_area = ImGui::GetCurrentWindow()->ID;
 }
-
-void home_scroll_post() {
-    ImGuiWindow* w = ImGui::GetCurrentWindow();
-    HS.wid = w->ID;
-    HS.frame = ImGui::GetFrameCount();
-}
+void home_shelves_end() { ui::scroll_end(); }
 
 /* A horizontally scrolling row of tiles. Scrolling is managed here (smooth, time based) instead of by a child
  * window, so every tile stays a real ImGui item and the D-pad can walk onto tiles that are off-screen.
@@ -145,7 +120,8 @@ void shelf_strip(const std::string& id, int count, float tw, float th, const std
     ImVec2 la(v1.x - bleed - shelf_arrows_w(), by), ra(v1.x - bleed - bs, by);
     bool over_arrow = false;   // arrows are outside the strip, so a press on a tile is never an arrow press
 
-    bool hov = ImGui::IsMouseHoveringRect(c0, c1) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    bool hov = ImGui::IsMouseHoveringRect(c0, c1) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+               ImGui::GetActiveID() != ImGui::GetWindowScrollbarID(win, ImGuiAxis_Y);   // a press on the page's scrollbar (over the right edge) is not a pan
     // click-and-drag panning (a press that moves past the threshold becomes a drag; a plain click is untouched)
     if (max_scroll > 0) {
         if (hov && !over_arrow && ImGui::IsMouseClicked(0)) {
