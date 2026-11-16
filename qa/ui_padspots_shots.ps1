@@ -120,7 +120,7 @@ if (-not $Only -or "myprof" -match $Only) {
 if (-not $Only -or "avatar" -match $Only) {
     Write-Host "avatar (profile editor cells, pad only)"
     $r = Run "avatar" "wait,view,down,a,down,a,shot:editor,right,right,shot:focus,a,shot:picked" ($fr + @{ HUB_SHOT_PROFILES = "1" }) "5"
-    Check "avatar: the editor opens from the pad" (@($r.pad | Where-Object { $_.win -eq 'Your profile##frprof' }).Count -ge 1) "never in 'Your profile##frprof'"
+    Check "avatar: the editor opens from the pad" (@($r.pad | Where-Object { $_.win -like 'Your profile##frprof*' }).Count -ge 1) "never in 'Your profile##frprof'"   # -like: the dialog's middle is a child window
     Check "avatar: right moves along the row" (Has $r '^prof-avatar-focus c:snes') "no 'prof-avatar-focus c:snes' line"
     Check "avatar: A picks the focused avatar" (Has $r '^prof-avatar c:snes') "no 'prof-avatar c:snes' line"
 }
@@ -129,7 +129,7 @@ if (-not $Only -or "avatarmouse" -match $Only) {
     Write-Host "avatarmouse (editor opened with the mouse, cells walked with the pad)"
     $waits = (@("wait") * 14) -join ","
     $r = Run "avatarmouse" "$waits,shot:editor,right,right,shot:focus,a,shot:picked" ($fr + @{ HUB_SHOT_PROFILES = "1"; HUB_SHOT_FRIENDS = "1"; HUB_SHOT_CLICK = "1018,86;497,180" }) "6"
-    Check "avatarmouse: the editor is open" (@($r.pad | Where-Object { $_.win -eq 'Your profile##frprof' }).Count -ge 1) "never in 'Your profile##frprof'"
+    Check "avatarmouse: the editor is open" (@($r.pad | Where-Object { $_.win -like 'Your profile##frprof*' }).Count -ge 1) "never in 'Your profile##frprof'"
     Check "avatarmouse: right moves along the cells" (Has $r '^prof-avatar-focus c:snes') "no 'prof-avatar-focus c:snes' line"
     Check "avatarmouse: A picks the focused avatar" (Has $r '^prof-avatar c:snes') "no 'prof-avatar c:snes' line"
 }

@@ -74,7 +74,10 @@ Exit codes: 0 = shot saved. **2 = a requested aid could not be honoured (unknown
 | `HUB_SHOT_ACCESS` | `pending`, `unavailable`, `setup`, `setup-offline` | whole-app lock screens |
 | `HUB_SHOT_ADMIN` | `1`, `pending`, `banned`, `detail`, `confirm`, `settings` | owner dashboard (fake data) |
 | `HUB_SHOT_NET` | `1` | allows the friends client, but only against a loopback server |
-| `HUB_SHOT_PARTY`, `_BRACKET`, `_KT`, `_CHALLENGE`, `_WRAPPED`, `_USERNAME*`, `_WIZARD`, `_SURPRISE` | | Plan 4 / account / first-run aids (grep the name) |
+| `HUB_SHOT_PARTY`, `_BRACKET`, `_KT`, `_CHALLENGE`, `_WRAPPED`, `_USERNAME*`, `_WIZARD`, `_SURPRISE` | | Plan 4 / account / first-run aids (grep the name). `HUB_SHOT_PARTY=couchpick`: the couch party setup on "I'll pick" (with `HUB_SHOT_FAKE_LIB=30`: its 24 game chips) |
+| `HUB_SHOT_FRCONF` | `remove`, `block` | with `HUB_SHOT_FAKE_FRIENDS` + `HUB_SHOT_FRIENDS`: the "Are you sure?" question for Mia (nothing is sent) |
+| `HUB_SHOT_PLAN_NIGHT` | any | with `HUB_SHOT_FAKE_FRIENDS` + `HUB_SHOT_FRIENDS`: Mia's chat with the "Plan a session" (game night) dialog open |
+| `HUB_SHOT_FAKE_NIGHT` | any | with `HUB_SHOT_FAKE_FRIENDS`: a game night starting now (its card, and its row at the top of the Friends list). Trace lines: `gn-card-focus <id>` (the D-pad is on the row), `gn-card-open <id>` (A / click opened its dialog), `gn-card-act <Host\|Join> <id>`, `gn-card-dismiss <id>` |
 
 ## Emulator dialogs
 
@@ -97,6 +100,10 @@ Exit codes: 0 = shot saved. **2 = a requested aid could not be honoured (unknown
 `qa\dialogs_shots.ps1 [-Bin <build output>] [-Tag before|after] [-Only regex]` captures the dialogs converted to `ui::dialog` (batch 1: emulator
 prompts, Add games, Find my games, ROM hacks, cloud saves) at 1024x600, 1280x720, 1920x1080 and 1024x600 at 150 %, plus pad walks (default focus,
 B, a long middle scrolling under pinned buttons), from a sandbox copy. Output and a `summary.txt` with the pad checks go to `build\qa_dialogs_out\<tag>`.
+`qa\dialogs2b_shots.ps1` (same options) does the same for batch 2b: couch party setup (and its wrapping game chips), Party night / The plan,
+standings, your profile editor, the remove / block question, Plan a session, the three Kanto Together dialogs, the admin question, and the
+game night card's row in the Friends list (focus, A opens its dialog, B fires nothing, Dismiss). Output: `build\qa_dialogs2b_out\<tag>`.
+With the focus in a dialog's scrolling middle the trace's `win=` is the middle (`<popup name>/##dlg_body_...`): match it with `-like '<name>*'`.
 
 ## Matrix
 

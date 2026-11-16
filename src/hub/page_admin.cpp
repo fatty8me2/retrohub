@@ -6,6 +6,7 @@
 #include "invite.h"
 #include "invite_logic.h"
 #include "imgui_internal.h"
+#include "ui_sheet.h"
 
 /* Admin page (docs/ADMIN.md): accounts, bans, approvals and the two switches. It exists only for the owner account: the welcome says so
  * (FriendsClient::is_admin) and the sidebar entry, the page and every request are gated on it. That is a convenience only - the Worker
@@ -495,26 +496,25 @@ void detail_panel(float w, long long now) {
     end_panel();
 }
 
+/* Ban / deny / unban question: a ui::dialog (ui_sheet.h) under its old popup name. The first button keeps the default focus it always
+ * had; B / Esc close it and do nothing. */
+bool g_confirm_shown = false;
 void confirm_modal() {
-    if (AU.confirm_open) { ImGui::OpenPopup("Are you sure?##admconf"); AU.confirm_open = false; }
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sp(2.5f), sp(2.5f)));
-    if (ImGui::BeginPopupModal("Are you sure?##admconf", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
-        if (ui::modal_back()) ImGui::CloseCurrentPopup();
+    if (AU.confirm_open) { g_confirm_shown = true; AU.confirm_open = false; }
+    ui::DialogOpts o;
+    o.keep_id = true;
+    if (ui::dialog_begin("Are you sure?##admconf", "Are you sure?", &g_confirm_shown, ui::DialogSize::Small, o)) {
         const bool ban = AU.confirm_op == "ban", deny = AU.confirm_op == "deny";
         std::string msg = ban ? hubnet::admin_ban_confirm(AU.confirm_name) : deny ? hubnet::admin_deny_confirm(AU.confirm_name)
                                                                                  : "Unban " + AU.confirm_name + "? They can use online features again. They are not added back to your friends.";
-        ImGui::PushTextWrapPos(sp(40.f));
-        ImGui::TextUnformatted(msg.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Dummy(ImVec2(0, sp(1.5f)));
+        ImGui::TextWrapped("%s", msg.c_str());
+        ui::dialog_buttons();
         const char* go = ban ? "Ban" : deny ? "Deny" : "Unban";
-        if (ui::button(go, ImVec2(sp(14.f), sp(5.f)), !ban && !deny)) { do_act(AU.confirm_op, AU.confirm_uid); ImGui::CloseCurrentPopup(); }
-        ImGui::SameLine();
-        if (ui::button("Cancel", ImVec2(sp(14.f), sp(5.f)))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        if (ui::button(go, ImVec2(sp(14.f), sp(5.f)), !ban && !deny)) { do_act(AU.confirm_op, AU.confirm_uid); g_confirm_shown = false; }
+        ui::dialog_same_line(sp(14.f));
+        if (ui::button("Cancel", ImVec2(sp(14.f), sp(5.f)))) g_confirm_shown = false;
+        ui::dialog_end();
     }
-    ImGui::PopStyleVar();
 }
 
 } // namespace

@@ -13,6 +13,7 @@
 #include "toast.h"
 #include "group_ui.h"
 #include "ui_sound.h"
+#include "ui_sheet.h"
 
 using namespace hubui::night;
 
@@ -208,36 +209,45 @@ void gn_card_dismiss(const std::string& id) {
     if (Night* n = GN.plans.find(id)) { n->dismissed = true; persist(); toast_sync(true); }
 }
 
+/* The plan dialog's starting values: the friend whose chat it was opened from, the last online game, an hour from now. */
+static void plan_open(const std::string& uid) {
+    GN.open = true; GN.err.clear(); GN.pick.clear(); GN.pick.insert(uid);
+    auto gs = online_games();
+    GN.game_ix = 0;
+    for (size_t i = 0; i < gs.size(); ++i) if (room_id(*gs[i]) == A.st.last_game) GN.game_ix = (int)i;
+    std::time_t t = std::time(nullptr) + 3600;
+    std::tm tmv{}; localtime_s(&tmv, &t);
+    GN.day = 0; GN.hour = tmv.tm_hour; GN.min5 = (tmv.tm_min / 5);
+}
+
+/* Screenshot aid (headless only): the plan dialog from `uid`'s chat, as if "Plan a session" was pressed (HUB_SHOT_PLAN_NIGHT). */
+void gn_plan_open_shot(const std::string& uid) {
+    if (!g_headless) return;
+    load_once();
+    plan_open(uid);
+}
+
 /* Chat header button + popup. `cx`/`cy` = top-right corner of the header area. */
 void gn_plan_button(const std::string& uid, ImVec2 pos, float h) {
     load_once();
     float w = 0;
-    if (fr_pill_button("plan_night", "Plan a session", pos, h, false, true, &w)) {
-        GN.open = true; GN.err.clear(); GN.pick.clear(); GN.pick.insert(uid);
-        auto gs = online_games();
-        GN.game_ix = 0;
-        for (size_t i = 0; i < gs.size(); ++i) if (room_id(*gs[i]) == A.st.last_game) GN.game_ix = (int)i;
-        std::time_t t = std::time(nullptr) + 3600;
-        std::tm tmv{}; localtime_s(&tmv, &t);
-        GN.day = 0; GN.hour = tmv.tm_hour; GN.min5 = (tmv.tm_min / 5);
-        ImGui::OpenPopup("##plan_night");
-    }
+    if (fr_pill_button("plan_night", "Plan a session", pos, h, false, true, &w)) plan_open(uid);   // gn_plan_popup() opens the dialog this frame
 }
 
+/* "Plan a session": a ui::dialog (ui_sheet.h) under its old popup name ##plan_night. The form, the friends to invite and "Coming up"
+ * scroll in the middle on a short window or a big UI size (the friend list was a nested area with its own scrollbar); Send invite /
+ * Cancel stay put. */
 void gn_plan_popup() {
-    // On short windows (1024x600) the spacer gaps go away first so the whole popup stays on screen.
+    // On short windows (1024x600) the spacer gaps go away first.
     const bool tight = ImGui::GetIO().DisplaySize.y < 700.f;
     auto gap = [&](float v) { return tight ? 0.f : sp(v); };
-    if (!GN.open) return;
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(std::min(sp(52.f), ImGui::GetIO().DisplaySize.x - sp(4.f)), 0));
-    if (!ImGui::BeginPopupModal("##plan_night", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) { GN.open = false; GN.inner_busy = false; return; }
+    ui::DialogOpts o;
+    o.keep_id = true;
+    o.back_closes = false;   // B is read below
+    if (!ui::dialog_begin("##plan_night", "Plan a session", &GN.open, ui::DialogSize::Small, o)) { GN.inner_busy = false; return; }
     /* B / Esc = Cancel, like every other modal. Not on the press that only closed the Game / Day list or ended a slider edit (ImGui
      * handles that B before this code runs, so the state of the last frame tells). */
-    if (!GN.inner_busy && ui::modal_back()) { GN.open = false; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    ImGui::PushFont(ui::F.bold);
-    ImGui::TextUnformatted("Plan a session");
-    ImGui::PopFont();
+    if (!GN.inner_busy && ui::modal_back()) { GN.open = false; ui::dialog_end(); return; }
     text_wrapped_disabled("Friends get an invite with the time. Reminder 10 minutes before, then one click to host or join.");
     ImGui::Dummy(ImVec2(0, gap(0.75f)));
     auto gs = online_games();
@@ -255,7 +265,7 @@ void gn_plan_popup() {
     ImGui::Combo("Day", &GN.day, kDays, 7);
     ImGui::SetNextItemWidth(sp(14.f));
     ImGui::SliderInt("Hour", &GN.hour, 0, 23);
-    ImGui::SameLine();
+    ui::dialog_same_line(sp(14.f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Minute").x);
     ImGui::SetNextItemWidth(sp(14.f));
     int mm = GN.min5 * 5;
     if (ImGui::SliderInt("Minute", &mm, 0, 55, "%d", ImGuiSliderFlags_AlwaysClamp)) GN.min5 = mm / 5;
@@ -267,19 +277,26 @@ void gn_plan_popup() {
     ImGui::TextUnformatted("Invite");
     load_once();
     auto act = GN.plans.active(wall_ms());
-    // Keep the whole popup on screen (1024x600): the friend list gives up height first and scrolls.
-    float lh = ImGui::GetTextLineHeightWithSpacing();
-    float foot = gap(0.75f) + sp(4.5f) + ImGui::GetStyle().WindowPadding.y * 2 + ImGui::GetStyle().ItemSpacing.y * 3;
-    if (!act.empty()) foot += gap(0.5f) + lh * (1.5f + 3.3f * (float)act.size() + (GN.ics_msg.empty() ? 0.f : 4.f));
-    if (!GN.err.empty()) foot += lh * 2.f;
-    float room = ImGui::GetIO().DisplaySize.y - sp(1.f) - ImGui::GetCursorPos().y - foot;
-    float fh = std::max(tight ? sp(3.2f) : sp(5.5f), std::min(sp(20.f), room));
-    ImGui::BeginChild("##gn_friends", ImVec2(0, fh), ImGuiChildFlags_Borders);
-    for (auto& f : fr_friends()) {
-        bool on = GN.pick.count(f.uid) > 0;
-        if (ImGui::Checkbox((f.name + "##gn" + f.uid).c_str(), &on)) { if (on) GN.pick.insert(f.uid); else GN.pick.erase(f.uid); }
+    {   // the friends to invite: plain rows on a panel drawn behind them once their height is known (the middle scrolls, not the list)
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->ChannelsSplit(2);
+        dl->ChannelsSetCurrent(1);
+        const ImVec2 lp0 = ImGui::GetCursorScreenPos();
+        const float lw = ImGui::GetContentRegionAvail().x;
+        ImGui::Dummy(ImVec2(0, sp(0.25f)));
+        ImGui::Indent(sp(1.f));
+        for (auto& f : fr_friends()) {
+            bool on = GN.pick.count(f.uid) > 0;
+            if (ImGui::Checkbox((f.name + "##gn" + f.uid).c_str(), &on)) { if (on) GN.pick.insert(f.uid); else GN.pick.erase(f.uid); }
+        }
+        ImGui::Unindent(sp(1.f));
+        ImGui::Dummy(ImVec2(0, sp(0.25f)));
+        const ImVec2 lp1(lp0.x + lw, ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y);
+        dl->ChannelsSetCurrent(0);
+        dl->AddRectFilled(lp0, lp1, ui::PANEL, sp(1.f));
+        dl->AddRect(lp0, lp1, ui::HAIRLINE, sp(1.f), 0, 1.f);
+        dl->ChannelsMerge();
     }
-    ImGui::EndChild();
     if (!GN.err.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN); ImGui::TextWrapped("%s", GN.err.c_str()); ImGui::PopStyleColor(); }
     // upcoming
     if (!act.empty()) {
@@ -299,12 +316,12 @@ void gn_plan_popup() {
             ImGui::PopStyleColor();
             if (!GN.ics_path.empty()) {
                 if (ImGui::SmallButton("Open##icsopen")) shell_ics(false);
-                ImGui::SameLine();
+                ui::dialog_same_line(ImGui::CalcTextSize("Show in folder").x + ImGui::GetStyle().FramePadding.x * 2.f);   // a SmallButton's width
                 if (ImGui::SmallButton("Show in folder##icsshow")) shell_ics(true);
             }
         }
     }
-    ImGui::Dummy(ImVec2(0, gap(0.75f)));
+    ui::dialog_buttons();
     if (ui::button("Send invite", ImVec2(sp(14.f), sp(4.5f)), true, !gs.empty())) {
         Night n;
         n.mine = true; n.start_ms = start;
@@ -319,14 +336,13 @@ void gn_plan_popup() {
             n.reminded = false;
             if (GN.plans.add(n, wall_ms())) { persist(); toast_sync(true); }
             set_toast("Game night sent to " + std::to_string(n.invitees.size()) + (n.invitees.size() == 1 ? " friend." : " friends."));
-            GN.open = false;
-            ImGui::CloseCurrentPopup();
+            GN.open = false;   // dialog_end() closes it
         }
     }
-    ImGui::SameLine();
-    if (ui::button("Cancel", ImVec2(sp(10.f), sp(4.5f)))) { GN.open = false; ImGui::CloseCurrentPopup(); }
+    ui::dialog_same_line(sp(10.f));
+    if (ui::button("Cancel", ImVec2(sp(10.f), sp(4.5f)))) GN.open = false;
     GN.inner_busy = ImGui::IsAnyItemActive() || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);   // a list open or a slider being edited
-    ImGui::EndPopup();
+    ui::dialog_end();
 }
 
 void gn_fake_seed() {   // screenshots: one night starting right now (HUB_SHOT_FAKE_NIGHT)
