@@ -265,6 +265,7 @@ bool FolderBrowser::matches(const std::string& filename) const {
 void FolderBrowser::open(const std::string& start) {
     done = cancelled = false;
     result.clear();
+    made_up_pick.clear();
     std::error_code ec;
     cwd = (!made_up && !start.empty() && fs::is_directory(P(start), ec)) ? start : "";
     sel = 0;
@@ -337,7 +338,7 @@ void FolderBrowser::move(int d) {
 void FolderBrowser::activate() {
     if (sel < 0 || sel >= (int)entries.size()) return;
     const FolderEntry e = entries[sel];
-    if (e.type == FolderEntry::Select || e.type == FolderEntry::File) { result = e.path; done = true; return; }
+    if (e.type == FolderEntry::Select || e.type == FolderEntry::File) { pick(e.path); return; }
     cwd = e.type == FolderEntry::Up ? e.path : e.path;
     sel = cwd.empty() ? 0 : 0;
     refresh();
@@ -351,8 +352,16 @@ void FolderBrowser::up() {
 }
 void FolderBrowser::choose_here() {
     if (cwd.empty() || pick_files) return;
-    result = cwd;
+    pick(cwd);
+}
+void FolderBrowser::pick(const std::string& path) {
     done = true;
+    if (made_up && !pick_files) {   // screenshot runs: a made-up folder choice is noted only (no real folder is added, nothing is scanned)
+        made_up_pick = path;
+        result.clear();
+        return;
+    }
+    result = path;
 }
 
 bool should_open(bool pad_mode, bool keyboard_seen, bool mouse_activated) {

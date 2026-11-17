@@ -329,6 +329,7 @@ void draw_folder() {
     ImGui::Dummy(ImVec2(1, 1));
 
     if (fb.done || fb.cancelled) {
+        if (fb.done && !fb.made_up_pick.empty()) shot_trace("osk-folder-pick", fb.made_up_pick);   // screenshot run: the made-up choice is only traced
         S.fb_result = fb.done ? fb.result : "";
         if (fb.done) S.last_folder = fb.pick_files ? parent_of(fb.result) : fb.result;
         S.fb_open = false;
