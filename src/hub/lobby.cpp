@@ -400,7 +400,7 @@ void lobby_tick() {
                 static ULONGLONG last_abort = 0;
                 static bool last_had_reason = false;
                 const bool again = last_abort && now - last_abort < 3000 && (last_had_reason || j.str("reason").empty());
-                if (!again) set_notice("The host couldn't start the game" + (j.str("reason").empty() ? std::string(".") : ": " + j.str("reason")), 10.0);
+                if (!again) set_notice("The host couldn't start the game" + (j.str("reason").empty() ? std::string(".") : ": " + hublaunch::local_text_of_wire(j.str("reason"))), 10.0);   // (an older wording on the wire reads as today's)
                 last_abort = now;
                 last_had_reason = !j.str("reason").empty();
             }
