@@ -30,6 +30,7 @@ bool picker_focus_ok() {
 /* IFileOpenDialog: folder or file picker. Returns "" on cancel (also when the hub lacks focus: a game owns the screen). */
 std::string pick_path(HWND owner, bool folder, const wchar_t* filter_name, const wchar_t* filter_spec) {
     std::string result;
+    if (g_headless) return result;   // screenshot / QA run: never open a real Windows dialog (it is a visible window)
     if (!picker_focus_ok()) return result;
     IFileOpenDialog* dlg = nullptr;
     if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return result;
@@ -61,6 +62,7 @@ std::string pick_path(HWND owner, bool folder, const wchar_t* filter_name, const
 std::string pick_save_path(HWND owner, const wchar_t* default_name, const wchar_t* filter_name,
                                   const wchar_t* filter_spec, const wchar_t* default_ext) {
     std::string result;
+    if (g_headless) return result;   // screenshot / QA run: never open a real Windows dialog (it is a visible window)
     if (!picker_focus_ok()) return result;
     IFileSaveDialog* dlg = nullptr;
     if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return result;
