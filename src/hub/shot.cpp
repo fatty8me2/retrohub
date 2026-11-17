@@ -348,9 +348,11 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
     el = (GetTickCount64() - t0) / 1000.0;
     if (path && !pad_seq.empty()) {
         io.BackendFlags |= ImGuiBackendFlags_HasGamepad;   // headless: no device, so the SDL backend would clear this every frame
+        static ImGuiKey pad_key2 = ImGuiKey_None;   // the second key of a token like "up+b": both go down in the same frame
         if (pad_key != ImGuiKey_None) {
             io.AddKeyAnalogEvent(pad_key, false, 0.f);
-            pad_key = ImGuiKey_None;
+            if (pad_key2 != ImGuiKey_None) io.AddKeyAnalogEvent(pad_key2, false, 0.f);
+            pad_key = pad_key2 = ImGuiKey_None;
         } else if (pad_i <= pad_seq.size() && el > 1.5 && A.scanned_once && el - pad_t > 0.4) {
             if (!pad_last.empty()) { pad_trace(pad_last); pad_last.clear(); }   // the previous press has settled by now
             if (pad_i < pad_seq.size()) {
@@ -361,6 +363,13 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
                 if (tok.rfind("shot:", 0) == 0) pending_shot = tok.substr(5);
                 else if (tok.rfind("toast:leave:", 0) == 0) { void fr_shot_confirm_toast(double); fr_shot_confirm_toast(std::atof(tok.c_str() + 12)); }   // friends_ui.cpp
                 else if (osk::inject(tok.c_str())) {}   // the on-screen keyboard owns the pad while it is open (it reads the SDL pad itself)
+                else if (size_t plus = tok.find('+'); plus != std::string::npos && pad_token_key(tok.substr(0, plus)) != ImGuiKey_None &&
+                                                      pad_token_key(tok.substr(plus + 1)) != ImGuiKey_None) {
+                    pad_key = pad_token_key(tok.substr(0, plus));
+                    pad_key2 = pad_token_key(tok.substr(plus + 1));
+                    io.AddKeyAnalogEvent(pad_key, true, 1.f);
+                    io.AddKeyAnalogEvent(pad_key2, true, 1.f);
+                }
                 else if (ImGuiKey k = pad_token_key(tok); k != ImGuiKey_None) {
                     io.AddKeyAnalogEvent(k, true, 1.f);
                     pad_key = k;

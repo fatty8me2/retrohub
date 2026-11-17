@@ -1,5 +1,5 @@
 # Headless gamepad walk onto the last controls a controller could not reach (ui2-padspots lane):
-#   1. toast: the action of a toast ("Leave and join") with Y, 2. myprof: your own profile entry at the top of the Friends panel,
+#   1. toast: the action of a toast ("Leave and join") with Y (1b. toastconfirm: only after 1.5 s), 2. myprof: your own profile entry at the top of the Friends panel,
 #   3. avatar: the avatar cells in the profile editor, 4. react: room chat reactions, 5. sort: reversing the library sort (X on the
 #   focused Sort chip; sortkey: the Menu key on a keyboard).
 # Each case walks onto the control, saves shots (<case>-<name>.png) and checks the HUB_SHOT_TRACE lines.
@@ -103,6 +103,24 @@ if (-not $Only -or "toast" -match $Only) {
     Check "toast: only the second Y pressed it" ($iFire -gt $iEarly -and $iEarly -ge 0) "toast-pad at line $iFire, first 'pad y' at line $iEarly"
     Check "toast: the join ran (headless: skipped with a notice)" (Has $r '^notice Headless test run: online skipped') "no 'Headless test run' notice"
     Check "toast: that Y opened no menu" ($late -and $late.popup -eq 0) "row=$(if ($late) { "popup=$($late.popup)" } else { 'none' })"
+}
+
+# 1b. "Leave and join" confirms leaving a room with other players in it, so Y takes it only after a longer look (1.5 s, an ordinary toast
+#    action 0.5 s): the pad token toast:leave:<age> asks the question the way X on Jake's row does and makes the toast that old, so a Y at
+#    about 0.6 s does nothing and a Y at about 1.6 s presses it. The Y glyph shows only once Y counts.
+if (-not $Only -or "toastconfirm" -match $Only) {
+    Write-Host "toastconfirm (Leave and join: Y at 0.6 s does nothing, at 1.6 s presses it)"
+    $r = Run "toastconfirm" "wait,toast:leave:0.2,y,shot:y06,toast:leave:1.2,y,shot:y16,wait" ($fr + @{ HUB_SHOT_FAKE_ROOM = "1" }) "5"
+    $L = [string[]]$r.lines
+    $i02 = [array]::FindIndex($L, [Predicate[string]]{ param($s) $s -match '^toast-age 0\.2' })
+    $i12 = [array]::FindIndex($L, [Predicate[string]]{ param($s) $s -match '^toast-age 1\.2' })
+    $iY1 = [array]::FindIndex($L, [Predicate[string]]{ param($s) $s -match '^pad y ' })
+    $iFire = [array]::FindIndex($L, [Predicate[string]]{ param($s) $s -match '^toast-pad Leave and join' })
+    $iHint = [array]::FindIndex($L, [Predicate[string]]{ param($s) $s -match '^toast-pad-hint Leave and join' })
+    Check "toastconfirm: the question is asked (a toast with Leave and join)" ($i02 -ge 0 -and $i12 -gt $i02) "toast-age lines at $i02 / $i12"
+    Check "toastconfirm: Y at about 0.6 s does nothing" ($iFire -lt 0 -or $iFire -gt $i12) "toast-pad at line $iFire, second toast-age at line $i12"
+    Check "toastconfirm: Y at about 1.6 s presses Leave and join" ($iFire -gt $i12 -and $i12 -ge 0) "toast-pad at line $iFire"
+    Check "toastconfirm: the Y glyph shows only once Y counts" ($iHint -gt $iY1 -and $iY1 -gt $i02) "toast-pad-hint at line $iHint, first 'pad y' at line $iY1"
 }
 
 # 2. Your own profile entry (the avatar at the top of the Friends panel): View opens the panel, down reaches the avatar (before the fix:
