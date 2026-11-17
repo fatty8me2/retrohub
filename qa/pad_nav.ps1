@@ -105,6 +105,11 @@ Check "B closes the friends panel and refocuses" ($bs[-1].friends -eq 0 -and $bs
 $r = Run "toast" "start,wait" @{ HUB_SHOT_FAKE_FRIENDS = "1"; HUB_SHOT_FRIENDS = "1" }
 Check "Start joins the invite toast" (@($r.other | Where-Object { $_ -like "join-toast *" }).Count -ge 1) ($r.other -join "|")
 
+# 6b. an invite card with no room above it (1024x420 at UI size 200 %) is not drawn: Start does not join it (it opens the Friends panel)
+$r = Run "toast_hidden" "wait,start,wait" @{ HUB_SHOT_FAKE_FRIENDS = "1"; HUB_UI_SCALE = "200"; SIZE = "1024x420" }
+$joined = @($r.other | Where-Object { $_ -like "join-toast *" })
+Check "Start never joins an invite card that is not on screen" ($joined.Count -eq 0 -and @($r.other | Where-Object { $_ -like "card-hidden invite*" }).Count -ge 1) ($r.other -join "|")
+
 # 7. Add-games dialog: reachable, B closes it
 $r = Run "addgames" "down,down,b" @{ HUB_SHOT_ADDGAMES = "dialog" }
 $rows = @($r.rows)
