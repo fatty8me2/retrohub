@@ -140,6 +140,7 @@ struct View {
     std::string shown;             // the game whose page was drawn this frame ("" = none)
     double key_at = -1e9;          // when `key` last changed (the pane's heavy facts wait pagecache::kSettleSecs after it; the first game: at once)
     std::string settled_key;       // the last game the pane settled on (trace "gamepage-settled")
+    bool short_pane = false;       // the desk pane is short (game_page_layout.h pane_short_h): set by the desk before each draw
 };
 
 void view_reset(View& v);   // the next draw opens the page afresh (Overlay: every time it opens)

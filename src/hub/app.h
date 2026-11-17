@@ -760,6 +760,7 @@ bool gs_set_game_value(const hub::GameEntry& e, const std::string& key, const st
 bool gs_set_system_value(hub::System sys, const std::string& key, const std::string& value);   // the system default (e.g. Switch "switch.runner"), saved
 bool gs_has_game_section(const hub::GameEntry& e);
 void gs_draw_game_section(const hub::GameEntry& e);       // game page, Settings tab
+bool gamepage_pane_short();                               // game_page_view.cpp: the desk pane being drawn is short (a 1024x600 window, 150 % on 1280x720)
 void gs_draw_defaults_area();                              // Settings page
 
 

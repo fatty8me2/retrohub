@@ -216,19 +216,21 @@ void runner_note(const hub::GameEntry& ge, const std::string& game_key, const hu
 }
 
 /* Headless QA: how many whole rows (section headers count) are in view in the scroll area around them. The trace gets a "gs-visible <key>
- * <rows>" line each time the number changes, so the last one is what the screenshot shows. */
+ * <rows>" line each time the number changes, so the last one is what the screenshot shows; "gs-rows <key> <n>" the same for the option
+ * rows alone (no headers). */
 struct VisibleRows {
-    int n = 0;
-    void count() {
+    int n = 0, rows = 0;
+    void count(bool option_row = false) {
         if (!g_headless) return;
         ImGuiWindow* w = ImGui::GetCurrentWindow();
         const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-        if (a.y >= w->InnerClipRect.Min.y - 0.5f && b.y <= w->InnerClipRect.Max.y + 0.5f) ++n;
+        if (a.y >= w->InnerClipRect.Min.y - 0.5f && b.y <= w->InnerClipRect.Max.y + 0.5f) { ++n; if (option_row) ++rows; }
     }
     void trace(const std::string& key) const {
-        static std::string last;
-        const std::string line = key + " " + std::to_string(n);
+        static std::string last, last_rows;
+        const std::string line = key + " " + std::to_string(n), lr = key + " " + std::to_string(rows);
         if (g_headless && line != last) { last = line; shot_trace("gs-visible", line); }
+        if (g_headless && lr != last_rows) { last_rows = lr; shot_trace("gs-rows", lr); }
     }
 };
 
@@ -267,6 +269,7 @@ void options_grouped(const std::string& console, const std::string& game_key, in
     const std::string gid = "gs_rows|" + console + "|" + game_key;
     ui::GroupOpts go;
     if (page) go.help = ui::HelpMode::Strip;
+    if (page && gamepage_pane_short()) go.dense = true;   // a short desk pane: the rows a little closer together
     ui::option_group_begin(gid.c_str(), go);
     if (lead) lead(changed);
     /* which sections start open (before the player opened or closed one), and the columns on a wide page */
@@ -309,7 +312,7 @@ void options_grouped(const std::string& console, const std::string& game_key, in
             ro.pill2 = r.inherited ? hubui::option_changed_pill(false, true) : hubui::option_online_pill(o.scope);
             std::string nv;
             const bool picked = option_row(o, cur, ro, &nv);
-            seen.count();
+            seen.count(true);
             if (picked) {
                 if (level == 2) GSTORE.set_game(game_key, sys, o.key, nv);
                 else GSTORE.set_console(console, o.key, nv);
@@ -385,9 +388,9 @@ void gs_draw_game_section(const hub::GameEntry& e) {   // body of the game page'
     options_grouped(console, e.key, 2, [&](int changed) {
         ImGui::PushFont(ui::F.cap);   // the page's lead line in the small font: the rows get the room
         struct PopFont { ~PopFont() { ImGui::PopFont(); } } pop_font;
-        if (changed > 0) text_wrapped_disabled(settings_count(changed) + " changed for this game.");
-        else if (over) text_wrapped_disabled("This game has its own settings.");
-        else text_wrapped_disabled(std::string("Changes here are for this game only. The rest use the ") + hub::console_name(console) + " defaults in Settings.");
+        const std::string lead = changed > 0 ? settings_count(changed) + " changed for this game." : over ? std::string("This game has its own settings.")
+                                 : std::string("Changes here are for this game only. The rest use the ") + hub::console_name(console) + " defaults in Settings.";
+        if (!gamepage_pane_short()) text_wrapped_disabled(lead);   // a short desk pane leaves it out: the option rows get the room
     }, true);
     static bool ask = false;
     static std::string ask_key;

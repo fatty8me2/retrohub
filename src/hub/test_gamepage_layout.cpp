@@ -152,6 +152,25 @@ int main() {
     CHECK(near(pane_header_inset(18.f, 12.f), 18.f));   // Mini at 150 %: 1.5 units of padding, 1.5 more above the header
     CHECK(near(pane_header_inset(24.f, 8.f), 0.f));     // 3 units: room enough, nothing changes
 
+    /* a short desk pane: the Mini header, one help line, the slim banner; a taller pane (1280x720 at 100 %, 1080p) keeps its layout */
+    CHECK(!pane_short_h(560.f, 8.f));        // 1280x720 at 100 %: the pane (its banner's place included) is about 560 tall: unchanged
+    CHECK(!pane_short_h(920.f, 8.f));        // 1920x1080 at 100 %
+    CHECK(!pane_short_h(920.f, 12.f));       // 1920x1080 at 150 % (77 units)
+    CHECK(pane_short_h(440.f, 8.f));         // 1024x600 at 100 %: about 440
+    CHECK(pane_short_h(485.f, 12.f));        // 1280x720 at 150 %
+    CHECK(!pane_short_h(480.f, 8.f) && pane_short_h(479.f, 8.f));   // boundary: 60 units
+    CHECK(pane_tier(446.f, 8.f, true) == Tier::Mini && pane_tier(446.f, 8.f, false) == Tier::Tight);   // the 1280x720 page under its banner stays Tight
+    CHECK(pane_help_lines_max(Tier::Tight, true) == 1 && pane_help_lines_max(Tier::Mini, true) == 1);
+    CHECK(pane_help_lines_max(Tier::Tight, false) == help_lines_max(Tier::Tight) && pane_help_lines_max(Tier::Full, false) == help_lines_max(Tier::Full));
+    {
+        HeaderIn h; h.avail_w = 600.f; h.sheet_h = 440.f; h.u = 8.f; h.play_w = 96.f; h.online_w = 120.f; h.more_w = 80.f;
+        CHECK(plan_header(h).tier == Tier::Tight);
+        h.short_pane = true;
+        const HeaderPlan p = plan_header(h);
+        CHECK(p.tier == Tier::Mini && p.play_icon && p.beside && !p.facts);   // one header line
+        CHECK(near(p.tabs_h, 3.25f * 8.f) && near(p.body_gap, 0.5f * 8.f) && near(p.pad, 1.25f * 8.f) && p.help_lines_max == 1);   // a little less air
+    }
+
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("hub_gamepage_test ok\n");
     return 0;

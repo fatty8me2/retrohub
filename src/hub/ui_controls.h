@@ -127,6 +127,7 @@ int stepper_pad_state();
 enum class HelpMode { Inline, Strip };
 struct GroupOpts {
     HelpMode help = HelpMode::Inline;   // Strip: compact one-line rows, the help goes to option_help_strip()
+    bool dense = false;                 // Strip rows with less padding above and below (a short desk pane: game_page_layout.h pane_short_h)
 };
 void option_group_begin(const char* id, const GroupOpts& opts);
 struct OptionHelp {

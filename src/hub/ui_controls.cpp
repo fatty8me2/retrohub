@@ -63,6 +63,7 @@ struct GroupState {
     float label_w = 0.f, ctl_w = 0.f;
     int frame = -10;
     HelpMode help = HelpMode::Inline;           // Strip: compact rows, the help in option_help_strip()
+    bool dense = false;                         // compact rows with less padding (GroupOpts::dense)
 };
 std::unordered_map<ImGuiID, GroupState> g_groups;
 GroupState* g_group = nullptr;
@@ -222,7 +223,7 @@ void row_begin(const char* label, const RowOpts& o, const CtlSpec& cs, RowFrame&
         L = std::max(L, g_group->label_w);
         C = std::max(C, g_group->ctl_w);
     }
-    const float padx = sp(1.25f), pady = compact ? sp(0.375f) : sp(1.f), gl = sp(0.25f);
+    const float padx = sp(1.25f), pady = compact ? (g_group && g_group->dense ? sp(0.25f) : sp(0.375f)) : sp(1.f), gl = sp(0.25f);
     const float under = compact ? sp(0.5f) : sp(1.f);   // label to control when the control goes under it
     const float min_h = compact ? std::min(cs.min_h, sp(4.f)) : cs.min_h;
     const float avail = std::max(1.f, std::min(ImGui::GetContentRegionAvail().x, max_row_w()));
@@ -649,6 +650,7 @@ void option_group_begin(const char* id, const GroupOpts& opts) {
     GroupState& gs = g_groups[gid];
     gs.frame = fc;
     gs.help = opts.help;
+    gs.dense = opts.dense;
     g_group = &gs;
     if (opts.help == HelpMode::Strip) {
         if (g_help.group != gid) {   // another page (another game): nothing carries over

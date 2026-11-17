@@ -35,6 +35,7 @@ struct HeaderIn {
     float close_w = 0.f;   // Close with its label; 0 = no Close button (the desk pane)
     float aspect = 1.3f;   // cover width / height
     float title_w = 0.f;   // the title's width on one line in the compact title font (0 = unknown): icons win when they let it show whole
+    bool short_pane = false;   // a short desk pane (pane_short_h): the Mini header whatever the height
 };
 
 struct HeaderPlan {
@@ -61,6 +62,21 @@ struct HeaderPlan {
 /* The most lines the Settings tab's help strip keeps (the rest of a long help is cut with "..."): 3, or 2 on a short sheet. */
 inline int help_lines_max(Tier t) { return (t == Tier::Tight || t == Tier::Mini) ? 2 : 3; }
 
+/* A short desk pane (a 1024x600 window, 150 % UI size on 1280x720; `pane_h` = the pane's whole height, the setup banner's place
+ * included: under 60 units) gives its body every line it can, so a few whole option rows show on the Settings tab:
+ *   - the page uses the Mini header (one line: the title, round icon buttons; lower tabs, less padding) whatever its own tier;
+ *   - the help strip keeps ONE line (heading and help run in, cut with "..."; the whole help is its tooltip, and shows on a taller pane);
+ *   - the tab's lead line ("Changes here are for this game only ...") is left out;
+ *   - the setup banner above the pane is one slim line (the title and its buttons, the steps in its tooltip, less padding).
+ * A taller pane (1280x720 at 100 % and up) and the full-window page keep their layout. */
+constexpr float kPaneShortUnits = 60.f;
+inline bool pane_short_h(float pane_h, float u) { return pane_h < kPaneShortUnits * u; }
+inline Tier pane_tier(float sheet_h, float u, bool short_pane) { return short_pane ? Tier::Mini : tier_for(sheet_h, u); }
+inline int pane_help_lines_max(Tier t, bool short_pane) { return short_pane ? 1 : help_lines_max(t); }
+/* ... and a little less air than Mini: the gaps between header, body and footer 0.5 units (Mini 1), the tab bar 3.25 units (Mini 4), the
+ * padding 1.25 units (Mini 1.5; the header still starts low enough for the focused Play button's glow, pane_header_inset) */
+constexpr float kPaneShortGapUnits = 0.5f, kPaneShortTabsUnits = 3.25f, kPaneShortPadUnits = 1.25f;
+
 /* The sheet padding and gaps of a tier (they are set before the header is laid out): Tight 2 and 1.25 units, Mini 1.5 and 1, the
  * others the sheet's own (-1). */
 inline void sheet_spacing(Tier t, float u, float* pad, float* body_gap) {
@@ -79,7 +95,7 @@ inline float pane_header_inset(float pad, float u) { return std::max(0.f, (kPlay
 inline HeaderPlan plan_header(const HeaderIn& in) {
     const float u = in.u;
     HeaderPlan p;
-    p.tier = tier_for(in.sheet_h, u);
+    p.tier = pane_tier(in.sheet_h, u, in.short_pane);
     p.tabs_h = 5.f * u;
     if (p.tier == Tier::Mini) {   // one line: the title (cut with "...") and round icon buttons beside it, Play included
         p.btn_h = 4.f * u;
@@ -92,6 +108,12 @@ inline HeaderPlan plan_header(const HeaderIn& in) {
         p.tabs_h = 4.f * u;
         sheet_spacing(p.tier, u, &p.pad, &p.body_gap);
         p.help_lines_max = 2;
+        if (in.short_pane) {   // a short desk pane: a little less air (pane_short_h)
+            p.tabs_h = kPaneShortTabsUnits * u;
+            p.body_gap = kPaneShortGapUnits * u;
+            p.pad = kPaneShortPadUnits * u;
+            p.help_lines_max = 1;
+        }
         return p;
     }
     p.cover_h = p.tier == Tier::Full ? 16.f * u : p.tier == Tier::Compact ? 8.5f * u : 0.f;
