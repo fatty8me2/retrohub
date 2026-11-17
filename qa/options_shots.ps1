@@ -88,7 +88,8 @@ $runs = @(
     @{ n = 'pad_reset';         size = '1280x720';  secs = 12; env = 'HUB_SHOT_FAKE_LIB=all;HUB_SHOT_DETAILS=fake:n64-plain;HUB_SHOT_TAB=3;HUB_SHOT_PAD=down,down,down,down,down,shot:button,a,shot:dialog,left,a,shot:done';
        seed = '{"version":"1","systems":{},"games":{"fake:n64-plain":{"n64.aa":"4","n64.fb_emulation":"off","_t":"1"}}}'; hub = 'Graphics=0,Audio=0,Advanced=0' },
     #  open / closed is remembered across restarts and by heading, not by game: close Graphics on one game, restart, look at another
-    @{ n = 'pad_persist_a';     size = '1280x720';  secs = 8;  env = 'HUB_SHOT_FAKE_LIB=all;HUB_SHOT_DETAILS=fake:n64-plain;HUB_SHOT_TAB=3;HUB_SHOT_PAD=down,down,a,shot:closed' },
+    #  (a screenshot run writes no hub.json unless asked: HUB_SHOT_SAVE_SETTINGS=1 keeps this sandbox's open / closed sections for the restart)
+    @{ n = 'pad_persist_a';     size = '1280x720';  secs = 8;  env = 'HUB_SHOT_FAKE_LIB=all;HUB_SHOT_DETAILS=fake:n64-plain;HUB_SHOT_TAB=3;HUB_SHOT_SAVE_SETTINGS=1;HUB_SHOT_PAD=down,down,a,shot:closed' },
     @{ n = 'pad_persist_b';     size = '1280x720';  keep = $true; env = 'HUB_SHOT_FAKE_LIB=all;HUB_SHOT_DETAILS=fake:ps1-plain;HUB_SHOT_TAB=3' }
 )
 $fail = 0

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "page_cache.h"
 #include "dolphin_speed.h"
 #include "hub_log.h"
 #include "synth_input_lock.h"
@@ -1532,25 +1533,34 @@ static bool is_image(const std::string& n) {
     return x == ".png" || x == ".bmp" || x == ".mp4";   // .mp4 = instant-replay clip (clip.h), shown by its .mp4.jpg thumbnail
 }
 
+/* -1 = not known yet: the desk pane counts once the cursor has settled on the game (never while a game runs); the full-window page
+ * counts again every 2 s as it always did (pagecache::need). */
 int shots_count(const hub::GameEntry& e) {
     if (is_native(e)) return 0;
-    static std::string k; static double at = -10; static int n = 0;
-    if (k != e.key || ImGui::GetTime() - at > 2.0) {
-        k = e.key; at = ImGui::GetTime(); n = 0;
+    static pagecache::PerGame<int> s_n;
+    const int* n = s_n.get(e.key, 2.0, [&] {
+        int c = 0;
         std::error_code ec;
         for (auto& it : std::filesystem::directory_iterator(std::filesystem::u8path(trim_sep(hub::saves::game_dir_path(sys_short(e), e.key)) + "\\shots"), ec))
-            if (it.is_regular_file(ec) && is_image(it.path().filename().u8string())) ++n;
-    }
-    return n;
+            if (it.is_regular_file(ec) && is_image(it.path().filename().u8string())) ++c;
+        return c;
+    });
+    return n ? *n : -1;
 }
 
 void shots_gallery(const hub::GameEntry& e) {
     if (is_native(e)) return;
     std::string dir = trim_sep(hub::saves::game_dir_path(sys_short(e), e.key)) + "\\shots";
     static std::string s_key; static double s_at = -10; static std::vector<std::string> s_files;
+    static unsigned s_gen = 0;
     static std::string s_confirm;
-    if (s_key != e.key || ImGui::GetTime() - s_at > 2.0) {
-        s_key = e.key; s_at = ImGui::GetTime();
+    /* the folder listing: the full-window page every 2 s as it always did, the desk pane once settled (pagecache::need); s_at < 0 = a
+     * picture was deleted here: list it again */
+    const pagecache::Need need = pagecache::need(s_key == e.key && s_at >= 0.0, s_gen, s_at, 2.0);
+    if (s_key != e.key && need == pagecache::Need::Use) { s_files.clear(); s_key.clear(); }   // another game, not listed yet (listed once settled)
+    if (need != pagecache::Need::Use) {
+        qadisk::Scope qs(pagecache::scope_name(need), false);
+        s_key = e.key; s_at = ImGui::GetTime(); s_gen = pagecache::generation();
         s_files.clear();
         std::error_code ec;
         for (auto& it : std::filesystem::directory_iterator(std::filesystem::u8path(dir), ec))
@@ -1605,6 +1615,7 @@ void shots_gallery(const hub::GameEntry& e) {
                 std::filesystem::remove(std::filesystem::u8path(path), ec);
                 if (path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".mp4") == 0) { std::error_code e2; std::filesystem::remove(std::filesystem::u8path(path + ".jpg"), e2); }
                 s_confirm.clear(); s_at = -10;
+                pagecache::invalidate("shot-deleted");   // the tab's count too
             }
         } else {
             if (ImGui::SmallButton("Delete")) s_confirm = s_files[i];
@@ -1619,7 +1630,7 @@ void shots_gallery(const hub::GameEntry& e) {
         ImGui::PopID();
     }
     ImGui::PopStyleVar();
-    if (shot_viewer_draw()) s_at = -10;   // a picture was deleted: rescan
+    if (shot_viewer_draw()) { s_at = -10; pagecache::invalidate("shot-deleted"); }   // a picture was deleted: rescan
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
 }
 

@@ -1,6 +1,7 @@
 #include "lichii.h"
 #include "winutil.h"
 #include "app.h"
+#include "page_cache.h"
 #include "capture_hold_logic.h"
 #include "ctl_pad_logic.h"
 #include "glyph_logic.h"
@@ -205,6 +206,7 @@ int tab_for_key(const std::string& sys) {
 
 void ctl_save() {
     if (CTL.shot_nosave) return;
+    pagecache::invalidate("controls");   // the game page's controllers strip reads the new order
     if (!hubctl::save_store(CTL.st, hub::data_dir(), hub::saves::vault_dir())) {
         CTL.notice = "Could not save the controller settings.";
         CTL.notice_until = ImGui::GetTime() + 6.0;
@@ -815,14 +817,15 @@ void page_controllers() {
     if (!inited) {
         inited = true;
         CTL.shot_nosave = std::getenv("HUB_SCREENSHOT") != nullptr;
-        if (const char* f = std::getenv("HUB_SHOT_FAKE_PADS")) CTL.fake_pads = std::atoi(f);
-        if (const char* as = std::getenv("HUB_SHOT_ASSIGN")) {   // screenshot aid: assign mode with N fake presses already made
+        /* the screenshot aids below act (assign mode claims ports, demo bindings, a capture): screenshot runs only (CTL.shot_nosave) */
+        if (const char* f = CTL.shot_nosave ? std::getenv("HUB_SHOT_FAKE_PADS") : nullptr) CTL.fake_pads = std::atoi(f);
+        if (const char* as = CTL.shot_nosave ? std::getenv("HUB_SHOT_ASSIGN") : nullptr) {   // screenshot aid: assign mode with N fake presses already made
             start_assign();
             for (int i = 0, n = std::atoi(as); i < n; ++i) CTL.assign.press("fake-pad-" + std::to_string(i), ImGui::GetTime());
         }
         hubctl::load_bundled_db();
-        if (const char* t = std::getenv("HUB_SHOT_CTL_SYS")) CTL.tab = tab_for_key(t);
-        if (const char* g = std::getenv("HUB_SHOT_CTL_GAME")) {
+        if (const char* t = CTL.shot_nosave ? std::getenv("HUB_SHOT_CTL_SYS") : nullptr) CTL.tab = tab_for_key(t);
+        if (const char* g = CTL.shot_nosave ? std::getenv("HUB_SHOT_CTL_GAME") : nullptr) {
             if (const hub::GameEntry* e = find_entry(g)) { CTL.game = e->key; CTL.game_title = e->title; CTL.tab = tab_for_key(hubctl::console_key(*e)); }
         }
     }
@@ -832,7 +835,7 @@ void page_controllers() {
         CTL.loaded = true;
         g_ctl_pads_dirty = true;
     }
-    if (!CTL.demo_done && std::getenv("HUB_SHOT_CTL_DEMO")) {   // screenshot aid: a few custom bindings (never saved)
+    if (!CTL.demo_done && CTL.shot_nosave && std::getenv("HUB_SHOT_CTL_DEMO")) {   // screenshot aid: a few custom bindings (never saved)
         CTL.demo_done = true;
         for (const char* sys : {"n64", "retro", "gc"}) {
             std::string gm = (CTL.game.empty() || (find_entry(CTL.game) ? hubctl::console_key(*find_entry(CTL.game)) : std::string("n64")) != sys) ? "" : CTL.game;
@@ -842,8 +845,8 @@ void page_controllers() {
         }
         if (!CTL.game.empty()) hubctl::edit_profile(CTL.st, kTabs[CTL.tab].key, CTL.game);
     }
-    if (std::getenv("HUB_SHOT_CTL_KEYS")) CTL.dev = 1;   // screenshot aid: open on the Keyboard tab
-    if (std::getenv("HUB_SHOT_CTL_CAPTURE")) {
+    if (CTL.shot_nosave && std::getenv("HUB_SHOT_CTL_KEYS")) CTL.dev = 1;   // screenshot aid: open on the Keyboard tab
+    if (CTL.shot_nosave && std::getenv("HUB_SHOT_CTL_CAPTURE")) {
         static bool once = false;
         if (!once) { once = true; CTL.fake_capture = CTL.fake_pads > 0; ctl_begin_capture("a", "A"); }
     }
@@ -899,9 +902,15 @@ void page_controllers() {
 /* Library details, local multiplayer: the ports with their current pad. Returns true when "Reassign" was clicked. */
 bool draw_players_strip(int players) {
     if (players < 2) return false;
-    hubctl::Store st;
-    hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
-    std::vector<hubctl::PadInfo> pads = hubctl::list_pads(st.port_order);
+    /* the port order from controls.json (userdata and vault): read once, again after the controls are saved (ctl_save) or another
+     * pagecache::invalidate(); never per frame (the desk pane draws this all the time, also behind a running game) */
+    static pagecache::One<std::vector<std::string>> s_order;
+    const std::vector<std::string>* order = s_order.get(hub::saves::vault_dir(), 2.0, [] {
+        hubctl::Store st;
+        hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
+        return st.port_order;
+    });
+    std::vector<hubctl::PadInfo> pads = hubctl::list_pads(order ? *order : std::vector<std::string>());
     bool clicked = false;
     const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;   // a narrow column (the desk pane): the strip wraps
     auto next = [&](float w, float gap) { if (ImGui::GetItemRectMax().x + gap + w <= right + 0.5f) ImGui::SameLine(0, gap); };

@@ -9,6 +9,8 @@
 #include "boot_art.h"
 #include "ui_kit.h"
 
+extern bool g_headless;   // app.cpp: a screenshot run (only then is HUB_SHOT_TRACE written)
+
 /* Game start animation engine: draws the timeline from boot_logic.h with the vector art from boot_art.cpp (or the stub), as a
  * full-screen modal popup (so nothing underneath reacts to the pad/mouse while it plays). Any input skips straight to the launch. */
 
@@ -338,7 +340,7 @@ bool shot_frozen() { return g_frozen; }
 void start(const hub::GameEntry& e, std::function<void()> on_done, bool online, bool quick, bool real_boot) {
     Mode m = choose_mode(g_opt, online, quick);
     if (g_frozen) m = Mode::Full;   // headless-only shot aid (HUB_SHOT_BOOTANIM): ignores kStartAnimationOn on purpose
-    if (const char* tr = std::getenv("HUB_SHOT_TRACE"); tr && *tr) {
+    if (const char* tr = g_headless ? std::getenv("HUB_SHOT_TRACE") : nullptr; tr && *tr) {
         if (FILE* f = std::fopen(tr, "a")) { std::fprintf(f, "bootanim start %s mode=%d\n", e.key.c_str(), (int)m); std::fclose(f); }
     }
     if (R.running) { skip(); }   // a second start never stacks: finish the first (launches it) -- callers guard against this anyway

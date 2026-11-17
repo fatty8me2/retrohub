@@ -546,6 +546,19 @@ Four programs can play a Switch game. The per-game setting `switch.runner` picks
     footer. Used by Traditional, and by the desk while its Library page is not showing (or over Coverflow).
   - Pane: the desk's right-hand pane (`desk_draw_game_pane`): no Close, the hub footer carries the hints, the header leaves room for the
     focused Play button's glow. B goes back to the list unless an open dropdown or menu takes it first.
+  - **Page data** (`page_cache.h`): the desk pane draws the selected game's page all the time, also behind a game it started, so every
+    fact the page reads from the disk (controllers order, the GBA BIOS search, Cemu / Fritchii detection, an archive's unpacked copy, the
+    play log, screenshots, save history, resume facts, achievements, save info, Wii U details) is cached per game and read again only
+    after `pagecache::invalidate()` (controls saved, an install / build / unpack finished, a game ended, the window got the focus back,
+    a rescan, the vault settings re-read). The full-window page keeps the timed re-reads it always had (4 s save info ...); the pane has
+    none, reads a game's heavy facts once the list cursor has rested on it for 0.2 s, and reads nothing while a game runs (it also
+    stops the library health chip's re-checks then). QA: `HUB_SHOT_DISKIO` + `qa\desk_idle_io.ps1` (zero page disk calls once idle).
+  - **A short desk pane** (the page's Tight / Mini tier: a 1024x600 window, 150 % on 1280x720; `game_page_layout.h` `pane_short`): the
+    setup banner moves to the list column above its buttons, the Settings tab's help strip keeps one line (the whole help in its
+    tooltip) and its lead line one line, so a few whole option rows show. A taller pane and the full-window page are unchanged.
+  - **Steppers in two columns** (a wide Settings tab): Left / Right move between the columns there, so A (Enter) starts adjusting a
+    stepper row (its control lights up; Left / Right step; A or B ends it, B never closes the page); the hint bar says so. One column:
+    Left / Right step as before. Mouse arrows work the same everywhere.
   - Every request for a game's page (Y / I, a tile, "...", the palette, Surprise me, a hack's Versions row ...) sets `A.show_details`;
     `draw_details_modal` hands it to `desk_show_game_page` (select the game in the list, focus Play in the pane) when the desk's Library
     page is showing, and opens the full-window page otherwise.

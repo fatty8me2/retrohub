@@ -5,6 +5,7 @@
 #include "nx_runner.h"
 #include "option_rows.h"
 #include "option_sections.h"
+#include "page_cache.h"
 #include "ui_controls.h"
 #include "ui_sheet.h"
 
@@ -195,15 +196,16 @@ bool option_row(const hub::gs::Option& o, const std::string& cur, const ui::RowO
 
 /* "Plays with" chose a native build that is not on this PC: say it under the row, not only at Play. */
 void runner_note(const hub::GameEntry& ge, const std::string& game_key, const hub::gs::Values& v) {
-    static double at = -100.0; static std::string for_key, note;   // decide() touches the disk: every 2 s, not every frame
+    /* decide() touches the disk: the full-window page every 2 s as it always did, the desk pane on settling / pagecache::invalidate() */
+    static pagecache::PerGame<std::string> s_note;
     const auto rv = v.find(hookshot::kRunnerSetting);
     const std::string want_key = game_key + "|" + (rv != v.end() ? rv->second : std::string());
-    if (ImGui::GetTime() - at > 2.0 || ImGui::GetTime() < at || for_key != want_key) {
-        at = ImGui::GetTime(); for_key = want_key;
+    const std::string* np = s_note.get(want_key, 2.0, [&] {
         const hookshot::Decision d = hookshot::decide(ge, v);
-        note = d.choice == hookshot::Choice::NativeNotBuilt ? std::string(hookshot::info(d.flavor).name) + " is not built on this PC yet. Build it on this game's About tab; until then Play asks what to do." : std::string();
-    }
-    if (note.empty()) return;
+        return d.choice == hookshot::Choice::NativeNotBuilt ? std::string(hookshot::info(d.flavor).name) + " is not built on this PC yet. Build it on this game's About tab; until then Play asks what to do." : std::string();
+    });
+    if (!np || np->empty()) return;
+    const std::string& note = *np;
     const float padx = sp(1.25f);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + padx);
     ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
@@ -214,19 +216,21 @@ void runner_note(const hub::GameEntry& ge, const std::string& game_key, const hu
 }
 
 /* Headless QA: how many whole rows (section headers count) are in view in the scroll area around them. The trace gets a "gs-visible <key>
- * <rows>" line each time the number changes, so the last one is what the screenshot shows. */
+ * <rows>" line each time the number changes, so the last one is what the screenshot shows; "gs-rows <key> <n>" the same for the option
+ * rows alone (no headers). */
 struct VisibleRows {
-    int n = 0;
-    void count() {
+    int n = 0, rows = 0;
+    void count(bool option_row = false) {
         if (!g_headless) return;
         ImGuiWindow* w = ImGui::GetCurrentWindow();
         const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-        if (a.y >= w->InnerClipRect.Min.y - 0.5f && b.y <= w->InnerClipRect.Max.y + 0.5f) ++n;
+        if (a.y >= w->InnerClipRect.Min.y - 0.5f && b.y <= w->InnerClipRect.Max.y + 0.5f) { ++n; if (option_row) ++rows; }
     }
     void trace(const std::string& key) const {
-        static std::string last;
-        const std::string line = key + " " + std::to_string(n);
+        static std::string last, last_rows;
+        const std::string line = key + " " + std::to_string(n), lr = key + " " + std::to_string(rows);
         if (g_headless && line != last) { last = line; shot_trace("gs-visible", line); }
+        if (g_headless && lr != last_rows) { last_rows = lr; shot_trace("gs-rows", lr); }
     }
 };
 
@@ -241,7 +245,18 @@ void options_grouped(const std::string& console, const std::string& game_key, in
     const hub::System sys = hub::console_system(console);
     const hub::GameEntry* ge = level == 2 ? find_entry(game_key) : nullptr;
     const bool oot_page = ge && hookshot::supports(*ge);
-    const bool fritchii_planned = oot_page && nx_planned_emulator(*ge, false) == hubemu::Kind::Fritchii;   // the one runner decision (also what Play starts)
+    /* the one runner decision (also what Play starts); it looks for Fritchii on the disk: cached per game and "Plays with" value
+     * (pagecache: a finished install reads it again). Not known yet (the desk cursor still moving): no Fritchii rows for now */
+    bool fritchii_planned = false;
+    if (oot_page) {
+        static pagecache::PerGame<bool> s_fr;
+        const hub::gs::Values gv = gs_values_for(*ge);
+        const auto rv = gv.find(hubemu::kRunnerKey);
+        const int src = GSTORE.source_console(hub::console_id(*ge), ge->key, hubemu::kRunnerKey);   // (nothing chosen and "Lichii" chosen differ)
+        const bool* fp = s_fr.get(ge->key + "|" + (rv != gv.end() ? rv->second : std::string()) + "|" + std::to_string(src) + "|" + A.st.cemu_exe, 2.0,
+                                  [&] { return nx_planned_emulator(*ge, false) == hubemu::Kind::Fritchii; });
+        fritchii_planned = fp && *fp;
+    }
     const std::vector<Group> groups = page_groups(console, game_key, level, oot_page, fritchii_planned);
     hub::gs::Values v = level == 2 ? hubui::effective_values(GSTORE, console, game_key, A.st.fullscreen, A.st.volume) : GSTORE.resolve_console(console, "");
     if (level == 1 && GSTORE.source_console(console, "", "fullscreen") == 0) v["fullscreen"] = A.st.fullscreen ? "true" : "false";
@@ -254,6 +269,7 @@ void options_grouped(const std::string& console, const std::string& game_key, in
     const std::string gid = "gs_rows|" + console + "|" + game_key;
     ui::GroupOpts go;
     if (page) go.help = ui::HelpMode::Strip;
+    if (page && gamepage_pane_short()) go.dense = true;   // a short desk pane: the rows a little closer together
     ui::option_group_begin(gid.c_str(), go);
     if (lead) lead(changed);
     /* which sections start open (before the player opened or closed one), and the columns on a wide page */
@@ -296,7 +312,7 @@ void options_grouped(const std::string& console, const std::string& game_key, in
             ro.pill2 = r.inherited ? hubui::option_changed_pill(false, true) : hubui::option_online_pill(o.scope);
             std::string nv;
             const bool picked = option_row(o, cur, ro, &nv);
-            seen.count();
+            seen.count(true);
             if (picked) {
                 if (level == 2) GSTORE.set_game(game_key, sys, o.key, nv);
                 else GSTORE.set_console(console, o.key, nv);
@@ -372,16 +388,17 @@ void gs_draw_game_section(const hub::GameEntry& e) {   // body of the game page'
     options_grouped(console, e.key, 2, [&](int changed) {
         ImGui::PushFont(ui::F.cap);   // the page's lead line in the small font: the rows get the room
         struct PopFont { ~PopFont() { ImGui::PopFont(); } } pop_font;
-        if (changed > 0) text_wrapped_disabled(settings_count(changed) + " changed for this game.");
-        else if (over) text_wrapped_disabled("This game has its own settings.");
-        else text_wrapped_disabled(std::string("Changes here are for this game only. The rest use the ") + hub::console_name(console) + " defaults in Settings.");
+        const std::string lead = changed > 0 ? settings_count(changed) + " changed for this game." : over ? std::string("This game has its own settings.")
+                                 : std::string("Changes here are for this game only. The rest use the ") + hub::console_name(console) + " defaults in Settings.";
+        if (!gamepage_pane_short()) text_wrapped_disabled(lead);   // a short desk pane leaves it out: the option rows get the room
     }, true);
     static bool ask = false;
     static std::string ask_key;
     if (reset_button(over)) { ask = true; ask_key = e.key; }
     if (ask && ask_key != e.key) ask = false;   // (the page now shows another game)
-    if (reset_confirm("gs_reset_game", "Reset this game's settings?", e.title.c_str(), &ask,
-                      std::string("Every setting on this page goes back to the default for ") + hub::console_name(console) + " games.",
+    /* reset_game drops the game's whole set of choices, also rows that are not shown (Ocarina of Time's Fritchii rows while another program
+     * plays it) and "Plays with": say so. The settings live in the save vault, so the reset reaches the player's other PCs with the saves. */
+    if (reset_confirm("gs_reset_game", "Reset this game's settings?", e.title.c_str(), &ask, hubui::reset_game_confirm_text(hub::console_name(console), hookshot::supports(e)),
                       "Your saves, save states and screenshots stay as they are.")) {
         GSTORE.reset_game(e.key);
         gs_save();
@@ -417,9 +434,13 @@ void gs_draw_defaults_area() {
     static bool ask = false;
     static std::string ask_console;
     if (reset_button(any)) { ask = true; ask_console = console; }
-    const std::string name = hub::console_name(ask_console.empty() ? console : ask_console);
+    const std::string rc = ask_console.empty() ? console : ask_console;
+    const std::string name = hub::console_name(rc);
     const std::string title = "Reset the " + name + " defaults?";
-    if (reset_confirm("gs_reset_defaults", title.c_str(), nullptr, &ask, "Every setting here goes back to RetroHub's own default for " + name + " games.",
+    /* reset_console drops the console's whole entry: for Nintendo Switch that includes the Switch-wide "play with" choice (its own row
+     * higher up on this page, not one of these rows) */
+    const bool wide_runner = rc == "switch" && GSTORE.has_console_value(rc, hubemu::kRunnerKey);
+    if (reset_confirm("gs_reset_defaults", title.c_str(), nullptr, &ask, hubui::reset_defaults_confirm_text(name, wide_runner),
                       hub::console_is_switch2(ask_console) ? std::string("Nintendo Switch 2 then uses the Nintendo Switch defaults again. Games with their own settings keep them.")
                                                            : std::string("Games with their own settings keep them."))) {
         GSTORE.reset_console(ask_console);

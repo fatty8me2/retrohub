@@ -180,7 +180,7 @@ set(RETROHUB_UI_SOURCES
     party_ui.cpp party_view.cpp bracket_ui.cpp hack_ui.cpp hack_core.cpp qm_party.cpp   # Plan 4 Wave 1
     lockout.cpp icon_refresh.cpp discord_ipc.cpp discord_ui.cpp diag_ui.cpp nettest_ui.cpp palette_ui.cpp help_ui.cpp glyph_ui.cpp   # Plan 4 Wave 2 C (convenience)
     transferpak.cpp gba_link.cpp palpark.cpp resume_more.cpp progress_ui.cpp verify_ui.cpp save_import_ui.cpp   # Plan 4 Wave 3
-    desk_view.cpp)   # UI overhaul: the Library desk layout
+    desk_view.cpp qa_diskio.cpp page_cache.cpp)   # UI overhaul: the Library desk layout; QA: the game page's disk calls (HUB_SHOT_DISKIO); the page's cached disk facts
 list(APPEND RETROHUB_UI_SOURCES game_page.cpp game_page_view.cpp)   # the game page: its pieces, and their one layout in a ui::sheet (full-window page + Library desk pane)
 add_executable(RetroHub WIN32 ${RETROHUB_UI_SOURCES} ui_kit.cpp art.cpp art_match.cpp boot_anim.cpp boot_flow.cpp boot_art.cpp boot_sound.cpp boot_synth.cpp ui_sound.cpp real_boot_ui.cpp)
 target_include_directories(RetroHub PRIVATE

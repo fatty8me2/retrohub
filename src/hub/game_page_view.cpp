@@ -4,6 +4,8 @@
 #include "game_page.h"
 #include "game_page_layout.h"
 #include "hack_ui.h"
+#include "page_cache.h"
+#include "qa_diskio.h"
 #include "ui_controls.h"
 #include "ui_sheet.h"
 
@@ -86,6 +88,7 @@ bool text_cut(ImDrawList* dl, ImFont* f, ImVec2 p, ImU32 col, const std::string&
 struct Frame {
     View& v;
     HostKind host;
+    bool short_pane = false;   // the desk pane is short: the Mini header, one help line, no lead line (game_page_layout.h)
     hubui::gp::HostMetrics hm;
     ImVec2 size;
     bool* open = nullptr;
@@ -117,6 +120,7 @@ bool draw_page_header(Frame& F) {
     hubui::gp::HeaderIn in;
     in.avail_w = W;
     in.sheet_h = F.size.y;
+    in.short_pane = F.short_pane;
     in.u = sp(1.f);
     in.play_w = play ? std::max(sp(12.f), ui::button_width(play->label.c_str(), ui::Icon::Play)) : 0.f;
     in.online_w = online ? ui::button_width(online->label.c_str(), ui::Icon::Globe) : 0.f;
@@ -294,6 +298,8 @@ bool draw_page_header(Frame& F) {
 
 }  // namespace
 
+namespace { bool g_pane_short = false; }   // the desk pane drawing now is short (game_page_layout.h pane_short_h)
+
 void view_reset(View& v) {
     v.fresh = true;
     v.popup_above = false;
@@ -306,15 +312,21 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
     v.shown.clear();
     if (!pane && open && *open && !ep) *open = false;   // the game left the library while its page was open
     const bool want = ep && (pane || (open && *open));
+    qadisk::Scope disk_scope(pane ? "pane" : "page", want);   // QA (HUB_SHOT_DISKIO): the page's own file-system calls
+    std::optional<pagecache::PageScope> page_scope;
     if (want) {
         if (ep->key != v.key) {
             if (F.hm.keep_tab && !v.key.empty() && !v.fresh) v.st.tab_key = ep->key;   // the pane follows the list: keep the tab (About when this game lacks it)
+            v.key_at = v.key.empty() ? -1e9 : ImGui::GetTime();   // the pane's heavy facts wait until the cursor has stayed here a moment (the first game: at once)
             v.key = ep->key;
             v.to_top = true;
         }
         if (v.fresh) {
             v.to_top = true;
-            if (!pane) { v.focus_until = ImGui::GetFrameCount() + 4; v.popup_above = false; }
+            if (!pane) {
+                v.focus_until = ImGui::GetFrameCount() + 4; v.popup_above = false;
+                pagecache::invalidate("page-open");   // the full-window page opens with every disk fact read afresh, as it always did
+            }
         }
         if (v.to_top) {
             for (unsigned id : v.body_win) if (id) ui::scroll_set((ImGuiID)id, 0.f);
@@ -323,11 +335,18 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
         Host h;
         if (pane) h.close = [] {};   // the pane stays; the action itself leads wherever it goes
         else h.close = [open] { if (open) *open = false; };
+        const bool settled = !pane || ImGui::GetTime() - v.key_at >= pagecache::kSettleSecs;
+        if (pane && settled && v.settled_key != v.key) { v.settled_key = v.key; shot_trace("gamepage-settled", v.key + " t=" + std::to_string(ImGui::GetTime())); }
+        page_scope.emplace(pane ? pagecache::Host::Pane : pagecache::Host::Full, settled);   // what the page's disk facts may read now (page_cache.h)
         F.ctx.emplace(begin(v.st, *ep, h, v.fresh));
         v.fresh = false;
     }
 
-    hubui::gp::sheet_spacing(hubui::gp::tier_for(size.y, sp(1.f)), sp(1.f), &F.so.pad, &F.so.gap);   // Mini: less padding and gaps
+    F.short_pane = pane && v.short_pane;
+    const hubui::gp::Tier tier = hubui::gp::pane_tier(size.y, sp(1.f), F.short_pane);
+    hubui::gp::sheet_spacing(tier, sp(1.f), &F.so.pad, &F.so.gap);   // Mini: less padding and gaps
+    if (F.short_pane) { F.so.gap = hubui::gp::kPaneShortGapUnits * sp(1.f); F.so.pad = hubui::gp::kPaneShortPadUnits * sp(1.f); }   // a short desk pane: less still (game_page_layout.h)
+    struct ShortFlag { bool prev; ShortFlag(bool v) : prev(g_pane_short) { g_pane_short = v; } ~ShortFlag() { g_pane_short = prev; } } short_flag(F.short_pane);
     if (pane) F.top_inset = hubui::gp::pane_header_inset(ui::sheet_pad(size, F.so), sp(1.f));
     ui::SheetParts parts;
     parts.header = [&F] {
@@ -345,9 +364,15 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
     if (F.hm.footer_hints) {
         parts.footer = [&F, &v] {
             /* the hints; on the Settings tab the help strip of the focused row, with the hints at the right end of its heading line */
-            static const ui::KeyHint hints[] = {{"A", "Enter", "Select"}, {"B", "Esc", "Close"}, {"LB", "[", ""}, {"RB", "]", "Tabs"},
-                                                {"LT", "PgUp", "Page up"}, {"RT", "PgDn", "Page down"}};
-            const int nh = (int)(sizeof hints / sizeof hints[0]);
+            static const ui::KeyHint base[] = {{"A", "Enter", "Select"}, {"B", "Esc", "Close"}, {"LB", "[", ""}, {"RB", "]", "Tabs"},
+                                               {"LT", "PgUp", "Page up"}, {"RT", "PgDn", "Page down"}};
+            /* a stepper row in two columns (ui_controls.h): A adjusts it; while adjusting, Left / Right change it and A or B is done */
+            static const ui::KeyHint step[] = {{"A", "Enter", "Change"}, {"B", "Esc", "Close"}, {"LB", "[", ""}, {"RB", "]", "Tabs"},
+                                               {"LT", "PgUp", "Page up"}, {"RT", "PgDn", "Page down"}};
+            static const ui::KeyHint adjust[] = {{"Left/Right", "Left/Right", "Change"}, {"A", "Enter", "Done"}, {"B", "Esc", "Done"}};
+            const int sps = F.ctx && !F.gone && shown_tab(*F.ctx) == TabSettings ? ui::stepper_pad_state() : 0;
+            const ui::KeyHint* hints = sps == 2 ? adjust : sps == 1 ? step : base;
+            const int nh = sps == 2 ? 3 : (int)(sizeof base / sizeof base[0]);
             ui::OptionHelp h;
             if (F.ctx && !F.gone && shown_tab(*F.ctx) == TabSettings && ui::option_help(&h)) {
                 const float w = std::max(1.f, ImGui::GetContentRegionAvail().x);
@@ -380,7 +405,7 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
             ui::OptionHelp h;
             if (!F.ctx || F.gone || shown_tab(*F.ctx) != TabSettings || !ui::option_help(&h)) return;
             const float w = std::max(1.f, ImGui::GetContentRegionAvail().x);
-            const int mx = hubui::gp::help_lines_max(hubui::gp::tier_for(F.size.y, sp(1.f)));
+            const int mx = hubui::gp::pane_help_lines_max(hubui::gp::tier_for(F.size.y, sp(1.f)), F.short_pane);   // a short pane: one line (game_page_layout.h)
             ui::option_help_strip(h, w, ui::option_help_lines(w, ui::StripStyle::RunIn, mx), ui::StripStyle::RunIn);
         };
     }
@@ -400,3 +425,5 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
 }
 
 }  // namespace gamepage
+
+bool gamepage_pane_short() { return gamepage::g_pane_short; }

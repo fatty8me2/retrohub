@@ -1,5 +1,6 @@
 #include "app.h"
 #include "save_jobs_logic.h"
+#include "page_cache.h"
 #include "hub_log.h"
 #include "u8file.h"
 #include <atomic>
@@ -380,6 +381,7 @@ void poll_job() {
     if ((j.kind == SaveJob::Sync || j.kind == SaveJob::Import) && j.report.ok) fr_adopt_identity_after_vault_change();
     A.vault_dirty = true;
     A.info_at = -100;
+    pagecache::invalidate("save-job");   // the game page's save facts (numbers, history, a newer save from another PC) are read again
     j.kind = SaveJob::None;
     j.running = false;
     j.done = false;

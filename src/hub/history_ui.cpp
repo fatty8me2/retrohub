@@ -1,4 +1,5 @@
 #include "app.h"
+#include "page_cache.h"
 #include "homefun.h"
 #include "playtime_logic.h"
 
@@ -122,6 +123,7 @@ void history_ui_saves_page() {
                 if (!r.cloud) {
                     std::string err;
                     P.ok = hs::history_restore(P.hist_dir, P.battery_dir, r.id, now_s(), &err);
+                    pagecache::invalidate("history-restore");
                     P.result = P.ok ? "Restored. Press Undo restore to go back." : "Could not restore: " + err;
                     A.vault_dirty = true;
                     if (P.ok) hs::cloud_game_changed(P.id);   // the vault changed outside a run: queue the push (saves-F13)
@@ -173,21 +175,20 @@ void history_ui_saves_page() {
 
 /* The game page's Saves tab: one small line + button. */
 void history_ui_details_section(const hub::GameEntry& e) {
-    static std::string key;
-    static double at = -10;
-    static size_t n = 0;
-    static int64_t newest = 0;
-    if (key != e.key || ImGui::GetTime() - at > 3.0) {
-        key = e.key;
-        at = ImGui::GetTime();
+    /* the history folder: the full-window page lists it again every 3 s as it always did, the desk pane once the cursor has settled on
+     * the game (pagecache::need); until then "none yet" is not claimed: the count is left out */
+    struct H { size_t n = 0; int64_t newest = 0; };
+    static pagecache::PerGame<H> s_h;
+    const H* h = s_h.get(e.key, 3.0, [&] {
         auto l = hs::history_list(hs::game_history_dir(sys_short(e), e.key));
-        n = l.size();
-        newest = l.empty() ? 0 : l[0].ts;
-    }
+        return H{l.size(), l.empty() ? 0 : l[0].ts};
+    });
+    const size_t n = h ? h->n : 0;
+    const int64_t newest = h ? h->newest : 0;
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Save history:");
     ImGui::SameLine(0, sp(0.75f));
-    ImGui::TextDisabled("%s", n ? (std::to_string(n) + " on this PC, latest " + when_text(newest)).c_str() : "none yet");
+    ImGui::TextDisabled("%s", !h ? "" : n ? (std::to_string(n) + " on this PC, latest " + when_text(newest)).c_str() : "none yet");
     ImGui::SameLine(0, sp(1.f));
     if (button("History...", ImVec2(0, 0))) {
         history_ui_open(sys_short(e), e.key);

@@ -437,6 +437,7 @@ struct ShotDriver {
     std::vector<std::string> pad_seq;
     size_t pad_i = 0;
     ImGuiKey pad_key = ImGuiKey_None;     // key currently held down
+    double pad_hold_until = 0;            // hold:<secs>:<button>: released once el reaches this
     double pad_t = 0;
     std::string pad_last;                 // token just sent, traced once the nav result has settled
     std::string pending_shot;             // shot:<name> waiting for the end of the frame
@@ -760,6 +761,7 @@ bool gs_set_game_value(const hub::GameEntry& e, const std::string& key, const st
 bool gs_set_system_value(hub::System sys, const std::string& key, const std::string& value);   // the system default (e.g. Switch "switch.runner"), saved
 bool gs_has_game_section(const hub::GameEntry& e);
 void gs_draw_game_section(const hub::GameEntry& e);       // game page, Settings tab
+bool gamepage_pane_short();                               // game_page_view.cpp: the desk pane being drawn is short (a 1024x600 window, 150 % on 1280x720)
 void gs_draw_defaults_area();                              // Settings page
 
 
@@ -882,7 +884,9 @@ void locate_smash(bool clicked);   // call every frame with the button result
 void toggle_favorite(const std::string& key);
 void section_title(const std::string& t);
 void refresh_save_info(const hub::GameEntry& e);
-void refresh_save_info_bg(const hub::GameEntry& e);   // same, but the disk walk runs on a worker
+bool refresh_save_info_bg(const hub::GameEntry& e);   // same, but the disk walk runs on a worker; false = one is still running (ask again)
+bool save_info_switch(const hub::GameEntry& e);       // the page shows another game: its last numbers, or none yet (reads nothing); true = switched
+bool save_info_known(const std::string& key);         // the shown save numbers come from a scan of this game (false: not checked yet this session)
 void poll_save_info();                                // UI thread: apply a finished background scan
 void resume_entry(const hub::GameEntry& e, int slot);   // slot -1 = auto; loads that state on launch (plain Play when it is missing)
 bool has_resume(const hub::GameEntry& e);               // this game can resume from its auto state right now

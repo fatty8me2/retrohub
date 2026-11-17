@@ -5,6 +5,7 @@
 #include <bcrypt.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -1218,10 +1219,16 @@ std::vector<std::string> suggest_rom_folders(size_t max_out) {
 
 std::string exe_dir() { return winutil::exe_dir(); }
 
+/* userdata\ beside the exe, created on the first call. Called all over (the game page draws use it every frame), so the folder is made
+ * once per process and not checked on every call: create_directories walks every parent folder (two file-system calls each). */
 std::string data_dir() {
     std::string dir = exe_dir() + "userdata\\";
-    std::error_code ec;
-    fs::create_directories(utf8_path(dir), ec);
+    static std::atomic<bool> made{false};
+    if (!made.load(std::memory_order_acquire)) {
+        std::error_code ec;
+        fs::create_directories(utf8_path(dir), ec);
+        if (!ec || fs::is_directory(utf8_path(dir), ec)) made.store(true, std::memory_order_release);   // (a failure is tried again next call)
+    }
     return dir;
 }
 

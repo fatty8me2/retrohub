@@ -3,6 +3,7 @@
  * Cartridge ROMs are hashed only when the player presses "Verify my games", on a background thread; a normal scan never hashes.
  * Screenshot aid: HUB_SHOT_VERIFY=card (expanded, made-up results + notes) | collapsed. Use with HUB_SHOT_FAKE_LIB=n and HUB_SHOT_FAKE_DUPES=1. */
 #include "app.h"
+#include "page_cache.h"
 #include "wave3_hooks.h"
 #include "library_scan_info.h"
 #include "pcsx2.h"
@@ -273,15 +274,14 @@ void nuprepair_details_section(const hub::GameEntry& e) {   // a Switch .nup cop
     std::string ext = e.path.substr(e.path.size() - 4);
     for (char& c : ext) c = (char)std::tolower((unsigned char)c);
     if (ext != ".nup") return;
-    struct Cached { std::string text; double at = -100.0; };
-    static std::map<std::string, Cached> cache;   // per (game, title id): re-read at most every 5 s (this runs every frame)
+    /* per (game, path): the full-window page reads the emulators' manifests again every 5 s as it always did, the desk pane once the
+     * cursor has settled on the game and after pagecache::invalidate() (a game ending writes it), never while a game runs */
+    struct Cached { std::string text; };
+    static pagecache::PerGame<Cached> cache;
     const uint64_t tid = hub::nx::title_id_from_key(e.key);
-    const std::string ck = e.key + "|" + e.path;
-    Cached& c = cache[ck];
-    const double now = ImGui::GetTime();
-    if (now - c.at >= 5.0) {
-        c.at = now;
-        c.text.clear();
+    const Cached* cp = cache.get(e.key + "|" + e.path, 5.0, [&] {
+        Cached cr;
+        Cached& c = cr;
         if (tid) {
             for (hubemu::Kind k : {hubemu::Kind::Fritchii, hubemu::Kind::Lichii}) {
                 const hubemu::Install inst = hubemu::find(k, "", "");
@@ -292,8 +292,10 @@ void nuprepair_details_section(const hub::GameEntry& e) {   // a Switch .nup cop
                 if (!c.text.empty()) break;
             }
         }
-    }
-    if (c.text.empty()) return;
+        return cr;
+    });
+    if (!cp || cp->text.empty()) return;
+    const Cached& c = *cp;
     ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
     ImGui::PushTextWrapPos(0.f);
     ImGui::TextWrapped("%s", c.text.c_str());
@@ -320,9 +322,9 @@ void verify_details_section(const hub::GameEntry& e) {
     }
 }
 
-bool verify_library_card(bool compact) {
+bool verify_library_card(bool compact, bool may_refresh) {
     using ui::sp;
-    tick();
+    if (may_refresh) tick();
     const bool running = V.runner.running();
     const int counted = (int)V.notes.size();
     const bool offer = !V.ever_checked && V.cartridges > 0;   // the way in: until the first check, a quiet one-line card

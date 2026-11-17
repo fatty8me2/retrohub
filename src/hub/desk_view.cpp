@@ -24,6 +24,7 @@
 #include "desk_view.h"
 #include "desk_logic.h"
 #include "game_page.h"
+#include "game_page_layout.h"
 #include "console_names.h"
 #include "convenience.h"
 #include "ui_sound.h"
@@ -35,6 +36,8 @@
 #include "help_logic.h"
 #include "ui_scroll.h"
 #include "ui_controls.h"
+#include "qa_diskio.h"
+#include "page_cache.h"
 
 #include <algorithm>
 #include <cmath>
@@ -760,7 +763,10 @@ void status_row(const ImRect& sr) {
         ImGui::SetCursorScreenPos(sr.Min);
         ImGui::PushID("desk_health");
         ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
-        D.health_shown = verify_library_card(true);   // verify_ui.cpp: the chip and its popup
+        {
+            qadisk::Scope disk_scope("desk-health");   // QA (HUB_SHOT_DISKIO)
+            D.health_shown = verify_library_card(true, !pagecache::frozen());   // verify_ui.cpp: the chip and its popup; no re-check (BIOS search ...) while a game runs
+        }
         ImGui::PopItemFlag();
         ImGui::PopID();
         return;
@@ -1178,8 +1184,10 @@ void pane_ghost(const ImRect& r, const hubui::fg::Ghost& g) {
  * bundled game is here, otherwise "Finish setup" with the steps still open. The title and one short line on the left (cut with "...", or
  * left out when there is too little room; the whole text is in its tooltip), the two buttons on the right. When even the title and the
  * buttons do not fit (a narrow pane at a big UI size) the buttons go on a line of their own under the text, sharing its width, or one
- * under the other. Not now hides it for this run (Finish setup: on Home too). Returns the height it takes, gap under it included. */
-float pane_banner(const ImRect& r) {
+ * under the other. Not now hides it for this run (Finish setup: on Home too). Returns the height it takes, gap under it included.
+ * `slim` (a short pane: game_page_layout.h pane_short_h): one slim line when it fits (the title and the buttons, the steps only in the
+ * tooltip; less padding, lower buttons, a smaller gap), so the game page below keeps a few whole rows. */
+float pane_banner(const ImRect& r, bool slim) {
     if (A.lib.empty()) return 0.f;   // the empty-library pane shows Traditional's cards itself
     bool own_empty = true;
     for (const hub::GameEntry& e : A.lib) if (e.key != kNativeKey) { own_empty = false; break; }
@@ -1191,12 +1199,12 @@ float pane_banner(const ImRect& r) {
     const char* b1 = folders ? "Add ROM folder" : "Continue setup";
     const ui::Icon i1 = folders ? ui::Icon::Folder : ui::Icon::ChevronR;
     const char* b2 = "Not now";
-    shot_trace_once("desk-banner", folders ? "folders" : "setup");
+    shot_trace_once("desk-banner", std::string(folders ? "folders" : "setup") + (slim ? " slim" : ""));
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImFont* tf = ui::F.bold;
     ImFont* bf = ui::F.body;
-    const float padx = sp(1.5f), pady = sp(0.75f), gap = sp(1.f), lgap = sp(0.75f), bh = sp(4.f);
+    const float padx = sp(1.5f), pady = slim ? sp(0.25f) : sp(0.75f), gap = sp(1.f), lgap = sp(0.75f), bh = slim ? sp(3.25f) : sp(4.f);
     float w1 = ui::button_width(b1, i1), w2 = ui::button_width(b2);
     const float btns = w1 + gap + w2;
     const float inner = std::max(1.f, r.GetWidth() - padx * 2.f);
@@ -1224,7 +1232,8 @@ float pane_banner(const ImRect& r) {
     dl->AddText(tf, tf->FontSize, ImVec2(tx0, ty + (text_h - tf->FontSize) * 0.5f), ui::TEXT, t.c_str());
     const float lx = tx0 + tf->CalcTextSizeA(tf->FontSize, FLT_MAX, 0.f, t.c_str()).x + sep;
     bool cut = t != title;
-    if (lx < tx1 - sp(10.f)) {   // (less room than that: the title alone, the line in its tooltip)
+    if (slim && one) cut = true;   // the slim line: the title alone, the steps in its tooltip
+    else if (lx < tx1 - sp(10.f)) {   // (less room than that: the title alone, the line in its tooltip)
         const std::string l = ui::ellipsize(bf, bf->FontSize, line, tx1 - lx);
         dl->AddText(bf, bf->FontSize, ImVec2(lx, ty + (text_h - bf->FontSize) * 0.5f), ui::TEXT2, l.c_str());
         cut = cut || l != line;
@@ -1252,7 +1261,7 @@ float pane_banner(const ImRect& r) {
         shot_trace("desk-banner", std::string("not-now ") + (folders ? "folders" : "setup"));
         if (p2_pad) { D.focus_pane = true; D.focus_pane_visible = true; }   // the banner is gone: the focus goes to Play, not nowhere
     }
-    return h + sp(1.25f);
+    return h + (slim ? sp(0.5f) : sp(1.25f));
 }
 
 const hub::GameEntry* shown_game() {
@@ -1262,7 +1271,7 @@ const hub::GameEntry* shown_game() {
     return e;
 }
 
-void pane_host(const ImRect& r) {
+void pane_host(const ImRect& r, bool short_pane) {
     ImGuiContext& g = *ImGui::GetCurrentContext();
     ImGui::SetCursorScreenPos(r.Min);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -1272,7 +1281,7 @@ void pane_host(const ImRect& r) {
     const hub::GameEntry* shown = shown_game();
     const hubui::fg::Ghost* ghost = D.ghost_sel.empty() ? nullptr : ghost_of_key(D.ghost_sel);
     ImRect page = r;
-    page.Min.y += pane_banner(r);
+    page.Min.y += pane_banner(r, short_pane);
     if (D.focus_pane) {   // entering the pane: the game page puts the focus on Play when it draws it
         D.focus_pane = false;
         if (shown) { D.page.focus_play = true; D.page.focus_visible = D.focus_pane_visible; }
@@ -1365,11 +1374,20 @@ void shot_type() {
 
 /* ======================= public ======================= */
 
-bool desk_layout_on() { return hubdesk::is_desk(A.st.ui_layout); }
+/* HUB_SHOT_LAYOUT (screenshot runs): the layout for this run only, never written into the stored setting (Settings::ui_layout).
+ * Choosing a layout (Settings, the Home card's Try it) drops it and stores the choice as usual. */
+static std::string g_layout_override;
+
+bool desk_layout_on() { return hubdesk::is_desk(g_layout_override.empty() ? A.st.ui_layout : g_layout_override); }
 
 void desk_set_layout(bool desk) {
     const std::string v = desk ? hubdesk::kDesk : hubdesk::kTraditional;
-    if (A.st.ui_layout == v) return;
+    const bool was = desk_layout_on();
+    g_layout_override.clear();
+    if (A.st.ui_layout == v) {
+        if (was != desk) { D.reveal = true; D.dirty = true; shot_trace("desk-layout", v); }   // only the run's override changed
+        return;
+    }
     A.st.ui_layout = v;
     mark_dirty();
     D.reveal = true;
@@ -1439,9 +1457,9 @@ void desk_page() {
     apply_page_request();
     /* B / Esc inside the pane: ImGui leaves the pane window (the focus lands on the pane itself, as an item of the page). Back to the list.
      * Not while an option row's dropdown list is open: that B closes only the list, and the dropdown puts the focus back on its row when
-     * it draws, later this frame.
+     * it draws, later this frame. The same for a stepper row being adjusted (two columns): that B only ends the adjusting.
      * The same item reached by a move from outside (Right from the search box): into the pane instead. */
-    if (g.NavId != 0 && g.NavId == D.pane_child && !(D.pane_focused && ui::dropdown_list_open())) {
+    if (g.NavId != 0 && g.NavId == D.pane_child && !(D.pane_focused && (ui::dropdown_list_open() || ui::stepper_adjusting()))) {
         if (D.pane_focused) {
             D.focus_list = D.focus_list_visible = true;
             ui_sound::play(ui_sound::Sfx::Back);
@@ -1455,8 +1473,10 @@ void desk_page() {
     const float col_w = hubdesk::list_width(A.st.desk_list_w, avail.x, sp(1.f));
     const ImRect col(o, ImVec2(o.x + col_w, o.y + avail.y));
     const ImRect pane(ImVec2(col.Max.x + gap, o.y), ImVec2(o.x + avail.x, o.y + avail.y));
+    const bool short_pane = hubui::gp::pane_short_h(pane.GetHeight(), sp(1.f));   // a short pane (1024x600, 150 % on 1280x720): slim banner, compact page
+    D.page.short_pane = short_pane;
     draw_column(col);
-    pane_host(pane);
+    pane_host(pane, short_pane);
     divider(ImRect(ImVec2(col.Max.x, o.y + sp(1.f)), ImVec2(pane.Min.x, o.y + avail.y - sp(1.f))), o.x, avail.x);
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false)) lock_key(ImGuiKey_GamepadR2);   // RT pages the list here: it must not also change the sort order
     /* A friend's game under the cursor: Y / I open its details (the friend-game view); X / F, R3 / S and Traditional's Y / I would act on
@@ -1475,8 +1495,10 @@ bool desk_footer_hints(std::vector<Hint>* out) {
     if (!desk_layout_on() || A.page != Page::Library || lib_cases_active()) return false;
     if ((A.lib.empty() && A.ghosts.empty())) { *out = {{"A", "Enter", "Select"}}; return true; }
     if (D.pane_focused) {   // the game page in the pane: its hints live here (the pane has no footer of its own)
+        const int sps = ui::stepper_pad_state();   // a stepper row in two columns (ui_controls.h): A adjusts it, then Left / Right change it
         if (!D.ghost_sel.empty()) *out = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}};   // a friend's game: its card and Details
-        else *out = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}, {"LB", "", "Tabs"}, {"LT", "", "Page up"}, {"RT", "", "Page down"}, {"X", "F", "Favorite"}};
+        else if (sps == 2) *out = {{"Left/Right", "Left/Right", "Change"}, {"A", "Enter", "Done"}, {"B", "Esc", "Done"}};
+        else *out = {{"A", "Enter", sps == 1 ? "Change" : "Select"}, {"B", "Esc", "Back"}, {"LB", "", "Tabs"}, {"LT", "", "Page up"}, {"RT", "", "Page down"}, {"X", "F", "Favorite"}};
         return true;
     }
     if (!D.list_focused || D.model.rows.empty()) {   // the search box, the toolbar, the buttons under the list (or nothing to list)
@@ -1501,7 +1523,7 @@ void desk_shot_seed() {
     const char* v = g_headless ? std::getenv("HUB_SHOT_LAYOUT") : nullptr;
     if (!v) return;
     const std::string s = v;
-    if (s == hubdesk::kDesk || s == hubdesk::kTraditional) A.st.ui_layout = s;
+    if (s == hubdesk::kDesk || s == hubdesk::kTraditional) g_layout_override = s;   // this run only: the stored setting is left alone
     else {
         std::fprintf(stderr, "HUB_SHOT_LAYOUT: unknown layout '%s' (desk or traditional); no screenshot taken\n", v);
         SH.fail = true;

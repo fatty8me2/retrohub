@@ -191,6 +191,21 @@ int main() {
         }
     }
 
+    {   /* the Reset confirms say plainly what goes: the game's every choice (and, for Ocarina of Time, which program plays it), the Switch-wide
+         * program choice with the Nintendo Switch defaults, and that other PCs get the change */
+        auto has = [](const std::string& s, const char* p) { return s.find(p) != std::string::npos; };
+        const std::string g = reset_game_confirm_text("Nintendo 64", false);
+        CHECK(g == "Every setting for this game goes back to the Nintendo 64 defaults. Your other PCs get the same change when your saves sync.");
+        const std::string oot = reset_game_confirm_text("Nintendo Switch 2", true);
+        CHECK(has(oot, "Every setting for this game") && has(oot, "which program it plays with") && has(oot, "Fritchii") && has(oot, "other PCs"));
+        CHECK(!has(g, "program"));
+        const std::string d = reset_defaults_confirm_text("Nintendo 64", false);
+        CHECK(d == "Every setting here goes back to RetroHub's own default for Nintendo 64 games. Your other PCs get the same change when your saves sync.");
+        const std::string nx = reset_defaults_confirm_text("Nintendo Switch", true);
+        CHECK(has(nx, "clears which program Switch and Switch 2 games play with") && has(nx, "other PCs"));
+        for (const std::string& s : {g, oot, d, nx}) CHECK(!has(s, "\xE2\x80\x94") && !has(s, "\xE2\x80\x93") && !has(s, "!"));   // no dashes, no exclamation marks
+    }
+
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("hub_option_sections_test: all passed\n");
     return 0;

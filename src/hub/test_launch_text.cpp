@@ -3,6 +3,7 @@
 #include "launch_files.h"
 
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 
 static int fails = 0;
@@ -40,8 +41,8 @@ static void host_view() {
     CHECK(contains(host_view_of_guest_fail("Mia", core_missing_wire_nds()), "missing a file"));
     CHECK(contains(host_view_of_guest_fail("Mia", start_failed_wire()), "didn't open on Mia's PC"));
     CHECK(contains(host_view_of_guest_fail("Mia", ps1_core_missing_wire()), "PlayStation online files"));
-    CHECK(contains(host_view_of_guest_fail("Mia", ps1_bios_missing_wire()), "no PlayStation BIOS"));
-    CHECK(contains(host_view_of_guest_fail("Mia", ps1_bios_missing_wire_old()), "no PlayStation BIOS"));   // a guest on RetroHub 1.45 or older
+    CHECK(contains(host_view_of_guest_fail("Mia", ps1_bios_missing_wire()), "no PlayStation BIOS"));   // what every version sends
+    CHECK(contains(host_view_of_guest_fail("Mia", ps1_bios_missing_local()), "no PlayStation BIOS"));  // a development build that sent today's wording
     CHECK(contains(host_view_of_guest_fail("Mia", "A GameCube session is still open on this PC (Dolphin) - close it, then the host can start again."), "still open on Mia's PC"));
     CHECK(contains(host_view_of_guest_fail("Mia", "The host's GameCube launch is invalid - ask them to update RetroHub."), "can't read this launch"));
     // nothing guest-directed or technical survives in a mapped line
@@ -84,10 +85,20 @@ static void sent_strings_pinned() {   // what goes to other players must stay by
     CHECK(remote_play_failed_wire(1225) == "Could not start remote play (streamrun error 1225).");
     CHECK(std::string(remote_play_missing_wire()) == "Remote play isn't installed (streamrun.exe is missing) - update RetroHub.");
     CHECK(std::string(ps1_core_missing_wire()) == "The PlayStation emulator core (beetle_psx_libretro.dll) was not found in the cores folder.");
-    // (v1.46: the PS1 BIOS line names the real Settings tab, Video & Games; the 1.45 wording is still recognised from older guests)
-    CHECK(std::string(ps1_bios_missing_wire()) == "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Video & Games.");
-    CHECK(std::string(ps1_bios_missing_wire_old()) == "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Playing.");
-    // the shown PS1 BIOS text goes out as the short one; unchanged texts go out unchanged
+    // the PS1 BIOS line on the wire stays exactly what RetroHub 1.45.1 sends and matches (origin/main src/hub/launch_text.h), so a 1.45 host
+    // still recognises a guest's failure; only what this player reads names the real Settings tab, Video & Games
+    {
+        static const char k145[] = "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Playing.";
+        const std::string wire = ps1_bios_missing_wire();
+        CHECK(wire.size() == sizeof k145 - 1 && std::memcmp(wire.data(), k145, sizeof k145 - 1) == 0);
+    }
+    CHECK(std::string(ps1_bios_missing_local()) == "PlayStation online needs a BIOS file (scph5501.bin) on every PC, or the built-in OpenBIOS on every PC. Set it up in Settings > Video & Games.");
+    // a client receiving the 1.45 wording (the host's np_abort reason) shows today's; other texts are shown as they came
+    CHECK(local_text_of_wire(ps1_bios_missing_wire()) == ps1_bios_missing_local());
+    CHECK(!contains(local_text_of_wire(ps1_bios_missing_wire()), "Playing"));
+    CHECK(local_text_of_wire(start_failed_wire()) == start_failed_wire());
+    CHECK(local_text_of_wire("their copy is newer") == "their copy is newer");
+    // the shown PS1 BIOS text goes out as the 1.45 one; unchanged texts go out unchanged
     CHECK(wire_for(std::string("PlayStation online needs a BIOS file (scph5501.bin) on every PC, or OpenBIOS on every PC. Set it up in Settings > Video & Games. ") + ps1_bios_own_text()) == ps1_bios_missing_wire());
     CHECK(wire_for("RetroHub can't find the game file for X. Open it in your Library to point RetroHub at it again.") == "RetroHub can't find the game file for X. Open it in your Library to point RetroHub at it again.");
     CHECK(wire_for("The host started a game you don't have.") == "The host started a game you don't have.");

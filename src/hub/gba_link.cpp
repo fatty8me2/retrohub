@@ -9,6 +9,7 @@
 #include "gba_link_logic.h"
 #include "saves/savestore.h"
 #include "wave3_hooks.h"
+#include "page_cache.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -27,6 +28,8 @@ std::string root(const std::string& d) {
 std::string store_path() { return root(hub::data_dir()) + "\\gba_link.json"; }
 
 const char* shot_mode() { static const char* m = g_headless ? std::getenv("HUB_SHOT_GBALINK") : nullptr; return m; }
+/* HUB_SHOT_GBALINK=real (QA, qa\desk_idle_io.ps1): the made-up games get their GBA link serials, but the BIOS is searched for for real */
+bool shot_real_bios() { return shot_mode() && std::string(shot_mode()) == "real"; }
 
 void load_store() {
     if (g_loaded) return;
@@ -39,7 +42,7 @@ void save_store() { hubgba::write_atomic(store_path(), hubgba::store_to_json(g_s
 
 /* The player's own gba_bios.bin, found the way "Real console startup" finds it (Settings BIOS folders, game folders' GamesBios / BIOS, ...). */
 std::string find_bios() {
-    if (shot_mode()) return std::string(shot_mode()) == "bios" ? "C:/fake/gba_bios.bin" : "";
+    if (shot_mode() && !shot_real_bios()) return std::string(shot_mode()) == "bios" ? "C:/fake/gba_bios.bin" : "";
     hub::GameEntry g;
     g.system = hub::System::GBA;
     RealBootPlan p = real_boot_plan(g);
@@ -148,8 +151,14 @@ void gba_link_details_section(const hub::GameEntry& e) {
     ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
     ImGui::PushTextWrapPos(0.f);
     ImGui::TextWrapped("%s Offline play only.", t->help);
-    const std::string bios = find_bios();
-    if (bios.empty()) ImGui::TextWrapped("Needs your own GBA BIOS (gba_bios.bin) in your GamesBios folder. RetroHub never downloads it, so this stays off until it is there.");
+    /* the BIOS search walks the game folders and the BIOS folders: once, then again only when the folders change or something that can
+     * add the file happens (pagecache: the window getting the focus back ...); the desk pane never while a game runs */
+    static pagecache::One<std::string> s_bios;
+    std::string sig = A.st.ps1_bios + "|" + A.st.ps2_bios_dir;
+    for (const std::string& f : A.st.rom_folders) sig += "|" + f;
+    const std::string* bios_p = s_bios.get(sig, 2.0, [] { return find_bios(); });
+    const std::string bios = bios_p ? *bios_p : std::string();
+    if (bios_p && bios.empty()) ImGui::TextWrapped("Needs your own GBA BIOS (gba_bios.bin) in your GamesBios folder. RetroHub never downloads it, so this stays off until it is there.");
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
     const std::vector<hubgba::Cand> games = gba_games();

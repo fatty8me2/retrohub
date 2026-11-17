@@ -138,7 +138,7 @@ hub::profile::Profile fr_my_profile() {
             g_my_prof.fav_game = p.profile.fav_game;
             g_my_prof.status = hub::profile::clean_status(p.profile.status);
         }
-        if (std::getenv("HUB_SHOT_PROFILES") && g_my_prof.empty()) { g_my_prof.avatar = "c:gc"; g_my_prof.status = "Smash night!"; }   // screenshot aid
+        if (g_headless && std::getenv("HUB_SHOT_PROFILES") && g_my_prof.empty()) { g_my_prof.avatar = "c:gc"; g_my_prof.status = "Smash night!"; }   // screenshot aid (never sent from a real run)
         g_my_prof_loaded = true;
     }
     return g_my_prof;
@@ -431,7 +431,7 @@ bool fr_send_attach_dm(const std::string& uid, const std::string& text, const hu
 }
 /* Test aid: HUB_SHOT_TRACE=<file> appends one line per friends-panel action, so the click harness can assert what a click did. */
 static void fr_trace(const char* what, const std::string& arg = std::string()) {
-    static const char* path = std::getenv("HUB_SHOT_TRACE");
+    static const char* path = g_headless ? std::getenv("HUB_SHOT_TRACE") : nullptr;
     if (!path) return;
     if (FILE* f = std::fopen(path, "a")) { std::fprintf(f, "%s %s\n", what, arg.c_str()); std::fclose(f); }
 }

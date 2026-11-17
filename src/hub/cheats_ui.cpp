@@ -540,7 +540,7 @@ void draw_cheats_modal() {
     static bool shot_done = false;
     if (!shot_done) {   // HUB_SHOT_CHEATS=list|add|locked|empty (+ HUB_SHOT_CHEATS_SYS=n64|gba|gb): open on a stand-in game
         shot_done = true;
-        if (const char* m = std::getenv("HUB_SHOT_CHEATS")) {
+        if (const char* m = g_headless ? std::getenv("HUB_SHOT_CHEATS") : nullptr) {   // screenshot runs only: it switches cheats on and saves them
             hub::GameEntry e;
             std::string sy = std::getenv("HUB_SHOT_CHEATS_SYS") ? std::getenv("HUB_SHOT_CHEATS_SYS") : "n64";
             e.system = sy == "gba" ? hub::System::GBA : sy == "gb" ? hub::System::GB : hub::System::N64;

@@ -423,7 +423,7 @@ bool gamepack_uninstall_ui(const hub::GameEntry& e, float bh) {
         ui::dialog_end();
     }
     st->SetBool(sid, open);
-    if (removed && shot_pack_owned(e)) { shot_trace("gp-uninstall", e.key + " (screenshot run: nothing deleted)"); return false; }
+    if (removed && (g_headless || shot_pack_owned(e))) { shot_trace("gp-uninstall", e.key + " (screenshot run: nothing deleted)"); return false; }   // a screenshot run never deletes (HUB_SHOT_PACKGAME, HUB_SHOT_GP_UNINSTALL)
     if (removed) { g_pending_uninstall = e; g_has_pending_uninstall = true; }   // done next frame: the library list is rebuilt, `e` would dangle
     return removed;
 }

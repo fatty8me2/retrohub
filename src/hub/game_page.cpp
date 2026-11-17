@@ -12,6 +12,8 @@
 #include "hidden_ui.h"
 #include "playtime_logic.h"
 #include "option_sections.h"
+#include "page_cache.h"
+#include "qa_diskio.h"
 
 #include <algorithm>
 #include <cstring>
@@ -68,25 +70,40 @@ std::vector<std::string> wiiu_info_compute(const hub::GameEntry& e, const std::s
     return s_lines;
 }
 
-/* UI thread: returns the last finished result for this game (empty until the first scan lands) and re-scans in the background at most
- * every 4 s. A per-game disk cache shared by every host (its worker outlives any one page), so it is not part of gamepage::State. */
+/* UI thread: returns the last finished result for this game (empty until the first scan lands). A scan runs in the background when
+ * pagecache::need() asks for one: the full-window page re-scans every 4 s as it always did; the desk pane once the cursor has settled on
+ * the game (and again after pagecache::invalidate()), never while a game runs. A per-game disk cache shared by every host (its worker
+ * outlives any one page), so it is not part of gamepage::State. Screenshot runs scan on the UI thread at the same moments (deterministic). */
 std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
-    if (g_headless) return wiiu_info_compute(e, A.st.cemu_exe);   // screenshots stay deterministic
     struct Bg { std::mutex mu; bool running = false; std::string key; std::vector<std::string> lines; };
     static Bg* bg = new Bg();
-    static std::string s_key;
+    static std::string s_key;   // the game the last scan was started for, when, under which pagecache generation
     static double s_at = -100;
+    static unsigned s_gen = 0;
     static std::vector<std::string> s_lines;
+    pagecache::Need n = pagecache::Need::Use;
     {
         std::lock_guard<std::mutex> l(bg->mu);
         if (bg->key == e.key) s_lines = bg->lines;   // only ever show a result computed for THIS game
         else s_lines.clear();
-        if (s_key == e.key && bg->key == e.key && ImGui::GetTime() - s_at < 4.0) return s_lines;
+        n = pagecache::need(s_key == e.key, s_gen, s_at, 4.0);
+        if (n == pagecache::Need::Use) return s_lines;
         if (bg->running) return s_lines;   // A's scan still running: B's starts on the first frame after it lands
         bg->running = true;
     }
     s_key = e.key;
     s_at = ImGui::GetTime();
+    s_gen = pagecache::generation();
+    qadisk::note_worker("wiiu-info");
+    if (g_headless) {   // screenshots stay deterministic: the same scan, on this thread
+        qadisk::Scope qs(pagecache::scope_name(n), false);
+        std::vector<std::string> r = wiiu_info_compute(e, A.st.cemu_exe);
+        std::lock_guard<std::mutex> l(bg->mu);
+        bg->key = e.key;
+        bg->lines = r;
+        bg->running = false;
+        return s_lines = r;
+    }
     std::thread([e, cemu = A.st.cemu_exe] {
         if (g_io_shutdown) return;
         std::vector<std::string> r = wiiu_info_compute(e, cemu);
@@ -143,11 +160,17 @@ std::vector<hub::saves::Session> pt_fake_sessions(const std::string& key, const 
     return v;
 }
 
-/* The shown game's numbers, cached in the page state (see PlayTimeCache). */
+/* The shown game's numbers, cached in the page state (see PlayTimeCache). The full-window page reads the play log again every 30 s and
+ * each time it opens; the desk pane once the cursor has settled on the game and after pagecache::invalidate(), never while a game runs
+ * (pagecache::need). Until then: nothing (the strip waits), or the last numbers of this same game. */
 const hubui::pt::GameStats& pt_stats_for(gamepage::PlayTimeCache& C, const hub::GameEntry& e, const hub::GameState& gs, int64_t now) {
-    const double t = ImGui::GetTime();
+    static const hubui::pt::GameStats none{};
     const int fr = ImGui::GetFrameCount();
-    if (!C.ok || C.key != e.key || C.ps != gs.play_seconds || C.lp != gs.last_played || t - C.at > 30.0 || fr - C.frame > 2) {
+    const bool same = C.ok && C.key == e.key && C.ps == gs.play_seconds && C.lp == gs.last_played;
+    const bool reopened = fr - C.frame > 2 && pagecache::host() != pagecache::Host::Pane;   // the full-window page closed and opened again
+    const pagecache::Need n = pagecache::need(same && !reopened, C.gen, C.at, 30.0);
+    if (n != pagecache::Need::Use) {
+        qadisk::Scope qs(pagecache::scope_name(n), false);
         static const bool fake_on = g_headless && std::getenv("HUB_SHOT_PLAYTIME") != nullptr;
         const bool fake = fake_on && e.key.compare(0, 5, "fake:") == 0;   // only the made-up games get made-up sessions
         std::vector<hub::saves::Session> sessions = fake ? pt_fake_sessions(e.key, gs) : hub::saves::playlog_read_game(sys_short(e), e.key);
@@ -155,11 +178,12 @@ const hubui::pt::GameStats& pt_stats_for(gamepage::PlayTimeCache& C, const hub::
         C.key = e.key;
         C.ps = gs.play_seconds;
         C.lp = gs.last_played;
-        C.at = t;
+        C.at = ImGui::GetTime();
+        C.gen = pagecache::generation();
         C.ok = true;
     }
     C.frame = fr;
-    return C.st;
+    return C.ok && C.key == e.key ? C.st : none;
 }
 
 /* shorten text with "..." until it is at most w wide in the current font (last resort only; UTF-8 safe) */
@@ -260,7 +284,17 @@ Ctx begin(State& st, const hub::GameEntry& e, const Host& host, bool appearing) 
     const hub::GameState& gs = gstate(e.key);
     const GameInfo* cat = catalog_for(e);
     poll_save_info();
-    if (A.info_key != e.key || ImGui::GetTime() - A.info_at > 4.0) refresh_save_info_bg(e);
+    {   /* the save numbers (Saves tab, Play / Resume): the full-window page scans again every 4 s as it always did (pagecache "periodic");
+         * the desk pane once the cursor has settled on the game and after pagecache::invalidate(), never while a game runs */
+        static std::string s_loaded;   // the game the last scan was asked for, under which pagecache generation
+        static unsigned s_gen = 0;
+        if (pagecache::host() == pagecache::Host::Pane && save_info_switch(e)) s_loaded.clear();   // another game: its last numbers (or none), nothing read yet; scanned again once settled
+        const pagecache::Need n = pagecache::need(A.info_key == e.key && s_loaded == e.key, s_gen, A.info_at, 4.0);
+        if (n != pagecache::Need::Use) {
+            qadisk::Scope qs(pagecache::scope_name(n), false);
+            if (refresh_save_info_bg(e)) { s_loaded = e.key; s_gen = pagecache::generation(); }
+        }
+    }
     Ctx c{st, e, host, appearing, gs, cat};
     c.idle = hubui::launch_allowed(A.proc != nullptr, session_active());
     c.native = is_native(e);
@@ -329,7 +363,14 @@ void draw_description(Ctx& c) {
 
 void draw_notices(Ctx& c) {
     const hub::GameEntry& e = c.e;
-    if (e.issue == "extract" && !hub::extracted_3ds_path(e).empty()) {
+    /* disk facts, cached per game (pagecache): an archived game's unpacked copy, a Wii U disc's keys. An unpack finishing or a key file
+     * added (the window gets the focus back) reads them again. */
+    static pagecache::PerGame<bool> s_unpacked;
+    static pagecache::PerGame<std::string> s_keys_why;
+    const bool* unpacked = e.issue == "extract" ? s_unpacked.get(e.key + "|" + e.path, 2.0, [&] { return !hub::extracted_3ds_path(e).empty(); }) : nullptr;
+    if (e.issue == "extract" && !unpacked) {
+        // not known yet (the desk cursor is still moving, or a game runs): say nothing rather than something that may be wrong
+    } else if (e.issue == "extract" && *unpacked) {
         text_wrapped_disabled("Unpacked and ready: Play starts at once.");
     } else if (e.issue == "extract") {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
@@ -341,13 +382,17 @@ void draw_notices(Ctx& c) {
         ImGui::TextWrapped("This 3DS image is encrypted. Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder) to run it.");
         ImGui::PopStyleColor();
     } else if (e.issue == "keys") {
-        ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
-        std::string ud;
-        hubemu::Install ki = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, e.path);
-        if (!ki.exe.empty()) { const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str(); ud = ki.managed ? ki.dir + "\\portable" : hub::cemu_dirs_for(ki.dir, ad ? ad : "", hubemu::wiiu_probe()).user_data; }
-        std::string why = hub::wiiu_keys_message(hub::wiiu_keys_check(ud, ki.dir, hubemu::wiiu_probe()), "wud");
-        ImGui::TextWrapped("%s", why.empty() ? "Disc images (.wud/.wux) are decrypted with the disc keys in Cemu's keys.txt (found). A .wua archive needs no keys." : why.c_str());
-        ImGui::PopStyleColor();
+        const std::string* why = s_keys_why.get(e.key + "|" + A.st.cemu_exe, 2.0, [&] {
+            std::string ud;
+            hubemu::Install ki = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, e.path);
+            if (!ki.exe.empty()) { const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str(); ud = ki.managed ? ki.dir + "\\portable" : hub::cemu_dirs_for(ki.dir, ad ? ad : "", hubemu::wiiu_probe()).user_data; }
+            return hub::wiiu_keys_message(hub::wiiu_keys_check(ud, ki.dir, hubemu::wiiu_probe()), "wud");
+        });
+        if (why) {   // (nothing until it is known)
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
+            ImGui::TextWrapped("%s", why->empty() ? "Disc images (.wud/.wux) are decrypted with the disc keys in Cemu's keys.txt (found). A .wua archive needs no keys." : why->c_str());
+            ImGui::PopStyleColor();
+        }
     }
     if (is_kanto(e)) {
         text_wrapped_disabled("A friend's two-player co-op version of Pokemon FireRed. It is played online: press Play to set it up (once), then host or join a room and pick it. Needs your own Pokemon FireRed (USA) 1.0 in the library.");
@@ -364,7 +409,7 @@ static void ensure_tabs(Ctx& c) {
     const hub::GameEntry& e = c.e;
     if (st.tab_key != e.key || c.appearing) { st.tab_key = e.key; st.tab = TabAbout; if (const char* s = g_headless ? std::getenv("HUB_SHOT_TAB") : nullptr) st.tab = std::atoi(s); }   // HUB_SHOT_TAB=0..3 for screenshots
     qm_seed_gallery(e);   // HUB_SHOT_GALLERY screenshot aid
-    const int nshots = shots_count(e);
+    const int nshots = shots_count(e);   // -1: not known yet (the desk cursor is still moving, or a game runs): no Screenshots tab for now
     const bool has_settings = gs_has_game_section(e);
     std::vector<TabInfo>& tl = c.tab_list;
     tl.clear();
@@ -379,7 +424,8 @@ static void ensure_tabs(Ctx& c) {
         if (g_headless && std::getenv("HUB_SHOT_TAB")) {   // the screenshot aid asked for a tab this game does not have: clamp to the nearest one that exists
             c.tab_shown = tl.back().id;
             for (auto& t : tl) if (t.id >= st.tab) { c.tab_shown = t.id; break; }
-        } else st.tab = c.tab_shown = TabAbout;
+        } else if (nshots < 0 && st.tab == TabShots) c.tab_shown = TabAbout;   // the pane keeps the Screenshots tab asked for until the count is known
+        else st.tab = c.tab_shown = TabAbout;
     }
 }
 
@@ -477,8 +523,8 @@ static void draw_saves(Ctx& c) {
         if (!sv.empty()) sv += "   ";
         sv += std::to_string(A.info_state_files) + " save state(s)" + (A.info_auto_state ? " + resume point" : "");
     }
-    if (sv.empty()) sv = "No save data yet.";
-    ImGui::TextUnformatted(sv.c_str());
+    if (sv.empty() && save_info_known(e.key)) sv = "No save data yet.";   // (not checked yet: the desk cursor is still moving, or a game runs: no line)
+    if (!sv.empty()) ImGui::TextUnformatted(sv.c_str());
     cloud_ui_game_line(e);
     history_ui_details_section(e);
     resume_details_section(e);   // Wave 3 R1
@@ -504,7 +550,7 @@ void draw_tab(Ctx& c, int id) {
 /* ---------- actions ---------- */
 
 bool shot_forced(Ctx& c, const char* name) {
-    static const char* act = std::getenv("HUB_SHOT_ACT");   // reachability QA (qa/reach_matrix.ps1): HUB_SHOT_ACT=<name> presses that action once
+    static const char* act = g_headless ? std::getenv("HUB_SHOT_ACT") : nullptr;   // reachability QA (qa/reach_matrix.ps1): HUB_SHOT_ACT=<name> presses that action once; screenshot mode only (a stray variable must never press Play on a real PC)
     static std::string done;   // the game + action already pressed: once per run, whichever host draws the page (pane, then the full-window page)
     if (!act || !name || std::strcmp(act, name) != 0 || done == c.e.key + name) return false;
     if (!SH.details_key.empty() && c.e.key != SH.details_key) return false;   // HUB_SHOT_DETAILS names the game (the desk pane shows another one first)
@@ -639,7 +685,9 @@ std::vector<Action> secondary_actions(Ctx& c) {
         add(std::move(a));
     }
     if (cheats_supported(e)) {
-        const int cn = cheats_enabled_count(e);
+        static bool cheats_read = false;   // the cheat list is read from the vault once (then kept): not while the desk cursor is moving
+        const int cn = cheats_read || pagecache::may_read() ? cheats_enabled_count(e) : 0;
+        cheats_read = cheats_read || pagecache::may_read();
         Action a;
         a.id = "cheats";
         a.label = cn ? "Cheats (" + std::to_string(cn) + ")" : std::string("Cheats");

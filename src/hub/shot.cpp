@@ -4,6 +4,7 @@
 #include "libview_ui.h"
 #include "continue_ui.h"
 #include "desk_view.h"
+#include "qa_diskio.h"
 #include <cstring>
 
 /* ============================ main ============================ */
@@ -311,20 +312,21 @@ static ImGuiKey pad_token_key(const std::string& n) {
 /* Generic trace line for UI actions that have no other observable effect headless (HUB_SHOT_TRACE). */
 void shot_trace(const char* what, const std::string& arg) {
     static const char* tp = std::getenv("HUB_SHOT_TRACE");
-    if (!tp) return;
+    if (!tp || !g_headless) return;   // screenshot runs only: a normal run writes no trace file
+    qadisk::Quiet quiet;   // the trace file itself is not the page's disk work (HUB_SHOT_DISKIO)
     if (FILE* f = std::fopen(tp, "a")) { std::fprintf(f, "%s %s\n", what, arg.c_str()); std::fclose(f); }
 }
 
 void shot_trace_once(const char* what, const std::string& arg) {
     static std::set<std::string> seen;
-    if (!std::getenv("HUB_SHOT_TRACE")) return;
+    if (!g_headless || !std::getenv("HUB_SHOT_TRACE")) return;
     if (!seen.insert(std::string(what) + " " + arg).second) return;
     shot_trace(what, arg);
 }
 
 /* One trace line per injected pad press: where the page / focus ended up (HUB_SHOT_TRACE). */
 void ShotDriver::pad_trace(const std::string& tok) {
-    static const char* tp = std::getenv("HUB_SHOT_TRACE");
+    static const char* tp = g_headless ? std::getenv("HUB_SHOT_TRACE") : nullptr;
     if (!tp) return;
     ImGuiContext& g = *ImGui::GetCurrentContext();
     static const char* pn[] = {"library", "discover", "online", "saves", "controllers", "settings", "about"};
@@ -350,9 +352,13 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
         io.BackendFlags |= ImGuiBackendFlags_HasGamepad;   // headless: no device, so the SDL backend would clear this every frame
         static ImGuiKey pad_key2 = ImGuiKey_None;   // the second key of a token like "up+b": both go down in the same frame
         if (pad_key != ImGuiKey_None) {
-            io.AddKeyAnalogEvent(pad_key, false, 0.f);
-            if (pad_key2 != ImGuiKey_None) io.AddKeyAnalogEvent(pad_key2, false, 0.f);
-            pad_key = pad_key2 = ImGuiKey_None;
+            if (el >= pad_hold_until) {   // released on the next frame, or after a hold:<secs>:<button> (ImGui repeats the press meanwhile)
+                io.AddKeyAnalogEvent(pad_key, false, 0.f);
+                if (pad_key2 != ImGuiKey_None) io.AddKeyAnalogEvent(pad_key2, false, 0.f);
+                pad_key = pad_key2 = ImGuiKey_None;
+                pad_hold_until = 0;
+                pad_t = el;
+            }
         } else if (pad_i <= pad_seq.size() && el > 1.5 && A.scanned_once && el - pad_t > 0.4) {
             if (!pad_last.empty()) { pad_trace(pad_last); pad_last.clear(); }   // the previous press has settled by now
             if (pad_i < pad_seq.size()) {
@@ -362,6 +368,17 @@ void ShotDriver::pre_frame(ImGuiIO& io) {
                 A.pad_mode = true;
                 if (tok.rfind("shot:", 0) == 0) pending_shot = tok.substr(5);
                 else if (tok.rfind("toast:leave:", 0) == 0) { void fr_shot_confirm_toast(double); fr_shot_confirm_toast(std::atof(tok.c_str() + 12)); }   // friends_ui.cpp
+                else if (tok.rfind("hold:", 0) == 0) {   // hold:<secs>:<button>: held down that long (the list cursor races through the games)
+                    const size_t c = tok.find(':', 5);
+                    if (c != std::string::npos) {
+                        if (ImGuiKey k = pad_token_key(tok.substr(c + 1)); k != ImGuiKey_None) {
+                            io.AddKeyAnalogEvent(k, true, 1.f);
+                            pad_key = k;
+                            pad_hold_until = el + std::atof(tok.substr(5, c - 5).c_str());
+                            shot_trace("pad-hold", tok + " t=" + std::to_string(ImGui::GetTime()));
+                        }
+                    }
+                }
                 else if (osk::inject(tok.c_str())) {}   // the on-screen keyboard owns the pad while it is open (it reads the SDL pad itself)
                 else if (size_t plus = tok.find('+'); plus != std::string::npos && pad_token_key(tok.substr(0, plus)) != ImGuiKey_None &&
                                                       pad_token_key(tok.substr(plus + 1)) != ImGuiKey_None) {

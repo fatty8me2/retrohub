@@ -1,5 +1,6 @@
 #include "console_names.h"
 #include "app.h"
+#include "page_cache.h"
 #include "challenge_ui.h"
 #include "cheevos_data.h"
 #include "cheevos_login.h"
@@ -22,11 +23,11 @@
 namespace {
 
 std::string cfg_path() {
-    if (const char* e = std::getenv("HUB_CHEEVOS_CFG")) return e;
+    if (const char* e = g_headless ? std::getenv("HUB_CHEEVOS_CFG") : nullptr) return e;   // screenshot runs only (a sign-in token lives there)
     return hub::data_dir() + "retroachievements.json";
 }
 std::string cache_dir() {
-    if (const char* e = std::getenv("HUB_CHEEVOS_DIR")) return e;
+    if (const char* e = g_headless ? std::getenv("HUB_CHEEVOS_DIR") : nullptr) return e;
     return hub::data_dir() + "cheevos";
 }
 
@@ -98,10 +99,18 @@ void poll_login() {
     RA.job.reset();
 }
 
-const cheevos::GameCache* cache_for(const std::string& key) {
+/* The game's achievements cache file: the full-window page reads it again every 4 s as it always did, the desk pane once the cursor has
+ * settled on the game and after pagecache::invalidate() (a game ending writes it), never while a game runs. */
+const cheevos::GameCache* cache_for(const std::string& key, bool* known) {
+    *known = true;
     double now = ImGui::GetTime();
+    static std::map<std::string, unsigned> read_gen;   // pagecache generation each game's file was read under
     auto it = RA.caches.find(key);
-    if (it == RA.caches.end() || now - it->second.first > 4.0) {
+    const pagecache::Need need = pagecache::need(it != RA.caches.end(), read_gen[key], it != RA.caches.end() ? it->second.first : 0.0, 4.0);
+    if (need == pagecache::Need::Use && it == RA.caches.end()) { *known = false; return nullptr; }   // not read yet
+    if (need != pagecache::Need::Use) {
+        qadisk::Scope qs(pagecache::scope_name(need), false);
+        read_gen[key] = pagecache::generation();
         cheevos::GameCache g;
         bool ok = cheevos::load_cache(cache_dir(), key, &g);
         auto& slot = RA.caches[key];
@@ -141,7 +150,9 @@ void achievements_ui_section(const hub::GameEntry& e) {
         text_wrapped_disabled(std::string("Achievements are not available for ") + hub::full_name(e.system) + " yet.");
         return;
     }
-    const cheevos::GameCache* g = cache_for(e.key);
+    bool known = true;
+    const cheevos::GameCache* g = cache_for(e.key, &known);
+    if (!known) return;   // the desk cursor is still moving (or a game runs): nothing rather than "play it once"
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     ImGui::PushFont(ui::F.bold);
     ImGui::TextUnformatted("Achievements");

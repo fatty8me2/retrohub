@@ -24,6 +24,8 @@
 #include "tv_mode.h"
 #include "input_gate.h"
 #include "ui_scroll.h"
+#include "qa_diskio.h"
+#include "page_cache.h"
 
 #include <cstring>
 
@@ -175,6 +177,16 @@ static int hub_main() {
     if (has_acct && !shot_path) lockout_invite_link(U(cmd_acct));
     if (has_night && !shot_path) pending_night = U(cmd_night);
     if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }
+    else {   /* a normal run ignores every screenshot aid, whatever the environment holds (docs/QA_SHOTS.md): drop HUB_SHOT_* (and the
+              * QA path overrides) before anything reads one, so a stray variable can never press a button, write a file or open a dialog */
+        std::vector<std::string> drop = {"HUB_SHORTCUT_DIR", "HUB_CHEEVOS_CFG", "HUB_CHEEVOS_DIR", "HUB_GAMEINFO_CACHE"};
+        if (wchar_t* env = GetEnvironmentStringsW()) {
+            for (const wchar_t* p = env; *p; p += wcslen(p) + 1)
+                if (wcsncmp(p, L"HUB_SHOT_", 9) == 0) { const std::wstring kv = p; drop.push_back(U(kv.substr(0, kv.find(L'=')))); }
+            FreeEnvironmentStringsW(env);
+        }
+        for (const std::string& k : drop) _putenv_s(k.c_str(), "");   // (an empty value removes it from the process environment)
+    }
     if (qm_e2e_active()) qm_e2e_boot();   // HUB_QM_E2E (needs HUB_SCREENSHOT): only the test's virtual joystick exists
     SDL_SetMainReady();
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -230,9 +242,10 @@ static int hub_main() {
              * install (nothing finished, no folders of the player's own) always runs the setup wizard, with the folder as a pre-filled
              * answer in its Games step. The file is the marker that survives a restart mid-wizard. */
             const bool fresh = hubui::wiz::fresh_install(A.st.setup_done, A.st.find_games_done, A.st.rom_folders.size(), usable);
-            const bool saved = !changed || hubui::save_settings(A.settings_path, A.st);   // keep the file if saving failed: retry next start
-            if (usable && fresh) { hubui::wiz::set_installer_prefill(true); installer_prefill_kept = true; }
-            else if (saved) { std::error_code ec; std::filesystem::remove(std::filesystem::path(W(installer_hand)), ec); }
+            /* A screenshot run uses the merged folders for this run only: it writes no hub.json and keeps the hand-off file (C: QA_SHOTS.md) */
+            const bool saved = !changed || (!g_headless && hubui::save_settings(A.settings_path, A.st));   // keep the file if saving failed: retry next start
+            if (usable && fresh) { hubui::wiz::set_installer_prefill(true); installer_prefill_kept = !g_headless; }
+            else if (saved && !g_headless) { std::error_code ec; std::filesystem::remove(std::filesystem::path(W(installer_hand)), ec); }
         }
     }
     if (const char* pg = std::getenv("HUB_START_PAGE")) {   // screenshot/testing aid: 0 Library, 1 Online, 2 Saves, 3 Controllers, 4 Settings, 5 Updates (6 = Updates too: the old What's new page), 7 Discover
@@ -253,9 +266,14 @@ static int hub_main() {
     }
     // No ROM folder is assumed: an empty library offers detected folders as one-click "Add" suggestions.
     if (!A.st.vault_dir.empty()) hub::saves::set_vault_dir(A.st.vault_dir);
+    std::string shot_run_vault;   // a screenshot run's own scratch vault (HUB_SHOT_CUSTOM_SHELVES without HUB_SHOT_VAULT): removed at exit
     if (g_headless) {   // screenshot mode never touches a real vault: HUB_SHOT_VAULT=<dir>, else a scratch dir under %TEMP%
         const std::string sv = winutil::getenv_utf8("HUB_SHOT_VAULT");   // UTF-8 (std::getenv is ANSI: u8path would throw on an accented folder)
         std::string dir = !sv.empty() ? sv : (std::filesystem::temp_directory_path() / "retrohub-shot-vault").u8string();
+        if (sv.empty() && std::getenv("HUB_SHOT_CUSTOM_SHELVES")) {   // its made-up shelves go into the vault's prefs: a vault of this run only (removed at exit), never the shared scratch one
+            dir = (std::filesystem::temp_directory_path() / ("retrohub-shot-vault-run-" + std::to_string(GetCurrentProcessId()))).u8string();
+            shot_run_vault = dir;
+        }
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::u8path(dir), ec);
         hub::saves::set_vault_dir(dir);
@@ -394,6 +412,7 @@ static int hub_main() {
         const char* hs = std::getenv("HUB_HANG_SECS");
         hang_watchdog_start(hub::data_dir() + "logs\\", hs ? std::max(1.0, std::atof(hs)) : 5.0);
     }
+    qadisk::install();   // QA only (HUB_SHOT_DISKIO=1 in a screenshot run): count the game page's file-system calls
     hublog::info("startup: services started, entering main loop (+%llu ms), %d games", hublog::since_start_ms(), (int)A.lib.size());
     bool running = true;
     bool log_game_on = false;   // hub.log: a hub-launched game process starting / ending
@@ -530,6 +549,7 @@ static int hub_main() {
         update_bell_tick();   // after group_tick(): the bell history is loaded by then
         hubupdate::tick();    // hands a downloaded update to the installer once no game is running
         userflow_tick();
+        pagecache::tick();    // the game page's cached disk facts: read again after a game ends, the window gets the focus back, an install finishes ...
         {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
             std::wstring w;
             while (invite_srv.take(&w)) { if (launch_blocked("invite link")) continue; link_join.push(U(w)); told_need_name = false; }
@@ -699,6 +719,7 @@ static int hub_main() {
         qm_pre_newframe();
         ImGui::SetKeyOwner(ImGuiKey_GamepadFaceUp, 1);   // Y is a context-action button here: ImGui's own "Y activates the focused item" must not fire it
         hang_watchdog_phase("imgui_newframe");
+        qadisk::frame_begin();
         ImGui::NewFrame();
         {   // a held X/Menu would open ImGui's window switcher; this app has no use for it (X is a real button here)
             ImGuiContext& g = *ImGui::GetCurrentContext();
@@ -723,6 +744,7 @@ static int hub_main() {
         draw_launch_tips(shot_path && std::getenv("HUB_SHOT_LAUNCH_TIPS"));   // controller tips for a game that is still starting (never over a game window)
         osk::draw_root();
         ImGui::PopFont();
+        qadisk::frame_end();
         hang_watchdog_phase("render");
         if (fps_report) { q_raster = qpc_ms(); ms_ui += q_raster - q_ui; }
         ImGui::Render();
@@ -789,6 +811,7 @@ static int hub_main() {
         }
     }
 
+    qadisk::finish();
     // clean shutdown
     hublog::info("shutdown: main loop ended");
     hub::scan_request_cancel();   // the library scan (and a ROM-cache clear / trim) stops at its next check point, so the joins below return promptly
@@ -800,7 +823,10 @@ static int hub_main() {
     find_games_shutdown();
     add_games_shutdown();
     gamepack_shutdown();
-    if (A.dirty) hubui::save_settings(A.settings_path, A.st);
+    /* A screenshot run never writes hub.json (headless-only overrides, a made-up selection): only when a QA script asks for it with
+     * HUB_SHOT_SAVE_SETTINGS=1 (qa\options_shots.ps1: open / closed sections remembered across a restart, in its sandbox) */
+    const char* shot_save = g_headless ? std::getenv("HUB_SHOT_SAVE_SETTINGS") : nullptr;
+    if (A.dirty && (!g_headless || (shot_save && shot_save[0] == '1'))) hubui::save_settings(A.settings_path, A.st);
     invite_srv.stop();
     hubjournal::stop_recovery();   // before the cloud engine and the log go away: the thread may be about to touch both
     gn_shutdown();   // hand the game night reminders back to Windows (scheduled toasts) now that RetroHub is closing
@@ -825,6 +851,10 @@ static int hub_main() {
     SDL_DestroyWindow(A.win);
     SDL_Quit();
     CoUninitialize();
+    if (!shot_run_vault.empty() && shot_run_vault.find("retrohub-shot-vault-run-") != std::string::npos) {   // only the folder this run made for itself
+        std::error_code ec;
+        std::filesystem::remove_all(std::filesystem::u8path(shot_run_vault), ec);
+    }
     hublog::shutdown();
     return SH.fail ? 2 : (qm_e2e_active() ? qm_e2e_exit_code() : 0);
 }

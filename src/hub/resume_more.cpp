@@ -1,5 +1,6 @@
 /* Plan 4 Wave 3 R1 "Resume more" (see resume_more.h, resume_logic.h, docs/SAVES.md). */
 #include "app.h"
+#include "page_cache.h"
 #include "wave3_hooks.h"
 #include "resume_logic.h"
 #include "resume_more.h"
@@ -266,16 +267,14 @@ void resume_choice_shot() {
 
 /* The game page's Saves tab: shown only when another PC's save is newer than this PC's resume point. */
 void resume_details_section(const hub::GameEntry& e) {
-    static std::string cached_key;
-    static double cached_at = -10;
-    static Facts f;
-    static bool tpak = false;   // refreshed with the facts (it stats files)
-    if (cached_key != e.key || ImGui::GetTime() - cached_at > 1.5) {
-        cached_key = e.key;
-        cached_at = ImGui::GetTime();
-        f = facts_for(e);
-        tpak = transferpak_will_use(e);
-    }
+    /* the facts stat the save files: the full-window page reads them again every 1.5 s as it always did, the desk pane once the cursor
+     * has settled on the game (pagecache::need); nothing is shown until they are known */
+    struct F2 { Facts f; bool tpak = false; };   // tpak: refreshed with the facts (it stats files)
+    static pagecache::PerGame<F2> s_facts;
+    const F2* fx = s_facts.get(e.key, 1.5, [&] { F2 r; r.f = facts_for(e); r.tpak = transferpak_will_use(e); return r; });
+    if (!fx) return;
+    const Facts& f = fx->f;
+    const bool tpak = fx->tpak;
     const bool shot = g_headless && std::getenv("HUB_SHOT_RESUME");
     if (!resumes(f.sys) && !shot) return;
     if (tpak) return;   // resume is dropped for a Transfer Pak launch: no "which save" row either
