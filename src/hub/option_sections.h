@@ -212,6 +212,25 @@ inline const char* option_changed_pill(bool changed_here, bool inherited) {
 }
 
 /* What happens to the option in an online game: Sync = the host's value is used, Locked = everyone gets the default. */
+/* ---- the two "Reset to defaults" confirms: what is erased, in plain words ---- */
+
+/* A game's Settings tab. The reset drops every choice made for the game (gs::Store::reset_game), also the ones its page does not show:
+ * for Ocarina of Time (`plays_with_game`) that is which program plays it and the Fritchii options that only show while Fritchii plays it.
+ * The settings live in the save vault, so other PCs get the reset when the saves sync. `console_name` = "Nintendo Switch 2" ... */
+inline std::string reset_game_confirm_text(const std::string& console_name, bool plays_with_game) {
+    std::string s = "Every setting for this game goes back to the " + console_name + " defaults";
+    if (plays_with_game) s += ", including which program it plays with and the Fritchii options that only show while Fritchii plays it";
+    return s + ". Your other PCs get the same change when your saves sync.";
+}
+
+/* Settings > Video & Games > Game defaults for one console (gs::Store::reset_console). For Nintendo Switch that entry also holds the
+ * Switch-wide choice of program (`wide_runner`: one is set), which is its own row above the defaults, not one of the rows reset here. */
+inline std::string reset_defaults_confirm_text(const std::string& console_name, bool wide_runner) {
+    std::string s = "Every setting here goes back to RetroHub's own default for " + console_name + " games.";
+    if (wide_runner) s += " This also clears which program Switch and Switch 2 games play with.";
+    return s + " Your other PCs get the same change when your saves sync.";
+}
+
 inline const char* option_online_pill(hub::gs::Scope s) {
     if (s == hub::gs::Scope::Sync) return "Host's choice online";
     if (s == hub::gs::Scope::Locked) return "Default when online";

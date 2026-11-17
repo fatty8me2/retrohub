@@ -393,8 +393,9 @@ void gs_draw_game_section(const hub::GameEntry& e) {   // body of the game page'
     static std::string ask_key;
     if (reset_button(over)) { ask = true; ask_key = e.key; }
     if (ask && ask_key != e.key) ask = false;   // (the page now shows another game)
-    if (reset_confirm("gs_reset_game", "Reset this game's settings?", e.title.c_str(), &ask,
-                      std::string("Every setting on this page goes back to the default for ") + hub::console_name(console) + " games.",
+    /* reset_game drops the game's whole set of choices, also rows that are not shown (Ocarina of Time's Fritchii rows while another program
+     * plays it) and "Plays with": say so. The settings live in the save vault, so the reset reaches the player's other PCs with the saves. */
+    if (reset_confirm("gs_reset_game", "Reset this game's settings?", e.title.c_str(), &ask, hubui::reset_game_confirm_text(hub::console_name(console), hookshot::supports(e)),
                       "Your saves, save states and screenshots stay as they are.")) {
         GSTORE.reset_game(e.key);
         gs_save();
@@ -430,9 +431,13 @@ void gs_draw_defaults_area() {
     static bool ask = false;
     static std::string ask_console;
     if (reset_button(any)) { ask = true; ask_console = console; }
-    const std::string name = hub::console_name(ask_console.empty() ? console : ask_console);
+    const std::string rc = ask_console.empty() ? console : ask_console;
+    const std::string name = hub::console_name(rc);
     const std::string title = "Reset the " + name + " defaults?";
-    if (reset_confirm("gs_reset_defaults", title.c_str(), nullptr, &ask, "Every setting here goes back to RetroHub's own default for " + name + " games.",
+    /* reset_console drops the console's whole entry: for Nintendo Switch that includes the Switch-wide "play with" choice (its own row
+     * higher up on this page, not one of these rows) */
+    const bool wide_runner = rc == "switch" && GSTORE.has_console_value(rc, hubemu::kRunnerKey);
+    if (reset_confirm("gs_reset_defaults", title.c_str(), nullptr, &ask, hubui::reset_defaults_confirm_text(name, wide_runner),
                       hub::console_is_switch2(ask_console) ? std::string("Nintendo Switch 2 then uses the Nintendo Switch defaults again. Games with their own settings keep them.")
                                                            : std::string("Games with their own settings keep them."))) {
         GSTORE.reset_console(ask_console);
