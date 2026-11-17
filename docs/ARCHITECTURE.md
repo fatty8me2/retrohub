@@ -519,7 +519,9 @@ Four programs can play a Switch game. The per-game setting `switch.runner` picks
 ## UI kit and layouts (`ui_scroll.h`, `ui_sheet.h`, `ui_controls.h`, `desk_view.*`, `game_page*`)
 - **The kit** (each header starts with a usage guide; layout math in `ui_layout_logic.h`, tested by `hub_uikit_test`):
   - `ui_scroll.h`: the one vertical scroll area. Themed scrollbar with its space always reserved, the controller focus kept in view with a
-    margin, LT / RT page it. Options: Eased, OverlayBar (no gutter), AutoGutter.
+    margin, LT / RT page it. Options: Eased, OverlayBar (no gutter), AutoGutter. A page that finds nothing focusable in the new view keeps
+    the old focus with its cursor hidden ("parked", `ui::nav_cursor_parked`): A does nothing until the next D-pad press, which is scored
+    from the edge of the view.
   - `ui_sheet.h`: `ui::sheet`, a page with a pinned header and footer and a scrolling body that takes the rest of the rect, hosted as an
     Overlay (a modal over the whole window; B / Esc close it) or as a Pane inside a rect (no modality; the screen around it decides what B
     does). `ui::dialog`, a centred modal with a pinned title, a scrolling middle and a pinned button row that wraps. `ui::hint_bar`.
@@ -529,6 +531,11 @@ Four programs can play a Switch game. The per-game setting `switch.runner` picks
     with the recipe in `ui_sheet.h`). Open a dialog from INSIDE a sheet callback (header, body or footer) so it stacks on an Overlay sheet:
     opened from outside, it replaces the sheet (ImGui popups at one level replace each other). The game page opens Customize, Add to shelf
     and the hack dialogs from its footer callback for this reason.
+  - **Notices and dialogs** (`notice_logic.h`, `hub_notice_test`): a real dialog is a popup under 90 % of the window; the full-window game
+    page is not one. A toast is never held back or dropped because a dialog is open: one that would lie over the dialog moves below, above
+    or beside it inside the window, or, with no clear spot, is drawn where it always was. A friend card (invite, ask, request, game night)
+    hides only while it would lie over an open dialog or menu (or past the top edge), and its clock stands still meanwhile; over the game
+    page it shows (display only: ImGui lets no click past an open modal). Start joins only an invite card that is on screen.
 - **Two layouts** (`Settings::ui_layout`, Settings > General > Layout, `desk_layout_on()`; `HUB_SHOT_LAYOUT` for screenshots). Only the
   Library page differs. `traditional` (the default): Home with the hero and shelves, All Games with its views. `desk`, the Library desk
   (`desk_view.cpp`, list model `desk_logic.h`, `hub_desk_test`): a game list on the left, the selected game's page in a pane on the right,

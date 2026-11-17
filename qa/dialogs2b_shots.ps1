@@ -1,6 +1,7 @@
 # Headless screenshots + pad walks of the dialogs converted to ui::dialog (ui_sheet.h), batch 2b: the couch party setup (and its game
 # chips), Party night / The plan, the standings popup, your profile editor, the remove / block question, Plan a session (game night), the
-# three Kanto Together dialogs and the admin "Are you sure?", plus the game night card's controller entry in the Friends list.
+# three Kanto Together dialogs and the admin "Are you sure?", plus the game night card's controller entry in the Friends list, friend
+# cards over the full-window game page and under a dialog (HUB_SHOT_CARD_AT), and Up from a dialog's buttons over a text-only middle.
 # No window is ever shown, everything is muted (SSB64_MUTE / RETROHUB_QA), no network (fake friends / room / admin data only; headless
 # never connects), no game or emulator starts and no download runs.
 #   powershell -NoProfile -ExecutionPolicy Bypass -File qa\dialogs2b_shots.ps1 [-Bin <build output dir>] [-Tag before|after] [-Out dir] [-Only regex] [-NoPad] [-NoStatic]
@@ -28,6 +29,7 @@ Get-ChildItem $Bin | Where-Object { $_.Name -ne 'userdata' } | ForEach-Object { 
 Add-Type -AssemblyName System.Drawing
 
 $fr = 'HUB_SHOT_FAKE_FRIENDS=1;HUB_SHOT_FRIENDS=1'
+$cards = 'HUB_SHOT_FAKE_FRIENDS=1;HUB_SHOT_FAKE_NIGHT=1;HUB_SHOT_FAKE_ASK=1'
 $sizes = @(@('600', '1024x600', ''), @('720', '1280x720', ''), @('1080', '1920x1080', ''), @('600s150', '1024x600', 'HUB_UI_SCALE=150'))
 $static = @(
     @{ n = 'couch';        env = 'HUB_SHOT_PARTY=couch' },
@@ -67,7 +69,21 @@ $walks = @(
     # the game night card: View opens the Friends panel (the pad lands on its top), down to the card's row, A opens the small dialog
     # (nothing else happens), B closes it, A again, right to Dismiss, A dismisses (the row goes away)
     @{ n = 'pad_nightcard';  size = '1280x720'; env = 'HUB_SHOT_FAKE_FRIENDS=1;HUB_SHOT_FAKE_NIGHT=1';                   pad = 'wait,view,down,down,down,shot:row,a,shot:dialog,b,shot:closed,a,shot:again,right,shot:dismiss_focus,a,shot:dismissed' },
-    @{ n = 'pad_nightcard150'; size = '1024x600'; env = 'HUB_SHOT_FAKE_FRIENDS=1;HUB_SHOT_FAKE_NIGHT=1;HUB_UI_SCALE=150'; pad = 'wait,view,down,down,down,shot:row,a,shot:dialog,b,shot:closed' }
+    @{ n = 'pad_nightcard150'; size = '1024x600'; env = 'HUB_SHOT_FAKE_FRIENDS=1;HUB_SHOT_FAKE_NIGHT=1;HUB_UI_SCALE=150'; pad = 'wait,view,down,down,down,shot:row,a,shot:dialog,b,shot:closed' },
+    # friend cards (game night, ask, invite) arriving while Traditional's full-window game page is open (HUB_SHOT_CARD_AT): they show over
+    # it, as over the library (the page is not a dialog)
+    @{ n = 'pad_cardsgp';     size = '1280x720'; env = "$cards;HUB_SHOT_DETAILS=fake:1;HUB_SHOT_CARD_AT=3";                   pad = 'wait,wait,wait,wait,wait,wait,shot:cards' },
+    @{ n = 'pad_cardsgp150';  size = '1024x600'; env = "$cards;HUB_SHOT_DETAILS=fake:1;HUB_SHOT_CARD_AT=3;HUB_UI_SCALE=150";  pad = 'wait,wait,wait,wait,wait,wait,shot:cards' },
+    # ... arriving while a dialog covers their place (Cheats from the page): hidden, their clock stands still; B closes it and they show
+    # with their whole time (age about 0, not the seconds they waited)
+    @{ n = 'pad_cardsfreeze'; size = '1280x720'; env = "$cards;HUB_SHOT_DETAILS=fake:1;HUB_SHOT_ACT=cheats;HUB_SHOT_CARD_AT=3"; pad = 'wait,wait,wait,wait,wait,wait,wait,wait,shot:hidden,b,wait,shot:shown' },
+    # How to play Kanto Together has only text in its middle: Up from Close (the first up puts the focus on Close) searches nothing, so the
+    # text never scrolls to its end and back and no press is eaten
+    @{ n = 'pad_ktup';        size = '1024x600'; env = 'HUB_SHOT_KT=howto;HUB_UI_SCALE=150'; pad = 'wait,up,shot:open,up,shot:up,down,up,shot:up2' },
+    # Up and B in the same frame close the dialog; the Up is never carried on into the library underneath: the focus ends where B alone
+    # leaves it
+    @{ n = 'pad_ktb';         size = '1024x600'; env = 'HUB_SHOT_KT=howto;HUB_UI_SCALE=150'; pad = 'wait,up,shot:open,b,wait,shot:closed' },
+    @{ n = 'pad_ktupb';       size = '1024x600'; env = 'HUB_SHOT_KT=howto;HUB_UI_SCALE=150'; pad = 'wait,up,shot:open,up+b,wait,shot:closed' }
 )
 
 function Run-Hub($name, $size, $envs) {
@@ -113,6 +129,7 @@ function Rows($tf) {
 
 $log = @()
 $script:fail = 0
+$script:ktb_nav = ''   # pad_ktb's final focus, compared by pad_ktupb (run both)
 function Check($what, $ok, $detail) {
     $script:log += "    CHECK $what : $(if ($ok) { 'PASS' } else { "FAIL ($detail)" })"
     if (-not $ok) { $script:fail++ }
@@ -162,6 +179,45 @@ if (-not $NoPad) {
                 Check 'opening the dialog and B fire nothing' ($early.Count -eq 0) ($early -join ' | ')
                 Check 'B closes the dialog, the Friends panel stays' ($b.Count -ge 1 -and $b[0].popup -eq 0 -and $b[0].friends -eq 1 -and $b[0].win -like '##friends*') "row=$(if ($b.Count) { "popup=$($b[0].popup) friends=$($b[0].friends) win=$($b[0].win)" })"
                 if ($w.n -eq 'pad_nightcard') { Check 'Dismiss from the dialog dismisses the card' ($acts.Count -eq 1 -and $acts[0] -like 'gn-card-dismiss *') ($acts -join ' | ') }
+            }
+            { $_ -like 'pad_cardsgp*' } {
+                $all = @(Get-Content $tf)
+                $iOpen = [array]::FindIndex([string[]]$all, [Predicate[string]]{ param($s) $s -like 'gamepage-open *' })
+                $last = if ($rows.Count) { $rows[-1] } else { $null }
+                Check 'the game page is open when the cards arrive' ($iOpen -ge 0 -and $last -and $last.popup -eq 1 -and $last.win -like 'details##uisheet*') "open line $iOpen, last row $(if ($last) { "popup=$($last.popup) win=$($last.win)" })"
+                $kinds = if ($w.n -eq 'pad_cardsgp') { @('night', 'ask', 'invite') } else { @('invite') }   # 1024x600 at 150 %: the rest wait for room above (clock stopped)
+                foreach ($k in $kinds) {
+                    $i = [array]::FindIndex([string[]]$all, [Predicate[string]]{ param($s) $s -like "card-shown $k *" })
+                    Check "the $k card shows over the game page" ($i -gt $iOpen -and $iOpen -ge 0) "card-shown $k at line $i, gamepage-open at line $iOpen"
+                }
+            }
+            'pad_cardsfreeze' {
+                $all = @(Get-Content $tf)
+                $hid = @($all | Where-Object { $_ -like 'card-hidden *' })
+                Check 'cards arriving under the Cheats dialog are hidden' ($hid.Count -ge 1) 'no card-hidden line'
+                $ages = @()
+                foreach ($h in $hid) {
+                    $k = ($h -split ' ')[1]
+                    $ih = [array]::IndexOf([string[]]$all, $h)
+                    $s = @($all[($ih + 1)..($all.Count - 1)] | Where-Object { $_ -like "card-shown $k age=*" } | Select-Object -First 1)
+                    if ($s.Count -and $s[0] -match 'age=([\d.]+)') { $ages += "$k=$($Matches[1])"; Check "the $k card shows after the dialog with its whole time (age $($Matches[1]) s)" ([double]$Matches[1] -lt 1.0) $s[0] }
+                }
+                Check 'at least one hidden card shows once the dialog closed' ($ages.Count -ge 1) 'no card-shown after card-hidden'
+            }
+            'pad_ktup' {
+                $srch = @($other | Where-Object { $_ -like 'dlg-up-*' })
+                Check 'Up from Close searches no text-only middle (no scroll to its end and back)' ($srch.Count -eq 0) ($srch -join ' | ')
+            }
+            'pad_ktb' {
+                Check 'B closes the dialog' ($b.Count -and $b[-1].popup -eq 0) "popup=$(if ($b.Count) { $b[-1].popup })"
+                $script:ktb_nav = if ($rows.Count) { $rows[-1].nav } else { '' }
+            }
+            'pad_ktupb' {
+                $last = if ($rows.Count) { $rows[-1] } else { $null }
+                Check 'Up+B closes the dialog' ($last -and $last.popup -eq 0) "popup=$(if ($last) { $last.popup })"
+                Check 'the Up is not carried on into the library (focus as after B alone)' ($last -and $script:ktb_nav -and $last.nav -eq $script:ktb_nav) "nav=$(if ($last) { $last.nav }) B alone=$($script:ktb_nav)"
+                $pg = @($other | Where-Object { $_ -like 'dlg-up-page *' })
+                Check 'no search page carried past the closing dialog' ($pg.Count -eq 0) ($pg -join ' | ')
             }
             default { if ($b.Count) { Check 'B closes the dialog' ($b[-1].popup -eq 0) "popup=$($b[-1].popup)" } }
         }

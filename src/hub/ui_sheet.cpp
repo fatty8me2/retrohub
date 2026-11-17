@@ -28,6 +28,7 @@ struct ModalMemo {
     ImGuiID body_win = 0;      // dialog: the scrolling middle's window (last frame)
     float btn_top = -1.f;      // dialog: screen y of the button row's first line (last frame)
     bool up_search = false;    // dialog: an Up from the buttons is still looking for an item in the middle (moved on to the next frame)
+    float up_from = -1.f;      // dialog: the middle's scroll when that search began (put back when it finds nothing)
 };
 std::unordered_map<ImGuiID, ModalMemo> g_memo;
 
@@ -125,34 +126,56 @@ std::vector<DlgFrame> g_dlg;
  * view. ImGui scores only the visible part of a NavFlattened child when the focus enters it from its parent window (NavScoreItem), so an
  * item below the visible part (a friend's "Ask ... to host" row under a long description) could not be reached that way. Before the middle
  * is drawn: scroll it to its end, so the move scores what is there. After the buttons: when the move found nothing in the middle, scroll it
- * up a page and carry the move on to the next frame, until something shows or the middle is at its top. True = this frame's move is one. */
+ * up a page and carry the move on to the next frame, until something shows or the middle is at its top; finding nothing, the middle goes
+ * back to where it was. A middle with nothing focusable (only text) is never searched. True = this frame's move is one. */
+
+/* The search stops. `found` = it reached an item of the middle (the move takes the focus there and the view follows it); otherwise the
+ * middle goes back to where it was before the search scrolled it. */
+void up_search_stop(ModalMemo& m, ImGuiWindow* mid, bool found) {
+    if (m.up_search && !found && mid && m.up_from >= 0.f && std::fabs(mid->Scroll.y - m.up_from) >= 0.5f) {
+        scroll_set(mid->ID, m.up_from);
+        shot_trace("dlg-up-restore", std::to_string((int)m.up_from));
+    }
+    m.up_search = false;
+    m.up_from = -1.f;
+}
+
 bool up_into_middle_begin(ModalMemo& m) {
     ImGuiContext& g = *GImGui;
     ImGuiWindow* dw = g.CurrentWindow;   // the dialog itself (its buttons are its own items)
     const bool up = g.NavMoveSubmitted && g.NavMoveDir == ImGuiDir_Up && g.NavWindow == dw && g.NavLayer == ImGuiNavLayer_Main &&
                     !(g.NavMoveFlags & (ImGuiNavMoveFlags_IsTabbing | ImGuiNavMoveFlags_FocusApi | ImGuiNavMoveFlags_IsPageMove | ImGuiNavMoveFlags_ScrollToEdgeY));
     ImGuiWindow* mid = m.body_win ? ImGui::FindWindowByID(m.body_win) : nullptr;
-    if (!up || !mid || !mid->WasActive || !hubui::kit::overflows(mid->ScrollMax.y) || m.btn_top < 0.f) { m.up_search = false; return false; }
+    if (!up || !mid || !mid->WasActive || !hubui::kit::overflows(mid->ScrollMax.y) || m.btn_top < 0.f) { up_search_stop(m, mid, false); return false; }
     if ((g.NavMoveFlags & ImGuiNavMoveFlags_Forwarded) && m.up_search) return true;   // our own move, carried on: the middle was paged already
+    /* Nothing focusable in the middle last frame (only text): there is nothing to find, so no search (it scrolled the text to its end and
+     * back and ate D-pad presses meanwhile). ImGui marks the layer for every item it scores, clipped ones too (ItemAdd, before the clip test),
+     * and a NavFlattened child passes its items' layers up to its parent (EndChild). NavLayersActiveMaskNext holds last frame's whole tally
+     * until the middle begins again below (Begin copies it to NavLayersActiveMask, which still holds the frame before). */
+    if (!(mid->DC.NavLayersActiveMaskNext & (1 << ImGuiNavLayer_Main))) { m.up_search = false; return false; }
     const ImRect cur = ImGui::WindowRectRelToAbs(dw, dw->NavRectRel[ImGuiNavLayer_Main]);
     if (cur.IsInverted() || cur.Min.y < m.btn_top - sp(0.5f) || cur.Min.y > m.btn_top + sp(1.f)) { m.up_search = false; return false; }   // not the buttons' first line
+    m.up_from = mid->Scroll.y;   // put back if the search reaches the top without finding anything
     if (mid->Scroll.y < mid->ScrollMax.y - 0.5f) scroll_set(mid->ID, mid->ScrollMax.y);   // applied when the middle begins, below
     m.up_search = true;
+    shot_trace("dlg-up-search", std::to_string((int)mid->Scroll.y));   // QA (HUB_SHOT_TRACE): the middle is searched for an item above the buttons
     return true;
 }
 
 void up_into_middle_end(ModalMemo& m) {
     ImGuiContext& g = *GImGui;
     ImGuiWindow* mid = m.body_win ? ImGui::FindWindowByID(m.body_win) : nullptr;
-    if (!mid || !g.NavMoveSubmitted || g.NavMoveForwardToNextFrame) { m.up_search = false; return; }
+    if (!mid || !g.NavMoveSubmitted || g.NavMoveForwardToNextFrame) { up_search_stop(m, mid, false); return; }
     /* the result ImGui is about to take (NavMoveRequestApplyResult's choice) */
     const ImGuiNavItemData* res = g.NavMoveResultLocal.ID ? &g.NavMoveResultLocal : g.NavMoveResultOther.ID ? &g.NavMoveResultOther : nullptr;
     const ImGuiNavItemData& oth = g.NavMoveResultOther;
     if (res && res != &oth && oth.ID && oth.Window && oth.Window->ParentWindow == g.NavWindow &&
         (oth.DistBox < res->DistBox || (oth.DistBox == res->DistBox && oth.DistCenter < res->DistCenter)))
         res = &oth;
-    if ((res && res->Window && ImGui::IsWindowChildOf(res->Window, mid, false)) || mid->Scroll.y <= 0.5f) { m.up_search = false; return; }
+    const bool found = res && res->Window && ImGui::IsWindowChildOf(res->Window, mid, false);
+    if (found || mid->Scroll.y <= 0.5f) { up_search_stop(m, mid, found); return; }   // found, or the top reached with nothing there
     scroll_set(mid->ID, std::max(0.f, mid->Scroll.y - std::max(sp(4.f), mid->InnerRect.GetHeight() * 0.8f)));
+    shot_trace("dlg-up-page", std::to_string((int)mid->Scroll.y));
     ImGui::NavMoveRequestForward(g.NavMoveDir, g.NavMoveClipDir, g.NavMoveFlags & ~ImGuiNavMoveFlags_Forwarded, g.NavMoveScrollFlags);
 }
 
@@ -308,8 +331,16 @@ void dialog_end() {
     g_dlg.pop_back();
     ModalMemo& m = g_memo[f.memo];
     m.buttons_h = std::max(0.f, ImGui::GetCursorPosY() - f.btn_y0);
-    if (f.up) up_into_middle_end(m);   // (every button scored: was an item of the middle found?)
     if (f.opts.back_closes && f.open && *f.open && modal_back()) { *f.open = false; consume_back(); }
+    if (f.up) {
+        if (f.open && !*f.open) {   // the dialog closes this frame: never carry the move on (it would land in the window underneath)
+            ImGuiContext& g = *GImGui;
+            if (m.up_search && (g.NavMoveFlags & ImGuiNavMoveFlags_Forwarded) && g.NavMoveSubmitted) ImGui::NavMoveRequestCancel();   // our own carried move
+            up_search_stop(m, nullptr, false);
+        } else {
+            up_into_middle_end(m);   // (every button scored: was an item of the middle found?)
+        }
+    }
     if (f.open && !*f.open) {
         ImGui::CloseCurrentPopup();
         m.was_open = false;

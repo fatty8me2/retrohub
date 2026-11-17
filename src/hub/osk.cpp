@@ -1,6 +1,7 @@
 #include "app.h"
 #include "osk.h"
 #include "ui_kit.h"
+#include "ui_scroll.h"
 
 namespace osk {
 namespace {
@@ -328,6 +329,7 @@ void draw_folder() {
     ImGui::Dummy(ImVec2(1, 1));
 
     if (fb.done || fb.cancelled) {
+        if (fb.done && !fb.made_up_pick.empty()) shot_trace("osk-folder-pick", fb.made_up_pick);   // screenshot run: the made-up choice is only traced
         S.fb_result = fb.done ? fb.result : "";
         if (fb.done) S.last_folder = fb.pick_files ? parent_of(fb.result) : fb.result;
         S.fb_open = false;
@@ -361,7 +363,8 @@ bool input(const char* id, const char* hint, char* buf, size_t size, ImGuiInputT
     bool r = hint ? ImGui::InputTextWithHint(id, hint, buf, size, flags) : ImGui::InputText(id, buf, size, flags);
     const ImGuiID wid = ImGui::GetItemID();
     /* ImGui activates a nav-focused InputText on Enter only (A is a "tap"), so A on the focused field opens the keyboard itself. */
-    const bool pad_a = !hub_input_blocked() && A.pad_mode && ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_NavEnableGamepad;
+    const bool pad_a = !hub_input_blocked() && A.pad_mode && ImGui::IsItemFocused() && !ui::nav_cursor_parked() &&   // parked: the field is out of view after an LT / RT page
+                       ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_NavEnableGamepad;
     const bool forced = g_open_req;
     g_open_req = false;
     if (!S.open && !S.fb_open && (ImGui::IsItemActivated() || pad_a || forced)) {

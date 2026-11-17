@@ -5,6 +5,7 @@
 #include "qm_logic.h"
 #include "cheat_view_logic.h"
 #include "glyph_logic.h"
+#include "ui_scroll.h"
 
 #include <xinput.h>
 
@@ -282,7 +283,8 @@ bool cheat_row(const cheatstore::Row& r, bool enabled, bool* removed, bool* acti
     ImGui::PushID(r.cheat.id.c_str());
     ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
     ImGui::InvisibleButton("##row", ImVec2(w - (r.custom ? rm_w + sp(1.f) : 0.f), h), ImGuiButtonFlags_EnableNav);
-    bool pressed = ImGui::IsItemClicked(ImGuiMouseButton_Left) || (ImGui::IsItemFocused() && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_Space, false)));
+    bool pressed = ImGui::IsItemClicked(ImGuiMouseButton_Left) || (ImGui::IsItemFocused() && !ui::nav_cursor_parked() &&   // parked: the row is out of view after an LT / RT page
+                                                                  (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_Space, false)));
     bool hov = ImGui::IsItemHovered(), foc = ImGui::IsItemFocused() && (A.pad_mode || ImGui::GetIO().NavVisible);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float rad = sp(1.75f);

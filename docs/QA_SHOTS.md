@@ -23,7 +23,7 @@ Exit codes: 0 = shot saved. **2 = a requested aid could not be honoured (unknown
 | `HUB_SHOT_PAGE` | `library`, `discover[:console]`, `online`, `saves`, `controllers`, `settings[:section]`, `about` (= `updates`) | open a page. `settings:<section>`: index `0-4` or name `general`, `online`, `video` (`games`), `account`, `help`. An unknown page or section exits 2 (no clamping) |
 | `HUB_SHOT_SETTINGS_TAB` | 0-4 | (page_about.cpp) Settings section when the Updates page is used as the start; prefer `HUB_SHOT_PAGE=settings:<name>` |
 | `HUB_SHOT_KEYS` | `right,down,enter,esc,f2,i,f,o,j,pgdn,...,a-z` | keyboard presses at 0.3 s steps |
-| `HUB_SHOT_PAD` | `1`/`0` or `down,a,lb,shot:<name>,...` | controller glyphs / pad presses; `shot:<name>` saves `<stem>-<name>.bmp` |
+| `HUB_SHOT_PAD` | `1`/`0` or `down,a,lb,shot:<name>,...` | controller glyphs / pad presses; `shot:<name>` saves `<stem>-<name>.bmp`; `<a>+<b>` (e.g. `up+b`) presses both in the same frame; `toast:leave:<age>` (with `HUB_SHOT_FAKE_ROOM`) asks "Leave and join" for Jake's room the way X on his row does and makes that toast `<age>` seconds old (trace `toast-age <age>`), so Y can be pressed at a known age |
 | `HUB_SHOT_CLICK` | `x,y;rx,y;...` | mouse clicks (`r` = right click), window pixels |
 | `HUB_SHOT_WHEEL` | `x,y,notches` | mouse wheel |
 | **`HUB_SHOT_HOVER`** | `x,y` (window pixels) | **parks the virtual mouse there and waits 1.2 s so the tooltip of that spot shows.** Any other text is the Friends panel's own "hovered friend uid" aid |
@@ -83,6 +83,8 @@ Exit codes: 0 = shot saved. **2 = a requested aid could not be honoured (unknown
 | `HUB_SHOT_FRCONF` | `remove`, `block` | with `HUB_SHOT_FAKE_FRIENDS` + `HUB_SHOT_FRIENDS`: the "Are you sure?" question for Mia (nothing is sent) |
 | `HUB_SHOT_PLAN_NIGHT` | any | with `HUB_SHOT_FAKE_FRIENDS` + `HUB_SHOT_FRIENDS`: Mia's chat with the "Plan a session" (game night) dialog open |
 | `HUB_SHOT_FAKE_NIGHT` | any | with `HUB_SHOT_FAKE_FRIENDS`: a game night starting now (its card, and its row at the top of the Friends list). Trace lines: `gn-card-focus <id>` (the D-pad is on the row), `gn-card-open <id>` (A / click opened its dialog), `gn-card-act <Host\|Join> <id>`, `gn-card-dismiss <id>` |
+| **`HUB_SHOT_CARD_AT`** | seconds | with `HUB_SHOT_FAKE_FRIENDS` (`_FAKE_NIGHT`, `_FAKE_ASK`): the made-up friends' cards (invite, ask, game night) arrive that many seconds into the run instead of at the start, e.g. while a game page (`HUB_SHOT_DETAILS`) or a dialog over it (`HUB_SHOT_ACT=cheats`) is open; their age is then not held at 1 s, so the trace shows it. Trace lines (every card, any run): `card-shown <invite\|ask\|request\|night> age=<s>` each time a card starts being drawn, `card-hidden <kind>` each time it stops (it would lie over a dialog or menu, or past the top edge; its clock stands still meanwhile) |
+| **`HUB_SHOT_TOAST`**, `HUB_SHOT_TOAST_BAD` | text (no `;`) | that notice (warning / error colour) arrives `HUB_SHOT_TOAST_AT` seconds into the run (default 2.5: a dialog opened by another aid, e.g. `HUB_SHOT_CHEATS=list`, is up by then) and lasts `HUB_SHOT_TOAST_SECS` (default 8). Trace: `toast-drawn <spot> <text>` once per spot, where spot is `default` (its usual place), `below` / `above` / `right` / `left` (moved clear of an open dialog) or `over` (no clear spot: drawn where it always was, over the dialog) |
 
 ## Emulator dialogs
 
@@ -109,6 +111,16 @@ B, a long middle scrolling under pinned buttons), from a sandbox copy. Output an
 standings, your profile editor, the remove / block question, Plan a session, the three Kanto Together dialogs, the admin question, and the
 game night card's row in the Friends list (focus, A opens its dialog, B fires nothing, Dismiss). Output: `build\qa_dialogs2b_out\<tag>`.
 With the focus in a dialog's scrolling middle the trace's `win=` is the middle (`<popup name>/##dlg_body_...`): match it with `-like '<name>*'`.
+UI kit trace lines: `dlg-up-search <scroll>` (Up from a dialog's pinned buttons searches its middle for an item, scrolled to its end first;
+never for a middle with nothing focusable), `dlg-up-page <scroll>` (the search pages up and carries the move on), `dlg-up-restore <scroll>`
+(it found nothing: the middle goes back to where it was); `page-keep-focus` (an LT / RT page found nothing focusable in the new view: the
+focus stays out of view with its cursor hidden, so A does nothing) and `page-retarget` (the next D-pad press is scored from the edge of the
+view). The pad file / folder browser in a screenshot run lists made-up entries; choosing one of its folders only writes
+`osk-folder-pick <path>` (nothing is handed back, so no real folder is added and no scan starts).
+**Careful:** pickers that do not go through the pad browser still open the real Windows file dialog in a screenshot run
+(`picker_focus_ok()` is true headless), a visible window that blocks the run: never let a pad walk press A on Add games'
+"Choose game files..." (its default focus is "Change...", one Down reaches it). Reach the pad folder browser through the PlayStation BIOS
+prompt (`HUB_SHOT_EMU=ps1bios`, `down,left,a`) as `qa\dialogs_shots.ps1` does.
 `qa\dialogs2a_shots.ps1` does the same for batch 2a (Customize and the shelf dialogs, a friend's game, the pack Uninstall confirm, the username prompt, the account confirms, Find my games) in both layouts. Aids it adds: `HUB_SHOT_CUSTOM_SHELVES=<n>` (made-up shelves, screenshot vault only), `HUB_SHOT_GP_UNINSTALL=<key>[:pad]` (that game shows as installed from a pack; the confirm opens by itself, or by pad with `:pad`; nothing is deleted), `HUB_SHOT_GHOST_OPEN=<title>` (as well as an index). **`HUB_SHOT_FINDGAMES` never scans this PC:** without `HUB_FINDGAMES_HOME` it shows made-up folders.
 
 ## Matrix

@@ -77,6 +77,8 @@ $static = @(
 )
 # Pad walks: wait = the first press (wakes the pad focus, shows the default), shots on the way, B at the end. Never A on an action.
 $d10 = (@('down') * 10) -join ','
+$bkText = 'Could not back up your save (the save file is in use). Cheats are on anyway.'   # cheats_ui.cpp's two notices, with made-up errors
+$rsText = 'Could not restore: the backup folder is missing'
 $walks = @(
     @{ n = 'pad_azahar';      size = '1280x720'; env = 'HUB_SHOT_EMU=azahar';                 pad = 'wait,shot:open,right,shot:moved,b,shot:closed' },
     @{ n = 'pad_ps1bios';     size = '1280x720'; env = 'HUB_SHOT_EMU=ps1bios';                pad = 'wait,shot:open,down,down,shot:moved,b,shot:closed' },
@@ -94,7 +96,16 @@ $walks = @(
     @{ n = 'pad_conflict';    size = '1280x720'; env = 'HUB_SHOT_CLOUD_DIALOG=conflict';      pad = 'wait,shot:open,right,shot:moved,b,shot:closed' },
     @{ n = 'pad_conflict8';   size = '1024x600'; env = 'HUB_SHOT_CLOUD_DIALOG=conflictmany;HUB_UI_SCALE=150'; pad = 'wait,shot:open,rt,shot:rt,rt,shot:rt2,down,shot:moved,b,shot:closed' },
     @{ n = 'pad_lease';       size = '1280x720'; env = 'HUB_SHOT_CLOUD_DIALOG=lease';         pad = 'wait,shot:open,right,shot:moved,b,shot:closed' },
-    @{ n = 'pad_waiting';     size = '1280x720'; env = 'HUB_SHOT_CLOUD_DIALOG=waiting'; pad = 'wait,shot:open,b,shot:after_b' }
+    @{ n = 'pad_waiting';     size = '1280x720'; env = 'HUB_SHOT_CLOUD_DIALOG=waiting'; pad = 'wait,shot:open,b,shot:after_b' },
+    # The pad folder browser lists made-up entries in a screenshot run; choosing one of its folders is only traced, nothing is handed back
+    # (the made-up C:\ is this PC's C:\: Add games would add it and scan it). Reached the way pad_ps1browse does (the PlayStation BIOS
+    # prompt's Choose); the folder chosen is the made-up Desktop shortcut, a path this PC does not have, so an older build finds nothing
+    # there either. NEVER walk to Add games' "Choose game files...": it opens the Windows file dialog even in a screenshot run (a visible
+    # window).
+    @{ n = 'pad_madeupfolder'; size = '1280x800'; env = 'HUB_SHOT_EMU=ps1bios;HUB_SHOT_FAKE_LIB=14'; pad = 'shot:b0,down,left,a,shot:b_browser,a,shot:made_up_folder,a,shot:picked,b,shot:b_closed' },
+    # The Cheats dialog's own notices (HUB_SHOT_TOAST*, at 2.5 s) show while it is open: beside it when a spot fits, over it otherwise
+    @{ n = 'pad_cheatstoast';    size = '1280x720'; env = "HUB_SHOT_CHEATS=list;HUB_SHOT_TOAST=$bkText;HUB_SHOT_TOAST_BAD=$rsText";                   pad = 'wait,wait,wait,wait,shot:toasts,b,shot:closed' },
+    @{ n = 'pad_cheatstoast150'; size = '1024x600'; env = "HUB_SHOT_CHEATS=list;HUB_SHOT_TOAST=$bkText;HUB_SHOT_TOAST_BAD=$rsText;HUB_UI_SCALE=150"; pad = 'wait,wait,wait,wait,shot:toasts,b,shot:closed' }
 )
 
 function Run-Hub($name, $size, $envs) {
@@ -160,7 +171,43 @@ if (-not $NoPad) {
                 $log += "    CHECK B closes: $(if ($closed) { 'PASS' } else { 'FAIL' })"
                 if (-not $closed) { $fail++ }
             }
+            if ($w.n -eq 'pad_madeupfolder') {
+                $tl = @(Get-Content $tf)
+                $pick = @($tl | Where-Object { $_ -like 'osk-folder-pick *' })
+                $used = @($tl | Where-Object { $_ -like 'notice *' })   # what the prompt did with a folder handed back (e.g. "No PlayStation BIOS ... in that folder.")
+                $ok = $pick.Count -ge 1 -and $used.Count -eq 0
+                $log += "    CHECK a made-up folder choice is only traced (nothing handed back): $(if ($ok) { 'PASS' } else { 'FAIL (' + (($pick + $used) -join ' | ') + ')' })"
+                if (-not $ok) { $fail++ }
+            }
+            if ($w.n -like 'pad_cheatstoast*') {   # each notice is drawn while the dialog is open (before the walk's B), never held back
+                $tl = @(Get-Content $tf)
+                $iB = [array]::FindIndex([string[]]$tl, [Predicate[string]]{ param($s) $s -like 'pad shot:toasts *' })
+                foreach ($txt in @($bkText, $rsText)) {
+                    $i = [array]::FindIndex([string[]]$tl, [Predicate[string]]{ param($s) $s -like "toast-drawn * $txt" })
+                    $ok = $i -ge 0 -and $iB -ge 0 -and $i -lt $iB
+                    $spot = if ($i -ge 0) { ($tl[$i] -split ' ')[1] } else { 'never' }
+                    $log += "    CHECK '$txt' shows while Cheats is open (spot: $spot): $(if ($ok) { 'PASS' } else { "FAIL (drawn at line $i, B at line $iB)" })"
+                    if (-not $ok) { $fail++ }
+                }
+                $held = @($tl | Where-Object { $_ -like 'toast-held *' })
+                $log += "    CHECK no notice held back under the dialog: $(if (-not $held.Count) { 'PASS' } else { 'FAIL (' + ($held -join ' | ') + ')' })"
+                if ($held.Count) { $fail++ }
+            }
         }
+    }
+    # The hub goes idle with a dialog open once its notice has gone (a notice held under a dialog never expired and kept every loop
+    # drawing): Cheats open, a 2 s notice, the idle throttle on as if behind a game (HUB_IDLE_SIM), frames presented per second measured
+    if ('idle_cheatstoast' -match $Only) {
+        $rep = Join-Path $Out 'idle_cheatstoast.fps.txt'
+        Remove-Item $rep -ErrorAction SilentlyContinue
+        $r = Run-Hub 'idle_cheatstoast' '1280x720' "HUB_SHOT_CHEATS=list;HUB_SHOT_TOAST=$bkText;HUB_SHOT_TOAST_SECS=2;HUB_SHOT_SECS=16;HUB_SHOT_NOWAIT=1;HUB_IDLE_SIM=bg,noraster;HUB_FPS_REPORT=$rep"
+        $log += "idle_cheatstoast : $r"
+        Write-Output "idle_cheatstoast : $r"
+        $line = if (Test-Path $rep) { (Get-Content $rep -Raw).Trim() } else { '' }
+        $log += "    $line"
+        $ok = $line -match 'steady \(after 3 s\): secs=[\d.]+ presented_per_s=([\d.]+)' -and [double]$Matches[1] -lt 30
+        $log += "    CHECK idle with Cheats open after the notice expired (frames/s in steady state under 30): $(if ($ok) { 'PASS' } else { 'FAIL' })"
+        if (-not $ok) { $fail++ }
     }
 }
 Remove-Item -Recurse -Force $box

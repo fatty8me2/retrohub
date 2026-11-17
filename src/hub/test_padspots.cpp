@@ -27,6 +27,21 @@ int main() {
         CHECK(toast_pad_pick({T(true, true, 5.0), T(true, false, 0.1)}, env) == -1);   // the newer one is still fading in: not the older one either
         CHECK(toast_pad_pick({T(true, true, 5.0), T(true, false, 9.0)}, env) == 0);   // the newer one is fading out: the older still shows its pill
     }
+    {   // a toast whose action leaves a room ("Leave and join"): Y only after it has been on screen for the longer delay
+        auto C = [](double age) { ToastPadIn t = T(true, true, age); t.confirm = true; return t; };
+        CHECK(kToastConfirmDelay == 1.5 && toast_pad_delay(true) == kToastConfirmDelay && toast_pad_delay(false) == kToastPadDelay);
+        CHECK(toast_pad_pick({C(0.6)}, env) == -1);                   // a Y at 0.6 s does nothing (an ordinary action toast would take it)
+        CHECK(toast_pad_pick({T(true, true, 0.6)}, env) == 0);
+        CHECK(toast_pad_pick({C(1.49)}, env) == -1);
+        CHECK(toast_pad_pick({C(1.6)}, env) == 0);                    // at 1.6 s it acts
+        CHECK(toast_pad_pick({T(true, true, 5.0), C(1.0)}, env) == -1);   // still too young: never the older toast underneath either
+        CHECK(toast_pad_pick({C(5.0), T(true, true, 0.6)}, env) == 1);    // an ordinary newer toast keeps its own short delay
+        // the press itself must have begun after the toast appeared (Y held since before it popped up never counts)
+        CHECK(toast_pad_press_ok(1.6, 0.0));
+        CHECK(!toast_pad_press_ok(1.6, 1.7));
+        CHECK(!toast_pad_press_ok(1.6, 1.6));
+        CHECK(!toast_pad_press_ok(1.6, -1.0));                        // not held at all: no press
+    }
     {   // anything else owning the pad turns it off
         const std::vector<ToastPadIn> one = {T(true, true, 2.0)};
         ToastPadEnv e = env; e.pad_mode = false;      CHECK(toast_pad_pick(one, e) == -1);   // mouse / keyboard: no glyph, no Y

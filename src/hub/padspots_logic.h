@@ -14,11 +14,16 @@ namespace padspots {
  * The toast shows a Y glyph beside its action, and Y presses that action, the same way Y presses Undo on the "removed from library"
  * card. A different button from the one that asked (Start / A / X joined the invite), so a double press can never confirm by itself. */
 constexpr double kToastPadDelay = 0.5;   // seconds on screen before Y counts: a press meant for the screen underneath, made as the toast pops up, is not taken
+/* A toast whose action leaves a room or cannot be undone ("Leave and join" is the confirmation for leaving a room with other players in
+ * it): Y also means Details / menu elsewhere, so it counts only once the toast, and with it its Y glyph, has been on screen this long. */
+constexpr double kToastConfirmDelay = 1.5;
+inline double toast_pad_delay(bool confirm) { return confirm ? kToastConfirmDelay : kToastPadDelay; }
 
 struct ToastPadIn {
     bool has_action = false;     // the toast carries an action
     bool pill_shown = false;     // its action pill is drawn this frame (fully faded in, not fading out): the mouse can click it too
     double age = 0.0;            // seconds since it appeared
+    bool confirm = false;        // its action leaves a room or cannot be undone: the longer delay
 };
 struct ToastPadEnv {
     bool pad_mode = false;       // the player is on a controller (glyphs are shown)
@@ -38,12 +43,14 @@ inline int toast_pad_pick(const std::vector<ToastPadIn>& toasts, const ToastPadE
     for (int i = (int)toasts.size() - 1; i >= 0; --i) {
         const ToastPadIn& t = toasts[(size_t)i];
         if (!t.has_action) continue;
-        if (t.age < kToastPadDelay) return -1;
+        if (t.age < toast_pad_delay(t.confirm)) return -1;
         if (!t.pill_shown) continue;   // fading out
         return i;
     }
     return -1;
 }
+/* A Y press counts for the toast showing the glyph only when it began after the toast appeared (`y_down_s` = how long Y has been held). */
+inline bool toast_pad_press_ok(double toast_age, double y_down_s) { return y_down_s >= 0.0 && y_down_s < toast_age; }
 
 /* ---- Library Sort chip ---- */
 /* Direction arrow after the chip's words: true = pointing down (descending: newest, most played or Z first). The natural order of each

@@ -23,6 +23,7 @@
 #include "display.h"
 #include "tv_mode.h"
 #include "input_gate.h"
+#include "ui_scroll.h"
 
 #include <cstring>
 
@@ -703,7 +704,8 @@ static int hub_main() {
             ImGuiContext& g = *ImGui::GetCurrentContext();
             g.NavWindowingTarget = g.NavWindowingTargetAnim = nullptr;
             g.NavWindowingToggleLayer = false;
-            if (A.pad_mode && g.NavWindow) g.NavCursorVisible = true;   // pad users always see where the focus is (ImGui hides it after a mouse click)
+            if (ui::nav_cursor_parked()) g.NavCursorVisible = false;    // ui_scroll.h: an LT / RT page left the focus out of view; A stays inert until the D-pad re-targets
+            else if (A.pad_mode && g.NavWindow) g.NavCursorVisible = true;   // pad users always see where the focus is (ImGui hides it after a mouse click)
             if (A.pad_first) {   // first pad input after using the mouse/keyboard: if nothing is focused, land on the page's default item
                 A.pad_first = false;
                 if (!g.NavId || !g.NavWindow) A.nav_seed = true;

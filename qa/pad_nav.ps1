@@ -105,6 +105,11 @@ Check "B closes the friends panel and refocuses" ($bs[-1].friends -eq 0 -and $bs
 $r = Run "toast" "start,wait" @{ HUB_SHOT_FAKE_FRIENDS = "1"; HUB_SHOT_FRIENDS = "1" }
 Check "Start joins the invite toast" (@($r.other | Where-Object { $_ -like "join-toast *" }).Count -ge 1) ($r.other -join "|")
 
+# 6b. an invite card with no room above it (1024x420 at UI size 200 %) is not drawn: Start does not join it (it opens the Friends panel)
+$r = Run "toast_hidden" "wait,start,wait" @{ HUB_SHOT_FAKE_FRIENDS = "1"; HUB_UI_SCALE = "200"; SIZE = "1024x420" }
+$joined = @($r.other | Where-Object { $_ -like "join-toast *" })
+Check "Start never joins an invite card that is not on screen" ($joined.Count -eq 0 -and @($r.other | Where-Object { $_ -like "card-hidden invite*" }).Count -ge 1) ($r.other -join "|")
+
 # 7. Add-games dialog: reachable, B closes it
 $r = Run "addgames" "down,down,b" @{ HUB_SHOT_ADDGAMES = "dialog" }
 $rows = @($r.rows)
@@ -154,6 +159,20 @@ foreach ($pg in @(@("controllers", "rb,rb,rb,rb"), @("settings", "rb,rb,rb,rb,rb
   Check "LT/RT scroll $($pg[0])" ($sc.Count -eq 4 -and $sc[1] -gt $sc[0] -and $sc[3] -lt $sc[2] -and $sc[1] -gt 0) ($sc -join ",")
   Check "focus stays on the page after LT/RT ($($pg[0]))" (@($rows | Where-Object { $_.tok -in @("rt", "lt") -and $_.win -notlike "*page_*" }).Count -eq 0) "focus left the page"
 }
+
+# 11b. LT / RT onto a view with nothing focusable (Play Online at 1024x600, UI size 150 %, the end of the how-to panel): the focus stays on
+# the item now out of view with its cursor hidden, A does nothing (it collapsed the how-to panel out of view before), and the next D-pad
+# press lands on what is on screen (the nearest item, scrolled into view), not back where the page started
+$r = Run "online_park" "down,down,down,rt,rt,rt,rt,a,up" @{ SIZE = "1024x600"; HUB_UI_SCALE = "150"; HUB_SHOT_PAGE = "online"; HUB_SHOT_FAKE_FRIENDS = "1"; HUB_SHOT_FAKE_ROOMS = "3"; HUB_SHOT_INVITE_AGE = "40"; HUB_SHOT_SECS = "4" }
+$rows = @($r.rows)
+$rt = @($rows | Where-Object { $_.tok -eq "rt" })
+$pa = @($rows | Where-Object { $_.tok -eq "a" })[0]
+$pu = @($rows | Where-Object { $_.tok -eq "up" })[0]
+Check "LT/RT: the last page found nothing focusable (the focus kept)" (@($r.other | Where-Object { $_ -like "page-keep-focus*" }).Count -ge 1) ($r.other -join "|")
+Check "LT/RT: A on the focus out of view does nothing" ($rt.Count -eq 4 -and $pa -and $pa.nav -eq $rt[3].nav -and $pa.sy -eq $rt[3].sy) "rt: nav=$(if ($rt.Count) { $rt[-1].nav }) sy=$(if ($rt.Count) { $rt[-1].sy }); a: nav=$(if ($pa) { $pa.nav }) sy=$(if ($pa) { $pa.sy })"
+$upSy = if ($pu -and $pu.sy -match '^(\d+)/') { [int]$Matches[1] } else { -1 }
+$rtSy = if ($rt.Count -eq 4 -and $rt[3].sy -match '^(\d+)/') { [int]$Matches[1] } else { -1 }
+Check "LT/RT: the next D-pad press lands on an item in view, near the view" ($pu -and $pu.nav -ne "00000000" -and $pu.y -ge 0 -and $pu.y -le 600 -and $upSy -ge 0 -and ($rtSy - $upSy) -lt 300) "up: nav=$(if ($pu) { $pu.nav }) y=$(if ($pu) { $pu.y }) sy=$(if ($pu) { $pu.sy }) (was $rtSy)"
 
 # 12. PlayStation BIOS prompts: A opens the pad folder browser, Back closes it, B closes the prompt
 foreach ($b in @("ps1bios", "ps2bios")) {

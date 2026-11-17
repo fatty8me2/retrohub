@@ -88,6 +88,8 @@ struct FolderBrowser {
     bool pick_files = false;                // file mode: list matching files, no "Select this folder"
     std::vector<std::string> filters;       // file mode: extensions incl. dot (".json"); empty = every file
     bool made_up = false;                   // screenshot runs: made-up shortcuts, drives and folders; the disk is never read
+    std::string made_up_pick;               // made_up: the folder chosen. It is only noted (a trace line), never handed back as `result`:
+                                            // the made-up C:\ is this PC's C:\, and choosing it must not add a real folder or start a scan
 
     bool matches(const std::string& filename) const;
     void open(const std::string& start);   // falls back to the drive list when start is not a folder
@@ -96,6 +98,8 @@ struct FolderBrowser {
     void up();         // B: parent folder (drive list above a drive root); cancels from the drive list
     void choose_here();   // Start: choose the current folder
     void move(int d);
+private:
+    void pick(const std::string& path);   // done; `result` = path (made_up folder mode: made_up_pick = path, result empty)
 };
 std::string parent_of(const std::string& path);   // "" when path is a drive root / empty
 

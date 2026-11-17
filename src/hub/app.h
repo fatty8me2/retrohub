@@ -113,6 +113,7 @@ struct Toast {
     bool top = false;   // stacks from the top edge instead of the bottom (keeps the chat input clear)
     std::string action_label;      // optional clickable action ("Play"); runs on a click on the toast
     std::function<void()> action;
+    bool confirm = false;          // the action leaves a room or cannot be undone ("Leave and join"): Y takes it only after a longer look (padspots_logic.h)
 };
 
 /* Smooth horizontal scroll state of one shelf. */
@@ -524,7 +525,7 @@ void entry_colors(const hub::GameEntry& e, ImU32* a, ImU32* b);
 
 /* ---- app.cpp ---- */
 void push_toast(const std::string& s, ImU32 col, double secs = 6.0, bool top = false);
-void push_toast_action(const std::string& s, ImU32 col, const std::string& label, std::function<void()> action, double secs = 12.0);   // a toast with a clickable action
+void push_toast_action(const std::string& s, ImU32 col, const std::string& label, std::function<void()> action, double secs = 12.0, bool confirm = false);   // a toast with a clickable action; confirm = it leaves a room or cannot be undone
 void set_notice(const std::string& s, double secs = 8.0);
 void mark_dirty();
 std::string server_url();

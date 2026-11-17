@@ -230,6 +230,19 @@ int main() {
         f6.sel = 3; f6.activate();   // C:\Games
         CHECK(f6.cwd == "C:\\Games" && f6.entries[0].type == FolderEntry::Select && f6.entries[2].path == "C:\\Games\\Emulation");
         for (const auto& e : f6.entries) CHECK(e.name != "alpha" && e.name != "Bravo");
+        /* ... and choosing one of its folders is only noted: nothing is handed back (the made-up C:\ is this PC's C:\: no real folder added,
+         * no scan started) */
+        f6.sel = 0; f6.activate();   // "Select this folder" on C:\Games
+        CHECK(f6.done && f6.result.empty() && f6.made_up_pick == "C:\\Games");
+        f6.open("");
+        CHECK(!f6.done && f6.made_up_pick.empty());
+        f6.sel = 3; f6.activate();   // C:\ .
+        f6.choose_here();            // Start / Y: choose C:\ itself
+        CHECK(f6.done && f6.result.empty() && f6.made_up_pick == "C:\\");
+        FolderBrowser f8;            // a real browser still hands the folder back
+        f8.open((root / "alpha").string());
+        f8.choose_here();
+        CHECK(f8.done && f8.result == (root / "alpha").string() && f8.made_up_pick.empty());
         FolderBrowser f7;
         f7.made_up = true;
         f7.pick_files = true;
