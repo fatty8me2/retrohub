@@ -1,6 +1,39 @@
 {
   "versions": [
     {
+      "version": "1.46.0",
+      "date": "2026-11-16",
+      "title": "Full-window game page and a new Library desk layout",
+      "new": [
+        "Library desk, a second layout you can choose in Settings > General > Layout: your games in a list on the left (Recent, Favorites and one group per console) with the selected game's page always open beside it. Traditional stays the default",
+        "Library desk has search (Ctrl+F), type-to-jump, the same Sort and Filters as All Games, Surprise me and a Coverflow button. Drag the line beside the list to resize it, or pick Narrow, Normal or Wide in Settings",
+        "Traditional Home shows a one-time card offering to try Library desk. Not now hides it for good, and you can switch layouts at any time in Settings",
+        "PlayStation and SNES games: Multitap (3-4 players) can now be set per game. PlayStation games also get Memory card 2 (offline only). Both settings existed but were never shown",
+        "PlayStation now has its own entry in Settings > Video & Games > Game defaults, so you can set defaults for every PlayStation game"
+      ],
+      "improved": [
+        "A game's page now fills the whole window instead of a small box. Play, Play Online and a More menu with every other action sit at the top, and the tabs get the rest of the space",
+        "On a game's page, its settings are compact rows in sections you can open and close, in two columns on wide windows, with a help line at the bottom for the option you point at or select",
+        "22 game options now come with a one-sentence explanation",
+        "A Changed mark shows each setting that differs from the default: click it, or press X, to put it back. Reset to defaults now asks first and says exactly what it clears",
+        "Run-ahead and Rewind are now under Gameplay",
+        "Home, All Games and the other pages show a scrollbar when there is more to see, and the controller selection stays in view as it moves",
+        "On small windows or with a large UI size, the empty library page, the Cases menu and Discover scroll instead of cutting things off",
+        "Dialogs keep their title at the top and their buttons at the bottom, and only the middle scrolls. Rows of buttons wrap instead of being cut off, and Find my games and the ROM hack picker show their whole list",
+        "More of RetroHub works with a controller: save-state slots, screenshots, theme colours, your avatar and profile, room chat reactions, and the game night card (through a GAME NIGHT row in Friends). Y presses the button on the newest notice, such as Retry or Leave and join, and X on the Sort chip reverses the order",
+        "Play Online lists every friend's room instead of the first six",
+        "Notices move to a free spot instead of covering an open dialog when there is room. Friend invites and game night cards wait while a dialog or menu would cover them, then get their full time on screen"
+      ],
+      "fixed": [
+        "Plan a session: Add to calendar saved its file in a misnamed folder, userdatacalendar in the RetroHub folder. New files go to userdata\\calendar",
+        "The Plays with setting now shows the program Play will really start, also for Ocarina of Time when nothing is chosen",
+        "Help texts that pointed to Settings tabs that do not exist now name the right place",
+        "Customize: B in a window opened from Customize closed Customize as well",
+        "Couch party setup: a long list of games ran off the edge of the window",
+        "Getting your save from the cloud: Cancel could not be reached with a controller. B now cancels too"
+      ]
+    },
+    {
       "version": "1.45.1",
       "date": "2026-11-14",
       "title": "Smoother Donkey Kong Bananza",
