@@ -279,6 +279,10 @@ void row_begin(const char* label, const RowOpts& o, const CtlSpec& cs, RowFrame&
     rf.p0 = ImGui::GetItemRectMin();
     rf.p1 = ImGui::GetItemRectMax();
     flow_record(rf.id, rf.p0, rf.p1);
+    if (g_headless && rf.focused) {   // QA (HUB_SHOT_TRACE): which option row the pad / keyboard focus is on, and in which column (x)
+        static ImGuiID last = 0;
+        if (last != rf.id) { last = rf.id; shot_trace("kit-focus", text + " x=" + std::to_string((int)rf.p0.x) + " y=" + std::to_string((int)rf.p0.y)); }
+    }
     if (compact) {
         rf.help.label = text;
         if (o.help) rf.help.help = o.help;
@@ -508,9 +512,18 @@ bool dropdown_impl(const char* label, int* idx, int n, const std::function<const
 
 /* ---------------- stepper ---------------- */
 
+/* In two-column sections (option_columns_begin with 2+ columns: a wide game Settings tab) Left / Right move between the columns, so a
+ * stepper row there is changed in an "adjusting" state: A (or Enter) starts it, the control lights up, Left / Right step the value, and
+ * A or B (Enter or Esc) ends it; moving the focus away ends it too. In one column Left / Right step the value as before. The mouse
+ * arrows work the same everywhere. */
+struct StepAdjust { ImGuiID id = 0; int frame = -10; };
+StepAdjust g_adj;
+int g_step_hint = 0, g_step_hint_frame = -10;   // 1 = a two-column stepper row has the focus, 2 = it is being adjusted (hint bars)
+
 bool stepper_impl(const char* label, int* idx, int n, const std::function<std::string(int)>& item, const RowOpts& o) {
     ImGuiContext& g = *GImGui;
     if (n <= 0) return false;
+    const int fc = ImGui::GetFrameCount();
     const int cur = std::max(0, std::min(*idx, n - 1));
     ImFont* fb = F.body;
     float maxw = 0.f;
@@ -525,10 +538,26 @@ bool stepper_impl(const char* label, int* idx, int n, const std::function<std::s
     cs.min_h = sp(4.5f);
     RowFrame rf;
     row_begin(label, o, cs, rf);
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    const std::string lname(label, ImGui::FindRenderedTextEnd(label));
+    const bool cols = g_flow.on && g_flow.cols > 1 && g_flow.win == win;   // two columns: Left / Right belong to the columns
+    bool adjusting = cols && o.enabled && g_adj.id == rf.id && g_adj.frame >= fc - 1;
+    if (adjusting && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+        /* B / Esc ends the adjusting only: the page around (sheet, desk pane, dialog) must not also take it as "back" */
+        ImGui::SetKeyOwner(ImGuiKey_GamepadFaceRight, rf.id, ImGuiInputFlags_LockThisFrame);
+        ImGui::SetKeyOwner(ImGuiKey_Escape, rf.id, ImGuiInputFlags_LockThisFrame);
+        ui_sound::play(ui_sound::Sfx::Back);
+        adjusting = false;
+        ImGui::SetFocusID(rf.id, win);   // (ImGui's own "back" moved the focus off the row this frame: put it back)
+        shot_trace("stepper-adjust", "off-b " + lname);
+    } else if (adjusting && g.NavId != rf.id) {   // the focus moved on (Up / Down, LT / RT, a click elsewhere)
+        adjusting = false;
+        shot_trace("stepper-adjust", "off-moved " + lname);
+    }
     int nv = cur;
     if (o.enabled && g.NavId == rf.id) {
         const ImGuiDir md = pad_move_dir();
-        if (md == ImGuiDir_Left || md == ImGuiDir_Right) {   // Left / Right change the value instead of moving the focus
+        if ((md == ImGuiDir_Left || md == ImGuiDir_Right) && (!cols || adjusting)) {   // Left / Right change the value instead of moving the focus
             ImGui::NavMoveRequestCancel();
             nv = hubui::kit::step_value(cur, 0, n - 1, 1, md == ImGuiDir_Left ? -1 : +1, false);
         }
@@ -537,12 +566,18 @@ bool stepper_impl(const char* label, int* idx, int n, const std::function<std::s
         const float mx = ImGui::GetIO().MousePos.x;
         if (rf.mouse && mx < rf.c0.x + zone && mx >= rf.c0.x - sp(1.f)) nv = hubui::kit::step_value(cur, 0, n - 1, 1, -1, false);
         else if (rf.mouse && mx > rf.c1.x - zone) nv = hubui::kit::step_value(cur, 0, n - 1, 1, +1, false);
-        else nv = hubui::kit::step_value(cur, 0, n - 1, 1, +1, true);   // A / click on the value: next, wrapping
+        else if (cols && !rf.mouse) {   // A / Enter in two columns: start or end adjusting
+            adjusting = !adjusting;
+            shot_trace("stepper-adjust", std::string(adjusting ? "on " : "off-a ") + lname);
+        } else nv = hubui::kit::step_value(cur, 0, n - 1, 1, +1, true);   // A / click on the value: next, wrapping
     }
+    if (adjusting) g_adj = StepAdjust{rf.id, fc};
+    else if (g_adj.id == rf.id) g_adj = StepAdjust();
+    if (cols && rf.focused) { g_step_hint = adjusting ? 2 : 1; g_step_hint_frame = fc; }
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    control_box(dl, rf, false);
+    control_box(dl, rf, adjusting);   // adjusting: lit like an open dropdown
     const float cy = (rf.c0.y + rf.c1.y) * 0.5f;
-    const ImU32 on = al(mix(TEXT2, TEXT, rf.hv)), off = al(with_alpha(TEXT3, 0.45f));
+    const ImU32 on = adjusting ? al(ACCENT) : al(mix(TEXT2, TEXT, rf.hv)), off = al(with_alpha(TEXT3, 0.45f));
     icon(dl, Icon::ChevronL, ImVec2(rf.c0.x + zone * 0.5f, cy), sp(2.5f), cur > 0 ? on : off);
     icon(dl, Icon::ChevronR, ImVec2(rf.c1.x - zone * 0.5f, cy), sp(2.5f), cur < n - 1 ? on : off);
     if (nv != cur) {
@@ -833,6 +868,9 @@ bool dropdown(const char* label, int* idx, const char* const* items, int n, cons
 bool dropdown(const char* label, int* idx, const std::vector<std::string>& items, const RowOpts& opts) {
     return dropdown_impl(label, idx, (int)items.size(), [&](int i) { return items[i].c_str(); }, opts);
 }
+
+bool stepper_adjusting() { return g_adj.id != 0 && g_adj.frame >= ImGui::GetFrameCount() - 1; }
+int stepper_pad_state() { return g_step_hint_frame >= ImGui::GetFrameCount() - 1 ? g_step_hint : 0; }
 
 bool dropdown_list_open() {
     if (!g_dd_open) return false;

@@ -353,9 +353,15 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
     if (F.hm.footer_hints) {
         parts.footer = [&F, &v] {
             /* the hints; on the Settings tab the help strip of the focused row, with the hints at the right end of its heading line */
-            static const ui::KeyHint hints[] = {{"A", "Enter", "Select"}, {"B", "Esc", "Close"}, {"LB", "[", ""}, {"RB", "]", "Tabs"},
-                                                {"LT", "PgUp", "Page up"}, {"RT", "PgDn", "Page down"}};
-            const int nh = (int)(sizeof hints / sizeof hints[0]);
+            static const ui::KeyHint base[] = {{"A", "Enter", "Select"}, {"B", "Esc", "Close"}, {"LB", "[", ""}, {"RB", "]", "Tabs"},
+                                               {"LT", "PgUp", "Page up"}, {"RT", "PgDn", "Page down"}};
+            /* a stepper row in two columns (ui_controls.h): A adjusts it; while adjusting, Left / Right change it and A or B is done */
+            static const ui::KeyHint step[] = {{"A", "Enter", "Change"}, {"B", "Esc", "Close"}, {"LB", "[", ""}, {"RB", "]", "Tabs"},
+                                               {"LT", "PgUp", "Page up"}, {"RT", "PgDn", "Page down"}};
+            static const ui::KeyHint adjust[] = {{"Left/Right", "Left/Right", "Change"}, {"A", "Enter", "Done"}, {"B", "Esc", "Done"}};
+            const int sps = F.ctx && !F.gone && shown_tab(*F.ctx) == TabSettings ? ui::stepper_pad_state() : 0;
+            const ui::KeyHint* hints = sps == 2 ? adjust : sps == 1 ? step : base;
+            const int nh = sps == 2 ? 3 : (int)(sizeof base / sizeof base[0]);
             ui::OptionHelp h;
             if (F.ctx && !F.gone && shown_tab(*F.ctx) == TabSettings && ui::option_help(&h)) {
                 const float w = std::max(1.f, ImGui::GetContentRegionAvail().x);

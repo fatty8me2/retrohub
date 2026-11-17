@@ -115,6 +115,13 @@ bool stepper_int(const char* label, int* v, int lo, int hi, int step, const char
 /* A dropdown's list is open (it was drawn open last frame): its B / Esc closes only the list. A host that turns ImGui's own "leave this
  * child window" (B in a child) into its own back action checks this first (the dropdown puts the focus back on its row). */
 bool dropdown_list_open();
+/* Stepper rows in two-column sections (option_columns_begin with 2+ columns): Left / Right move between the columns there, so A (Enter)
+ * starts adjusting the row (its control lights up; Left / Right step; A or B ends it; moving away ends it). One column: as before.
+ * stepper_adjusting(): one is being adjusted (last frame): its B / Esc only ends that, so a host that turns ImGui's "leave this child
+ * window" into its own back action checks this first, like dropdown_list_open(). stepper_pad_state(): 0 = no such row has the focus,
+ * 1 = one has it (A adjusts), 2 = it is being adjusted (hint bars). */
+bool stepper_adjusting();
+int stepper_pad_state();
 
 /* ---- compact rows and the help strip (see the guide above) ---- */
 enum class HelpMode { Inline, Strip };

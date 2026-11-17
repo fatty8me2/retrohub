@@ -1453,9 +1453,9 @@ void desk_page() {
     apply_page_request();
     /* B / Esc inside the pane: ImGui leaves the pane window (the focus lands on the pane itself, as an item of the page). Back to the list.
      * Not while an option row's dropdown list is open: that B closes only the list, and the dropdown puts the focus back on its row when
-     * it draws, later this frame.
+     * it draws, later this frame. The same for a stepper row being adjusted (two columns): that B only ends the adjusting.
      * The same item reached by a move from outside (Right from the search box): into the pane instead. */
-    if (g.NavId != 0 && g.NavId == D.pane_child && !(D.pane_focused && ui::dropdown_list_open())) {
+    if (g.NavId != 0 && g.NavId == D.pane_child && !(D.pane_focused && (ui::dropdown_list_open() || ui::stepper_adjusting()))) {
         if (D.pane_focused) {
             D.focus_list = D.focus_list_visible = true;
             ui_sound::play(ui_sound::Sfx::Back);
@@ -1489,8 +1489,10 @@ bool desk_footer_hints(std::vector<Hint>* out) {
     if (!desk_layout_on() || A.page != Page::Library || lib_cases_active()) return false;
     if ((A.lib.empty() && A.ghosts.empty())) { *out = {{"A", "Enter", "Select"}}; return true; }
     if (D.pane_focused) {   // the game page in the pane: its hints live here (the pane has no footer of its own)
+        const int sps = ui::stepper_pad_state();   // a stepper row in two columns (ui_controls.h): A adjusts it, then Left / Right change it
         if (!D.ghost_sel.empty()) *out = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}};   // a friend's game: its card and Details
-        else *out = {{"A", "Enter", "Select"}, {"B", "Esc", "Back"}, {"LB", "", "Tabs"}, {"LT", "", "Page up"}, {"RT", "", "Page down"}, {"X", "F", "Favorite"}};
+        else if (sps == 2) *out = {{"Left/Right", "Left/Right", "Change"}, {"A", "Enter", "Done"}, {"B", "Esc", "Done"}};
+        else *out = {{"A", "Enter", sps == 1 ? "Change" : "Select"}, {"B", "Esc", "Back"}, {"LB", "", "Tabs"}, {"LT", "", "Page up"}, {"RT", "", "Page down"}, {"X", "F", "Favorite"}};
         return true;
     }
     if (!D.list_focused || D.model.rows.empty()) {   // the search box, the toolbar, the buttons under the list (or nothing to list)
