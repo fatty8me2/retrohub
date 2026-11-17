@@ -176,6 +176,16 @@ static int hub_main() {
     if (has_acct && !shot_path) lockout_invite_link(U(cmd_acct));
     if (has_night && !shot_path) pending_night = U(cmd_night);
     if (shot_path) { SDL_setenv("SDL_VIDEODRIVER", "dummy", 1); g_headless = true; }
+    else {   /* a normal run ignores every screenshot aid, whatever the environment holds (docs/QA_SHOTS.md): drop HUB_SHOT_* (and the
+              * QA path overrides) before anything reads one, so a stray variable can never press a button, write a file or open a dialog */
+        std::vector<std::string> drop = {"HUB_SHORTCUT_DIR", "HUB_CHEEVOS_CFG", "HUB_CHEEVOS_DIR", "HUB_GAMEINFO_CACHE"};
+        if (wchar_t* env = GetEnvironmentStringsW()) {
+            for (const wchar_t* p = env; *p; p += wcslen(p) + 1)
+                if (wcsncmp(p, L"HUB_SHOT_", 9) == 0) { const std::wstring kv = p; drop.push_back(U(kv.substr(0, kv.find(L'=')))); }
+            FreeEnvironmentStringsW(env);
+        }
+        for (const std::string& k : drop) _putenv_s(k.c_str(), "");   // (an empty value removes it from the process environment)
+    }
     if (qm_e2e_active()) qm_e2e_boot();   // HUB_QM_E2E (needs HUB_SCREENSHOT): only the test's virtual joystick exists
     SDL_SetMainReady();
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);

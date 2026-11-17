@@ -23,11 +23,11 @@
 namespace {
 
 std::string cfg_path() {
-    if (const char* e = std::getenv("HUB_CHEEVOS_CFG")) return e;
+    if (const char* e = g_headless ? std::getenv("HUB_CHEEVOS_CFG") : nullptr) return e;   // screenshot runs only (a sign-in token lives there)
     return hub::data_dir() + "retroachievements.json";
 }
 std::string cache_dir() {
-    if (const char* e = std::getenv("HUB_CHEEVOS_DIR")) return e;
+    if (const char* e = g_headless ? std::getenv("HUB_CHEEVOS_DIR") : nullptr) return e;
     return hub::data_dir() + "cheevos";
 }
 

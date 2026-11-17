@@ -71,7 +71,7 @@ std::map<std::string, Slot> g_slots;
 int64_t now_s() { return (int64_t)std::time(nullptr); }
 
 std::string cache_dir() {
-    if (const char* e = std::getenv("HUB_GAMEINFO_CACHE")) {
+    if (const char* e = g_headless ? std::getenv("HUB_GAMEINFO_CACHE") : nullptr) {   // screenshot runs only
         std::string d = e;
         if (!d.empty() && d.back() != '/' && d.back() != '\\') d += '/';
         return d;

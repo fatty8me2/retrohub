@@ -550,7 +550,7 @@ void draw_tab(Ctx& c, int id) {
 /* ---------- actions ---------- */
 
 bool shot_forced(Ctx& c, const char* name) {
-    static const char* act = std::getenv("HUB_SHOT_ACT");   // reachability QA (qa/reach_matrix.ps1): HUB_SHOT_ACT=<name> presses that action once
+    static const char* act = g_headless ? std::getenv("HUB_SHOT_ACT") : nullptr;   // reachability QA (qa/reach_matrix.ps1): HUB_SHOT_ACT=<name> presses that action once; screenshot mode only (a stray variable must never press Play on a real PC)
     static std::string done;   // the game + action already pressed: once per run, whichever host draws the page (pane, then the full-window page)
     if (!act || !name || std::strcmp(act, name) != 0 || done == c.e.key + name) return false;
     if (!SH.details_key.empty() && c.e.key != SH.details_key) return false;   // HUB_SHOT_DETAILS names the game (the desk pane shows another one first)
