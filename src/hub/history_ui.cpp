@@ -123,6 +123,7 @@ void history_ui_saves_page() {
                 if (!r.cloud) {
                     std::string err;
                     P.ok = hs::history_restore(P.hist_dir, P.battery_dir, r.id, now_s(), &err);
+                    pagecache::invalidate("history-restore");
                     P.result = P.ok ? "Restored. Press Undo restore to go back." : "Could not restore: " + err;
                     A.vault_dirty = true;
                     if (P.ok) hs::cloud_game_changed(P.id);   // the vault changed outside a run: queue the push (saves-F13)

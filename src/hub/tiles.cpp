@@ -34,6 +34,18 @@ std::atomic<bool> g_io_shutdown{false};   // set at app teardown: background dis
 /* Bumped by every synchronous refresh and every game switch: a background scan started earlier is stale. */
 static std::atomic<unsigned> g_info_gen{0};
 
+/* Each game's last scanned numbers (UI thread): switching back to a game shows them again at once, without reading anything; the
+ * next scan (pagecache rules) replaces them. A game without an entry has not been scanned this session ("not known yet"). */
+struct InfoSnap { int bf = 0, sf = 0; uint64_t bb = 0; bool auto_state = false; std::vector<hubui::StateSlot> states; };
+static std::map<std::string, InfoSnap> g_info_seen;
+static void info_remember() {
+    if (A.info_key.empty()) return;
+    if (g_info_seen.size() > 512) g_info_seen.clear();
+    InfoSnap& s = g_info_seen[A.info_key];
+    s.bf = A.info_battery_files; s.sf = A.info_state_files; s.bb = A.info_battery_bytes; s.auto_state = A.info_auto_state; s.states = A.info_states;
+}
+bool save_info_known(const std::string& key) { return A.info_key == key && g_info_seen.count(key) > 0; }
+
 void refresh_save_info(const hub::GameEntry& e) {
     ++g_info_gen;
     A.info_key = e.key;
@@ -55,6 +67,7 @@ void refresh_save_info(const hub::GameEntry& e) {
         A.info_states = hubui::list_states(sd);
         A.info_state_files = hubui::count_states(A.info_states, false);   // slots only: thumbnails and sidecars are not states
     }
+    info_remember();
 }
 
 /* Periodic / first-open refresh of the game page's save info: the directory walks run on a worker,
@@ -99,15 +112,21 @@ void save_info_scan(std::string key, std::string sys, bool native, unsigned gen)
 }
 }
 
-void save_info_switch(const hub::GameEntry& e) {
-    if (A.info_key == e.key) return;   // different game: drop the old numbers now, fill in when a scan lands
+bool save_info_switch(const hub::GameEntry& e) {
+    if (A.info_key == e.key) return false;   // different game: drop the old numbers now (or show its last ones), fill in when a scan lands
     ++g_info_gen;
     A.info_key = e.key;
     A.info_battery_files = A.info_state_files = 0;
     A.info_battery_bytes = 0;
     A.info_auto_state = false;
     A.info_states.clear();
+    auto it = g_info_seen.find(e.key);
+    if (it != g_info_seen.end()) {
+        A.info_battery_files = it->second.bf; A.info_state_files = it->second.sf; A.info_battery_bytes = it->second.bb;
+        A.info_auto_state = it->second.auto_state; A.info_states = it->second.states;
+    }
     if (A.info_states_key != e.key) { A.info_states_key = e.key; A.state_sel = -3; A.state_confirm = -2; }
+    return true;
 }
 
 bool refresh_save_info_bg(const hub::GameEntry& e) {
@@ -134,6 +153,7 @@ void poll_save_info() {
     A.info_battery_files = v.battery_files; A.info_state_files = v.state_files;
     A.info_battery_bytes = v.battery_bytes; A.info_auto_state = v.auto_state;
     A.info_states = std::move(v.states);
+    info_remember();
 }
 
 std::string size_text(uint64_t b) {

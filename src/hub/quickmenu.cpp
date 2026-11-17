@@ -1557,7 +1557,7 @@ void shots_gallery(const hub::GameEntry& e) {
     /* the folder listing: the full-window page every 2 s as it always did, the desk pane once settled (pagecache::need); s_at < 0 = a
      * picture was deleted here: list it again */
     const pagecache::Need need = pagecache::need(s_key == e.key && s_at >= 0.0, s_gen, s_at, 2.0);
-    if (s_key != e.key && need == pagecache::Need::Use) s_files.clear();   // another game, not listed yet
+    if (s_key != e.key && need == pagecache::Need::Use) { s_files.clear(); s_key.clear(); }   // another game, not listed yet (listed once settled)
     if (need != pagecache::Need::Use) {
         qadisk::Scope qs(pagecache::scope_name(need), false);
         s_key = e.key; s_at = ImGui::GetTime(); s_gen = pagecache::generation();

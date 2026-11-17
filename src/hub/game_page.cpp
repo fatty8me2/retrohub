@@ -288,7 +288,7 @@ Ctx begin(State& st, const hub::GameEntry& e, const Host& host, bool appearing) 
          * the desk pane once the cursor has settled on the game and after pagecache::invalidate(), never while a game runs */
         static std::string s_loaded;   // the game the last scan was asked for, under which pagecache generation
         static unsigned s_gen = 0;
-        if (pagecache::host() == pagecache::Host::Pane) save_info_switch(e);   // another game: its numbers start empty, nothing read yet
+        if (pagecache::host() == pagecache::Host::Pane && save_info_switch(e)) s_loaded.clear();   // another game: its last numbers (or none), nothing read yet; scanned again once settled
         const pagecache::Need n = pagecache::need(A.info_key == e.key && s_loaded == e.key, s_gen, A.info_at, 4.0);
         if (n != pagecache::Need::Use) {
             qadisk::Scope qs(pagecache::scope_name(n), false);
@@ -367,7 +367,7 @@ void draw_notices(Ctx& c) {
      * added (the window gets the focus back) reads them again. */
     static pagecache::PerGame<bool> s_unpacked;
     static pagecache::PerGame<std::string> s_keys_why;
-    const bool* unpacked = e.issue == "extract" ? s_unpacked.get(e.key + "|" + e.path, 0.0, [&] { return !hub::extracted_3ds_path(e).empty(); }) : nullptr;
+    const bool* unpacked = e.issue == "extract" ? s_unpacked.get(e.key + "|" + e.path, 2.0, [&] { return !hub::extracted_3ds_path(e).empty(); }) : nullptr;
     if (e.issue == "extract" && !unpacked) {
         // not known yet (the desk cursor is still moving, or a game runs): say nothing rather than something that may be wrong
     } else if (e.issue == "extract" && *unpacked) {
@@ -382,7 +382,7 @@ void draw_notices(Ctx& c) {
         ImGui::TextWrapped("This 3DS image is encrypted. Azahar needs your own AES keys (aes_keys.txt in its user\\sysdata folder) to run it.");
         ImGui::PopStyleColor();
     } else if (e.issue == "keys") {
-        const std::string* why = s_keys_why.get(e.key + "|" + A.st.cemu_exe, 0.0, [&] {
+        const std::string* why = s_keys_why.get(e.key + "|" + A.st.cemu_exe, 2.0, [&] {
             std::string ud;
             hubemu::Install ki = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, e.path);
             if (!ki.exe.empty()) { const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str(); ud = ki.managed ? ki.dir + "\\portable" : hub::cemu_dirs_for(ki.dir, ad ? ad : "", hubemu::wiiu_probe()).user_data; }
@@ -523,8 +523,8 @@ static void draw_saves(Ctx& c) {
         if (!sv.empty()) sv += "   ";
         sv += std::to_string(A.info_state_files) + " save state(s)" + (A.info_auto_state ? " + resume point" : "");
     }
-    if (sv.empty()) sv = "No save data yet.";
-    ImGui::TextUnformatted(sv.c_str());
+    if (sv.empty() && save_info_known(e.key)) sv = "No save data yet.";   // (not checked yet: the desk cursor is still moving, or a game runs: no line)
+    if (!sv.empty()) ImGui::TextUnformatted(sv.c_str());
     cloud_ui_game_line(e);
     history_ui_details_section(e);
     resume_details_section(e);   // Wave 3 R1

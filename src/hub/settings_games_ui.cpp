@@ -251,7 +251,7 @@ void options_grouped(const std::string& console, const std::string& game_key, in
         const hub::gs::Values gv = gs_values_for(*ge);
         const auto rv = gv.find(hubemu::kRunnerKey);
         const int src = GSTORE.source_console(hub::console_id(*ge), ge->key, hubemu::kRunnerKey);   // (nothing chosen and "Lichii" chosen differ)
-        const bool* fp = s_fr.get(ge->key + "|" + (rv != gv.end() ? rv->second : std::string()) + "|" + std::to_string(src) + "|" + A.st.cemu_exe, 0.0,
+        const bool* fp = s_fr.get(ge->key + "|" + (rv != gv.end() ? rv->second : std::string()) + "|" + std::to_string(src) + "|" + A.st.cemu_exe, 2.0,
                                   [&] { return nx_planned_emulator(*ge, false) == hubemu::Kind::Fritchii; });
         fritchii_planned = fp && *fp;
     }

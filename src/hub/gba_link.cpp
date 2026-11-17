@@ -156,7 +156,7 @@ void gba_link_details_section(const hub::GameEntry& e) {
     static pagecache::One<std::string> s_bios;
     std::string sig = A.st.ps1_bios + "|" + A.st.ps2_bios_dir;
     for (const std::string& f : A.st.rom_folders) sig += "|" + f;
-    const std::string* bios_p = s_bios.get(sig, 0.0, [] { return find_bios(); });
+    const std::string* bios_p = s_bios.get(sig, 2.0, [] { return find_bios(); });
     const std::string bios = bios_p ? *bios_p : std::string();
     if (bios_p && bios.empty()) ImGui::TextWrapped("Needs your own GBA BIOS (gba_bios.bin) in your GamesBios folder. RetroHub never downloads it, so this stays off until it is there.");
     ImGui::PopTextWrapPos();

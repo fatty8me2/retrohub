@@ -319,7 +319,10 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
         }
         if (v.fresh) {
             v.to_top = true;
-            if (!pane) { v.focus_until = ImGui::GetFrameCount() + 4; v.popup_above = false; }
+            if (!pane) {
+                v.focus_until = ImGui::GetFrameCount() + 4; v.popup_above = false;
+                pagecache::invalidate("page-open");   // the full-window page opens with every disk fact read afresh, as it always did
+            }
         }
         if (v.to_top) {
             for (unsigned id : v.body_win) if (id) ui::scroll_set((ImGuiID)id, 0.f);

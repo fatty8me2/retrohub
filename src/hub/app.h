@@ -883,7 +883,8 @@ void toggle_favorite(const std::string& key);
 void section_title(const std::string& t);
 void refresh_save_info(const hub::GameEntry& e);
 bool refresh_save_info_bg(const hub::GameEntry& e);   // same, but the disk walk runs on a worker; false = one is still running (ask again)
-void save_info_switch(const hub::GameEntry& e);       // the page shows another game: its numbers start empty (reads nothing)
+bool save_info_switch(const hub::GameEntry& e);       // the page shows another game: its last numbers, or none yet (reads nothing); true = switched
+bool save_info_known(const std::string& key);         // the shown save numbers come from a scan of this game (false: not checked yet this session)
 void poll_save_info();                                // UI thread: apply a finished background scan
 void resume_entry(const hub::GameEntry& e, int slot);   // slot -1 = auto; loads that state on launch (plain Play when it is missing)
 bool has_resume(const hub::GameEntry& e);               // this game can resume from its auto state right now

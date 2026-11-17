@@ -905,7 +905,7 @@ bool draw_players_strip(int players) {
     /* the port order from controls.json (userdata and vault): read once, again after the controls are saved (ctl_save) or another
      * pagecache::invalidate(); never per frame (the desk pane draws this all the time, also behind a running game) */
     static pagecache::One<std::vector<std::string>> s_order;
-    const std::vector<std::string>* order = s_order.get(hub::saves::vault_dir(), 0.0, [] {
+    const std::vector<std::string>* order = s_order.get(hub::saves::vault_dir(), 2.0, [] {
         hubctl::Store st;
         hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
         return st.port_order;

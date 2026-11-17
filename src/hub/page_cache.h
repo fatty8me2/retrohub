@@ -5,8 +5,10 @@
  * drawn all the time, also behind a game it started. So every disk fact the page shows is cached here:
  *   - a fact is read once per game and kept until something that can change it happens (invalidate(): controls saved, an install, build
  *     or unpack finished, a game ended, the hub window got the focus back, the library was rescanned, the settings were re-read from the
- *     vault). Facts the full-window page always re-read on a timer (play log 30 s, screenshots 2 s, save history 3 s, resume facts
- *     1.5 s, achievements 4 s, save info 4 s, Wii U details 4 s) keep that timer there, and only there;
+ *     vault, a save sync / import / history restore, the full-window page opening). Facts the full-window page always re-read on a
+ *     timer (play log 30 s, screenshots 2 s, save history 3 s, resume facts 1.5 s, achievements 4 s, save info 4 s, Wii U details 4 s,
+ *     .nup repair notes 5 s) keep that timer there, and only there; the ones it read on every frame (controllers order, the GBA BIOS,
+ *     an archive's unpacked copy, a Wii U disc's keys, Fritchii) are read again every 2 s there;
  *   - in the desk pane the heavy facts of a game wait until the list cursor has stayed on it for kSettleSecs (stepping through the list
  *     stays smooth: the header and the tabs switch at once, the rest fills in), and the pane never times a re-read;
  *   - while a game (or another session) runs, the pane reads nothing at all: it shows what is cached.
