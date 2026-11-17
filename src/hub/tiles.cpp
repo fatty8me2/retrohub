@@ -4,6 +4,7 @@
 #include "hack_ui.h"
 #include "playtime_logic.h"
 #include "tiles_logic.h"
+#include "qa_diskio.h"
 
 #include <atomic>
 #include <cstring>
@@ -98,25 +99,30 @@ void save_info_scan(std::string key, std::string sys, bool native, unsigned gen)
 }
 }
 
-void refresh_save_info_bg(const hub::GameEntry& e) {
-    if (g_headless) { refresh_save_info(e); return; }   // screenshots stay deterministic
+void save_info_switch(const hub::GameEntry& e) {
+    if (A.info_key == e.key) return;   // different game: drop the old numbers now, fill in when a scan lands
+    ++g_info_gen;
+    A.info_key = e.key;
+    A.info_battery_files = A.info_state_files = 0;
+    A.info_battery_bytes = 0;
+    A.info_auto_state = false;
+    A.info_states.clear();
+    if (A.info_states_key != e.key) { A.info_states_key = e.key; A.state_sel = -3; A.state_confirm = -2; }
+}
+
+bool refresh_save_info_bg(const hub::GameEntry& e) {
+    qadisk::note_worker("save-info");   // QA (HUB_SHOT_DISKIO)
+    if (g_headless) { refresh_save_info(e); return true; }   // screenshots stay deterministic
     A.info_at = ImGui::GetTime();   // throttle: next request in 4 s
-    if (A.info_key != e.key) {      // different game: drop the old numbers now, fill in when the scan lands
-        ++g_info_gen;
-        A.info_key = e.key;
-        A.info_battery_files = A.info_state_files = 0;
-        A.info_battery_bytes = 0;
-        A.info_auto_state = false;
-        A.info_states.clear();
-        if (A.info_states_key != e.key) { A.info_states_key = e.key; A.state_sel = -3; A.state_confirm = -2; }
-    }
+    save_info_switch(e);
     SaveInfoBg& v = sib();
     {
         std::lock_guard<std::mutex> l(v.mu);
-        if (v.running) { A.info_at = -100; return; }   // retry next frame
+        if (v.running) { A.info_at = -100; return false; }   // retry next frame
         v.running = true;
     }
     std::thread(save_info_scan, e.key, sys_short(e), is_native(e), g_info_gen.load()).detach();
+    return true;
 }
 
 void poll_save_info() {

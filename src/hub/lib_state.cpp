@@ -8,6 +8,7 @@
 #include "online_caps.h"
 #include "gameinfo.h"
 #include "gamepack.h"
+#include "page_cache.h"
 #include "hidden_games.h"
 #include "hidden_ui.h"
 #include <deque>
@@ -73,6 +74,7 @@ const hub::GameEntry* find_entry(const std::string& key) {
 
 void apply_scan() {
     lib_lookup_cache_clear();
+    pagecache::invalidate("scan");   // the game page reads its disk facts again (archives unpacked, files moved ...)
     A.lib.clear();
     if (!smash_exe_path().empty()) {
         if (const GameInfo* g = hub::find_game("smash64")) {
@@ -276,6 +278,16 @@ void apply_scan() {
                 h.hack_patch = "C:/fake/patch.bps";
                 h.hack_base = base.key;
                 A.lib.insert(A.lib.begin() + 1, h);
+            }
+        }
+        if (const char* si = std::getenv("HUB_SHOT_ISSUE")) {   // QA (qa\desk_idle_io.ps1): "<key>:<issue>;..." marks made-up games archived ("extract") or needing keys ("keys")
+            std::string all = si, tok;
+            for (size_t i = 0; i <= all.size(); ++i) {
+                if (i < all.size() && all[i] != ';') { tok += all[i]; continue; }
+                const size_t c = tok.rfind(':');
+                if (c != std::string::npos && tok.compare(0, 5, "fake:") == 0)
+                    for (hub::GameEntry& g : A.lib) if (g.key == tok.substr(0, c)) g.issue = tok.substr(c + 1);
+                tok.clear();
             }
         }
         gameinfo_ui_shot_lib();

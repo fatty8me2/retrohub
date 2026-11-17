@@ -35,6 +35,8 @@
 #include "help_logic.h"
 #include "ui_scroll.h"
 #include "ui_controls.h"
+#include "qa_diskio.h"
+#include "page_cache.h"
 
 #include <algorithm>
 #include <cmath>
@@ -760,7 +762,10 @@ void status_row(const ImRect& sr) {
         ImGui::SetCursorScreenPos(sr.Min);
         ImGui::PushID("desk_health");
         ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
-        D.health_shown = verify_library_card(true);   // verify_ui.cpp: the chip and its popup
+        {
+            qadisk::Scope disk_scope("desk-health");   // QA (HUB_SHOT_DISKIO)
+            D.health_shown = verify_library_card(true, !pagecache::frozen());   // verify_ui.cpp: the chip and its popup; no re-check (BIOS search ...) while a game runs
+        }
         ImGui::PopItemFlag();
         ImGui::PopID();
         return;

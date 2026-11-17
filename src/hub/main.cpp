@@ -23,6 +23,8 @@
 #include "display.h"
 #include "tv_mode.h"
 #include "input_gate.h"
+#include "qa_diskio.h"
+#include "page_cache.h"
 
 #include <cstring>
 
@@ -393,6 +395,7 @@ static int hub_main() {
         const char* hs = std::getenv("HUB_HANG_SECS");
         hang_watchdog_start(hub::data_dir() + "logs\\", hs ? std::max(1.0, std::atof(hs)) : 5.0);
     }
+    qadisk::install();   // QA only (HUB_SHOT_DISKIO=1 in a screenshot run): count the game page's file-system calls
     hublog::info("startup: services started, entering main loop (+%llu ms), %d games", hublog::since_start_ms(), (int)A.lib.size());
     bool running = true;
     bool log_game_on = false;   // hub.log: a hub-launched game process starting / ending
@@ -529,6 +532,7 @@ static int hub_main() {
         update_bell_tick();   // after group_tick(): the bell history is loaded by then
         hubupdate::tick();    // hands a downloaded update to the installer once no game is running
         userflow_tick();
+        pagecache::tick();    // the game page's cached disk facts: read again after a game ends, the window gets the focus back, an install finishes ...
         {   // requests from a second launch (invite links, --play, "show yourself") and from our own command line
             std::wstring w;
             while (invite_srv.take(&w)) { if (launch_blocked("invite link")) continue; link_join.push(U(w)); told_need_name = false; }
@@ -698,6 +702,7 @@ static int hub_main() {
         qm_pre_newframe();
         ImGui::SetKeyOwner(ImGuiKey_GamepadFaceUp, 1);   // Y is a context-action button here: ImGui's own "Y activates the focused item" must not fire it
         hang_watchdog_phase("imgui_newframe");
+        qadisk::frame_begin();
         ImGui::NewFrame();
         {   // a held X/Menu would open ImGui's window switcher; this app has no use for it (X is a real button here)
             ImGuiContext& g = *ImGui::GetCurrentContext();
@@ -721,6 +726,7 @@ static int hub_main() {
         draw_launch_tips(shot_path && std::getenv("HUB_SHOT_LAUNCH_TIPS"));   // controller tips for a game that is still starting (never over a game window)
         osk::draw_root();
         ImGui::PopFont();
+        qadisk::frame_end();
         hang_watchdog_phase("render");
         if (fps_report) { q_raster = qpc_ms(); ms_ui += q_raster - q_ui; }
         ImGui::Render();
@@ -787,6 +793,7 @@ static int hub_main() {
         }
     }
 
+    qadisk::finish();
     // clean shutdown
     hublog::info("shutdown: main loop ended");
     hub::scan_request_cancel();   // the library scan (and a ROM-cache clear / trim) stops at its next check point, so the joins below return promptly

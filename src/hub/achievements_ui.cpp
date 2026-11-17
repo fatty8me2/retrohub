@@ -1,5 +1,6 @@
 #include "console_names.h"
 #include "app.h"
+#include "page_cache.h"
 #include "challenge_ui.h"
 #include "cheevos_data.h"
 #include "cheevos_login.h"
@@ -98,10 +99,17 @@ void poll_login() {
     RA.job.reset();
 }
 
+/* The game's achievements cache file: the full-window page reads it again every 4 s as it always did, the desk pane once the cursor has
+ * settled on the game and after pagecache::invalidate() (a game ending writes it), never while a game runs. */
 const cheevos::GameCache* cache_for(const std::string& key) {
     double now = ImGui::GetTime();
+    static std::map<std::string, unsigned> read_gen;   // pagecache generation each game's file was read under
     auto it = RA.caches.find(key);
-    if (it == RA.caches.end() || now - it->second.first > 4.0) {
+    const pagecache::Need need = pagecache::need(it != RA.caches.end(), read_gen[key], it != RA.caches.end() ? it->second.first : 0.0, 4.0);
+    if (need == pagecache::Need::Use && it == RA.caches.end()) return nullptr;   // not read yet
+    if (need != pagecache::Need::Use) {
+        qadisk::Scope qs(pagecache::scope_name(need), false);
+        read_gen[key] = pagecache::generation();
         cheevos::GameCache g;
         bool ok = cheevos::load_cache(cache_dir(), key, &g);
         auto& slot = RA.caches[key];

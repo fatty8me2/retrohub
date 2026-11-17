@@ -5,6 +5,7 @@
 #include "nx_runner.h"
 #include "option_rows.h"
 #include "option_sections.h"
+#include "page_cache.h"
 #include "ui_controls.h"
 #include "ui_sheet.h"
 
@@ -195,15 +196,16 @@ bool option_row(const hub::gs::Option& o, const std::string& cur, const ui::RowO
 
 /* "Plays with" chose a native build that is not on this PC: say it under the row, not only at Play. */
 void runner_note(const hub::GameEntry& ge, const std::string& game_key, const hub::gs::Values& v) {
-    static double at = -100.0; static std::string for_key, note;   // decide() touches the disk: every 2 s, not every frame
+    /* decide() touches the disk: the full-window page every 2 s as it always did, the desk pane on settling / pagecache::invalidate() */
+    static pagecache::PerGame<std::string> s_note;
     const auto rv = v.find(hookshot::kRunnerSetting);
     const std::string want_key = game_key + "|" + (rv != v.end() ? rv->second : std::string());
-    if (ImGui::GetTime() - at > 2.0 || ImGui::GetTime() < at || for_key != want_key) {
-        at = ImGui::GetTime(); for_key = want_key;
+    const std::string* np = s_note.get(want_key, 2.0, [&] {
         const hookshot::Decision d = hookshot::decide(ge, v);
-        note = d.choice == hookshot::Choice::NativeNotBuilt ? std::string(hookshot::info(d.flavor).name) + " is not built on this PC yet. Build it on this game's About tab; until then Play asks what to do." : std::string();
-    }
-    if (note.empty()) return;
+        return d.choice == hookshot::Choice::NativeNotBuilt ? std::string(hookshot::info(d.flavor).name) + " is not built on this PC yet. Build it on this game's About tab; until then Play asks what to do." : std::string();
+    });
+    if (!np || np->empty()) return;
+    const std::string& note = *np;
     const float padx = sp(1.25f);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + padx);
     ImGui::PushStyleColor(ImGuiCol_Text, ui::WARN);
@@ -241,7 +243,18 @@ void options_grouped(const std::string& console, const std::string& game_key, in
     const hub::System sys = hub::console_system(console);
     const hub::GameEntry* ge = level == 2 ? find_entry(game_key) : nullptr;
     const bool oot_page = ge && hookshot::supports(*ge);
-    const bool fritchii_planned = oot_page && nx_planned_emulator(*ge, false) == hubemu::Kind::Fritchii;   // the one runner decision (also what Play starts)
+    /* the one runner decision (also what Play starts); it looks for Fritchii on the disk: cached per game and "Plays with" value
+     * (pagecache: a finished install reads it again). Not known yet (the desk cursor still moving): no Fritchii rows for now */
+    bool fritchii_planned = false;
+    if (oot_page) {
+        static pagecache::PerGame<bool> s_fr;
+        const hub::gs::Values gv = gs_values_for(*ge);
+        const auto rv = gv.find(hubemu::kRunnerKey);
+        const int src = GSTORE.source_console(hub::console_id(*ge), ge->key, hubemu::kRunnerKey);   // (nothing chosen and "Lichii" chosen differ)
+        const bool* fp = s_fr.get(ge->key + "|" + (rv != gv.end() ? rv->second : std::string()) + "|" + std::to_string(src) + "|" + A.st.cemu_exe, 0.0,
+                                  [&] { return nx_planned_emulator(*ge, false) == hubemu::Kind::Fritchii; });
+        fritchii_planned = fp && *fp;
+    }
     const std::vector<Group> groups = page_groups(console, game_key, level, oot_page, fritchii_planned);
     hub::gs::Values v = level == 2 ? hubui::effective_values(GSTORE, console, game_key, A.st.fullscreen, A.st.volume) : GSTORE.resolve_console(console, "");
     if (level == 1 && GSTORE.source_console(console, "", "fullscreen") == 0) v["fullscreen"] = A.st.fullscreen ? "true" : "false";

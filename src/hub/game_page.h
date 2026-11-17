@@ -47,6 +47,7 @@ struct PlayTimeCache {
     unsigned long long ps = 0, lp = 0;
     double at = -1e9;
     int frame = -100;
+    unsigned gen = 0;    // pagecache::generation() when it was read
     bool ok = false;
     hubui::pt::GameStats st;
 };
@@ -137,6 +138,8 @@ struct View {
     unsigned body_win[4] = {0, 0, 0, 0};   // each tab's body scroll window (ImGuiID), sent back to the top for another game
     bool to_top = false;
     std::string shown;             // the game whose page was drawn this frame ("" = none)
+    double key_at = -1e9;          // when `key` last changed (the pane's heavy facts wait pagecache::kSettleSecs after it; the first game: at once)
+    std::string settled_key;       // the last game the pane settled on (trace "gamepage-settled")
 };
 
 void view_reset(View& v);   // the next draw opens the page afresh (Overlay: every time it opens)

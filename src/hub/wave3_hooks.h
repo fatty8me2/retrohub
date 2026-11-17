@@ -37,6 +37,6 @@ void progress_details_section(const hub::GameEntry& e);                         
 void verify_details_section(const hub::GameEntry& e);                                    // game page, About tab
 void dumpwarn_details_section(const hub::GameEntry& e);                                  // game page, top of the About tab: an incomplete Switch dump
 void nuprepair_details_section(const hub::GameEntry& e);                                  // game page, About tab under the dump warning: a .nup copy RetroHub repairs at launch
-bool verify_library_card(bool compact = false);   // All Games page, above the grid; false when it drew nothing; compact = only the chip + popup (the caller places it)
+bool verify_library_card(bool compact = false, bool may_refresh = true);   // All Games page, above the grid; false when it drew nothing; compact = only the chip + popup (the caller places it); may_refresh = false: show what was found last (no re-check, no BIOS search: the desk while a game runs)
 
 void save_import_section();                                                              // Saves page

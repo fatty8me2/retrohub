@@ -1,6 +1,7 @@
 #include "lichii.h"
 #include "winutil.h"
 #include "app.h"
+#include "page_cache.h"
 #include "capture_hold_logic.h"
 #include "ctl_pad_logic.h"
 #include "glyph_logic.h"
@@ -205,6 +206,7 @@ int tab_for_key(const std::string& sys) {
 
 void ctl_save() {
     if (CTL.shot_nosave) return;
+    pagecache::invalidate("controls");   // the game page's controllers strip reads the new order
     if (!hubctl::save_store(CTL.st, hub::data_dir(), hub::saves::vault_dir())) {
         CTL.notice = "Could not save the controller settings.";
         CTL.notice_until = ImGui::GetTime() + 6.0;
@@ -899,9 +901,15 @@ void page_controllers() {
 /* Library details, local multiplayer: the ports with their current pad. Returns true when "Reassign" was clicked. */
 bool draw_players_strip(int players) {
     if (players < 2) return false;
-    hubctl::Store st;
-    hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
-    std::vector<hubctl::PadInfo> pads = hubctl::list_pads(st.port_order);
+    /* the port order from controls.json (userdata and vault): read once, again after the controls are saved (ctl_save) or another
+     * pagecache::invalidate(); never per frame (the desk pane draws this all the time, also behind a running game) */
+    static pagecache::One<std::vector<std::string>> s_order;
+    const std::vector<std::string>* order = s_order.get(hub::saves::vault_dir(), 0.0, [] {
+        hubctl::Store st;
+        hubctl::load_store(hub::data_dir(), hub::saves::vault_dir(), &st);
+        return st.port_order;
+    });
+    std::vector<hubctl::PadInfo> pads = hubctl::list_pads(order ? *order : std::vector<std::string>());
     bool clicked = false;
     const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;   // a narrow column (the desk pane): the strip wraps
     auto next = [&](float w, float gap) { if (ImGui::GetItemRectMax().x + gap + w <= right + 0.5f) ImGui::SameLine(0, gap); };

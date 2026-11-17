@@ -4,6 +4,8 @@
 #include "game_page.h"
 #include "game_page_layout.h"
 #include "hack_ui.h"
+#include "page_cache.h"
+#include "qa_diskio.h"
 #include "ui_controls.h"
 #include "ui_sheet.h"
 
@@ -306,9 +308,12 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
     v.shown.clear();
     if (!pane && open && *open && !ep) *open = false;   // the game left the library while its page was open
     const bool want = ep && (pane || (open && *open));
+    qadisk::Scope disk_scope(pane ? "pane" : "page", want);   // QA (HUB_SHOT_DISKIO): the page's own file-system calls
+    std::optional<pagecache::PageScope> page_scope;
     if (want) {
         if (ep->key != v.key) {
             if (F.hm.keep_tab && !v.key.empty() && !v.fresh) v.st.tab_key = ep->key;   // the pane follows the list: keep the tab (About when this game lacks it)
+            v.key_at = v.key.empty() ? -1e9 : ImGui::GetTime();   // the pane's heavy facts wait until the cursor has stayed here a moment (the first game: at once)
             v.key = ep->key;
             v.to_top = true;
         }
@@ -323,6 +328,9 @@ Drawn draw_view(View& v, const hub::GameEntry* ep, HostKind host, ImVec2 pos, Im
         Host h;
         if (pane) h.close = [] {};   // the pane stays; the action itself leads wherever it goes
         else h.close = [open] { if (open) *open = false; };
+        const bool settled = !pane || ImGui::GetTime() - v.key_at >= pagecache::kSettleSecs;
+        if (pane && settled && v.settled_key != v.key) { v.settled_key = v.key; shot_trace("gamepage-settled", v.key + " t=" + std::to_string(ImGui::GetTime())); }
+        page_scope.emplace(pane ? pagecache::Host::Pane : pagecache::Host::Full, settled);   // what the page's disk facts may read now (page_cache.h)
         F.ctx.emplace(begin(v.st, *ep, h, v.fresh));
         v.fresh = false;
     }

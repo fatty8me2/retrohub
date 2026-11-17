@@ -6,6 +6,7 @@
 #include "gametdb.h"
 #include "games.h"
 #include "winutil.h"
+#include "page_cache.h"
 
 #include <atomic>
 #include <chrono>
@@ -376,6 +377,7 @@ bool gameinfo_ui_section_held(const hub::GameEntry& e, const std::string& catalo
     q.serial = e.serial;
     q.alt_title = e.catalog_id == "smash64" ? "Super Smash Bros." : catalog_title;
     if (q.system.empty()) return false;
+    if (!pagecache::may_read() && g_slots.find(gameinfo::cache_name(q)) == g_slots.end()) return false;   // the desk cursor is still moving (or a game runs): its cached description file is read once it settles; the built-in blurb meanwhile
     const float y0 = ImGui::GetCursorPosY();
     bool d = gameinfo_ui_section_query_held(q, e.key, part, scroll_hold);
     if (ImGui::GetCursorPosY() > y0 + 0.5f) ImGui::Dummy(ImVec2(0, sp(0.5f)));   // air under the block, only when it drew something
