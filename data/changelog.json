@@ -1,6 +1,16 @@
 {
   "versions": [
     {
+      "version": "1.46.1",
+      "date": "2026-11-17",
+      "title": "Library desk: consoles in release order",
+      "new": [],
+      "improved": [
+        "Library desk: the console groups in the game list are now in release order, oldest console first (NES 1983 through Switch 2 2025), and each group header shows the year the console came out"
+      ],
+      "fixed": []
+    },
+    {
       "version": "1.46.0",
       "date": "2026-11-16",
       "title": "Full-window game page and a new Library desk layout",
