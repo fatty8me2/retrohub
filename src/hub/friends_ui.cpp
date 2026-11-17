@@ -496,7 +496,8 @@ bool fr_join_lobby(const std::string& code, const std::string& game_id, const st
     if (!(A.in_room && A.code == code) && hubui::group::join_needs_confirm(A.in_room, (int)room_members().size(), ::is_host())) {
         if (who.empty()) group_note_invite("link:" + code, bell_name, inv);   // a link has no card: keep a bell entry in case the question expires
         push_toast_action(hubui::group::join_confirm_text(who, ::is_host()), ui::WARN, "Leave and join",
-                          [code, game_id, title, who, expires_at]() { if (fr_join_now(code, game_id, title, expires_at) && who.empty()) group_resolve(hubui::group::Kind::Invite, "link:" + code, code); }, 12.0);   // letting the toast expire is "Stay"
+                          [code, game_id, title, who, expires_at]() { if (fr_join_now(code, game_id, title, expires_at) && who.empty()) group_resolve(hubui::group::Kind::Invite, "link:" + code, code); }, 12.0,
+                          /*confirm=*/true);   // letting the toast expire is "Stay"; it leaves the room: Y needs the longer look
         return false;
     }
     return fr_join_now(code, game_id, title, expires_at);

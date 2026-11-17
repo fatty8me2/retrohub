@@ -96,6 +96,8 @@ static void toast_pad_input() {
     if (!hubui::padspots::toast_pad_env_ok(toast_pad_env())) return;
     for (Toast& t : A.toasts) {
         if (t.t0 != g_toast_pad_t0 || t.action_label.empty() || t.until <= ImGui::GetTime()) continue;
+        const ImGuiKeyData* y = ImGui::GetKeyData(ImGuiKey_GamepadFaceUp);
+        if (!hubui::padspots::toast_pad_press_ok(ImGui::GetTime() - t.t0, y ? (double)y->DownDuration : 0.0)) return;   // that Y began before the toast appeared
         ImGui::SetKeyOwner(ImGuiKey_GamepadFaceUp, ImGuiKeyOwner_NoOwner, ImGuiInputFlags_LockThisFrame);   // this Y is spent: Details, a friend's menu or a reaction must not also open
         shot_trace("toast-pad", t.action_label);
         auto fn = t.action;
@@ -113,7 +115,7 @@ float draw_toasts(float bottom, float right, float top) {
     int pad_i = -1;   // the toast that shows the Y glyph
     {
         std::vector<hubui::padspots::ToastPadIn> pin;
-        for (const Toast& t : A.toasts) pin.push_back({!t.action_label.empty(), toast_alpha(t, now) > 0.9f, now - t.t0});
+        for (const Toast& t : A.toasts) pin.push_back({!t.action_label.empty(), toast_alpha(t, now) > 0.9f, now - t.t0, t.confirm});
         pad_i = hubui::padspots::toast_pad_pick(pin, toast_pad_env());
         g_toast_pad_t0 = pad_i >= 0 ? A.toasts[(size_t)pad_i].t0 : -1.0;
         if (pad_i >= 0 && g_headless) shot_trace_once("toast-pad-hint", A.toasts[(size_t)pad_i].action_label);   // QA trace (HUB_SHOT_TRACE)
