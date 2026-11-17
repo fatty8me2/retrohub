@@ -43,7 +43,14 @@ struct Frame {
     ScrollFlags flags = 0;
     bool page_req = false;     // page_focus() submitted its "first item of the new view" request this frame
     float page_off = 0.f;      // ... and the new view is this far below this frame's (an eased area still gliding there)
+    bool retarget = false;     // a D-pad press while parked was re-scored from the edge of the view this frame
 };
+/* Parked: an LT / RT page found nothing focusable in the new view, so the focus stayed on `nav`, now out of view, with its cursor hidden. */
+struct Park {
+    ImGuiID nav = 0;    // 0 = not parked
+    ImGuiID area = 0;   // the area that paged (key)
+};
+Park g_park;
 
 std::unordered_map<ImGuiID, Area> g_areas;          // key: ImGui::GetID(id) in the host window
 std::unordered_map<ImGuiID, ImGuiID> g_by_window;   // child window id -> key
@@ -221,6 +228,27 @@ bool scroll_begin(const char* id, ImVec2 size, ScrollFlags flags, ImVec2 padding
             }
         }
     }
+    /* Parked (see Park): the next D-pad press is scored from the edge of the view (Down from its top, Up from its bottom, Left / Right
+     * from its middle line), so it lands on what is on screen, or on the nearest item past that edge, never back on the item out of view.
+     * Re-submitting drops what was scored before the area (nothing of this zone is drawn before it). */
+    if (g_park.nav && g_park.area == key) {
+        if (!alive) g_park = Park();
+        else if (!fr.page_dir && g.NavWindow && g.NavLayer == ImGuiNavLayer_Main && g.NavMoveSubmitted && g.NavMoveDir != ImGuiDir_None &&
+                 !(g.NavMoveFlags & (ImGuiNavMoveFlags_Forwarded | ImGuiNavMoveFlags_IsTabbing | ImGuiNavMoveFlags_FocusApi | ImGuiNavMoveFlags_IsPageMove |
+                                     ImGuiNavMoveFlags_ScrollToEdgeY))) {
+            const ImGuiDir dir = g.NavMoveDir;
+            const ImRect view = w->InnerRect;
+            const ImRect old = ImGui::WindowRectRelToAbs(g.NavWindow, g.NavWindow->NavRectRel[ImGuiNavLayer_Main]);
+            float x = old.IsInverted() ? (view.Min.x + view.Max.x) * 0.5f : (old.Min.x + old.Max.x) * 0.5f;
+            x = hubui::kit::clampf(x, view.Min.x + 1.f, std::max(view.Min.x + 1.f, view.Max.x - 1.f));
+            const float y = dir == ImGuiDir_Down ? view.Min.y + 1.f : dir == ImGuiDir_Up ? view.Max.y - 1.f : (view.Min.y + view.Max.y) * 0.5f;
+            ImGui::NavMoveRequestSubmit(dir, dir, ImGuiNavMoveFlags_AllowCurrentNavId, ImGuiScrollFlags_KeepVisibleEdgeY);
+            g.NavScoringRect = ImRect(x, y, x, y);
+            g.NavScoringNoClipRect = g.NavScoringRect;
+            fr.retarget = true;
+            shot_trace("page-retarget", "");   // QA (HUB_SHOT_TRACE)
+        }
+    }
     const float follow = alive && !fr.page_dir && !(flags & ScrollFlags_NoFocusFollow) ? focus_follow(w, a, fc, base) : -1.f;
     float page_off = 0.f;
     if (eased && alive) {
@@ -296,9 +324,17 @@ ScrollInfo scroll_end() {
         const bool in_view = res && res->Window && (res->Window == cw || ImGui::IsWindowChildOf(res->Window, cw, false)) &&
                              ImGui::WindowRectRelToAbs(res->Window, res->RectRel).Overlaps(view);
         if (!in_view) {
+            /* ... and park it: its cursor is hidden, so A does nothing (ImGui only activates a visible cursor) until the next D-pad press
+             * re-targets from the view (scroll_begin). Without this A pressed the item out of view (Play Online: a room's Join). */
             ImGui::NavMoveRequestCancel();
+            g.NavCursorVisible = false;
+            g_park.nav = g.NavId;
+            g_park.area = fr.key;
             shot_trace("page-keep-focus", "");   // QA (HUB_SHOT_TRACE): nothing focusable in the new view
         }
+    }
+    if (fr.retarget) {   // the re-scored press found something: it moves there and its cursor shows again; nothing at all that way: still parked
+        if (!g.NavMoveSubmitted || g.NavMoveResultLocal.ID || g.NavMoveResultOther.ID) g_park = Park();
     }
     si.window_id = cw->ID;
     si.visible = !cw->SkipItems;
@@ -328,6 +364,15 @@ void scroll_set(ImGuiID window_id, float y) {
 
 void scroll_by(ImGuiID window_id, float dy) {
     if (Area* a = window_id ? area_of(window_id) : nullptr) a->pending += dy;
+}
+
+bool nav_cursor_parked() {
+    if (!g_park.nav) return false;
+    ImGuiContext& g = *GImGui;
+    auto ar = g_areas.find(g_park.area);
+    const bool alive = ar != g_areas.end() && ar->second.frame >= ImGui::GetFrameCount() - 1;
+    if (!alive || (g.NavId != 0 && g.NavId != g_park.nav)) { g_park = Park(); return false; }   // the page went away, or the focus moved on
+    return true;
 }
 
 void scrollbar_theme_push() { push_clear_bar(); }

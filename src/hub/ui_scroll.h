@@ -83,4 +83,10 @@ void scrollbar_theme_push();
 void scrollbar_theme_pop();
 void scrollbar_theme_draw();
 
+/* After an LT / RT page that found nothing focusable in the new view (a long text, a tall panel) the focus stays on an item that is now out
+ * of view, with its cursor hidden: A presses nothing (ImGui activates only a visible cursor) until the next D-pad press, which is scored
+ * from the edge of the view and so lands on what is on screen. True while that holds: the caller must not show the cursor again
+ * (main.cpp re-shows it every frame for pad users). */
+bool nav_cursor_parked();
+
 }  // namespace ui
