@@ -1370,11 +1370,20 @@ void shot_type() {
 
 /* ======================= public ======================= */
 
-bool desk_layout_on() { return hubdesk::is_desk(A.st.ui_layout); }
+/* HUB_SHOT_LAYOUT (screenshot runs): the layout for this run only, never written into the stored setting (Settings::ui_layout).
+ * Choosing a layout (Settings, the Home card's Try it) drops it and stores the choice as usual. */
+static std::string g_layout_override;
+
+bool desk_layout_on() { return hubdesk::is_desk(g_layout_override.empty() ? A.st.ui_layout : g_layout_override); }
 
 void desk_set_layout(bool desk) {
     const std::string v = desk ? hubdesk::kDesk : hubdesk::kTraditional;
-    if (A.st.ui_layout == v) return;
+    const bool was = desk_layout_on();
+    g_layout_override.clear();
+    if (A.st.ui_layout == v) {
+        if (was != desk) { D.reveal = true; D.dirty = true; shot_trace("desk-layout", v); }   // only the run's override changed
+        return;
+    }
     A.st.ui_layout = v;
     mark_dirty();
     D.reveal = true;
@@ -1506,7 +1515,7 @@ void desk_shot_seed() {
     const char* v = g_headless ? std::getenv("HUB_SHOT_LAYOUT") : nullptr;
     if (!v) return;
     const std::string s = v;
-    if (s == hubdesk::kDesk || s == hubdesk::kTraditional) A.st.ui_layout = s;
+    if (s == hubdesk::kDesk || s == hubdesk::kTraditional) g_layout_override = s;   // this run only: the stored setting is left alone
     else {
         std::fprintf(stderr, "HUB_SHOT_LAYOUT: unknown layout '%s' (desk or traditional); no screenshot taken\n", v);
         SH.fail = true;

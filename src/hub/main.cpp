@@ -241,9 +241,10 @@ static int hub_main() {
              * install (nothing finished, no folders of the player's own) always runs the setup wizard, with the folder as a pre-filled
              * answer in its Games step. The file is the marker that survives a restart mid-wizard. */
             const bool fresh = hubui::wiz::fresh_install(A.st.setup_done, A.st.find_games_done, A.st.rom_folders.size(), usable);
-            const bool saved = !changed || hubui::save_settings(A.settings_path, A.st);   // keep the file if saving failed: retry next start
-            if (usable && fresh) { hubui::wiz::set_installer_prefill(true); installer_prefill_kept = true; }
-            else if (saved) { std::error_code ec; std::filesystem::remove(std::filesystem::path(W(installer_hand)), ec); }
+            /* A screenshot run uses the merged folders for this run only: it writes no hub.json and keeps the hand-off file (C: QA_SHOTS.md) */
+            const bool saved = !changed || (!g_headless && hubui::save_settings(A.settings_path, A.st));   // keep the file if saving failed: retry next start
+            if (usable && fresh) { hubui::wiz::set_installer_prefill(true); installer_prefill_kept = !g_headless; }
+            else if (saved && !g_headless) { std::error_code ec; std::filesystem::remove(std::filesystem::path(W(installer_hand)), ec); }
         }
     }
     if (const char* pg = std::getenv("HUB_START_PAGE")) {   // screenshot/testing aid: 0 Library, 1 Online, 2 Saves, 3 Controllers, 4 Settings, 5 Updates (6 = Updates too: the old What's new page), 7 Discover
@@ -264,9 +265,14 @@ static int hub_main() {
     }
     // No ROM folder is assumed: an empty library offers detected folders as one-click "Add" suggestions.
     if (!A.st.vault_dir.empty()) hub::saves::set_vault_dir(A.st.vault_dir);
+    std::string shot_run_vault;   // a screenshot run's own scratch vault (HUB_SHOT_CUSTOM_SHELVES without HUB_SHOT_VAULT): removed at exit
     if (g_headless) {   // screenshot mode never touches a real vault: HUB_SHOT_VAULT=<dir>, else a scratch dir under %TEMP%
         const std::string sv = winutil::getenv_utf8("HUB_SHOT_VAULT");   // UTF-8 (std::getenv is ANSI: u8path would throw on an accented folder)
         std::string dir = !sv.empty() ? sv : (std::filesystem::temp_directory_path() / "retrohub-shot-vault").u8string();
+        if (sv.empty() && std::getenv("HUB_SHOT_CUSTOM_SHELVES")) {   // its made-up shelves go into the vault's prefs: a vault of this run only (removed at exit), never the shared scratch one
+            dir = (std::filesystem::temp_directory_path() / ("retrohub-shot-vault-run-" + std::to_string(GetCurrentProcessId()))).u8string();
+            shot_run_vault = dir;
+        }
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::u8path(dir), ec);
         hub::saves::set_vault_dir(dir);
@@ -815,7 +821,10 @@ static int hub_main() {
     find_games_shutdown();
     add_games_shutdown();
     gamepack_shutdown();
-    if (A.dirty) hubui::save_settings(A.settings_path, A.st);
+    /* A screenshot run never writes hub.json (headless-only overrides, a made-up selection): only when a QA script asks for it with
+     * HUB_SHOT_SAVE_SETTINGS=1 (qa\options_shots.ps1: open / closed sections remembered across a restart, in its sandbox) */
+    const char* shot_save = g_headless ? std::getenv("HUB_SHOT_SAVE_SETTINGS") : nullptr;
+    if (A.dirty && (!g_headless || (shot_save && shot_save[0] == '1'))) hubui::save_settings(A.settings_path, A.st);
     invite_srv.stop();
     hubjournal::stop_recovery();   // before the cloud engine and the log go away: the thread may be about to touch both
     gn_shutdown();   // hand the game night reminders back to Windows (scheduled toasts) now that RetroHub is closing
@@ -840,6 +849,10 @@ static int hub_main() {
     SDL_DestroyWindow(A.win);
     SDL_Quit();
     CoUninitialize();
+    if (!shot_run_vault.empty() && shot_run_vault.find("retrohub-shot-vault-run-") != std::string::npos) {   // only the folder this run made for itself
+        std::error_code ec;
+        std::filesystem::remove_all(std::filesystem::u8path(shot_run_vault), ec);
+    }
     hublog::shutdown();
     return SH.fail ? 2 : (qm_e2e_active() ? qm_e2e_exit_code() : 0);
 }
