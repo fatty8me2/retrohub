@@ -3,6 +3,7 @@
 #include "../net/username.h"
 #include "homefun.h"
 #include "libview_ui.h"
+#include "notice_logic.h"
 #include "padspots_logic.h"
 #include "ui_sound.h"
 #include "ui_scroll.h"
@@ -73,6 +74,7 @@ void draw_update_popup() {
  * draw_toasts records which toast showed the glyph; toast_pad_input() reads that at the start of the next frame, before any page or
  * panel sees the press, so Y only ever acts on a glyph that was on screen. */
 static double g_toast_pad_t0 = -1.0;   // t0 of the toast that showed the Y glyph last frame (-1 = none)
+static std::vector<hubui::notice::Box> g_toasts_moved;   // this frame's toasts placed clear of a dialog (off their stack): friend cards keep off them
 static hubui::padspots::ToastPadEnv toast_pad_env() {
     hubui::padspots::ToastPadEnv e;
     e.pad_mode = A.pad_mode;
@@ -120,36 +122,60 @@ float draw_toasts(float bottom, float right, float top) {
     ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImFont* f = ui::F.body;
     float fs = f->FontSize, y_bot = bottom, y_top = top;
-    /* An open dialog: a toast that would lie over it waits (its clock stops) and shows when the dialog closes. A full-window page (the
-     * game page) is not a dialog: toasts show over it as before. */
-    ImRect dialog;
+    /* An open real dialog (a full-window page such as the game page is not one): a toast that would lie over it goes to a clear spot below,
+     * above or beside it, inside the window (notice_logic.h); with none it is drawn where it always was, over the dialog. A toast is never
+     * delayed or dropped because a dialog is open, so the dialog's own errors show while it is up. */
+    namespace nt = hubui::notice;
+    nt::Box dialog;
     bool avoid = false;
     if (ImGuiWindow* m = ImGui::GetTopMostPopupModal()) {
         const ImRect r = m->Rect();
-        if (m->WasActive && r.GetWidth() * r.GetHeight() < ds.x * ds.y * 0.9f) { dialog = r; dialog.Expand(sp(1.f)); avoid = true; }
+        const nt::Box b{r.Min.x, r.Min.y, r.Max.x, r.Max.y};
+        if ((m->Active || m->WasActive) && nt::real_dialog(b, ds.x, ds.y)) { dialog = {b.x0 - sp(1.f), b.y0 - sp(1.f), b.x1 + sp(1.f), b.y1 + sp(1.f)}; avoid = true; }
     }
-    const double dt = ImGui::GetIO().DeltaTime;
+    const nt::Box bounds{sp(1.5f), sp(1.5f), right, ds.y - sp(1.5f)};
+    std::vector<nt::Box> placed;
+    g_toasts_moved.clear();
+    const float maxw = std::min(sp(58.f), ds.x * 0.62f);
     for (int i = (int)A.toasts.size() - 1; i >= 0; --i) {
-        Toast& t = A.toasts[i];
+        const Toast& t = A.toasts[i];
         float a = toast_alpha(t, now), in = (float)std::min(1.0, (now - t.t0) / 0.28);
         in = 1.f - (1.f - in) * (1.f - in);   // ease-out (slide)
-        float maxw = std::min(sp(58.f), ds.x * 0.62f);
-        std::vector<std::string> lines = ui::wrap_lines(f, fs, t.text, maxw - sp(6.f), 4);
-        float tw = 0;
-        for (auto& l : lines) tw = std::max(tw, f->CalcTextSizeA(fs, FLT_MAX, 0.f, l.c_str()).x);
         const bool has_act = !t.action_label.empty();
         const float hint_w = has_act && A.pad_mode ? ui::key_hint_width(true, "Y", "", "") : 0.f;   // room for the Y glyph left of the action (pad only)
-        float w = tw + sp(6.f) + (has_act ? f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.action_label.c_str()).x + sp(4.f) + hint_w : 0.f), h = lines.size() * fs * 1.25f + sp(2.5f) + (has_act ? 0.f : 0.f);
-        float x1 = right + (1.f - in) * sp(5.f);
-        float y0 = t.top ? y_top : y_bot - h;   // top toasts grow downward from the top edge, the rest upward from the bottom
-        ImVec2 p1(x1, y0 + h), p0(x1 - w, y0);
-        if (avoid && dialog.Overlaps(ImRect(ImVec2(right - w, y0), ImVec2(right, y0 + h)))) {   // waits for the dialog to close
-            t.t0 += dt;
-            t.until += dt;
-            if (g_headless) shot_trace_once("toast-held", t.text);
-            continue;
+        const float act_w = has_act ? f->CalcTextSizeA(fs, FLT_MAX, 0.f, t.action_label.c_str()).x + sp(4.f) + hint_w : 0.f;
+        /* the toast with its text wrapped at text_w (max_lines 0 = no limit) */
+        auto layout = [&](float text_w, int max_lines, std::vector<std::string>* out) {
+            std::vector<std::string> ls = ui::wrap_lines(f, fs, t.text, text_w, max_lines);
+            float tw = 0;
+            for (auto& l : ls) tw = std::max(tw, f->CalcTextSizeA(fs, FLT_MAX, 0.f, l.c_str()).x);
+            nt::Size s;
+            s.w = tw + sp(6.f) + act_w;
+            s.h = ls.size() * fs * 1.25f + sp(2.5f);
+            s.fits = ls.size() <= 6;
+            if (out) *out = std::move(ls);
+            return s;
+        };
+        std::vector<std::string> lines;
+        const nt::Size s0 = layout(maxw - sp(6.f), 4, &lines);
+        const float w = s0.w, h = s0.h;
+        const float y0 = t.top ? y_top : y_bot - h;   // top toasts grow downward from the top edge, the rest upward from the bottom
+        nt::Placed pl{{right - w, y0, right, y0 + h}, nt::Spot::Default};
+        if (avoid) {
+            auto measure = [&](float max_w) {   // beside the dialog: the text wrapped narrower, never cut
+                const float text_w = max_w - sp(6.f) - act_w;
+                if (text_w < sp(12.f)) return nt::Size{};
+                return layout(text_w, 0, nullptr);
+            };
+            pl = nt::place_toast(pl.box, bounds, &dialog, placed, sp(1.f), t.top, measure, sp(20.f));
+            if (pl.box.w() < w - 0.5f) layout(pl.box.w() - sp(6.f) - act_w, 0, &lines);   // re-wrapped for a spot beside the dialog
         }
-        if (g_headless) shot_trace_once("toast-drawn", "default " + t.text);
+        placed.push_back(pl.box);
+        const bool on_stack = pl.spot == nt::Spot::Default || pl.spot == nt::Spot::Over;
+        if (!on_stack) g_toasts_moved.push_back(pl.box);
+        if (g_headless) shot_trace_once("toast-drawn", std::string(nt::spot_name(pl.spot)) + " " + t.text);   // QA trace (HUB_SHOT_TRACE)
+        const float x1 = (on_stack ? right : pl.box.x1) + (1.f - in) * sp(5.f), bw = on_stack ? w : pl.box.w();
+        ImVec2 p1(x1, pl.box.y1), p0(x1 - bw, pl.box.y0);
         ui::shadow(dl, p0, p1, sp(1.5f), a);
         dl->AddRectFilled(p0, p1, ui::scale_alpha(ui::PANEL2, a), sp(1.5f));
         dl->AddRect(p0, p1, ui::scale_alpha(ui::HAIRLINE, a), sp(1.5f), 0, 1.f);
@@ -166,11 +192,13 @@ float draw_toasts(float bottom, float right, float top) {
             if (i == pad_i) ui::key_hint(dl, ImVec2(b0.x - hint_w, (b0.y + b1.y - ui::F.cap->FontSize - sp(0.75f)) * 0.5f), true, "Y", "", "");   // Y presses it
             if (hov && ImGui::IsMouseClicked(0)) { auto fn = t.action; A.toasts[i].until = 0; if (fn) fn(); return bottom - y_bot; }
         }
+        if (!on_stack) continue;   // moved clear of a dialog: the stack does not grow
         if (t.top) y_top += h + sp(1.f);
         else y_bot -= h + sp(1.f);
     }
     return bottom - y_bot;
 }
+const std::vector<hubui::notice::Box>& toasts_moved() { return g_toasts_moved; }
 
 /* ---------- sidebar ---------- */
 

@@ -14,7 +14,9 @@
 #include "hack_ui.h"
 #include "ui_sheet.h"
 #include "dialogs2b_logic.h"
+#include "notice_logic.h"
 
+#include <algorithm>
 #include <shellapi.h>
 
 FriendsUi FR;
@@ -1203,33 +1205,70 @@ static void fr_card_trace(const Notif& n, bool shown, double age) {
     shot_trace(shown ? "card-shown" : "card-hidden", std::string(kind) + (shown ? std::string(a) : std::string()));
 }
 
+const std::vector<hubui::notice::Box>& toasts_moved();   // frame.cpp: this frame's toasts placed clear of a dialog
+static std::vector<int> g_drawn_invites;   // invite cards (full or the pill) fr_draw_toasts drew in its last call, by notif id
+static int g_drawn_frame = -10;            // ImGui frame of that call
+static bool fr_invite_drawn(const Notif& n) {
+    return ImGui::GetFrameCount() - g_drawn_frame <= 1 && std::find(g_drawn_invites.begin(), g_drawn_invites.end(), n.id) != g_drawn_invites.end();
+}
+
+/* A card is drawn as usual unless it would lie over an open dialog or menu, a toast moved clear of a dialog, or past the window's top edge.
+ * While hidden its clock stands still (notice_logic.h card_tick), so it gets its whole time on screen afterwards; the Friends list's game
+ * night row reads the same clock. A full-window page (the Traditional game page) is not a dialog: the cards show over it, as they do over
+ * the library. An invite's own expiry (expires_at) is never stretched. */
 void fr_draw_toasts(float right_x, float bottom_y) {
+    namespace nt = hubui::notice;
     double now = ImGui::GetTime();
+    const double dt = ImGui::GetIO().DeltaTime;
     float y = bottom_y, w = std::min(sp(45.f), right_x - sp(2.f));
     /* screenshot aid: HUB_SHOT_CARD_AT=<s> = the made-up friends' cards (invite, ask, game night) arrive that many seconds into the run */
     static const double card_at = (g_headless && std::getenv("HUB_SHOT_CARD_AT")) ? std::atof(std::getenv("HUB_SHOT_CARD_AT")) : -1.0;
+    std::vector<nt::Box> keep_off;   // open dialogs and menus (not a full-window page), toasts moved clear of a dialog
+    bool any_popup = false;          // a popup is up (a page, a dialog, a menu): its window is on top, so a card shown is brought above it
+    {
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        const ImVec2 ds = ImGui::GetIO().DisplaySize;
+        for (const ImGuiPopupData& p : g.OpenPopupStack) {
+            ImGuiWindow* pw = p.Window;
+            if (!pw || !(pw->Active || pw->WasActive)) continue;
+            any_popup = true;
+            const ImRect r = pw->Rect();
+            const nt::Box b{r.Min.x, r.Min.y, r.Max.x, r.Max.y};
+            if (nt::real_dialog(b, ds.x, ds.y)) keep_off.push_back({b.x0 - sp(1.f), b.y0 - sp(1.f), b.x1 + sp(1.f), b.y1 + sp(1.f)});
+        }
+        const std::vector<nt::Box>& tm = toasts_moved();
+        keep_off.insert(keep_off.end(), tm.begin(), tm.end());
+    }
+    g_drawn_invites.clear();
+    g_drawn_frame = ImGui::GetFrameCount();
     for (auto& n : FR.notifs) {
         if (n.done || !n.toast) continue;
         if (FR.fake && card_at > 0.0 && now < card_at) { n.t0 = now; continue; }
-        if (A.popup_last_frame) { fr_card_trace(n, false, now - n.t0); continue; }   // the bell / a menu / a dialog is open: no floating card over it (invites and asks are in the bell, a game night in the Friends list, requests in the requests list)
         if (FR.fake && g_headless && card_at <= 0.0) n.t0 = std::max(n.t0, now - 1.0);   // screenshots: the toast must outlive a slow library scan
         if (FR.fake && g_headless && std::getenv("HUB_SHOT_INVITE_AGE")) n.t0 = now - std::atof(std::getenv("HUB_SHOT_INVITE_AGE"));   // screenshot aid: age the invite toast (>10 = shrunk pill)
         double life = !n.night_id.empty() ? hubui::dlg2b::kNightCardLife : (n.invite || n.ask) ? 30.0 : 20.0, age = now - n.t0;   // a night card's Friends-list row follows the same life
-        if (age > life) { n.toast = false; continue; }
-        float in = (float)std::min(1.0, age / 0.3);
-        in = 1.f - (1.f - in) * (1.f - in);
         const bool pill = n.invite && n.night_id.empty() && !n.expanded && (age > kInvitePillAfter || A.popup_last_frame);   // a modal or menu is open: the card shrinks to the one-line pill so it never sits over its buttons (a click expands it)
         float h = pill ? fr_invite_pill_h() : n.invite ? fr_invite_card_h(n, w) : fr_request_card_h();
-        if (y - h < sp(1.f)) break;   // no room above (a short window, a big UI size): the rest wait in the bell, never cut by the top edge
-        fr_card_trace(n, true, age);
         float cw = pill ? std::min(w, fr_tw(ui::F.bold, fr_invite_pill_text(n)) + sp(3.5f)) : w;
+        const nt::CardTick tk = nt::card_tick(nt::card_hidden(nt::Box{right_x - cw, y - h, right_x, y}, keep_off, sp(1.f)), n.t0, now, dt, life);
+        n.t0 = tk.t0;
+        if (tk.expired) { n.toast = false; continue; }
+        if (!tk.draw) { fr_card_trace(n, false, age); continue; }   // hidden this frame: its clock stands still; a smaller card after it may still fit
+        fr_card_trace(n, true, age);
+        float in = (float)std::min(1.0, age / 0.3);
+        in = 1.f - (1.f - in) * (1.f - in);
         ImGui::SetNextWindowPos(ImVec2(right_x - cw + (1.f - in) * sp(8.f), y - h));
         ImGui::SetNextWindowSize(ImVec2(cw, h));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
         ImGui::PushStyleColor(ImGuiCol_WindowBg, 0);
         std::string wid = "##toast" + std::to_string(n.id);
-        if (ImGui::Begin(wid.c_str(), nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoFocusOnAppearing)) {
+        /* over a popup the card only shows: ImGui lets no click reach it past an open modal anyway, so it lets clicks through to the page */
+        const ImGuiWindowFlags cf = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar |
+                                    ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoFocusOnAppearing | (any_popup ? ImGuiWindowFlags_NoInputs : 0);
+        if (ImGui::Begin(wid.c_str(), nullptr, cf)) {
+            if (any_popup) ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());   // above the full-window page (or a dialog it does not touch)
+            if (n.invite && n.night_id.empty()) g_drawn_invites.push_back(n.id);
             float frac = (float)(1.0 - age / life);
             if (!n.night_id.empty()) {
                 std::string tt, ss; const char* act = "Host";
@@ -1277,14 +1316,16 @@ void fr_shot_confirm_toast(double age) {
     }
 }
 
+/* Only an invite card (or its pill) that is on screen: fr_draw_toasts drew it in its last call. A card hidden over a dialog or past the
+ * window's top edge is in the bell, and Start does not join it. */
 bool fr_invite_toast_visible() {
-    for (auto& n : FR.notifs) if (!n.done && n.toast && n.invite && ImGui::GetTime() - n.t0 <= 30.0) return true;
+    for (auto& n : FR.notifs) if (!n.done && n.toast && n.invite && fr_invite_drawn(n)) return true;
     return false;
 }
 bool fr_join_invite_toast() {
     for (int i = (int)FR.notifs.size() - 1; i >= 0; --i) {
         auto& n = FR.notifs[i];
-        if (n.done || !n.toast || !n.invite || ImGui::GetTime() - n.t0 > 30.0) continue;
+        if (n.done || !n.toast || !n.invite || !fr_invite_drawn(n)) continue;
         if (hubui::invite_expired(n.inv.expires_at, wall_ms())) {
             n.done = true;
             fr_join_notice("That invite has expired.");

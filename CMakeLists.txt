@@ -229,6 +229,7 @@ add_test(NAME hub_welcome_test COMMAND hub_welcome_test)   # Welcome back card: 
 add_test(NAME hub_gamenight_test COMMAND hub_gamenight_test)     # game night plans: DM tag, reminder timing, persistence
 add_test(NAME hub_padspots_test COMMAND hub_padspots_test)       # controller reach: which toast Y presses, Sort chip arrow and reverse keys
 add_test(NAME hub_dialogs2b_test COMMAND hub_dialogs2b_test)     # batch 2b dialogs: game night card row / dialog lifetime, avatar grid, Kanto dialog order
+add_test(NAME hub_notice_test COMMAND hub_notice_test)           # toasts placed clear of a real dialog (fallback over it), friend cards hidden over one with their clock stopped
 add_test(NAME hub_group_test COMMAND hub_group_test)             # recent groups + notification history persistence/expiry
 add_test(NAME hub_rivals_test COMMAND hub_rivals_test)         # rivalry result parsing, ranking, storage union, head-to-head
 add_test(NAME hub_results_test COMMAND hub_results_test)       # Plan 4: match results (ranks, mid-run watcher) + auto-resume guard (saves-F1)
