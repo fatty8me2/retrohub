@@ -299,6 +299,11 @@ void rebuild() {
     shot_trace("desk-model", "games=" + std::to_string(D.model.total) + " matches=" + std::to_string(D.model.matches) + " ghosts=" + std::to_string(D.model.ghosts) +
                " groups=" + std::to_string(D.model.groups.size()) + " rows=" + std::to_string(n) + " cursor=" + std::to_string(D.cursor) +
                " sort=" + A.st.library_sort + (A.st.library_sort_rev ? "+rev" : "") + (filters_on() ? " filtered" : ""));
+    if (g_headless) {   // the groups top to bottom, "-" = closed (QA: the console groups oldest first)
+        std::string order;
+        for (const hubdesk::Group& grp : D.model.groups) order += (order.empty() ? "" : ",") + grp.id + (grp.open ? "" : "-");
+        shot_trace("desk-order", order);
+    }
 }
 
 /* Something else chose a game (the palette, the start animation, Coverflow, the full-window game page...): the cursor follows when the game is in
@@ -483,15 +488,31 @@ void draw_header_row(ImDrawList* dl, const ImRect& rr, const hubdesk::Group& grp
     const float x = rr.Min.x + sp(1.f);
     const float room = std::max(sp(3.f), q0.x - sp(0.75f) - x);
     const std::string full = group_title(grp);
-    const std::string title = ui::ellipsize(bf, fs, full, room);
+    /* a console group: the year it came out, muted, after the name ("Nintendo 64  1996"); the short name ("NES  1983") when the full one
+     * and the year do not fit together; the name is ellipsized only when even that does not fit */
+    const std::string year = grp.kind == hubdesk::GroupKind::Console ? hub::launch_year_text(grp.id) : std::string();
+    const float yw = year.empty() ? 0.f : bf->CalcTextSizeA(fs, FLT_MAX, 0.f, year.c_str()).x;
+    const float ygap = year.empty() ? 0.f : sp(1.f);
+    const bool show_year = !year.empty() && room - ygap - yw >= sp(3.f);
+    const float name_room = show_year ? room - ygap - yw : room;
+    std::string name = full;
+    if (show_year && bf->CalcTextSizeA(fs, FLT_MAX, 0.f, full.c_str()).x > name_room) {
+        const char* sn = hub::short_name_id(grp.id);
+        if (sn && *sn) name = sn;
+    }
+    const std::string title = ui::ellipsize(bf, fs, name, name_room);
     dl->AddText(bf, fs, ImVec2(x, y), hov ? ui::TEXT : ui::TEXT2, title.c_str());
+    if (show_year) {   // the name's face and size (the caption face sits up to 2 px lower than the scaled-down bold one), muted
+        const float tw = bf->CalcTextSizeA(fs, FLT_MAX, 0.f, title.c_str()).x;
+        dl->AddText(bf, fs, ImVec2(x + tw + ygap, y), ui::TEXT3, year.c_str());
+    }
     const float s = sp(0.6f), th = std::max(1.f, sp(0.2f));   // open: minus, closed: plus
     const ImU32 mcol = hov ? ui::TEXT : ui::TEXT2;
     dl->AddLine(ImVec2(mc.x - s, mc.y), ImVec2(mc.x + s, mc.y), mcol, th);
     if (!grp.open) dl->AddLine(ImVec2(mc.x, mc.y - s), ImVec2(mc.x, mc.y + s), mcol, th);
     if (ring) ui::focus_ring(dl, rr.Min, rr.Max, rad);
     if (hov && D.list_tip) {
-        const std::string tip = full + "  (" + count + (grp.items.size() == 1 ? " game)" : " games)");
+        const std::string tip = full + (year.empty() ? std::string() : ", " + year) + "  (" + count + (grp.items.size() == 1 ? " game)" : " games)");
         ImGui::SetTooltip("%s", tip.c_str());
     }
 }

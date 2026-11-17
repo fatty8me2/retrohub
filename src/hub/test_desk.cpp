@@ -93,7 +93,7 @@ int main() {
     {
         Model m = build(games, "", OpenMap());
         CHECK(m.total == 9 && m.matches == 9 && !m.searching && m.first_console == "n64");
-        CHECK((ids(m) == std::vector<std::string>{"recent", "favs", "n64", "gc", "switch2", "gba", "other"}));
+        CHECK((ids(m) == std::vector<std::string>{"recent", "favs", "n64", "gc", "gba", "switch2", "other"}));   // consoles oldest first, then Other
         const Group& rec = m.groups[0];
         CHECK(rec.items.size() == 5);
         CHECK(games[(size_t)rec.items[0]].key == "c" && games[(size_t)rec.items[1]].key == "a" && games[(size_t)rec.items[2]].key == "e" && games[(size_t)rec.items[3]].key == "d" && games[(size_t)rec.items[4]].key == "i");   // newest first, 5 at most
@@ -119,24 +119,81 @@ int main() {
             big.push_back(G(("k" + std::to_string(i)).c_str(), ("Game " + std::to_string(100 + i)).c_str(), cons[i % 3], i < 3 ? 100 + i : 0, i == 7));
         }
         Model m = build(big, "", OpenMap());
-        CHECK((ids(m) == std::vector<std::string>{"recent", "favs", "gc", "ps1", "gba"}) && m.first_console == "gc");
+        CHECK((ids(m) == std::vector<std::string>{"recent", "favs", "ps1", "gc", "gba"}) && m.first_console == "ps1");   // the oldest console opens
         CHECK(m.groups[0].open && !m.groups[1].open && m.groups[2].open && !m.groups[3].open && !m.groups[4].open);
         CHECK(m.rows.size() == 5 + 3 + 15);
         OpenMap om = parse_open("gc=0,gba=1");
         Model m2 = build(big, "", om);
-        CHECK(!m2.groups[2].open && m2.groups[4].open && m2.groups[0].open);
+        CHECK(m2.groups[2].open && !m2.groups[3].open && m2.groups[4].open && m2.groups[0].open);   // kept by id, not by position
+        CHECK(m2.groups[3].id == "gc" && m2.groups[4].id == "gba");
         /* a search opens every group with a match (even ones the player closed), and leaves the empty ones out */
         Model s = build(big, "game 12", om);
         CHECK(s.searching && s.matches == 10 && s.total == 45);   // Game 112, 120-129
         for (const Group& g : s.groups) CHECK(g.open && !g.items.empty());
-        CHECK((ids(s) == std::vector<std::string>{"gc", "ps1", "gba"}));
+        CHECK((ids(s) == std::vector<std::string>{"ps1", "gc", "gba"}));
         Model s2 = build(big, "  GAME 112 ", om);
         CHECK(s2.matches == 1 && s2.groups.size() == 1 && s2.rows.size() == 2);
         std::set<std::string> closed = {"gc"};
         Model s3 = build(big, "game 12", om, closed);
-        CHECK(!s3.groups[0].open && s3.groups[1].open);
+        CHECK(s3.groups[0].open && !s3.groups[1].open && s3.groups[1].id == "gc");
         Model none = build(big, "nothing like this", om);
-        CHECK(none.groups.empty() && none.rows.empty() && none.matches == 0 && none.first_console == "gc");
+        CHECK(none.groups.empty() && none.rows.empty() && none.matches == 0 && none.first_console == "ps1");
+    }
+
+    /* ---- console groups oldest first (console_years.h) ---- */
+    {
+        CHECK(hub::launch_year("nes") == 1983 && hub::launch_year("snes") == 1990 && hub::launch_year("n64") == 1996 && hub::launch_year("gb") == 1989);
+        CHECK(hub::launch_year("gbc") == 1998 && hub::launch_year("gba") == 2001 && hub::launch_year("nds") == 2004 && hub::launch_year("3ds") == 2011);
+        CHECK(hub::launch_year("gc") == 2001 && hub::launch_year("wiiu") == 2012 && hub::launch_year("switch") == 2017 && hub::launch_year("switch2") == 2025);
+        CHECK(hub::launch_year("ps1") == 1994 && hub::launch_year("ps2") == 2000 && hub::launch_year("psp") == 2004);
+        CHECK(hub::launch_year("other") == 0 && hub::launch_year("") == 0 && hub::launch_year("NES") == 0 && hub::launch_year("zz64") == 0);
+        CHECK(hub::launch_year_text("nes") == "1983" && hub::launch_year_text("switch2") == "2025" && hub::launch_year_text("other").empty());
+        /* every console the hub lists has a year (a new console without one fails here), and the desk order holds exactly those consoles */
+        const std::vector<std::string>& co = hubui::console_order();
+        for (const std::string& c : co) CHECK(hub::launch_year(c) >= 1970 && hub::launch_year(c) <= 2100);
+        const std::vector<std::string>& d = desk_console_order();
+        CHECK(d.size() == co.size() && std::set<std::string>(d.begin(), d.end()) == std::set<std::string>(co.begin(), co.end()));
+        CHECK((d == std::vector<std::string>{"nes", "gb", "snes", "ps1", "n64", "gbc", "ps2", "gc", "gba", "nds", "psp", "3ds", "wiiu", "switch", "switch2"}));
+        for (size_t i = 1; i < d.size(); ++i) CHECK(hub::launch_year(d[i - 1]) <= hub::launch_year(d[i]));
+        /* ties: the home console first (GameCube / GBA 2001), then the id (DS / PSP 2004); a console without a year last */
+        CHECK(hub::launch_less("gc", "gba") && !hub::launch_less("gba", "gc"));
+        CHECK(hub::launch_less("nds", "psp") && !hub::launch_less("psp", "nds"));
+        CHECK(!hub::launch_less("n64", "n64") && !hub::launch_less("zz", "zz"));
+        CHECK(hub::launch_less("switch2", "zz64") && !hub::launch_less("zz64", "nes") && hub::launch_less("aa", "zz"));
+        CHECK((hub::by_launch({"zz64", "switch2", "gba", "nes", "gc", "aa"}) == std::vector<std::string>{"nes", "gc", "gba", "switch2", "aa", "zz64"}));
+        CHECK(console_group_id("nes") == "nes" && console_group_id("switch2") == "switch2" && console_group_id("zz64") == "other" && console_group_id("") == "other");
+
+        /* a library with a game on every console: Recent and Favorites on top as before, then the consoles oldest first, then Other */
+        std::vector<Game> lib;
+        int k = 0;
+        for (auto it = co.rbegin(); it != co.rend(); ++it, ++k)   // added newest-listed first: the input order must not matter
+            lib.push_back(G(("k" + std::to_string(k)).c_str(), ("Game " + *it).c_str(), it->c_str(), k < 2 ? 100 + k : 0, k == 3));
+        lib.push_back(G("odd", "Odd One", "zz64"));
+        Model m = build(lib, "", OpenMap());
+        std::vector<std::string> want = {"recent", "favs"};
+        want.insert(want.end(), d.begin(), d.end());
+        want.push_back("other");
+        CHECK(ids(m) == want);
+        CHECK(m.first_console == "nes");
+        /* a big library: the oldest console is the one that starts open; closed groups are kept by id, whatever their position */
+        Model big = build(lib, "", OpenMap(), std::set<std::string>(), kMaxRecent, 10);
+        for (const Group& g : big.groups) CHECK(g.open == (g.id == "recent" || g.id == "nes"));
+        Model shut = build(lib, "", parse_open("nes=0,switch2=0,gba=1"), std::set<std::string>(), kMaxRecent, 10);
+        for (const Group& g : shut.groups) CHECK(g.open == (g.id == "recent" || g.id == "gba"));
+        /* a search keeps the order ("Odd One" does not match "game": no Other) */
+        std::vector<std::string> no_other = want;
+        no_other.pop_back();
+        CHECK(ids(build(lib, "game", OpenMap())) == no_other);
+        /* the remembered cursor ("gb|<key>") finds its row again by id */
+        std::string gb_key;
+        for (const Game& g : lib) if (g.console == "gb") gb_key = g.key;
+        const int r = find_row(m, lib, RowRef{"gb", gb_key});
+        CHECK(r > 0 && m.groups[(size_t)m.rows[(size_t)r].group].id == "gb" && ref_of(m, lib, r).key == gb_key);
+        CHECK(row_text(m, lib, header_row(m, "gb") - 2) == "[nes]");   // [nes] its game, then [gb]
+        /* the pad: Down from the NES group's game crosses into the Game Boy header; type to jump goes on down the list from where it is */
+        CHECK(step(m, header_row(m, "nes") + 1, Key::Down, 5).row == header_row(m, "gb"));
+        const int j = jump_row(m, lib, header_row(m, "nes"), "game sw");
+        CHECK(j > header_row(m, "switch") && m.groups[(size_t)m.rows[(size_t)j].group].id == "switch");
     }
 
     /* ---- identity across rebuilds ---- */
@@ -230,7 +287,8 @@ int main() {
         const Group* n64 = nullptr;
         for (const Group& q : mg.groups) if (q.id == "n64") n64 = &q;
         CHECK(n64 && n64->items.size() == 4 && gh[(size_t)n64->items.back()].key == "ghost:1");
-        CHECK(mg.groups.back().id == "ps2" && mg.groups.back().items.size() == 1);   // a console only friends have
+        CHECK((ids(mg) == std::vector<std::string>{"recent", "favs", "n64", "ps2", "gc"}));   // a console only friends have, in its place by year
+        CHECK(mg.groups[3].items.size() == 1);
         CHECK(build(gh, "zoo", OpenMap()).ghosts == 1 && build(gh, "zoo", OpenMap()).matches == 0);
         /* a renamed game: the search matches the scanned name too */
         std::vector<Game> rn = {G("r", "My Favourite", "gba")};

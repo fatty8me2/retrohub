@@ -4,7 +4,8 @@
  * column width and the virtual-row maths. Unit-tested in test_desk.cpp (hub_desk_test). The drawing is desk_view.cpp.
  *
  * Groups, in order: "Recent" (the most recently played games, up to 5), "Favorites" (when there are any), then one group per console
- * in hubui::console_order(), and "other" for a console id that is not in that list. A game can be in Recent, in Favorites and in its
+ * in desk_console_order() (the consoles of hubui::console_order(), oldest first: console_years.h; the headers show the year), and
+ * "other" for a console id that is not in that list. A game can be in Recent, in Favorites and in its
  * console group at once. Hidden games are never listed. A search keeps the games whose title (or the scanned name of a renamed game)
  * contains the text (any case) and opens every group that has a match; empty groups are left out.
  * The library's own Sort order and filters (desk_view.cpp passes them from rebuild_vis, the same code Traditional uses): Game::rank orders
@@ -12,7 +13,8 @@
  * games). Friends' games you do not own (Game::ghost) are listed greyed in their console group after your own games, never in Recent or
  * Favorites, and never counted as yours. */
 
-#include "logic.h"   // hubui::console_order()
+#include "console_years.h"   // hub::by_launch(): the console groups, oldest console first
+#include "logic.h"           // hubui::console_order()
 
 #include <algorithm>
 #include <cctype>
@@ -117,9 +119,17 @@ inline bool game_matches(const Game& g, const std::string& lower_query) {
     return title_matches(g.title, lower_query) || (!g.alt_title.empty() && !lower_query.empty() && title_matches(g.alt_title, lower_query));
 }
 
+/* The console groups in the order the desk lists them: every console of hubui::console_order() (the same set Traditional and All Games
+ * use), oldest console first (console_years.h; a console added there without a year comes last). The desk only: Traditional keeps
+ * hubui::console_order(). */
+inline const std::vector<std::string>& desk_console_order() {
+    static const std::vector<std::string> v = hub::by_launch(hubui::console_order());
+    return v;
+}
+
 /* Which console group a console id goes in: itself when it is a known console, else "other". */
 inline std::string console_group_id(const std::string& console) {
-    const std::vector<std::string>& o = hubui::console_order();
+    const std::vector<std::string>& o = desk_console_order();
     return std::find(o.begin(), o.end(), console) != o.end() ? console : std::string("other");
 }
 
@@ -164,7 +174,7 @@ inline Model build(const std::vector<Game>& games, const std::string& query, con
     {   // the first console group of your WHOLE library (a search or a filter must not move the default)
         int best = -1;
         bool other = false;
-        const std::vector<std::string>& o = hubui::console_order();
+        const std::vector<std::string>& o = desk_console_order();
         for (const Game& g : games) {
             if (g.hidden || g.ghost) continue;
             auto it = std::find(o.begin(), o.end(), g.console);
@@ -205,7 +215,7 @@ inline Model build(const std::vector<Game>& games, const std::string& query, con
     }
     std::map<std::string, std::vector<int>> by_console;
     for (int i : keep) by_console[console_group_id(games[i].console)].push_back(i);
-    for (const std::string& c : hubui::console_order()) {
+    for (const std::string& c : desk_console_order()) {   // oldest console first
         auto it = by_console.find(c);
         if (it == by_console.end()) continue;
         std::stable_sort(it->second.begin(), it->second.end(), in_order);
