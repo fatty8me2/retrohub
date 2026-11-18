@@ -506,6 +506,7 @@ void poll_process() {
     }
     DWORD code = 0;
     GetExitCodeProcess(A.proc, &code);
+    const uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;   // the game's own time: measured before the after-exit work (save copy-back) below
     const DWORD proc_id = GetProcessId(A.proc);
     CloseHandle(A.proc);
     A.proc = nullptr;
@@ -515,7 +516,6 @@ void poll_process() {
     transferpak_run_finished();   // Wave 3 X1: the Game Boy game's save changed too
     palpark_process_ended();   // Wave 3 X3: a GBA game in the DS Slot-2 may have a new save
     if (A.run.after_exit) { auto fn = std::move(A.run.after_exit); A.run.after_exit = nullptr; fn(); }
-    uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;
     if (!A.run.key.empty()) {
         if (secs >= 1) { hub::record_play(A.run.key, A.run.start_unix, secs); if (!A.run.system_short.empty()) hub::saves::playlog_append(A.run.system_short, A.run.key, (int64_t)A.run.start_unix, (int64_t)secs); }
         resume_note_exit(A.run.system_short, A.run.key, A.run.online, A.run.start_unix);   // Wave 3 R1: which PC wrote the resume point
