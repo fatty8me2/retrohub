@@ -160,6 +160,7 @@ add_test(NAME hub_palpark_test COMMAND hub_palpark_test)   # Wave 3 X3: Pal Park
 add_test(NAME palpark_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/palpark_headless.ps1 -Root ${CMAKE_SOURCE_DIR})   # retrorun --slot2-* flags parsed offline, refused with --net / --ds-link
 set_tests_properties(palpark_headless PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
 add_test(NAME retrorun_rewind_test COMMAND retrorun_rewind_test)   # rewind ring size/limits, rewind->replay hashes, run-ahead == normal shifted (fake core)
+add_test(NAME retrorun_savewrite_test COMMAND retrorun_savewrite_test)   # save writes: one attempt in game, flushed + retried at exit while the old save is held
 add_test(NAME clip_test COMMAND clip_test)   # frame ring caps + MP4 encode and decode round trip (Media Foundation, no window)
 add_test(NAME retrorun_rollback_stall_test COMMAND retrorun_rollback_stall_test)
 add_test(NAME retrorun_dropin_test COMMAND retrorun_dropin_test)   # drop-in: admit frame, joiner takeover, 2-4 peers, old peer refusal, crashed joiner

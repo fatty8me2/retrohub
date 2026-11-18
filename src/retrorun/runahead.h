@@ -19,8 +19,9 @@ int effective(int setting, const std::string& system);
 /* "off" / "0" / "1" / "2" / "auto" -> setting (false for anything else). */
 bool parse(const std::string& s, int* setting);
 
-/* Run n speculative frames after the real one. `saved` is the serialized state right after the real frame. */
-void speculate(int n, const std::function<void()>& run, const std::function<void(bool)>& speculative,
+/* Run n speculative frames after the real one. `saved` is the serialized state right after the real frame. False when the core refused to
+ * load `saved` back: it is then still n frames ahead of the real frame (the caller must stop running ahead). */
+bool speculate(int n, const std::function<void()>& run, const std::function<void(bool)>& speculative,
                const std::function<bool(const void*, size_t)>& load, const std::vector<uint8_t>& saved);
 
 }  // namespace runahead

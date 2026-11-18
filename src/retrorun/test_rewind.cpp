@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "features.h"
+#include "pacing.h"
 
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
@@ -17,6 +18,7 @@ struct Fake {
     uint64_t vid = 0;   // the "framebuffer": written by run(), NOT restored by load (like a real core's last picture)
     int runs = 0, spec_runs = 0, loads = 0;
     bool spec = false;
+    bool refuse_load = false;   // retro_unserialize returns false (and changes nothing)
     uint64_t frame() const { uint64_t f; std::memcpy(&f, ram.data() + 4096, 8); return f; }
     void run() {
         uint64_t f = frame() + 1;
@@ -35,7 +37,7 @@ static retrofeat::Hooks hooks(Fake& c, std::vector<std::string>* msgs = nullptr)
     h.run = [&c] { c.run(); };
     h.state_size = [&c] { return c.ram.size(); };
     h.save = [&c](void* b, size_t n) { std::memcpy(b, c.ram.data(), n); return true; };
-    h.load = [&c](const void* b, size_t n) { std::memcpy(c.ram.data(), b, n); c.loads++; return true; };
+    h.load = [&c](const void* b, size_t n) { if (c.refuse_load) return false; std::memcpy(c.ram.data(), b, n); c.loads++; return true; };
     h.video_hash = [&c] { return c.vid; };
     h.speculative = [&c](bool s) { c.spec = s; };
     if (msgs) h.notify = [msgs](const std::string& s, retrofeat::Note) { msgs->push_back(s); };
@@ -178,11 +180,67 @@ static void test_runahead() {
     CHECK(fs.runahead_frames() == 0 && !msgs.empty());
 }
 
+/* A core that refuses to load its own state back: run-ahead must stop (else the game runs 1 + N frames per frame, silently), and a rewind
+ * must stop instead of playing forward under "REWIND". */
+static void test_refused_load() {
+    {
+        Fake c; std::vector<std::string> msgs;
+        retrofeat::Settings s; s.system = "nes"; s.measure = false; s.rewind = 2; s.runahead = 2;
+        retrofeat::Features f(hooks(c, &msgs), s);
+        c.refuse_load = true;
+        f.frame();                                       // 1 real + 2 speculative frames that could not be taken back
+        CHECK(f.runahead_frames() == 0 && msgs.size() == 1);
+        const uint64_t at = c.frame();
+        for (int i = 0; i < 30; i++) f.frame();
+        CHECK(c.frame() == at + 30);                     // normal speed from here on (was at + 90)
+        CHECK(!c.spec);
+    }
+    {
+        Fake c; std::vector<std::string> msgs;
+        retrofeat::Settings s; s.system = "gba"; s.measure = false; s.runahead = 0;
+        retrofeat::Features f(hooks(c, &msgs), s);
+        for (int i = 0; i < 20; i++) f.frame();
+        c.refuse_load = true;
+        CHECK(f.set_latched(true));
+        const uint64_t at = c.frame();
+        f.frame();
+        CHECK(!f.rewinding() && !f.rewind_active() && msgs.size() == 1);
+        CHECK(c.frame() == at);                          // nothing ran forward under "REWIND"
+        f.frame();
+        CHECK(c.frame() == at + 1);                      // plays on normally
+    }
+}
+
+/* Frame pacing (pacing.h): a rewind step plays no audio, so on an audio-paced display it must be paced by the timer, or a held rewind spins
+ * through the whole history unthrottled. */
+static void test_pacing() {
+    using retrorun::Pace;
+    using retrorun::frame_pace;
+    CHECK(frame_pace(Pace::Audio, 1.0, false, false) == Pace::Audio);
+    CHECK(frame_pace(Pace::Audio, 1.0, false, true) == Pace::Timer);    // rewinding on a 120/144 Hz display
+    CHECK(frame_pace(Pace::Vsync, 1.0, false, true) == Pace::Vsync);    // vsync still paces a silent frame
+    CHECK(frame_pace(Pace::Vsync, 1.0, false, false) == Pace::Vsync);
+    CHECK(frame_pace(Pace::Timer, 1.0, false, true) == Pace::Timer);
+    CHECK(frame_pace(Pace::Audio, 2.0, false, false) == Pace::Timer);   // a changed speed: timer, as before
+    CHECK(frame_pace(Pace::Vsync, 0.5, false, false) == Pace::Timer);
+    CHECK(frame_pace(Pace::None, 1.0, true, false) == Pace::Timer);     // headless --realtime / netplay
+    // The flag the main loop passes: Features::rewinding() for a held rewind and a latched one, false again once released.
+    Fake c; retrofeat::Settings s; s.system = "gba"; s.measure = false;
+    retrofeat::Features f(hooks(c), s);
+    for (int i = 0; i < 20; i++) f.frame();
+    CHECK(!f.rewinding() && frame_pace(Pace::Audio, 1.0, false, f.rewinding()) == Pace::Audio);
+    CHECK(f.set_held(true) && f.rewinding() && frame_pace(Pace::Audio, 1.0, false, f.rewinding()) == Pace::Timer);
+    CHECK(f.set_held(false) && !f.rewinding());
+    CHECK(f.set_latched(true) && f.rewinding() && frame_pace(Pace::Audio, 1.0, false, f.rewinding()) == Pace::Timer);
+}
+
 int main() {
     test_ring();
     test_policy();
     test_rewind_features();
     test_runahead();
+    test_pacing();
+    test_refused_load();
     if (fails) { std::printf("%d failures\n", fails); return 1; }
     std::printf("rewind_test: ok\n");
     return 0;

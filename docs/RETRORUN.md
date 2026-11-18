@@ -89,6 +89,7 @@ Frame pacing mode is chosen once at start:
 1. **vsync + dynamic rate control** - display refresh within +/-5% of core fps (60 Hz vs 59.73 fps): `SDL_RenderPresent` paces the loop and the producer resamples
    (linear) by `1 +/- 0.5%` according to ring fill vs a 70 ms target, so the 0.45% clock mismatch never underruns or overflows the buffer.
 2. **audio-paced** - otherwise (e.g. 144 Hz monitor): the loop waits until the ring drops below target before running the next frame; the audio clock is master, video is dupe/skipped by the display.
+   A rewind step plays no audio, so it is paced by the timer instead (`pacing.h`; before, a held rewind ran through the whole history unthrottled).
 3. **timer** - when muted/no audio device: QueryPerformanceCounter deadlines at core fps.
 
 Fast forward (Tab, offline) discards audio, skips pacing and presents every 8th frame.
@@ -97,8 +98,11 @@ Fast forward (Tab, offline) discards audio, skips pacing and presents every 8th 
 
 - Battery: `<save-dir>\<rom basename>.srm` via `retro_get_memory_data(SAVE_RAM)`. Loaded at start (copied up to the smaller of file and core sizes),
   written on exit and every 30 s **only if changed**, always temp-file + rename (`MoveFileEx` replace + write-through) so a crash never tears the file.
+  The writes at exit (battery, clock, `auto.state`) are also flushed to disk before the rename and retried for up to 1.5 s while another program
+  (a sync client, a virus scanner) holds the old file (`save_write.h`, `durable_write.h`): they have no second chance 30 s later.
   Cores that write their own saves (via the save dir) also land in `--save-dir`.
-- States: `<state-dir>\slotN.state` (F5/F7), plus `auto.state` written on exit and loaded at start only with `--resume` (ignored online). In RetroAchievements hardcore the resume state is not written (hardcore forbids save states), so a later non-hardcore session resumes from the older point.
+- States: `<state-dir>\slotN.state` (F5/F7), plus `auto.state` written on exit and loaded at start only with `--resume` (ignored online). `--load-state FILE`
+  (the hub's "Resume" from a chosen state) replaces the `--resume` load; `auto.state` is then only the fallback when FILE cannot be restored. In RetroAchievements hardcore the resume state is not written (hardcore forbids save states), so a later non-hardcore session resumes from the older point.
   Loading states is disabled in netplay.
 
 ## Netplay (lockstep)

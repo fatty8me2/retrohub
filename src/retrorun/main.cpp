@@ -3,7 +3,6 @@
 
 #include "winutil.h"
 #include "net_probe.h"
-#include "durable_write.h"
 #include <windows.h>
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -43,7 +42,9 @@ namespace slot2 = retrorun::slot2;
 #include "link_sync.h"
 #include "ps1_input.h"
 #include "port_plan.h"
+#include "pacing.h"
 #include "save_companion.h"
+#include "save_write.h"
 #include "rollback.h"
 #include "lockstep.h"
 #include "perf_overlay.h"
@@ -284,29 +285,8 @@ static bool read_file(const std::string& path, std::vector<uint8_t>* out) {
     return true;
 }
 
-/* Write to <path>.tmp then rename over <path>, so a crash never leaves a torn file. */
-static bool write_atomic(const std::string& path, const void* data, size_t size) {
-    fs::path p = fs::u8path(path);
-    fs::path tmp = p;
-    tmp += L".tmp";
-    {
-        FILE* f = _wfopen(tmp.c_str(), L"wb");
-        if (!f) return false;
-        bool ok = size == 0 || fwrite(data, 1, size, f) == size;
-        ok = (fflush(f) == 0) && ok;
-        fclose(f);
-        if (!ok) { std::error_code ec; fs::remove(tmp, ec); return false; }
-    }
-    /* durable::commit_replace flushes the temp file to disk BEFORE the rename (fflush only reaches the OS cache: a power cut could leave a
-     * zero-length .srm behind the new name) and retries a moment while a cloud client or antivirus holds the save open (that used to fail
-     * the write, and the save made just before quitting was lost). The short budget: this runs on the emulation thread. */
-    if (!durable::commit_replace(tmp.wstring(), p.wstring(), durable::kRetryShortMs)) {
-        std::error_code ec;
-        fs::remove(tmp, ec);
-        return false;
-    }
-    return true;
-}
+/* Temp file + one atomic replace; at_exit = flushed and retried while another program holds the old file (save_write.h). */
+using retrorun::write_atomic;
 
 /* Status line -> OSD colour. */
 static osd::Kind osd_kind_for(const std::string& s) {
@@ -415,7 +395,7 @@ class AudioOut {
 
 /* ---------------------------------------------------------------- frontend */
 
-enum class Pace { None, Vsync, Audio, Timer };
+using retrorun::Pace;
 
 class Frontend {
   public:
@@ -489,6 +469,7 @@ class Frontend {
     int last_mouse_x = -1, last_mouse_y = -1;
     uint64_t cursor_tick = 0;
     uint16_t rumble_lvl[4][2] = {};
+    void rumble_apply(bool on);   // re-send (on) or silence (off) the rumble the core asked for on each local pad
     /* Rewind + run-ahead (features.h): offline only. spec_ = a rewind / run-ahead frame is running (audio muted). */
     std::unique_ptr<retrofeat::Features> feat_;
     bool spec_ = false;
@@ -653,7 +634,7 @@ class Frontend {
     std::string link_rtc(int inst) const { std::string p = link_srm(inst); return p.substr(0, p.size() - 4) + ".rtc"; }
     std::vector<uint8_t> link_blob_from_disk(int inst) const;
     void link_apply_blob(int inst, const std::vector<uint8_t>& blob);
-    void link_save(bool force);
+    void link_save(bool force, bool at_exit = false);
     bool link_loaded = false;   // never write a console save before its real save was loaded into the core
     std::vector<std::vector<uint8_t>> link_saved_;   // last written sram+rtc per console
     SDL_Rect view_src() const;               // portion of the frame shown to this player
@@ -679,7 +660,7 @@ class Frontend {
     bool guest_save_ro = false;   // --share-host-save guest: the save lives in a throwaway dir and is never written back
     std::string rtc_path() const { return srm_path.substr(0, srm_path.size() - 4) + ".rtc"; }
     std::vector<uint8_t> rtc_saved;
-    void save_srm(bool force);
+    void save_srm(bool force, bool at_exit = false);   // at_exit: the session's last write (flushed, retried: save_write.h)
     std::string state_path(const std::string& name) const { return a.state_dir + "\\" + name + ".state"; }
     bool save_state(const std::string& name);
     bool load_state(const std::string& name);
@@ -997,6 +978,11 @@ bool Frontend::setup_paths() {
     for (auto& o : a.opts) {
         size_t eq = o.find('=');
         if (eq != std::string::npos) core.overrides[trim(o.substr(0, eq))] = trim(o.substr(eq + 1));
+    }
+    if (is_ds) {   // F9 cycles on from the layout really in use: the hub's per-game layout (--opt) replaces the remembered one above
+        auto lo = core.overrides.find("melonds_screen_layout1");
+        const int li = lo == core.overrides.end() ? -1 : dsview::layout_index(lo->second);
+        if (li >= 0) ds_layout = li;
     }
     if (is_ps1 && (!a.net.empty() || a.synctest)) {
         /* Online (and SyncTest): every PC must run the identical emulation AND produce the identical picture, because the picture
@@ -1575,7 +1561,7 @@ void Frontend::pump_events(bool idle) {
                 case SDL_QUIT: quit = true; break;
                 case SDL_KEYDOWN: handle_key(e.key); break;
                 case SDL_CONTROLLERDEVICEADDED:
-                case SDL_CONTROLLERDEVICEREMOVED: open_pads(); break;
+                case SDL_CONTROLLERDEVICEREMOVED: open_pads(); if (!paused_) rumble_apply(true); break;   // reopening stops every motor: give each port its level back
                 default: break;
             }
         }
@@ -1592,6 +1578,7 @@ void Frontend::pump_events(bool idle) {
         if (rbe) rbe->say_bye();
         else if (lockstep) lockstep->finish();
         finish();
+        rumble_apply(false);   // ExitProcess skips closing the pads, which is what would stop a motor the core left running
         ExitProcess(0);
     }
 }
@@ -1733,7 +1720,7 @@ void Frontend::slot2_commit() {
     slot2_work_.clear();
 }
 
-void Frontend::save_srm(bool force) {
+void Frontend::save_srm(bool force, bool at_exit) {
     if (guest_save_ro) return;
     size_t n = 0;
     void* mem = core.save_ram(&n);
@@ -1742,7 +1729,7 @@ void Frontend::save_srm(bool force) {
         size_t nr = 0;
         void* rm = core.memory(RETRO_MEMORY_RTC, &nr);
         if (rm && nr && (force || rtc_saved.size() != nr || memcmp(rtc_saved.data(), rm, nr) != 0) ) {
-            if (write_atomic(rtc_path(), rm, nr)) rtc_saved.assign((uint8_t*)rm, (uint8_t*)rm + nr);
+            if (write_atomic(rtc_path(), rm, nr, at_exit)) rtc_saved.assign((uint8_t*)rm, (uint8_t*)rm + nr);
         }
     }
     if (!force && srm_saved.size() == n && memcmp(srm_saved.data(), mem, n) == 0) return;
@@ -1755,7 +1742,7 @@ void Frontend::save_srm(bool force) {
             rlog("save: %s original kept as %s", bec ? "FAILED to keep" : "size-mismatched", bak.u8string().c_str());
         }
     }
-    if (write_atomic(srm_path, mem, n)) {
+    if (write_atomic(srm_path, mem, n, at_exit)) {
         srm_saved.assign((uint8_t*)mem, (uint8_t*)mem + n);
         rlog("save: wrote %s (%zu bytes)", srm_path.c_str(), n);
     } else {
@@ -1922,10 +1909,22 @@ void Frontend::ctl_poll() {
     }
 }
 
+/* The core only sets the motors while it runs, and every request lasts up to 60 s: a game paused (or left) mid-rumble would keep the pad
+ * buzzing with nothing running. Silence them; on resume the core's last levels come back. */
+void Frontend::rumble_apply(bool on) {
+    if (a.headless) return;
+    for (int i = 0; i < n_local && i < 4 && (size_t)i < pads.size(); i++) {
+        if (!rumble_lvl[i][0] && !rumble_lvl[i][1]) continue;
+        if (on) SDL_GameControllerRumble(pads[i], rumble_lvl[i][0], rumble_lvl[i][1], 60000);
+        else SDL_GameControllerRumble(pads[i], 0, 0, 0);
+    }
+}
+
 void Frontend::set_paused(bool p) {
     if (p == paused_) return;
     paused_ = p;
     audio.pause(p);
+    rumble_apply(!p);
     next_deadline = 0;   // pacing starts afresh: the time spent paused is not owed as frames
     rlog("pause: %s (frame %llu)", p ? "on" : "off", (unsigned long long)frame_no);
     if (p) osd::push("Paused");
@@ -2040,7 +2039,7 @@ void Frontend::link_apply_blob(int inst, const std::vector<uint8_t>& b) {
 }
 
 /* Writes only the consoles this PC owns. */
-void Frontend::link_save(bool force) {
+void Frontend::link_save(bool force, bool at_exit) {
     if (!link_loaded) return;
     link_saved_.resize(link_n);
     for (int i = 0; i < link_n; i++) {
@@ -2052,8 +2051,8 @@ void Frontend::link_save(bool force) {
         if (ms) cur.insert(cur.end(), (uint8_t*)ms, (uint8_t*)ms + ns);
         if (mr) cur.insert(cur.end(), (uint8_t*)mr, (uint8_t*)mr + nr);
         if (!force && cur == link_saved_[i]) continue;
-        if (ms && ns) write_atomic(link_srm(i), ms, ns);
-        if (mr && nr) write_atomic(link_rtc(i), mr, nr);
+        if (ms && ns) write_atomic(link_srm(i), ms, ns, at_exit);
+        if (mr && nr) write_atomic(link_rtc(i), mr, nr, at_exit);
         link_saved_[i] = cur;
         rlog("save: console %d wrote %s (%zu + %zu bytes)", i + 1, link_srm(i).c_str(), ns, nr);
     }
@@ -3044,9 +3043,10 @@ bool Frontend::setup_link() {
 
 void Frontend::do_pacing() {
     if (ff || (a.headless && !a.realtime && !a.ds_link && !rbe)) return;
-    switch ((speed != 1.0 || a.headless) ? Pace::Timer : pace) {   // a changed speed paces by timer (vsync/audio pacing are tied to 1x)
-        case Pace::Audio:
-            while (audio.fill() > audio.target() && !quit) {
+    // a changed speed paces by timer (vsync/audio pacing are tied to 1x); so does a rewind step, which pushes no audio (pacing.h)
+    switch (retrorun::frame_pace(pace, speed, a.headless, feat_ && feat_->rewinding())) {
+        case Pace::Audio:   // a "pause" heard in this wait stops the device, so the ring would never drain: leave for pause_tick()
+            while (audio.fill() > audio.target() && !quit && !paused_) {
                 SDL_Delay(1);
                 pump_events(false);
             }
@@ -3132,23 +3132,23 @@ void Frontend::finish() {
         if (core.serialize(buf.data(), buf.size()) && write_atomic(sd, buf.data(), buf.size())) rlog("state-dump: %s (%zu bytes)", sd, buf.size());
     }
     if (core.game_loaded() && link) {
-        link_save(false);
+        link_save(false, true);
     } else if (core.game_loaded()) {
-        save_srm(false);
+        save_srm(false, true);
         {   // final clock (the periodic save only writes it together with a changed save RAM)
             size_t nr = 0;
             void* rm = core.memory(RETRO_MEMORY_RTC, &nr);
             if (rm && nr && !guest_save_ro && !is_ds && !rtc_saved.empty() && (rtc_saved.size() != nr || memcmp(rtc_saved.data(), rm, nr) != 0))
-                write_atomic(rtc_path(), rm, nr);
+                write_atomic(rtc_path(), rm, nr, true);
         }
         if (ra_.active() && !cheevos::auto_state_allowed(ra_.hardcore())) {
             rlog("state: hardcore is on; auto.state not written");   // hardcore rules forbid save states, the resume point included
         } else if (!a.selftest && !is_ds && core.serialize_size()) {   // DS states are ~19 MB and the hub never resumes them
             size_t n = core.serialize_size();
             std::vector<uint8_t> buf(n);
-            if (core.serialize(buf.data(), n) && write_atomic(state_path("auto"), buf.data(), n)) {
+            if (core.serialize(buf.data(), n) && write_atomic(state_path("auto"), buf.data(), n, true)) {
                 const std::string ps = retrorun::plan_signature(pplan) + "\n";
-                write_atomic(plan_file_for(state_path("auto")), ps.data(), ps.size());
+                write_atomic(plan_file_for(state_path("auto")), ps.data(), ps.size(), true);
                 rlog("state: wrote auto.state (%zu bytes)", n);
             }
         }
@@ -3991,13 +3991,17 @@ int Frontend::run(const Args& args) {
             { for (int i = 0; i < link_n; i++) if (owner[i] >= 0) link_apply_blob(i, link_blob_from_disk(i)); link_loaded = true; }
     } else load_srm();
     ra_start();
-    if (!link && a.resume && !online && a.net.empty() && !a.ds_link) {
-        if (fs::exists(fs::u8path(state_path("auto")))) load_state("auto");
-    }
+    /* The hub passes --resume with every launch and adds --load-state for "Resume" from a chosen state: that state replaces the auto resume, which
+     * is only the fallback when it cannot be restored. (Loading auto.state first cost a second load, a "Loaded state auto" toast, and under the
+     * chosen state's port plan a false "This save was made with ... adapter" refusal.) */
+    bool resumed = false;
     if (!a.load_state_path.empty() && !link && !online && a.net.empty() && !a.ds_link && ra_.allow(cheevos::Feature::LoadState)) {
         std::vector<uint8_t> sb;
-        if (read_file(a.load_state_path, &sb) && plan_matches(a.load_state_path) && core.unserialize(sb.data(), sb.size())) set_status("Resumed from saved state");
+        if (read_file(a.load_state_path, &sb) && plan_matches(a.load_state_path) && core.unserialize(sb.data(), sb.size())) { set_status("Resumed from saved state"); resumed = true; ra_.reset(); }
         else rlog("load-state: could not restore %s", a.load_state_path.c_str());
+    }
+    if (!resumed && !link && a.resume && !online && a.net.empty() && !a.ds_link) {
+        if (fs::exists(fs::u8path(state_path("auto")))) load_state("auto");
     }
 
     cheats_init();
@@ -4125,6 +4129,7 @@ int Frontend::run(const Args& args) {
                 disc_poll();
                 ctl_poll();
                 do_pacing();
+                if (paused_) continue;   // paused during the pacing wait: no frame runs; the next pass is pause_tick()
                 run_core_frame();
                 if (link_active) {
                     link_pump();
