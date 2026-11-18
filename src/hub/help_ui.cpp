@@ -1,6 +1,7 @@
 /* Settings > Help: FAQ, plus the "Finish setup" card on Home while first-run steps are open. */
 #include "convenience.h"
 #include "help_logic.h"
+#include "winutil.h"
 
 namespace {
 
@@ -68,7 +69,7 @@ namespace {
 std::string g_scan_last_line;     // "Found 12 games in 2 folders." / "Looked in ...: no game files found." ("" until a scan with folders ended)
 std::string g_scan_toast_text;    // the text of the last scan toast (so it can be dropped when a game starts)
 double g_scan_started = 0.0;
-std::string home_dir() { const char* h = std::getenv("USERPROFILE"); return h ? h : ""; }
+std::string home_dir() { return winutil::getenv_utf8("USERPROFILE"); }   // UTF-8 like the scanned paths (std::getenv is ANSI: a non-ASCII profile name never matched)
 }  // namespace
 
 /* lib_state.cpp: a scan starts / its result has been applied (once per finished scan, from apply_scan, whatever page is open). */
