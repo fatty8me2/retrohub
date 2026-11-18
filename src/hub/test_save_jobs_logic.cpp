@@ -57,6 +57,15 @@ int main() {
         w3.warning = w.warning;
         CHECK_EQ(report_summary(w3, "sent", "received"), "Failed: disk full");
     }
+    // export: a zip that left something out says so; a failure always says why
+    {
+        using hubsave::export_summary;
+        CHECK_EQ(export_summary(true, "D:\\b.zip", ""), "Exported to D:\\b.zip");
+        CHECK_EQ(export_summary(true, "D:\\b.zip", "Could not read all of the save folder of n64/a, so some of it may be missing."),
+                 "Exported to D:\\b.zip, but not everything: Could not read all of the save folder of n64/a, so some of it may be missing.");
+        CHECK_EQ(export_summary(false, "D:\\b.zip", "zip init failed"), "Export failed: zip init failed");
+        CHECK_EQ(export_summary(false, "D:\\b.zip", ""), "Export failed: unknown error");
+    }
     if (g_fail) { std::printf("%d failure(s)\n", g_fail); return 1; }
     std::printf("hub_save_jobs_logic_test: all passed\n");
     return 0;

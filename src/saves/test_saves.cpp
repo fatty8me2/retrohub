@@ -588,6 +588,33 @@ int main() {
         CHECK(s.ok && s.pulled == 1 && count_conflicts(V) == 1 && count_conflicts(sf) == 1 && read_file(V / "n64/g/battery/x.sav") == "old-restored");
     }
 
+    printf("[17] export: an unreadable game folder is named and every other game is still in the zip; an unreadable system folder fails it\n");
+    {
+        fs::path V = base / "s6V", W = base / "s6W";
+        set_vault_dir(V.u8string());
+        write_file(V / "n64/a/battery/a.sav", "a-save", 100);
+        write_file(V / "n64/z/battery/z.sav", "z-save", 100);     // listed AFTER the unreadable game
+        write_file(V / "snes/q/battery/q.srm", "q-save", 100);    // and another system after it
+        const std::string zip = (base / "s6.zip").u8string(), zip2 = (base / "s6-fail.zip").u8string();
+        std::string err;
+        set_enum_error_hook(enum_hook);
+        g_hook_mode = 1; g_hook_tail = "\\battery"; g_hook_match = "s6V\\n64\\a";
+        CHECK(export_zip(zip, false, &err));
+        printf("  export warning: %s\n", err.c_str());
+        CHECK(err.find("n64/a") != std::string::npos);            // the gap is said, by name (it used to be silent)
+        g_hook_tail = "s6V\\n64"; g_hook_match = "s6V\\n64";       // the system folder itself: nothing can be told apart
+        err.clear();
+        CHECK(!export_zip(zip2, false, &err) && !err.empty() && !fs::exists(fs::u8path(zip2)));
+        g_hook_mode = 0; g_hook_tail = "\\battery";
+        set_enum_error_hook(nullptr);
+        set_vault_dir(W.u8string());
+        SyncReport ir = import_zip(zip);
+        CHECK(ir.ok);
+        CHECK(read_file(W / "n64/z/battery/z.sav") == "z-save");   // the zip used to end at the unreadable folder
+        CHECK(read_file(W / "snes/q/battery/q.srm") == "q-save");
+        CHECK(!fs::exists(W / "n64/a/battery/a.sav"));
+    }
+
     { std::error_code ec; fs::remove_all(fs::path(L"\\\\?\\" + fs::absolute(base).wstring()), ec); }
     printf("\n%s: %d checks, %d failed\n", g_fail ? "FAILED" : "PASSED", g_checks, g_fail);
     return g_fail ? 1 : 0;

@@ -25,4 +25,12 @@ inline std::string report_summary(const hub::saves::SyncReport& r, const char* s
     return s + "." + warn;
 }
 
+/* The Saves page line after "Export". A zip that was written but left something out (export_zip's warning: files or a game folder
+ * that could not be read) says so: it is a backup, and a silent gap is only found when it is needed. */
+inline std::string export_summary(bool ok, const std::string& path, const std::string& err) {
+    if (!ok) return "Export failed: " + (err.empty() ? std::string("unknown error") : err);
+    if (err.empty()) return "Exported to " + path;
+    return "Exported to " + path + ", but not everything: " + err;
+}
+
 }  // namespace hubsave

@@ -370,9 +370,9 @@ void poll_job() {
             set_toast("Saves synced: " + A.sync_result, true);
         }
     } else if (j.kind == SaveJob::Export) {
-        A.export_ok = j.export_ok;
-        A.export_result = j.export_ok ? "Exported to " + j.path : "Export failed: " + j.export_err;
-        set_toast(j.export_ok ? "Saves exported." : A.export_result, j.export_ok);
+        A.export_ok = j.export_ok && j.export_err.empty();   // a zip that left something out is not shown as a plain success
+        A.export_result = hubsave::export_summary(j.export_ok, j.path, j.export_err);
+        set_toast(!j.export_ok ? A.export_result : j.export_err.empty() ? std::string("Saves exported.") : std::string("Saves exported, but some could not be read: see the Saves page."), A.export_ok);
     } else if (j.kind == SaveJob::Import) {
         A.import_ok = j.report.ok;
         A.import_result = report_summary(j.report, "restored", "restored");

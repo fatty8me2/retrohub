@@ -708,7 +708,13 @@ bool export_zip(const std::string& zip_path, bool include_states, std::string* e
     ws vault = vault_w();
     if (!is_dir(vault)) mkdirs(vault);
     FMap files; std::vector<str> log;
-    walk(vault, L"", include_states, files, log);
+    /* A folder that could not be listed used to end the whole walk right there, silently: the zip lacked every game listed after it and
+     * the export still reported success. Now, as in sync_folder, a game folder (or a foreign top-level folder) that cannot be read is
+     * named in the warning and the rest is exported; an unreadable vault root, system folder, _conflicts or _account fails the export. */
+    Excluded ex;
+    ex.vault = vault;
+    str werr;
+    if (!walk(vault, L"", include_states, files, log, &werr, false, &ex, "vault")) return fail("Export stopped. " + werr + " in the save vault.");
 
     ws dst = W(zip_path);
     if (!mkdirs_for_file(dst)) return fail("cannot create folder for " + zip_path);
@@ -737,7 +743,11 @@ bool export_zip(const std::string& zip_path, bool include_states, std::string* e
     fclose(f);
     if (!ok) { DeleteFileW(lp(tmp).c_str()); return fail("writing zip failed"); }
     if (!commit_tmp(tmp, dst)) return fail("cannot write " + zip_path);
-    if (skipped && error) *error = std::to_string(skipped) + " file(s) could not be read and were left out";
+    str warn;
+    if (skipped) warn = std::to_string(skipped) + " file(s) could not be read and were left out.";
+    for (auto& g : ex.games) warn += (warn.empty() ? "" : " ") + str("Could not read all of the save folder of ") + g.second + ", so some of it may be missing.";
+    for (auto& f : ex.folders) warn += (warn.empty() ? "" : " ") + str("Could not read the folder ") + f.second + ", so it was left out.";
+    if (!warn.empty() && error) *error = warn;
     return true;
 }
 
