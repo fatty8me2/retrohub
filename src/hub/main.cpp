@@ -403,8 +403,7 @@ static int hub_main() {
             *managed = i.managed;
             return true;
         };
-        const char* ad = std::getenv("APPDATA");
-        jc.appdata = ad ? ad : "";
+        jc.appdata = winutil::getenv_utf8("APPDATA");   // UTF-8 like the launch path that recorded the journal (std::getenv is ANSI: a non-ASCII profile never matched)
         hubjournal::start_recovery(hubjournal::pending_dir(hub::data_dir()), jc, [](const hubjournal::Entry& e) {
             if (e.system_short.empty() || e.game_key.empty()) return;
             hub::saves::touch_game(e.system_short, e.game_key, e.title);
