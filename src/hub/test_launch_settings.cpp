@@ -106,6 +106,13 @@ int main(int argc, char** argv) {
         CHECK(hubui::play_first_step(false, false, false).step == PlayFirst::Continue);
         CHECK(hubui::play_first_step(true, true, false).step == PlayFirst::GateBusy && hubui::play_first_step(true, false, true).step == PlayFirst::GateBusy);
     }
+    {   // Play on an archived game while an unpack runs: never replaced by the question (that hid its progress and made "Unpack and play" join it on the frame thread)
+        using hubui::UnpackStep;
+        CHECK(hubui::unpack_step(true, true, false) == UnpackStep::BusySame && hubui::unpack_step(true, true, true) == UnpackStep::BusySame);
+        CHECK(hubui::unpack_step(true, false, false) == UnpackStep::BusyOther && hubui::unpack_step(true, false, true) == UnpackStep::BusyOther);
+        CHECK(hubui::unpack_step(false, false, false) == UnpackStep::Ask && hubui::unpack_step(false, true, false) == UnpackStep::Ask);
+        CHECK(hubui::unpack_step(false, false, true) == UnpackStep::StartNow && hubui::unpack_step(false, true, true) == UnpackStep::StartNow);
+    }
     {   // Undo card: Y acts only while the card shows, in pad mode, with the hub in front and no typing
         hubui::UndoPadIn u; u.card_visible = u.pad_mode = u.y_pressed = true;
         CHECK(hubui::undo_card_pad_press(u));

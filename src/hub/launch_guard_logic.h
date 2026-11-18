@@ -32,6 +32,15 @@ inline PlayFirstDecision play_first_step(bool gate_busy, bool missing, bool pass
     return {PlayFirst::Continue, false};
 }
 
+/* Play on a game whose archived image must be unpacked first (launch_external, ps1_play). An unpack that is already running, for this game or
+ * another, is never replaced by the question: that hid its progress, and "Unpack and play" then joined the running job on the frame thread
+ * (minutes of a frozen window) before unpacking again. `pack_owned` = installed from a shared pack (no question). */
+enum class UnpackStep { BusySame, BusyOther, StartNow, Ask };
+inline UnpackStep unpack_step(bool job_working, bool same_game, bool pack_owned) {
+    if (job_working) return same_game ? UnpackStep::BusySame : UnpackStep::BusyOther;
+    return pack_owned ? UnpackStep::StartNow : UnpackStep::Ask;
+}
+
 /* Wii U pad-screen combo (View + right bumper) reads the controller whatever window has focus. It may act (and raise Cemu) only while the
  * player is looking at RetroHub or at one of this session's own game windows; with ANOTHER program in front (a second game the player
  * alt-tabbed to) the press belongs to that program and Cemu must not be pulled over it. fg_pid 0 = no foreground window: do nothing. */

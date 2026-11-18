@@ -122,6 +122,8 @@ bool ps1_swap_disc(const std::string& key) {
 
 bool ps1_real_bios_present() { return !find_all().empty(); }
 
+void unzip_play_request(const hub::GameEntry& e);   // launch.cpp
+
 void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& states) {
     std::string core = find_core("beetle_psx");
     if (core.empty()) { set_notice("The PlayStation emulator core (beetle_psx_libretro.dll) was not found in the cores folder."); return; }
@@ -133,10 +135,8 @@ void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& bat
         ASK.warning.clear();
         return;
     }
-    if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived set: ask once, unpack, then start
-        UNZ.key = e.key;
-        if (gamepack_owns(e)) start_unzip(e);   // installed from a shared pack: no question
-        else UNZ.state = UnzipJob::Asking;
+    if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived set: ask once (none for a shared-pack game), unpack, then start; never over a running unpack
+        unzip_play_request(e);
         return;
     }
     if (!bios.empty()) hub::ps1::stage_bios(bios, sysdir);

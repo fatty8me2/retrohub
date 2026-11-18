@@ -696,6 +696,8 @@ static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const st
     else { autotest_log("external: spawn failed"); hubjournal::abort_unspawned(*jr, jdir, false); }
 }
 
+void unzip_play_request(const hub::GameEntry& e);   // (below, beside start_unzip; ps1_ui.cpp uses it too)
+
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg) {
     if (launch_blocked("launch_external")) return;
     hubemu::Kind kind = hubemu::kind_for(e.system);
@@ -721,9 +723,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         if (ps2_bios.file.empty()) { ps2_bios_ask(e.key); return; }
     }
     if ((e.system == hub::System::N3DS || e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::PSP || e.system == hub::System::WiiU) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
-        UNZ.key = e.key;
-        if (gamepack_owns(e)) start_unzip(e);   // installed from a shared pack: the player already chose this game, no question
-        else UNZ.state = UnzipJob::Asking;
+        unzip_play_request(e);
         return;
     }
     /* One lock for launching and replaying a leftover session (session_journal.h): held until the spawn has returned and the journal is written.
@@ -962,6 +962,17 @@ void start_unzip(const hub::GameEntry& e) {
         UNZ.done = true;
     });
 }
+/* Play on an archived image (launch_external, ps1_play): the unpack question, or the unpack at once for a shared-pack game. Never while an unpack
+ * runs (launch_guard_logic.h unpack_step): Play can also come from outside the modal dialog (a desktop shortcut, an install that finished). */
+void unzip_play_request(const hub::GameEntry& e) {
+    switch (hubui::unpack_step(UNZ.state == UnzipJob::Working, UNZ.key == e.key, gamepack_owns(e))) {
+        case hubui::UnpackStep::BusySame: set_notice(e.title + " is still being unpacked. Press Play again when it is done."); return;
+        case hubui::UnpackStep::BusyOther: set_notice("Another game is still being unpacked. Try again when it has finished."); return;
+        case hubui::UnpackStep::StartNow: UNZ.key = e.key; start_unzip(e); return;   // installed from a shared pack: the player already chose this game, no question
+        case hubui::UnpackStep::Ask: UNZ.key = e.key; UNZ.state = UnzipJob::Asking; return;
+    }
+}
+
 void flash_taskbar() {
     if (!A.hwnd || g_headless || game_active()) return;   // a flash is still a popup: nothing while a game runs
     FLASHWINFO fi{};
