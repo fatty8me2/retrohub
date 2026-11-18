@@ -1635,7 +1635,7 @@ bool Frontend::share_host_save_run() {
     std::error_code ec;
     if (a.slot != 0) { fs::remove_all(fs::u8path(dir), ec); fs::create_directories(fs::u8path(dir), ec); }
     std::string err;
-    if (!n64run::run_save_sync(session, a.slot, slot_mask, a.slot == 0 ? &files : nullptr, dir, 30000, &err)) {
+    if (!n64run::run_save_sync(session, a.slot, slot_mask, a.slot == 0 ? &files : nullptr, dir, 30000, &err, /*utf8_dir=*/true)) {   // retrorun's paths are UTF-8
         rlog("hostsave: save sync failed: %s", err.c_str());
         return false;
     }
@@ -2237,7 +2237,7 @@ bool Frontend::ps2_card_presync() {
     std::string dir = a.save_dir + "\\hostsave";
     if (a.slot != 0) { fs::remove_all(fs::u8path(dir), ec); fs::create_directories(fs::u8path(dir), ec); }
     std::string serr;
-    if (!n64run::run_save_sync(ps, a.slot, mask, a.slot == 0 ? &files : nullptr, dir, 60000, &serr)) {
+    if (!n64run::run_save_sync(ps, a.slot, mask, a.slot == 0 ? &files : nullptr, dir, 60000, &serr, /*utf8_dir=*/true)) {
         rlog("hostsave: memory card sync failed: %s", serr.c_str());
         net_rc = 6;
         ps.stop();

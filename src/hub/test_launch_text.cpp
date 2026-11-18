@@ -150,6 +150,20 @@ static void files() {
     CHECK(!fs::exists(fs::u8path(pid)));
     CHECK(file_size_utf8(pid) == 0);
     remove_file_utf8(pid);                                // removing a missing file is harmless
+    // the host's battery saves into the throwaway netplay folder: both UTF-8 (a vault under C:\Users\José was never found before)
+    const std::string bat = dir + "\\battery", tmp = dir + "\\netplay";
+    CHECK(!copy_dir_files_utf8(bat, tmp));                // no save folder: false, nothing copied
+    fs::create_directories(fs::u8path(bat), ec);
+    fs::create_directories(fs::u8path(tmp), ec);
+    fs::create_directories(fs::u8path(bat + "\\sub"), ec);   // sub-folders are not copied
+    CHECK(write_file_utf8(bat + "\\Pok\xC3\xA9mon Red.srm", "SAVE"));
+    CHECK(write_file_utf8(bat + "\\game.rtc", "RTC"));
+    CHECK(write_file_utf8(tmp + "\\game.rtc", "OLD"));
+    CHECK(copy_dir_files_utf8(bat, tmp));
+    CHECK(read_file_utf8(tmp + "\\Pok\xC3\xA9mon Red.srm") == "SAVE");
+    CHECK(read_file_utf8(tmp + "\\game.rtc") == "RTC");   // replaced
+    CHECK(!fs::exists(fs::u8path(tmp + "\\sub")));
+    CHECK(copy_dir_files_utf8(tmp, tmp + "\\missing") == true);   // a destination that does not exist: no crash (files are skipped)
     fs::remove_all(base, ec);
 }
 

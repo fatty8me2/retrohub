@@ -9,7 +9,7 @@
 namespace n64run {
 
 bool run_save_sync(hubnet::Session& s, int my_slot, uint32_t slot_mask, const std::vector<SaveFile>* host_files,
-                   const std::string& client_dir, uint32_t timeout_ms, std::string* err) {
+                   const std::string& client_dir, uint32_t timeout_ms, std::string* err, bool utf8_dir) {
     if ((slot_mask & 0xFFu & ~1u) == 0) return true;   // nobody to share with
     const uint32_t t0 = hubnet::now_ms();
     std::vector<uint8_t> msg;
@@ -30,7 +30,7 @@ bool run_save_sync(hubnet::Session& s, int my_slot, uint32_t slot_mask, const st
         }
     }
 
-    SaveReceiver rcv(my_slot, 0, client_dir);
+    SaveReceiver rcv(my_slot, 0, client_dir, utf8_dir);
     SendFn send = [&s](const std::vector<uint8_t>& d) { s.send(0, d.data(), (int)d.size()); };
     for (;;) {
         s.update();

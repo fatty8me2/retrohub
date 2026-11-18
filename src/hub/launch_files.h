@@ -30,6 +30,18 @@ inline bool write_file_utf8(const std::string& utf8, const std::string& data) {
     f.write(data.data(), (std::streamsize)data.size());
     return (bool)f;
 }
+/* Copies the regular files of folder `src` into folder `dst` (both UTF-8; existing files are replaced). False when `src` is not a folder.
+ * The host's battery saves reach the throwaway netplay folder this way. */
+inline bool copy_dir_files_utf8(const std::string& src, const std::string& dst) {
+    std::error_code ec;
+    const std::filesystem::path s = u8p(src), d = u8p(dst);
+    if (!std::filesystem::is_directory(s, ec)) return false;
+    for (std::filesystem::directory_iterator it(s, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code fe;
+        if (it->is_regular_file(fe)) std::filesystem::copy_file(it->path(), d / it->path().filename(), std::filesystem::copy_options::overwrite_existing, fe);
+    }
+    return true;
+}
 /* Size of a file in bytes (0 when it cannot be read). */
 inline unsigned long long file_size_utf8(const std::string& utf8) {
     std::error_code ec;

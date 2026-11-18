@@ -214,10 +214,41 @@ static void session_checks()
     }
 }
 
+/* The hub's room socket after a blip (offline: frames are injected, nothing connects). */
+static void lobby_checks()
+{
+    /* A refusal of a RE-connect that only means "not yet" is retried; anything else is final. host-reconnecting: a Worker restart drops
+     * the whole room at once and the host is back a moment after the guests (it used to end the guest's room at once). */
+    CHECK(lobby_reconnect_retry_cap("host-reconnecting", 6) == 12);
+    CHECK(lobby_reconnect_retry_cap("room-in-use", 6) == 12);
+    CHECK(lobby_reconnect_retry_cap("room-full", 6) == 6);       // a full room still holds our own old socket
+    CHECK(lobby_reconnect_retry_cap("bad-slot", 6) == 6);
+    CHECK(lobby_reconnect_retry_cap("no-such-room", 6) == 6);
+    CHECK(lobby_reconnect_retry_cap("server-busy", 6) == 0);
+    CHECK(lobby_reconnect_retry_cap("rate-limited", 6) == 0);
+    CHECK(lobby_reconnect_retry_cap("spectators-full", 6) == 0);
+    CHECK(lobby_reconnect_retry_cap("ident-required", 6) == 0);
+    {   // a guest promoted to host must reclaim slot 0 when its own socket blips (the server holds the seat only for role=host)
+        LobbyClient c;
+        c.inject_server_text(R"({"type":"welcome","room":"ABC234","slot":1})");
+        CHECK(c.reconnect_url().find("role=host") == std::string::npos);
+        c.inject_server_text(R"({"type":"host_changed","from_slot":2,"slot":0,"name":"other"})");   // somebody else promoted: nothing changes
+        LobbyEvent e;
+        CHECK(c.poll_event(&e) && e.type == LobbyEvent::HostChange && c.my_slot() == 1);
+        CHECK(c.reconnect_url().find("role=host") == std::string::npos);
+        c.inject_server_text(R"({"type":"host_changed","from_slot":1,"slot":0,"name":"me"})");
+        CHECK(c.reconnect_url().find("role=host") == std::string::npos);   // not before the event is consumed
+        CHECK(c.poll_event(&e) && e.type == LobbyEvent::HostChange && c.my_slot() == 0);
+        const std::string u = c.reconnect_url();
+        CHECK(u.find("role=host") != std::string::npos && u.find("caps=hostmig,reasons") != std::string::npos && u.find("&slot=") == std::string::npos);
+    }
+}
+
 int main()
 {
     caps_checks();
     session_checks();
+    lobby_checks();
     WsReconnect r;
     CHECK(!r.active());
     CHECK(!r.should_retry(1000));

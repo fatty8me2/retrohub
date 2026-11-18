@@ -72,6 +72,8 @@ class LobbyClient {
     bool poll_event(LobbyEvent* out);
     /* Test hook: process one server text frame as if it had arrived on the socket. */
     void inject_server_text(const std::string& text);
+    /* The URL a reconnect after a blip opens (role=host once this seat was promoted to the room's host). For tests and logs. */
+    std::string reconnect_url() const;
 
   private:
     bool start_impl(const std::string& server, const std::string& code, bool role_host, const std::string& name, bool watch, bool dropin = false);

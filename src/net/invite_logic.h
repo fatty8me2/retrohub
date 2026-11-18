@@ -141,10 +141,18 @@ inline std::string invite_esc(const std::string& s) { return json::escape(s); }
 inline std::string redeem_invite_json(const std::string& code) { return "{\"type\":\"redeem_invite\",\"code\":\"" + invite_format(code) + "\"}"; }
 inline int invite_clamp_uses(int v) { return v < 1 ? 1 : v > 20 ? 20 : v; }
 inline int invite_clamp_hours(int v) { return v < 1 ? 1 : v > 720 ? 720 : v; }
+/* At most `max` bytes, never ending inside a UTF-8 character (a cut "é" is not UTF-8, and the socket only carries UTF-8 text). */
+inline std::string invite_utf8_cut(const std::string& s, size_t max)
+{
+    if (s.size() <= max) return s;
+    size_t n = max;
+    while (n > 0 && ((unsigned char)s[n] & 0xC0) == 0x80) --n;   // s[n] continues the character that starts before it: drop that one too
+    return s.substr(0, n);
+}
 inline std::string invite_create_json(int uses, int hours, const std::string& note)
 {
     return "{\"type\":\"admin_invite_create\",\"uses\":" + std::to_string(invite_clamp_uses(uses)) + ",\"hours\":" + std::to_string(invite_clamp_hours(hours)) +
-           ",\"note\":\"" + invite_esc(note.substr(0, 60)) + "\"}";
+           ",\"note\":\"" + invite_esc(invite_utf8_cut(note, 60)) + "\"}";
 }
 inline std::string invite_list_json() { return "{\"type\":\"admin_invite_list\"}"; }
 inline std::string invite_revoke_json(const std::string& code) { return "{\"type\":\"admin_invite_revoke\",\"code\":\"" + invite_format(code) + "\"}"; }
