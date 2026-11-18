@@ -38,17 +38,20 @@ std::string region_of(const std::string& path) {   // from folder / file name wo
     return "";
 }
 
-void collect(const std::string& dir, int depth, std::vector<Cand>* out) {
+/* `names`: the search folder's own name plus the folders below it down to `dir`. The region is read from those names and the file's, never from the
+ * rest of the absolute path: a profile folder such as C:\Users\Musa or C:\Users\Pallav would otherwise make every file "USA" or "EUR". */
+void collect(const std::string& dir, int depth, std::vector<Cand>* out, const std::string& names) {
     std::error_code ec;
     if (!fs::is_directory(P(dir), ec)) return;
     for (fs::directory_iterator it(P(dir), ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code e2;
-        if (it->is_directory(e2)) { if (depth > 0 && !it->is_symlink(e2)) collect(it->path().u8string(), depth - 1, out); continue; }
+        const std::string leaf = it->path().filename().u8string();
+        if (it->is_directory(e2)) { if (depth > 0 && !it->is_symlink(e2)) collect(it->path().u8string(), depth - 1, out, names + "\\" + leaf); continue; }
         Cand c;
         c.path = it->path().u8string();
-        c.name_l = lower(it->path().filename().u8string());
+        c.name_l = lower(leaf);
         c.size = (uint64_t)it->file_size(e2);
-        c.region = region_of(c.path);
+        c.region = region_of(names + "\\" + leaf);
         out->push_back(c);
     }
 }
@@ -56,11 +59,12 @@ void collect(const std::string& dir, int depth, std::vector<Cand>* out) {
 std::vector<Cand> scan(const std::vector<std::string>& dirs) {
     std::vector<Cand> v;
     for (const std::string& d : dirs) {
-        std::string leaf = lower(fs::u8path(d).filename().u8string());
-        if (leaf.empty()) leaf = lower(fs::u8path(d).parent_path().filename().u8string());
+        std::string name = fs::u8path(d).filename().u8string();
+        if (name.empty()) name = fs::u8path(d).parent_path().filename().u8string();
+        const std::string leaf = lower(name);
         const bool deep = leaf.find("bios") != std::string::npos || leaf.find("gc") == 0 || leaf == "user" || leaf == "system";
-        collect(d, deep ? 4 : 0, &v);
-        for (const char* sub : {"BIOS", "bios", "Bios", "GamesBios", "GC"}) collect((fs::u8path(d) / sub).u8string(), 4, &v);
+        collect(d, deep ? 4 : 0, &v, name);
+        for (const char* sub : {"BIOS", "bios", "Bios", "GamesBios", "GC"}) collect((fs::u8path(d) / sub).u8string(), 4, &v, name + "\\" + sub);
     }
     return v;
 }
