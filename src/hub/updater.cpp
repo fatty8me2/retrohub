@@ -173,8 +173,10 @@ void kill_children() {   // by handle only; under the lock, so a handle is never
 }
 
 constexpr int kRunTimedOut = -2;
-/* timeout_ms: when the process runs longer it is ended by its own handle (never by name) and kRunTimedOut is returned. */
-int run_capture(std::string cmd, const std::function<void(const std::string&)>& onLine, DWORD timeout_ms = INFINITE) {
+/* timeout_ms: when the process runs longer it is ended by its own handle (never by name) and kRunTimedOut is returned.
+ * cwd (UTF-8, optional): the child's working directory, handed over as UTF-16. */
+int run_capture(std::string cmd, const std::function<void(const std::string&)>& onLine, DWORD timeout_ms = INFINITE,
+                const std::string& cwd = std::string()) {
     HANDLE rd = nullptr, wr = nullptr;
     SECURITY_ATTRIBUTES sa{}; sa.nLength = sizeof(sa); sa.bInheritHandle = TRUE;
     if (!CreatePipe(&rd, &wr, &sa, 0)) return -1;
@@ -183,7 +185,8 @@ int run_capture(std::string cmd, const std::function<void(const std::string&)>& 
     si.hStdOutput = wr; si.hStdError = wr;
     PROCESS_INFORMATION pi{};
     std::wstring wcmd = W(cmd);
-    BOOL ok = CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    const std::wstring wcwd = W(cwd);
+    BOOL ok = CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, wcwd.empty() ? nullptr : wcwd.c_str(), &si, &pi);
     CloseHandle(wr);
     if (!ok) { CloseHandle(rd); return -1; }
     if (!register_child(pi.hProcess)) TerminateProcess(pi.hProcess, 1);   // the app is leaving: do not let it run
@@ -600,6 +603,11 @@ void OwnedThread::detach() { std::lock_guard<std::mutex> l(mu_); if (th_.joinabl
 
 int run_command(const std::string& cmd, const std::function<void(const std::string&)>& onLine, unsigned long timeout_ms) {
     return run_capture(cmd, onLine, (DWORD)timeout_ms);
+}
+
+int unpack_zip(const std::string& tar_exe, const std::string& dir, const std::string& zip_name, const std::string& out_name, unsigned long timeout_ms) {
+    if (tar_exe.empty() || dir.empty() || zip_name.empty() || out_name.empty()) return -1;
+    return run_capture("\"" + tar_exe + "\" -xf \"" + zip_name + "\" -C \"" + out_name + "\"", [](const std::string&) {}, (DWORD)timeout_ms, dir);
 }
 int live_child_count() { std::lock_guard<std::mutex> l(s_child_mu); return (int)s_children.size(); }
 #ifdef RETROHUB_UPDATER_TESTING
@@ -1324,8 +1332,9 @@ void start_update() {
             rm_file(updatesDir + "\\staged.json");
             remove_tree(P(staged), &s_quit);
             std::filesystem::create_directories(P(staged), fec);
-            std::string tarCmd = "\"" + tarExe + "\" -xf \"" + zipPath + "\" -C \"" + staged + "\"";
-            int tarCode = run_capture(tarCmd, [](const std::string&) {}, detail::kTarTimeoutMs);   // a stuck tar is ended by its handle; the install is untouched either way
+            /* tar.exe reads its arguments in the ANSI code page: an install folder with letters outside it (a Cyrillic profile name on an
+             * English Windows ...) could not be opened. The paths go in RELATIVE to updates\, which is tar's working directory. */
+            int tarCode = detail::unpack_zip(tarExe, updatesDir, "update.zip", "staged", detail::kTarTimeoutMs);   // a stuck tar is ended by its handle; the install is untouched either way
             const long long freeAfter = tarCode != 0 ? detail::free_bytes_on(updatesDir) : -1;   // read before the half-unpacked files are removed
             rm_file(zipPath); rm_file(zipPath + ".resume");
             if (tarCode != 0) {

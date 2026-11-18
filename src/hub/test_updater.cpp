@@ -925,6 +925,40 @@ int main(int argc, char** argv) {
         CHECK(live_child_count() == 0);
     }
 
+    // --- the unpack works in a folder whose name is outside the ANSI code page (tar.exe reads ANSI arguments) ---
+    {
+        namespace fs = std::filesystem;
+        std::string tar, terr;
+        if (!find_system_tool("tar.exe", &tar, &terr)) {
+            std::printf("unpack: no tar.exe (%s); skipped\n", terr.c_str());
+        } else {
+            const fs::path tmp = fs::temp_directory_path();
+            const std::wstring pid = std::to_wstring(GetCurrentProcessId());
+            const fs::path ascii = tmp / (L"rh_unpack_src_" + pid);
+            const fs::path odd = tmp / (L"rh_unpack_\x0416\x0436_\x30C6\x30B9\x30C8_" + pid);   // Cyrillic + Japanese: not in code page 1252
+            std::error_code ec;
+            fs::remove_all(ascii, ec); fs::remove_all(odd, ec);
+            fs::create_directories(ascii, ec);
+            fs::create_directories(odd / L"staged", ec);
+            { std::ofstream f(ascii / L"hello.txt", std::ios::binary); f << "hi there"; }
+            const std::string a8 = ascii.u8string();
+            const int mk = run_command("\"" + tar + "\" -a -cf \"" + a8 + "\\pack.zip\" -C \"" + a8 + "\" hello.txt", [](const std::string&) {});
+            if (mk != 0 || !fs::exists(ascii / L"pack.zip", ec)) {
+                std::printf("unpack: could not build the test zip (tar exit %d); skipped\n", mk);
+            } else {
+                fs::rename(ascii / L"pack.zip", odd / L"update.zip", ec);
+                CHECK(!ec);
+                CHECK(unpack_zip(tar, odd.u8string(), "update.zip", "staged", 60000) == 0);
+                std::string got;
+                { std::ifstream f(odd / L"staged" / L"hello.txt", std::ios::binary); std::stringstream ss; ss << f.rdbuf(); got = ss.str(); }
+                CHECK(got == "hi there");
+                CHECK(unpack_zip(tar, odd.u8string(), "missing.zip", "staged", 60000) != 0);   // a failure is still reported
+                CHECK(unpack_zip(tar, "", "update.zip", "staged", 60000) == -1);
+            }
+            fs::remove_all(ascii, ec); fs::remove_all(odd, ec);
+        }
+    }
+
     std::printf("current_version=%s launch_check_disabled=%d\n", current_version().c_str(), (int)launch_check_disabled());
     std::printf("unit checks: %s\n", g_fail ? "FAILED" : "all passed");
 
