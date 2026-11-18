@@ -245,7 +245,8 @@ bool export_game_zip(const std::string& game_dir, const std::string& zip_path, b
     size_t len = 0;
     if (ok) ok = mz_zip_writer_finalize_heap_archive(&z, &buf, &len) != 0;
     if (ok) ok = durable::write_file_durable(dst.wstring(), buf, len, durable::kRetryLongMs);
-    mz_zip_writer_end(&z);   // frees the heap archive
+    mz_zip_writer_end(&z);   // frees the writer; NOT the finished archive: finalize_heap_archive handed that buffer to us
+    if (buf) mz_free(buf);
     if (!ok) return fail("Writing the zip failed.");
     return true;
 }
