@@ -1044,14 +1044,10 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         make_dirs(tmp);
         /* Save policy (docs/SAVES.md): with "use host's save" the host's vault battery files are COPIED into the throwaway dir and
          * retrorun --share-host-save broadcasts them (guests get the bytes before frame 0). Nobody writes into a vault. */
-        if (share_save && (is_host || room_my_slot() == 0)) {
-            std::error_code ec;
-            std::filesystem::path bd = hub::saves::battery_dir(sys_short(e), e.key);
-            if (std::filesystem::is_directory(bd, ec)) {
-                for (auto& de : std::filesystem::directory_iterator(bd, ec))
-                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
-            } else launch_note(true, "No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
-        }
+        /* (UTF-8 paths: fs::path(std::string) read them in the ANSI code page, so a profile like C:\Users\José never found the saves; and the
+         * "no saved progress" line is information only - launch_note() would also send np_abort and cancel the guests' launch.) */
+        if (share_save && (is_host || room_my_slot() == 0) && !hublaunch::copy_dir_files_utf8(hub::saves::battery_dir(sys_short(e), e.key), tmp))
+            set_notice("No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
                            " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg("retro", e.key);
         if (share_save) args += " --share-host-save";
@@ -1094,14 +1090,8 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
         remove_tree(tmp);
         make_dirs(tmp);
-        if (share_save && (is_host || room_my_slot() == 0)) {
-            std::error_code ec;
-            std::filesystem::path bd = hub::saves::battery_dir(sys_short(e), e.key);
-            if (std::filesystem::is_directory(bd, ec)) {
-                for (auto& de : std::filesystem::directory_iterator(bd, ec))
-                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
-            } else launch_note(true, "No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
-        }
+        if (share_save && (is_host || room_my_slot() == 0) && !hublaunch::copy_dir_files_utf8(hub::saves::battery_dir(sys_short(e), e.key), tmp))   // UTF-8 paths; information only (see GB above)
+            set_notice("No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
                            " --state-dir " + quote(tmp) + net + title_arg(e.title) + save_stem_arg(e) + controls_arg(nes ? "nes" : "snes", e.key);   // retrorun only accepts a profile of its own system ("nes"/"snes"; a "retro" one was refused and the built-in mapping used)
         if (share_save) args += " --share-host-save";
@@ -1118,14 +1108,8 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
         remove_tree(tmp);
         make_dirs(tmp);
-        if (share_save && (is_host || room_my_slot() == 0)) {
-            std::error_code ec;
-            std::filesystem::path bd = hub::saves::battery_dir(sys_short(e), e.key);
-            if (std::filesystem::is_directory(bd, ec)) {
-                for (auto& de : std::filesystem::directory_iterator(bd, ec))
-                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
-            } else launch_note(true, "No saved progress for " + e.title + " on this PC yet - everyone starts with an empty memory card.", 8.0);
-        }
+        if (share_save && (is_host || room_my_slot() == 0) && !hublaunch::copy_dir_files_utf8(hub::saves::battery_dir(sys_short(e), e.key), tmp))   // UTF-8 paths; information only (see GB above)
+            set_notice("No saved progress for " + e.title + " on this PC yet - everyone starts with an empty memory card.", 8.0);
         std::string args, err;
         if (!ps1_online_args(e, net, plan.ports, tmp, share_save, gsv, &args, &err)) { launch_note(is_host, err, 12.0); return; }
         args += cheats_launch_args(e, true, is_host, launch_body);
