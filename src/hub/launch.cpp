@@ -506,6 +506,7 @@ void poll_process() {
     }
     DWORD code = 0;
     GetExitCodeProcess(A.proc, &code);
+    const uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;   // the game's own time: measured before the after-exit work (save copy-back) below
     const DWORD proc_id = GetProcessId(A.proc);
     CloseHandle(A.proc);
     A.proc = nullptr;
@@ -515,7 +516,6 @@ void poll_process() {
     transferpak_run_finished();   // Wave 3 X1: the Game Boy game's save changed too
     palpark_process_ended();   // Wave 3 X3: a GBA game in the DS Slot-2 may have a new save
     if (A.run.after_exit) { auto fn = std::move(A.run.after_exit); A.run.after_exit = nullptr; fn(); }
-    uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;
     if (!A.run.key.empty()) {
         if (secs >= 1) { hub::record_play(A.run.key, A.run.start_unix, secs); if (!A.run.system_short.empty()) hub::saves::playlog_append(A.run.system_short, A.run.key, (int64_t)A.run.start_unix, (int64_t)secs); }
         resume_note_exit(A.run.system_short, A.run.key, A.run.online, A.run.start_unix);   // Wave 3 R1: which PC wrote the resume point
@@ -696,6 +696,8 @@ static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const st
     else { autotest_log("external: spawn failed"); hubjournal::abort_unspawned(*jr, jdir, false); }
 }
 
+void unzip_play_request(const hub::GameEntry& e);   // (below, beside start_unzip; ps1_ui.cpp uses it too)
+
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg) {
     if (launch_blocked("launch_external")) return;
     hubemu::Kind kind = hubemu::kind_for(e.system);
@@ -721,9 +723,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         if (ps2_bios.file.empty()) { ps2_bios_ask(e.key); return; }
     }
     if ((e.system == hub::System::N3DS || e.system == hub::System::GC || e.system == hub::System::PS2 || e.system == hub::System::PSP || e.system == hub::System::WiiU) && e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived image: ask once, unpack, then start
-        UNZ.key = e.key;
-        if (gamepack_owns(e)) start_unzip(e);   // installed from a shared pack: the player already chose this game, no question
-        else UNZ.state = UnzipJob::Asking;
+        unzip_play_request(e);
         return;
     }
     /* One lock for launching and replaying a leftover session (session_journal.h): held until the spawn has returned and the journal is written.
@@ -885,7 +885,15 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         }
     }
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, "", wiiu_tid, hubemu::nx_manifest_suffix(kind)));
-    autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
+    autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary + (sess->error.empty() ? "" : " ERROR " + sess->error));
+    if (sess->active && !sess->error.empty()) {
+        /* The vault -> emulator copy had a problem (the emulator's own copy is untouched; the game still starts). Said now, in the hub, and cleared:
+         * left in place it came back after the game as "Could not copy the save into the vault", hid any real copy-back failure behind it, and kept
+         * the pending-session journal for a pointless replay. (An inactive session copies nothing back, so its error stays for the after-exit note.) */
+        hublog::warn("external: save copy into %s: %s", hubemu::name(kind), sess->error.c_str());
+        set_notice("Your newest save could not be put into " + std::string(hubemu::name(kind)) + " first: " + sess->error, 15.0);
+        sess->error.clear();
+    }
     /* Pending-session journal (session_journal.h): what the after-exit work needs, so it still happens when RetroHub is closed during play
      * (replayed at the next start once the emulator has ended) and the Cemu overrides below are put back when the spawn fails. */
     auto jr = std::make_shared<hubjournal::Entry>();
@@ -962,6 +970,17 @@ void start_unzip(const hub::GameEntry& e) {
         UNZ.done = true;
     });
 }
+/* Play on an archived image (launch_external, ps1_play): the unpack question, or the unpack at once for a shared-pack game. Never while an unpack
+ * runs (launch_guard_logic.h unpack_step): Play can also come from outside the modal dialog (a desktop shortcut, an install that finished). */
+void unzip_play_request(const hub::GameEntry& e) {
+    switch (hubui::unpack_step(UNZ.state == UnzipJob::Working, UNZ.key == e.key, gamepack_owns(e))) {
+        case hubui::UnpackStep::BusySame: set_notice(e.title + " is still being unpacked. Press Play again when it is done."); return;
+        case hubui::UnpackStep::BusyOther: set_notice("Another game is still being unpacked. Try again when it has finished."); return;
+        case hubui::UnpackStep::StartNow: UNZ.key = e.key; start_unzip(e); return;   // installed from a shared pack: the player already chose this game, no question
+        case hubui::UnpackStep::Ask: UNZ.key = e.key; UNZ.state = UnzipJob::Asking; return;
+    }
+}
+
 void flash_taskbar() {
     if (!A.hwnd || g_headless || game_active()) return;   // a flash is still a popup: nothing while a game runs
     FLASHWINFO fi{};

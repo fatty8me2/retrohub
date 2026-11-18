@@ -100,8 +100,11 @@ void real_boot_dolphin_apply(const std::string& install_dir, const RealBootPlan&
     std::error_code ec;
     const fs::path dst = P(install_dir) / "User" / "GC" / p.stage.region / "IPL.bin";
     fs::create_directories(dst.parent_path(), ec);
-    if (!fs::exists(dst, ec) || fs::file_size(dst, ec) != fs::file_size(P(p.stage.copies[0].first), ec))
-        fs::copy_file(P(p.stage.copies[0].first), dst, fs::copy_options::overwrite_existing, ec);
+    /* By content, not size: every GameCube IPL is 2 MB, so a size check never replaced a copy once one was there (another dump, another region). */
+    const std::string src_bytes = read_all(p.stage.copies[0].first);
+    if (src_bytes.empty()) return;
+    ec.clear();
+    if (read_all(dst.u8string()) != src_bytes) fs::copy_file(P(p.stage.copies[0].first), dst, fs::copy_options::overwrite_existing, ec);
     if (ec) return;
     const std::string ini = install_dir + "\\User\\Config\\Dolphin.ini";
     write_all(ini, hub::realboot::dolphin_skip_ipl(read_all(ini), false));

@@ -51,6 +51,16 @@ int main() {
     CHECK(find(System::GC, {(root / "b2").u8string()}, "GALJ01").ok && !find(System::GC, {(root / "b2").u8string()}, "GALE01").ok);
     put(root / "b3" / "ipl.bin", 2097152);   // region unknown: any
     CHECK(find(System::GC, {(root / "b3").u8string()}, "GALP01").ok);
+    /* the region comes from the names below the search folder, never from the folders above it (a user profile "Musa" or "Pallav") */
+    put(root / "Musa" / "Desktop" / "GamesBios" / "GC" / "EUR" / "IPL.bin", 2097152);
+    const std::string musa = (root / "Musa" / "Desktop" / "GamesBios").u8string();
+    Stage ge = find(System::GC, {musa}, "GALP01");
+    CHECK(ge.ok && ge.region == "EUR" && !ge.copies.empty() && ge.copies[0].first.find("EUR") != std::string::npos);
+    CHECK(!find(System::GC, {musa}, "GALE01").ok);   // a EUR IPL is never used for a USA game
+    put(root / "Pallav" / "GamesBios" / "IPL (JAP).bin", 2097152);
+    CHECK(find(System::GC, {(root / "Pallav" / "GamesBios").u8string()}, "GALJ01").ok && !find(System::GC, {(root / "Pallav" / "GamesBios").u8string()}, "GALP01").ok);
+    put(root / "Pallav" / "EUR" / "IPL.bin", 2097152);   // the search folder's own name still counts
+    CHECK(find(System::GC, {(root / "Pallav" / "EUR").u8string()}, "GALP01").ok && !find(System::GC, {(root / "Pallav" / "EUR").u8string()}, "GALE01").ok);
 
     /* GBA / GB / GBC / NDS */
     put(root / "GamesBios" / "gba_bios.bin", 16384);

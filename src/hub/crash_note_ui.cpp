@@ -56,8 +56,8 @@ static void shot_fake_note() {
     c.pid = 4242;
     c.session_secs = 312;
     c.time_unix = (long long)unix_now();
-    c.log_dir = "C:\RetroHub\emulators\fritchii\user\log";
-    if (std::string(m) == "dump") c.dump_path = "C:\Users\player\AppData\Local\CrashDumps\lichii.exe.4242.dmp";
+    c.log_dir = "C:\\RetroHub\\emulators\\fritchii\\user\\log";
+    if (std::string(m) == "dump") c.dump_path = "C:\\Users\\player\\AppData\\Local\\CrashDumps\\lichii.exe.4242.dmp";
     if (std::string(m) == "start") { c.session_secs = 2; c.exit_code = 0xC0000135u; }
     g_note = c;
     g_pending = true;

@@ -122,6 +122,8 @@ bool ps1_swap_disc(const std::string& key) {
 
 bool ps1_real_bios_present() { return !find_all().empty(); }
 
+void unzip_play_request(const hub::GameEntry& e);   // launch.cpp
+
 void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& states) {
     std::string core = find_core("beetle_psx");
     if (core.empty()) { set_notice("The PlayStation emulator core (beetle_psx_libretro.dll) was not found in the cores folder."); return; }
@@ -133,10 +135,8 @@ void ps1_play(const hub::GameEntry& e, const RunInfo& ri, const std::string& bat
         ASK.warning.clear();
         return;
     }
-    if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived set: ask once, unpack, then start
-        UNZ.key = e.key;
-        if (gamepack_owns(e)) start_unzip(e);   // installed from a shared pack: no question
-        else UNZ.state = UnzipJob::Asking;
+    if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // archived set: ask once (none for a shared-pack game), unpack, then start; never over a running unpack
+        unzip_play_request(e);
         return;
     }
     if (!bios.empty()) hub::ps1::stage_bios(bios, sysdir);
@@ -377,7 +377,7 @@ bool ps2_online_args(const hub::GameEntry& e, const std::string& net, const std:
     std::filesystem::copy_file(std::filesystem::u8path(bios.dir + "\\" + bios.file), std::filesystem::u8path(bios_dir + "\\" + bios.file), std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) { *err = "Could not stage the PlayStation 2 BIOS: " + ec.message(); return false; }
     if (share_save && is_host_card) {   // the host's vault card is COPIED; retrorun sends it to every guest, nothing is written back
-        std::filesystem::path card = std::filesystem::path(hub::saves::battery_dir(sys_short(e), e.key)) / std::filesystem::u8path(hubps2::vault_card_rel(hubemu::pcsx2_safe_key(e.key)));
+        std::filesystem::path card = std::filesystem::u8path(hub::saves::battery_dir(sys_short(e), e.key)) / std::filesystem::u8path(hubps2::vault_card_rel(hubemu::pcsx2_safe_key(e.key)));   // UTF-8 (a plain path() reads the ANSI code page)
         if (std::filesystem::is_regular_file(card, ec)) std::filesystem::copy_file(card, std::filesystem::u8path(sysdir + "\\" + hubps2::staged_card_rel()), std::filesystem::copy_options::overwrite_existing, ec);
         else set_notice("No memory card for " + e.title + " on this PC yet - everyone starts with a blank card.", 8.0);
     }
