@@ -218,6 +218,13 @@ std::string showing_text(size_t visible, size_t total)
     std::snprintf(b, sizeof b, "Showing %zu of %zu", visible, total);
     return b;
 }
+std::string decade_chip_text(int decade)
+{
+    if (decade <= 0) return "Decade";
+    char b[32];
+    std::snprintf(b, sizeof b, "Decade: %02ds", decade % 100);   // two digits: the 2000s are "00s", not "0s"
+    return b;
+}
 
 /* ---------------------------------------------------------------- Classifier */
 
