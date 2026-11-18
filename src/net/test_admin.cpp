@@ -127,6 +127,15 @@ int main()
     CHECK(redeem_invite_json("k7qm2xdt") == "{\"type\":\"redeem_invite\",\"code\":\"K7QM-2XDT\"}");
     CHECK(invite_create_json(1, 168, "Mia\"s") == "{\"type\":\"admin_invite_create\",\"uses\":1,\"hours\":168,\"note\":\"Mia\\\"s\"}");
     CHECK(invite_create_json(99, 0, "").find("\"uses\":20,\"hours\":1,") != std::string::npos && invite_create_json(0, 9999, "").find("\"uses\":1,\"hours\":720,") != std::string::npos);
+    {   // the 60-byte note limit never cuts a character in half (the frame must stay UTF-8)
+        const std::string e = "\xC3\xA9";                                   // "é", 2 bytes
+        const std::string note = std::string(59, 'a') + e + "zz";           // the 60th byte is the first half of the é
+        CHECK(invite_create_json(1, 1, note).find("\"note\":\"" + std::string(59, 'a') + "\"}") != std::string::npos);
+        CHECK(invite_utf8_cut(std::string(58, 'a') + e + "zz", 60) == std::string(58, 'a') + e);   // a whole é fits
+        CHECK(invite_utf8_cut(std::string(57, 'a') + "\xE2\x82\xAC" + "z", 60) == std::string(57, 'a') + "\xE2\x82\xAC");   // a 3-byte euro sign that ends at 60
+        CHECK(invite_utf8_cut(std::string(58, 'a') + "\xE2\x82\xAC", 60) == std::string(58, 'a'));   // ... and one that would not fit
+        CHECK(invite_utf8_cut("short", 60) == "short");
+    }
     CHECK(invite_list_json() == "{\"type\":\"admin_invite_list\"}" && invite_revoke_json("k7qm2xdt") == "{\"type\":\"admin_invite_revoke\",\"code\":\"K7QM-2XDT\"}");
     CHECK(approve_code_json("RH-7KQ2-M9XD") == "{\"type\":\"admin_approve_code\",\"code\":\"RH-7KQ2-M9XD\"}");
     // the newcomer's answer (and not to be confused with a room invite result)
