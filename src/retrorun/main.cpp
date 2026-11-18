@@ -996,6 +996,11 @@ bool Frontend::setup_paths() {
         size_t eq = o.find('=');
         if (eq != std::string::npos) core.overrides[trim(o.substr(0, eq))] = trim(o.substr(eq + 1));
     }
+    if (is_ds) {   // F9 cycles on from the layout really in use: the hub's per-game layout (--opt) replaces the remembered one above
+        auto lo = core.overrides.find("melonds_screen_layout1");
+        const int li = lo == core.overrides.end() ? -1 : dsview::layout_index(lo->second);
+        if (li >= 0) ds_layout = li;
+    }
     if (is_ps1 && (!a.net.empty() || a.synctest)) {
         /* Online (and SyncTest): every PC must run the identical emulation AND produce the identical picture, because the picture
          * hash is the desync check. Pin everything that changes timing, the video output or the state, whatever the user chose
