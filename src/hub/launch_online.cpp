@@ -8,6 +8,10 @@
 #include <filesystem>
 
 GcOnline GCO;
+/* GCO.fp_th (the disc fingerprint worker) was only ever joined when another disc was hashed, so the last one was still joinable when GCO was
+ * destroyed at exit, and destroying a joinable std::thread calls std::terminate: RetroHub aborted on quit after a GameCube game had been
+ * selected in a room. Defined after GCO in this file, so it is destroyed first. */
+static struct GcFingerprintJoin { ~GcFingerprintJoin() { if (GCO.fp_th.joinable()) GCO.fp_th.join(); } } g_gc_fp_join;
 void rplay_stop();
 void rplay_busy_states(bool* pending, bool* stream, bool* probe);
 static hubnp3ds::ResumeGate NP3_resume;   // guest launch waiting for the archive to finish unpacking
