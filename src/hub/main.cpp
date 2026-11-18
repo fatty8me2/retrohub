@@ -215,7 +215,11 @@ static int hub_main() {
     // settings
     A.settings_path = hub::data_dir() + "hub.json";
     A.st.server = hubnet::default_server();
-    hubui::load_settings(A.settings_path, &A.st);
+    {
+        bool kept = false;
+        if (!hubui::load_settings(A.settings_path, &A.st, &kept) && kept)
+            hublog::warn("startup: hub.json is not valid JSON; running on defaults (a copy was kept as hub.json.unreadable)");
+    }
     hublog::info("startup: settings loaded (+%llu ms)", hublog::since_start_ms());
     {   // D2: Reduce motion's first-run default follows Windows "Show animations"; after that it is the player's own choice
         bool key_saved = false;

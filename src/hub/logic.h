@@ -121,7 +121,9 @@ inline std::vector<std::pair<std::string, std::string>> n64_clips_env(bool on) {
     return v;
 }
 bool settings_from_json(const std::string& text, Settings* out);   // missing keys keep defaults in *out
-bool load_settings(const std::string& path, Settings* out);
+/* false: no file, unreadable, or not valid JSON. A file that exists but does not parse is copied to <path>.unreadable first (*kept_copy =
+ * true when that copy was written), because the hub then runs on defaults and its next save replaces the file. */
+bool load_settings(const std::string& path, Settings* out, bool* kept_copy = nullptr);
 bool save_settings(const std::string& path, const Settings& s);
 /* RetroHub-Setup.exe drops userdata/installer_games_dir.txt with the games folder the player chose.
  * Adds that folder to s->rom_folders (never removes or reorders existing ones). Returns true when the

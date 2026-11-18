@@ -293,11 +293,20 @@ bool settings_from_json(const std::string& text, Settings* out) {
 /* hub.json by UTF-8 path (wide APIs). A player with a non-ASCII path may have a file only at the legacy location (older builds read and
  * wrote the UTF-8 bytes as the ANSI code page): the correct path wins when it exists (main.cpp reads that one too); otherwise the legacy
  * file is loaded and re-saved at the correct path. The legacy file is left alone. */
-bool load_settings(const std::string& path, Settings* out) {
+bool load_settings(const std::string& path, Settings* out, bool* kept_copy) {
+    if (kept_copy) *kept_copy = false;
     std::string text;
     const durable::ReadResult r = durable::read_file_utf8_migrating(path, &text);
     if (r == durable::ReadResult::NotFound || r == durable::ReadResult::Unreadable) return false;   // Unreadable: saves to this path are refused (durable guard)
-    if (!settings_from_json(text, out)) return false;
+    if (!settings_from_json(text, out)) {
+        /* A file that is there but does not parse (a hand edit gone wrong, a damaged disk): the hub runs on defaults and its first save
+         * replaces it. Keep a copy first (as game_settings.cpp does), so the player's folders and choices can still be recovered. */
+        if (r == durable::ReadResult::Primary && text.find_first_not_of(" \t\r\n") != std::string::npos) {
+            const bool ok = durable::write_file_atomic_utf8(path + ".unreadable", text);
+            if (kept_copy) *kept_copy = ok;
+        }
+        return false;
+    }
     if (r == durable::ReadResult::Legacy) save_settings(path, *out);
     return true;
 }
