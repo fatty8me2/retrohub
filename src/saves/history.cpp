@@ -118,10 +118,11 @@ bool make_snapshot(const fs::path& dir, const fs::path& battery, int64_t ts, con
     return true;
 }
 
-std::string device_name() {
-    char b[MAX_COMPUTERNAME_LENGTH + 2];
+std::string device_name() {   // UTF-8 (the history table draws it): the ANSI name turned a non-ASCII PC name into mojibake
+    wchar_t b[MAX_COMPUTERNAME_LENGTH + 2];
     DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
-    return GetComputerNameA(b, &n) ? std::string(b, n) : std::string("this PC");
+    if (!GetComputerNameW(b, &n)) return "this PC";
+    return S(fs::path(std::wstring(b, n)));
 }
 
 }  // namespace
