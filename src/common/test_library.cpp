@@ -525,6 +525,29 @@ static void test_scan_cache_state(const fs::path& dir) {
     CHECK(!game_state(k).favorite && game_state(k).play_seconds == 150);
     CHECK(!game_state("unknown:key").favorite);
     flush_library_state();
+
+    /* An unreadable library.json (another program holds it open without read sharing) is not an empty history: the play time of the game
+     * that just ended used to be flushed over it once the lock was gone, wiping every other game's play time and favourite. */
+    {
+        const fs::path lj = dir / "userdata" / "library.json";
+        auto slurp = [](const fs::path& p) { std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); };
+        set_favorite(k, true);
+        flush_library_state();
+        const std::string before = slurp(lj);
+        CHECK(before.find(k) != std::string::npos);
+        HANDLE h = CreateFileW(lj.c_str(), GENERIC_READ, FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(h != INVALID_HANDLE_VALUE);
+        library_set_data_dir((dir / "userdata").u8string());   // the next read finds the file locked
+        record_play("gba:other-game", 1700002000, 60);
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        flush_library_state();                                  // the lock is gone: nothing may be written over it this session
+        CHECK(slurp(lj) == before);
+        library_set_data_dir((dir / "userdata").u8string());   // readable again
+        CHECK(game_state(k).favorite && game_state(k).play_seconds == 150);
+        record_play("gba:other-game", 1700003000, 60);         // and the next session records normally
+        library_set_data_dir((dir / "userdata").u8string());
+        CHECK(game_state(k).play_seconds == 150 && game_state("gba:other-game").play_seconds == 60);
+    }
 }
 
 /* Regression: a parallel scan of many real-format zips (GBA/GB, long names, non-ASCII folder). Every zip also makes the

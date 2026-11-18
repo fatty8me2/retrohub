@@ -581,6 +581,15 @@ std::vector<Item> evaluate(const GameId& g, const std::map<str, LFile>& locals, 
         if (lf != locals.end()) {
             it.local.present = !lf->second.sha.empty() || lf->second.size > kMaxPlain;
             it.local.sha = lf->second.sha; it.local.size = lf->second.size; it.local.mtime = lf->second.mtime;
+            if (!it.local.present) {
+                /* The file is HERE but its bytes could not be read (another program holds it open without read sharing, a cloud
+                 * placeholder that cannot be fetched now). It is not absent: read as absent, three_way "heals" it with a pull that is
+                 * written over it without a safety copy (the copy is only taken for a present local file). Left alone this pass. */
+                log_line("cannot read " + wire_key(g) + "/" + p + " on this PC; left alone this pass");
+                it.act = Act::Nothing;
+                items.push_back(it);
+                continue;
+            }
         }
         const WFile* wf = cg ? cg->find(p) : nullptr;
         if (wf) {

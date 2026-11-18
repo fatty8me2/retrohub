@@ -1,5 +1,6 @@
 #include "winutil.h"
 #include "json.h"
+#include "durable_write.h"
 #include "miniz.h"
 #include "library.h"
 #include "library_scan_info.h"
@@ -2665,7 +2666,9 @@ bool read_text(const fs::path& p, std::string* out) {
     return true;
 }
 
-/* Write via temp file + replace so a crash never leaves a truncated file. */
+/* Write via temp file + replace so a crash never leaves a truncated file. durable::commit_replace flushes the temp file to disk first (a
+ * bare rename can still leave a zero-length library.json after a power cut: every play time and favourite gone) and retries a moment
+ * while another program holds the file. */
 bool write_text_atomic(const fs::path& p, const std::string& text) {
     fs::path tmp = p;
     tmp += L".tmp";
@@ -2675,7 +2678,7 @@ bool write_text_atomic(const fs::path& p, const std::string& text) {
         f.write(text.data(), (std::streamsize)text.size());
         if (!f) return false;
     }
-    if (!MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    if (!durable::commit_replace(tmp.wstring(), p.wstring())) {
         std::error_code ec;
         fs::remove(tmp, ec);
         return false;
@@ -2716,16 +2719,40 @@ void set_scan_current(const std::string& s) { std::lock_guard<std::mutex> lk(g_s
 std::mutex g_state_mu;
 bool g_state_loaded = false;
 bool g_state_dirty = false;
+bool g_state_keep_file = false;   // library.json is there but could not be read: never replaced with the state in memory (see below)
 std::map<std::string, GameState> g_state;
 
 void state_load_locked() {
     if (g_state_loaded) return;
     g_state_loaded = true;
     g_state.clear();
+    g_state_keep_file = false;
     std::string text;
-    if (!read_text(lib_dir() / L"library.json", &text)) return;
+    const fs::path lj = lib_dir() / L"library.json";
+    bool read = read_text(lj, &text);
+    for (int i = 0; !read && i < 3; ++i) {   // there but held by another program for a moment (antivirus, a sync client)
+        std::error_code ec;
+        if (!fs::exists(lj, ec) && !ec) break;   // really absent: a fresh start
+        Sleep(100);
+        read = read_text(lj, &text);
+    }
+    if (!read) {
+        /* Still unreadable: that is NOT an empty history. The next flush (the play time of the game that just ended) used to write this
+         * session's few entries over it, wiping every game's play time, last played and favourite. Left alone this session. */
+        std::error_code ec;
+        if (fs::exists(lj, ec) || ec) g_state_keep_file = true;
+        return;
+    }
     JV root;
-    if (!json_parse(text, &root) || root.type != JV::Object) return;
+    if (!json_parse(text, &root) || root.type != JV::Object) {
+        if (!text.empty()) {   // damaged (a hand edit, a torn disk): a copy is kept beside it before the next flush writes a fresh one
+            std::error_code ec;
+            fs::path bad = lj;
+            bad += L".damaged";
+            fs::copy_file(lj, bad, fs::copy_options::overwrite_existing, ec);
+        }
+        return;
+    }
     const JV* games = root.get("games");
     if (!games || games->type != JV::Object) return;
     for (const auto& kv : games->o) {
@@ -2739,7 +2766,7 @@ void state_load_locked() {
 }
 
 void state_flush_locked() {
-    if (!g_state_dirty) return;
+    if (!g_state_dirty || g_state_keep_file) return;   // keep_file: the real library.json could not be read (state_load_locked)
     std::string o = "{\"version\":1,\"games\":{";
     bool first = true;
     for (const auto& kv : g_state) {

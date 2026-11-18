@@ -118,10 +118,11 @@ bool make_snapshot(const fs::path& dir, const fs::path& battery, int64_t ts, con
     return true;
 }
 
-std::string device_name() {
-    char b[MAX_COMPUTERNAME_LENGTH + 2];
+std::string device_name() {   // UTF-8 (the history table draws it): the ANSI name turned a non-ASCII PC name into mojibake
+    wchar_t b[MAX_COMPUTERNAME_LENGTH + 2];
     DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
-    return GetComputerNameA(b, &n) ? std::string(b, n) : std::string("this PC");
+    if (!GetComputerNameW(b, &n)) return "this PC";
+    return S(fs::path(std::wstring(b, n)));
 }
 
 }  // namespace
@@ -139,7 +140,13 @@ bool history_snapshot(const std::string& hist_dir, const std::string& battery_di
     char id[32];
     std::snprintf(id, sizeof id, "%012lld", (long long)ts);
     std::string sid = id;
-    for (auto& e : have) if (e.id == sid) { ts++; std::snprintf(id, sizeof id, "%012lld", (long long)ts); sid = id; break; }
+    /* the first FREE id: make_snapshot empties its folder first, so stepping only once (three snapshots within one second) removed the
+     * second snapshot and put the third in its place */
+    for (bool taken = true; taken;) {
+        taken = false;
+        for (auto& e : have) if (e.id == sid) { taken = true; break; }
+        if (taken) { ts++; std::snprintf(id, sizeof id, "%012lld", (long long)ts); sid = id; }
+    }
     if (!make_snapshot(h / P(sid), b, ts, device, max_file)) return false;
     have = history_list(hist_dir);
     std::error_code ec;
@@ -239,7 +246,8 @@ bool export_game_zip(const std::string& game_dir, const std::string& zip_path, b
     size_t len = 0;
     if (ok) ok = mz_zip_writer_finalize_heap_archive(&z, &buf, &len) != 0;
     if (ok) ok = durable::write_file_durable(dst.wstring(), buf, len, durable::kRetryLongMs);
-    mz_zip_writer_end(&z);   // frees the heap archive
+    mz_zip_writer_end(&z);   // frees the writer; NOT the finished archive: finalize_heap_archive handed that buffer to us
+    if (buf) mz_free(buf);
     if (!ok) return fail("Writing the zip failed.");
     return true;
 }

@@ -1,5 +1,6 @@
 #include "save_import.h"
 #include "gba_save.h"
+#include "durable_write.h"
 
 #include <algorithm>
 #include <chrono>
@@ -854,8 +855,9 @@ bool write_atomic(const fs::path& to, const std::string& data) {
         f.flush();
         if (!f) { f.close(); fs::remove(tmp, ec); return false; }
     }
-    fs::rename(tmp, to, ec);
-    if (ec) { std::error_code e2; fs::remove(tmp, e2); return false; }
+    /* flushed to disk before the one atomic replace (a bare rename after f.flush(), which only reaches the OS cache, could leave a zero-length
+     * vault save after a power cut), and a moment of retry while another program holds the save */
+    if (!durable::commit_replace(tmp.wstring(), to.wstring())) { std::error_code e2; fs::remove(tmp, e2); return false; }
     return true;
 }
 }  // namespace

@@ -44,6 +44,17 @@ int main() {
     CHECK(l[0].ts == 1008 && l[4].ts == 1004);
     CHECK(l[0].files == 1 && l[0].size == 2 && l[0].device == "PC-A");
     CHECK(!fs::exists(hist / l[0].id / "big.card"));
+    {   // three snapshots in one second: each gets its own id (the third used to replace the second)
+        fs::path h3 = root / "hist3";
+        const std::string H3 = U(h3);
+        for (int i = 0; i < 3; ++i) { put(bat / "a.sra", "same-second-" + std::to_string(i)); CHECK(history_snapshot(H3, B, 5000, "PC-A")); }
+        auto l3 = history_list(H3);
+        CHECK(l3.size() == 3);
+        int seen = 0;
+        for (auto& e : l3) for (int i = 0; i < 3; ++i) if (get(h3 / e.id / "a.sra") == "same-second-" + std::to_string(i)) seen |= 1 << i;
+        CHECK(seen == 7);
+        put(bat / "a.sra", "v8");
+    }
 
     // restore v5 -> undo copy holds v8
     std::string err;

@@ -3,6 +3,7 @@
 
 #include "winutil.h"
 #include "net_probe.h"
+#include "durable_write.h"
 #include <windows.h>
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -296,7 +297,10 @@ static bool write_atomic(const std::string& path, const void* data, size_t size)
         fclose(f);
         if (!ok) { std::error_code ec; fs::remove(tmp, ec); return false; }
     }
-    if (!MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    /* durable::commit_replace flushes the temp file to disk BEFORE the rename (fflush only reaches the OS cache: a power cut could leave a
+     * zero-length .srm behind the new name) and retries a moment while a cloud client or antivirus holds the save open (that used to fail
+     * the write, and the save made just before quitting was lost). The short budget: this runs on the emulation thread. */
+    if (!durable::commit_replace(tmp.wstring(), p.wstring(), durable::kRetryShortMs)) {
         std::error_code ec;
         fs::remove(tmp, ec);
         return false;
