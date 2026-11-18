@@ -925,6 +925,44 @@ int main(int argc, char** argv) {
         CHECK(live_child_count() == 0);
     }
 
+    // --- the hand-off: "quit now" only while the installer still runs (a game started meanwhile keeps RetroHub open, the installer gives up) ---
+    {
+        const std::string sd = system_dir();
+        auto spawn = [](const std::string& cmd) -> HANDLE {   // a hidden child of our own; returns its process handle
+            std::wstring w(cmd.begin(), cmd.end());
+            STARTUPINFOW si{}; si.cb = sizeof si;
+            PROCESS_INFORMATION pi{};
+            if (!CreateProcessW(nullptr, &w[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return nullptr;
+            CloseHandle(pi.hThread);
+            return pi.hProcess;
+        };
+        HANDLE live = spawn("\"" + sd + "\\ping.exe\" -n 60 127.0.0.1");   // harmless, long-running, loopback only
+        CHECK(live != nullptr);
+        if (live) {
+            handoff_for_test(live);
+            CHECK(installer_started());                   // the installer is waiting for us: leave
+            CHECK(installer_started());
+            TerminateProcess(live, 3);                     // our own child, by handle: it "gave up" (exit 3 = postponed)
+            WaitForSingleObject(live, 10000);
+            CHECK(!installer_started());                  // RetroHub stays open; it does not close by itself after the game
+            CHECK(downloading());                         // the update waits for the game again (tick() hands it over later)
+            CHECK(status() == kReadyText);
+            handoff_for_test(nullptr);
+        }
+        HANDLE dead = spawn("\"" + sd + "\\cmd.exe\" /c exit 7");
+        CHECK(dead != nullptr);
+        if (dead) {
+            WaitForSingleObject(dead, 10000);
+            handoff_for_test(dead);
+            CHECK(!installer_started());                  // any other early end: a failure the player can retry
+            CHECK(!downloading() && !update_deferred());
+            CHECK(status().rfind("Error:", 0) == 0);
+            handoff_for_test(nullptr);
+        }
+        handoff_for_test(nullptr);
+        CHECK(!installer_started() && !downloading());
+    }
+
     // --- the unpack works in a folder whose name is outside the ANSI code page (tar.exe reads ANSI arguments) ---
     {
         namespace fs = std::filesystem;

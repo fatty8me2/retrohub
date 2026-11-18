@@ -49,7 +49,10 @@ void tick();                     // every frame, UI thread: starts the deferred 
 bool downloading();                // true from start_update() until failure or handoff (including while the install waits for a game)
 bool update_deferred();            // downloaded and verified, waiting for the game(s) to close
 float download_progress();         // 0..1, or -1 when unknown
-bool installer_started();          // true => quit the app now
+bool installer_started();          // true => quit the app now (false again once the installer ended while the app stayed open)
+#ifdef RETROHUB_UPDATER_TESTING
+void handoff_for_test(void* applier_process);   // tests only: pretend begin_handoff started this process (owned from here); nullptr resets
+#endif
 void shutdown();                   // the app is leaving: stop waiting, drop the unused installer copy, join the startup pass
 std::string manual_download_url(); // release page to download by hand (shown when verification fails)
 
