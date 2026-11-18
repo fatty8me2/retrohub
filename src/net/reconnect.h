@@ -66,6 +66,18 @@ class WsReconnect {
     int attempts_ = 0;
 };
 
+/* LobbyClient (the hub's room socket) re-connecting after a blip: the server's refusal `reason` can just mean "not yet". Returns how many
+ * reconnect attempts may be spent on it (0 = final: fail at once). room-in-use / host-reconnecting: the server holds a dropped host's seat
+ * for its grace (hub.js HOST_GRACE_MS, about 10 s), so keep asking for twice as long. bad-slot / room-full: our own old socket has not
+ * been reaped yet (a full room). no-such-room: everybody dropped at once (a Worker restart) and the host has not re-opened the room yet.
+ * Only for a RE-connect: the first connect of a room fails at once on every refusal. */
+inline int lobby_reconnect_retry_cap(const std::string& reason, int max_reconnects)
+{
+    if (reason == "room-in-use" || reason == "host-reconnecting") return 2 * max_reconnects;
+    if (reason == "bad-slot" || reason == "room-full" || reason == "no-such-room") return max_reconnects;
+    return 0;
+}
+
 /* Peer bookkeeping for "left the room, but is its UDP still alive?". `ws_gone_at` != 0 marks a member that vanished from the
  * server's roster; it only really counts as departed once its direct path went stale too. */
 inline bool member_departed(bool ws_gone, bool udp_fresh) { return ws_gone && !udp_fresh; }

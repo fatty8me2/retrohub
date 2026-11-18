@@ -1,5 +1,6 @@
 #include "net_internal.h"
 #include "log.h"
+#include "reconnect.h"
 #include "session.h"
 #include "ws_error_text.h"
 
@@ -23,6 +24,13 @@ struct LobbyClient::Impl {
     uint32_t retry_at = 0;
     bool waiting_retry = false;
     std::string ident;   // see set_ident_msg
+    /* The room URL as this seat stands now; a reconnect after a blip opens it again. */
+    std::string room_url() const
+    {
+        std::string u = hub_url(server.empty() ? default_server() : server, code, role_host, name, 0, watch, dropin);
+        u += watch ? "&caps=reasons" : "&caps=hostmig,reasons";   // we understand host_changed (keep the room alive when the host leaves) and the distinct error reasons
+        return u;
+    }
 };
 static const int kMaxReconnects = 6;
 
@@ -57,8 +65,7 @@ bool LobbyClient::start_impl(const std::string& server, const std::string& code,
     d.last_keepalive = now_ms();
     d.server = server; d.code = code; d.name = name; d.role_host = role_host; d.watch = watch; d.dropin = dropin;
     d.was_welcomed = false; d.attempts = 0; d.busy_tries = 0; d.waiting_retry = false;
-    std::string url = hub_url(server.empty() ? default_server() : server, code, role_host, name, 0, watch, dropin);
-    url += watch ? "&caps=reasons" : "&caps=hostmig,reasons";   // we understand host_changed (keep the room alive when the host leaves) and the distinct error reasons
+    std::string url = d.room_url();
     d.url = url;
     net_log("Lobby: connecting %s", url.c_str());
     return d.ws.connect(url);
@@ -96,9 +103,21 @@ bool LobbyClient::poll_event(LobbyEvent* out)
     d.events.pop_front();
     /* My slot changes exactly when the host-change event is consumed, so messages queued before it are
      * still interpreted under the old numbering. */
-    if (out->type == LobbyEvent::HostChange && out->from_slot >= 0 && out->from_slot == d.slot) d.slot = 0;
+    if (out->type == LobbyEvent::HostChange && out->from_slot >= 0 && out->from_slot == d.slot) {
+        d.slot = 0;
+        /* We are the host now. A blip of ours makes the server hold slot 0 for us (its host grace); the seat is only reclaimed by a
+         * role=host connect with the same name, so a reconnect must no longer ask to join (that is refused "host-reconnecting" and the
+         * room would move on to somebody else once the grace ran out). */
+        if (!d.role_host && !d.watch) {
+            d.role_host = true;
+            d.url = d.room_url();
+            net_log("Lobby: this seat is the host now; a reconnect reclaims slot 0");
+        }
+    }
     return true;
 }
+
+std::string LobbyClient::reconnect_url() const { return impl_->url; }
 
 /* Plain-language text for a reason code the /hub server sends (an `error` frame, or a close). "" = not a code we know: a newer
  * server may send a readable sentence of its own, which the callers then show as it is. Shared with session.cpp (same library).
@@ -199,11 +218,13 @@ bool LobbyClient::handle_text(const std::string& text)
             net_log("Lobby: relay denied by the server (%s)", j.str("reason", "server-busy").c_str());
         } else if (type == "error") {
             std::string why = j.str("reason", "error");
-            if (d.attempts > 0 && d.attempts < (why == "room-in-use" ? 2 * kMaxReconnects : kMaxReconnects) && (why == "room-in-use" || why == "bad-slot"))   /* the Worker holds a dropped host seat ~10 s (HOST_GRACE_MS): keep asking for as long */ {
-                /* Our old socket has not been reaped by the server yet: try again shortly. */
+            const int cap = lobby_reconnect_retry_cap(why, kMaxReconnects);   // 0 = a final answer
+            if (d.attempts > 0 && d.attempts < cap) {
+                /* A reconnect after a blip: our old socket has not been reaped yet, or the host's seat is held for its grace (a Worker
+                 * restart drops everybody at once and the host may be back a moment after us). Try again shortly. */
                 ++d.attempts;
                 d.welcomed = false;
-                d.status = "Connection lost - reconnecting (" + std::to_string(d.attempts) + "/" + std::to_string(kMaxReconnects) + ")...";
+                d.status = "Connection lost - reconnecting (" + std::to_string(d.attempts) + "/" + std::to_string(cap) + ")...";
                 d.retry_at = now_ms() + 1500;
                 d.waiting_retry = true;
                 return true;
