@@ -346,7 +346,7 @@ bool gameinfo_ui_section_query_held(const Query& q, const std::string& id, int p
         for (const auto& ln : lines) ImGui::TextUnformatted(ln.c_str());
         ImGui::PopStyleColor();
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
-        if (more && ui::button(s.expanded ? "Less" : "More", ImVec2(sp(8.f), sp(3.5f)))) s.expanded = !s.expanded;
+        if (more && ui::button(s.expanded ? "Less###desc_more" : "More###desc_more", ImVec2(sp(8.f), sp(3.5f)))) s.expanded = !s.expanded;   // one id: the pad focus stays on it when the words change
         if (more) ImGui::SameLine(0, sp(1.f));
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("From");

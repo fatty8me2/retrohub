@@ -768,7 +768,8 @@ void library_filter_chips() {
         if (cases_view) {   // Cases: Coverflow (default) or the Classic shelf of turned cases
             const char* sl = A.st.lib_cases_classic ? "Style: Classic shelf" : "Style: Coverflow";
             chip_same_line(sl, -1.f);
-            if (chip(sl, !A.st.lib_cases_classic, COL_ACCENT)) { A.st.lib_cases_classic = !A.st.lib_cases_classic; mark_dirty(); }
+            /* "###...": the chip keeps one id while its words change, so the pad focus stays on it after A (also Group below) */
+            if (chip(A.st.lib_cases_classic ? "Style: Classic shelf###cases_style" : "Style: Coverflow###cases_style", !A.st.lib_cases_classic, COL_ACCENT)) { A.st.lib_cases_classic = !A.st.lib_cases_classic; mark_dirty(); }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carousel style: Coverflow (straight row, disc slides out) or the Classic shelf");
         }
         {   // Show hidden (library-12): off by default, remembered on this PC. Only drawn when something is hidden (or it is on).
@@ -781,7 +782,7 @@ void library_filter_chips() {
         }
         if (!cases_view) {
             chip_same_line(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", -1.f);
-            if (chip(A.st.lib_group_genre ? "Group: Genre" : "Group: Console", A.st.lib_group_genre, COL_ACCENT)) {
+            if (chip(A.st.lib_group_genre ? "Group: Genre###group_by" : "Group: Console###group_by", A.st.lib_group_genre, COL_ACCENT)) {
                 A.st.lib_group_genre = !A.st.lib_group_genre; mark_dirty(); A.vis_dirty = true; A.grid_scroll_top = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Group the library by console or by genre");

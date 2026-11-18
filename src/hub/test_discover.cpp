@@ -135,6 +135,10 @@ int main(int argc, char** argv)
         Pager q; CHECK(q.visible(10) == 10 && !q.has_more(10) && q.visible(0) == 0 && !q.has_more(0));
         CHECK(q.visible(24) == 24 && !q.has_more(24) && q.has_more(25));
     }
+    /* ---- browsing: the Decade chip (the 2000s used to read "Decade: 0s") ---- */
+    CHECK(decade_chip_text(0) == "Decade");
+    CHECK(decade_chip_text(1980) == "Decade: 80s" && decade_chip_text(1990) == "Decade: 90s");
+    CHECK(decade_chip_text(2000) == "Decade: 00s" && decade_chip_text(2010) == "Decade: 10s");
 
     /* ---- browsing: sort / filter / search over a small hand-made list ---- */
     auto mk = [](const char* t, const char* sys, const char* genre, int year, int pl, bool fr, const char* cid = "") {

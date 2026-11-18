@@ -527,7 +527,7 @@ void toolbar()
         }
     }
     {   // Decade
-        std::string lab = g_f.decade ? "Decade: " + std::to_string(g_f.decade % 100) + "s" : "Decade";
+        std::string lab = discover::decade_chip_text(g_f.decade);
         if (menu_begin("decade", lab, g_f.decade > 0, ui::ACCENT, f2, 13.f)) {
             if (menu_check("Any decade", g_f.decade == 0)) g_f.decade = 0;
             for (int d = 1980; d <= 2010; d += 10) if (menu_check(std::to_string(d) + "s", g_f.decade == d)) g_f.decade = d;

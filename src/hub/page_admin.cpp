@@ -288,7 +288,7 @@ void invite_panel(float w, long long now) {
         if (ui::button("Make invite code", ImVec2(bw, sp(4.f)), true)) do_create();
     }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
-    if (ui::chip(AU.more ? "Fewer options" : "More options", AU.more, ui::ACCENT)) AU.more = !AU.more;
+    if (ui::chip(AU.more ? "Fewer options###more_opts" : "More options###more_opts", AU.more, ui::ACCENT)) AU.more = !AU.more;   // one id: the pad focus stays on it
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     ImGui::PushStyleColor(ImGuiCol_Text, ui::TEXT3);
@@ -615,7 +615,7 @@ void page_admin() {
             if (ui::chip(fl[i].second.c_str(), AU.q.status == fl[i].first, col)) { AU.q.status = fl[i].first; AU.q.offset = 0; AU.dirty = true; if (AU.fake) fake_filter_apply(); }
         }
         ImGui::SameLine();
-        if (ui::chip(AU.q.asc ? "Oldest first" : "Newest first", false, ui::ACCENT)) { AU.q.asc = !AU.q.asc; AU.dirty = true; if (AU.fake) fake_filter_apply(); }
+        if (ui::chip(AU.q.asc ? "Oldest first###sort_dir" : "Newest first###sort_dir", false, ui::ACCENT)) { AU.q.asc = !AU.q.asc; AU.dirty = true; if (AU.fake) fake_filter_apply(); }   // one id: the pad focus stays on it
         ImGui::SameLine();
         if (ui::chip("Show test accounts", AU.q.show_test, ui::ACCENT)) { AU.q.show_test = !AU.q.show_test; AU.q.offset = 0; AU.dirty = true; if (AU.fake) fake_filter_apply(); }
     }

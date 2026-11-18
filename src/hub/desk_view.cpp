@@ -1443,7 +1443,8 @@ void apply_page_request() {
     if (!find_entry(key)) return;
     if (!hubdesk::has_game(D.model, D.games, key) && (A.search_buf[0] || filters_on())) {   // a search or a filter hides it: clear them
         A.search_buf[0] = 0;
-        if (filters_on()) { clear_filters(); rebuild_vis(); }
+        if (filters_on()) clear_filters();
+        rebuild_vis();   // A.vis still lists the old search's matches (page_library built it this frame): the model below must see every game
         rebuild();
     }
     if (hubdesk::row_of_key(D.model, D.games, key) < 0) {   // its group is closed: open one that holds it (its console's first)

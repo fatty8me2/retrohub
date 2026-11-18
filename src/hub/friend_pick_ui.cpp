@@ -51,13 +51,16 @@ bool FriendPicker::draw(const char* id) {
     for (size_t i = 0; i < fl.size(); ++i) {
         const hubnet::Friend& f = *fl[i];
         const bool on = sel_.count(f.uid) > 0;
-        std::string label = std::string(on ? "[x]  " : "[  ]  ") + f.name + (f.online() ? "   (online)" : "   (offline - gets it when back)");
+        /* "###row": the row's ID must not change with its tick. It used to be the whole label, so ticking a friend with A gave the row a
+         * new ID: the pad focus was left on an item that no longer existed (no ring, and A did nothing until the next D-pad press). */
+        std::string label = std::string(on ? "[x]  " : "[  ]  ") + f.name + (f.online() ? "   (online)" : "   (offline - gets it when back)") + "###row";
         ImGui::PushID((int)i);
         if (focus_ && i == 0) { ImGui::SetKeyboardFocusHere(0); focus_ = false; }
         if (ui::button(label.c_str(), ImVec2(-FLT_MIN, sp(4.25f)), on)) {
             if (on) sel_.erase(f.uid);
             else if ((int)sel_.size() < max_) sel_.insert(f.uid);
             else set_toast("You can pick up to " + std::to_string(max_) + " friends at a time.", false, 3.0);
+            shot_trace("fpick-toggle", f.uid + (sel_.count(f.uid) ? " on" : " off"));   // QA (HUB_SHOT_TRACE)
         }
         ImGui::PopID();
     }

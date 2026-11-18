@@ -541,7 +541,8 @@ bool modal_back() {
 }
 
 bool chip(const char* label, bool on, ImU32 col) {
-    ImVec2 ts = ImGui::CalcTextSize(label);
+    const char* end = ImGui::FindRenderedTextEnd(label);   // "Words###id": a toggle chip keeps one id while its words change (the pad focus stays on it)
+    ImVec2 ts = ImGui::CalcTextSize(label, end);
     ImVec2 sz(ts.x + sp(3.25f), ts.y + sp(1.75f));
     bool pressed = ImGui::InvisibleButton(label, sz, ImGuiButtonFlags_EnableNav);
     bool hov = ImGui::IsItemHovered();
@@ -554,7 +555,7 @@ bool chip(const char* label, bool on, ImU32 col) {
     dl->AddRectFilled(p0, p1, bg, sz.y * 0.5f);
     if (!on) dl->AddRect(p0, p1, HAIRLINE, sz.y * 0.5f, 0, 1.f);
     if (focus) focus_ring(dl, p0, p1, sz.y * 0.5f);
-    dl->AddText(p0 + ImVec2(sp(1.625f), sp(0.875f)), on ? IM_COL32_WHITE : mix(TEXT2, TEXT, *hv), label);
+    dl->AddText(p0 + ImVec2(sp(1.625f), sp(0.875f)), on ? IM_COL32_WHITE : mix(TEXT2, TEXT, *hv), label, end);
     return pressed;
 }
 

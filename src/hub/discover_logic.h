@@ -120,6 +120,7 @@ struct Pager {
     void more(size_t total) { if (shown < total) shown += kBatch; }
 };
 std::string showing_text(size_t visible, size_t total);   // "Showing 48 of 103"
+std::string decade_chip_text(int decade);                 // the Decade chip: "Decade" (any), "Decade: 80s", "Decade: 00s", "Decade: 10s"
 
 /* Prebuilt matcher for many classify() calls: same answers as classify(), but a word index narrows the loose-title search so a
  * whole 12,000-game catalog can be checked without a hitch. */
