@@ -42,6 +42,7 @@ namespace slot2 = retrorun::slot2;
 #include "link_sync.h"
 #include "ps1_input.h"
 #include "port_plan.h"
+#include "pacing.h"
 #include "save_companion.h"
 #include "rollback.h"
 #include "lockstep.h"
@@ -411,7 +412,7 @@ class AudioOut {
 
 /* ---------------------------------------------------------------- frontend */
 
-enum class Pace { None, Vsync, Audio, Timer };
+using retrorun::Pace;
 
 class Frontend {
   public:
@@ -3040,7 +3041,8 @@ bool Frontend::setup_link() {
 
 void Frontend::do_pacing() {
     if (ff || (a.headless && !a.realtime && !a.ds_link && !rbe)) return;
-    switch ((speed != 1.0 || a.headless) ? Pace::Timer : pace) {   // a changed speed paces by timer (vsync/audio pacing are tied to 1x)
+    // a changed speed paces by timer (vsync/audio pacing are tied to 1x); so does a rewind step, which pushes no audio (pacing.h)
+    switch (retrorun::frame_pace(pace, speed, a.headless, feat_ && feat_->rewinding())) {
         case Pace::Audio:
             while (audio.fill() > audio.target() && !quit) {
                 SDL_Delay(1);

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "features.h"
+#include "pacing.h"
 
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
@@ -178,11 +179,35 @@ static void test_runahead() {
     CHECK(fs.runahead_frames() == 0 && !msgs.empty());
 }
 
+/* Frame pacing (pacing.h): a rewind step plays no audio, so on an audio-paced display it must be paced by the timer, or a held rewind spins
+ * through the whole history unthrottled. */
+static void test_pacing() {
+    using retrorun::Pace;
+    using retrorun::frame_pace;
+    CHECK(frame_pace(Pace::Audio, 1.0, false, false) == Pace::Audio);
+    CHECK(frame_pace(Pace::Audio, 1.0, false, true) == Pace::Timer);    // rewinding on a 120/144 Hz display
+    CHECK(frame_pace(Pace::Vsync, 1.0, false, true) == Pace::Vsync);    // vsync still paces a silent frame
+    CHECK(frame_pace(Pace::Vsync, 1.0, false, false) == Pace::Vsync);
+    CHECK(frame_pace(Pace::Timer, 1.0, false, true) == Pace::Timer);
+    CHECK(frame_pace(Pace::Audio, 2.0, false, false) == Pace::Timer);   // a changed speed: timer, as before
+    CHECK(frame_pace(Pace::Vsync, 0.5, false, false) == Pace::Timer);
+    CHECK(frame_pace(Pace::None, 1.0, true, false) == Pace::Timer);     // headless --realtime / netplay
+    // The flag the main loop passes: Features::rewinding() for a held rewind and a latched one, false again once released.
+    Fake c; retrofeat::Settings s; s.system = "gba"; s.measure = false;
+    retrofeat::Features f(hooks(c), s);
+    for (int i = 0; i < 20; i++) f.frame();
+    CHECK(!f.rewinding() && frame_pace(Pace::Audio, 1.0, false, f.rewinding()) == Pace::Audio);
+    CHECK(f.set_held(true) && f.rewinding() && frame_pace(Pace::Audio, 1.0, false, f.rewinding()) == Pace::Timer);
+    CHECK(f.set_held(false) && !f.rewinding());
+    CHECK(f.set_latched(true) && f.rewinding() && frame_pace(Pace::Audio, 1.0, false, f.rewinding()) == Pace::Timer);
+}
+
 int main() {
     test_ring();
     test_policy();
     test_rewind_features();
     test_runahead();
+    test_pacing();
     if (fails) { std::printf("%d failures\n", fails); return 1; }
     std::printf("rewind_test: ok\n");
     return 0;

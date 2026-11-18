@@ -89,6 +89,7 @@ Frame pacing mode is chosen once at start:
 1. **vsync + dynamic rate control** - display refresh within +/-5% of core fps (60 Hz vs 59.73 fps): `SDL_RenderPresent` paces the loop and the producer resamples
    (linear) by `1 +/- 0.5%` according to ring fill vs a 70 ms target, so the 0.45% clock mismatch never underruns or overflows the buffer.
 2. **audio-paced** - otherwise (e.g. 144 Hz monitor): the loop waits until the ring drops below target before running the next frame; the audio clock is master, video is dupe/skipped by the display.
+   A rewind step plays no audio, so it is paced by the timer instead (`pacing.h`; before, a held rewind ran through the whole history unthrottled).
 3. **timer** - when muted/no audio device: QueryPerformanceCounter deadlines at core fps.
 
 Fast forward (Tab, offline) discards audio, skips pacing and presents every 8th frame.
