@@ -6,7 +6,9 @@
 #include "invite.h"
 
 #include <cstdio>
+#include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 static int g_fail = 0;
@@ -136,6 +138,39 @@ static void single_instance_tests() {
     server.stop();
 }
 
+/* A launch that finds the mutex but gets no answer on the pipe (the other hub is closing): it waits and becomes the primary. */
+static void wait_primary_tests() {
+    const std::wstring mutex = L"Local\\RetroHubTest.WaitMutex." + std::to_wstring(GetCurrentProcessId());
+    auto first = std::make_unique<InviteInstance>(mutex);
+    check(first->is_primary(), "wait: the first holder is primary");
+    auto second = std::make_unique<InviteInstance>(mutex);
+    check(!second->is_primary(), "wait: a second launch is not");
+    std::thread closer([&] { Sleep(600); first.reset(); });   // the closing hub finally ends
+    bool handed = true;
+    int asked = 0;
+    ULONGLONG t0 = GetTickCount64();
+    bool prim = invite_wait_for_primary(&second, mutex, [&](DWORD) { ++asked; return false; }, 10000, &handed);
+    closer.join();
+    check(prim && second && second->is_primary() && !handed, "wait: the waiting launch becomes the primary once the other one is gone");
+    check(GetTickCount64() - t0 < 5000, "wait: promptly");
+    /* a primary that stays (second): a hand-over that is taken ends the wait */
+    auto third = std::make_unique<InviteInstance>(mutex);
+    check(!third->is_primary(), "wait: a third launch is not primary");
+    prim = invite_wait_for_primary(&third, mutex, [&](DWORD) { return true; }, 10000, &handed);
+    check(!prim && handed, "wait: a slow primary that answers later takes the request");
+    /* nobody answers and the primary stays: gives up after the budget, still not primary */
+    third = std::make_unique<InviteInstance>(mutex);
+    t0 = GetTickCount64();
+    prim = invite_wait_for_primary(&third, mutex, [&](DWORD) { return false; }, 1500, &handed);
+    const ULONGLONG took = GetTickCount64() - t0;
+    check(!prim && !handed && third && !third->is_primary() && took >= 1400 && took < 5000, "wait: gives up after its budget");
+    /* already primary: nothing to wait for */
+    second.reset();
+    third.reset();
+    auto solo = std::make_unique<InviteInstance>(mutex);
+    check(invite_wait_for_primary(&solo, mutex, nullptr, 1000, &handed) && solo->is_primary() && !handed, "wait: a primary returns at once");
+}
+
 static void night_tests() {
     std::wstring id;
     check(invite_parse_night_url(L"retrohub://night/abc123@1700000000", &id) && id == L"abc123@1700000000", "night link parses");
@@ -183,6 +218,7 @@ int wmain(int argc, wchar_t** argv) {
     night_tests();
     link_tests();
     single_instance_tests();
+    wait_primary_tests();
     std::printf("%s\n", g_fail ? "FAILED" : "all passed");
     return g_fail ? 1 : 0;
 }

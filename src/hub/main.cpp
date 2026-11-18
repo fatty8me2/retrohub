@@ -164,8 +164,15 @@ static int hub_main() {
     if (!shot_path && !autotest) {
         instance.reset(new InviteInstance(INVITE_MUTEX_NAME));
         if (!instance->is_primary()) {   // already running: hand the request over (or just ask it to show itself) and leave
-            bool sent = has_night ? invite_send_night(INVITE_PIPE_NAME, cmd_night) : has_acct ? invite_send_account(INVITE_PIPE_NAME, cmd_acct) : has_join ? invite_send(INVITE_PIPE_NAME, cmd_join) : has_play ? invite_send_play(INVITE_PIPE_NAME, cmd_play) : invite_send_show(INVITE_PIPE_NAME);
-            if (sent) return 0;
+            auto hand_over = [&](DWORD ms) {
+                return has_night ? invite_send_night(INVITE_PIPE_NAME, cmd_night, ms) : has_acct ? invite_send_account(INVITE_PIPE_NAME, cmd_acct, ms) : has_join ? invite_send(INVITE_PIPE_NAME, cmd_join, ms) : has_play ? invite_send_play(INVITE_PIPE_NAME, cmd_play, ms) : invite_send_show(INVITE_PIPE_NAME, ms);
+            };
+            if (hand_over(3000)) return 0;
+            /* No answer: the other RetroHub is most likely still closing. Wait for it to end and take over as the primary, instead of
+             * running as a second hub beside it for good (invite.h, invite_wait_for_primary). */
+            bool handed = false;
+            if (invite_wait_for_primary(&instance, INVITE_MUTEX_NAME, hand_over, 15000, &handed)) invite_srv.start(INVITE_PIPE_NAME);
+            else if (handed) return 0;
         } else {
             invite_srv.start(INVITE_PIPE_NAME);
         }
