@@ -270,11 +270,12 @@ void history_block(const hs::GameCloudInfo& g) {
     if (job_busy()) { ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("Working on it..."); }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     const bool pinned = g.pinned;
-    if (button(pinned ? "Stop keeping in cloud" : "Keep in cloud", ImVec2(0, 0), false, !job_busy())) { hs::GameId id = g.id; run_job(id, [id, pinned]() { hs::cloud_set_pin(id, !pinned); }); }
+    /* the toggles below keep one id ("###...") while their words change: pressed with A, the pad focus stays on them */
+    if (button(pinned ? "Stop keeping in cloud###keep_cloud" : "Keep in cloud###keep_cloud", ImVec2(0, 0), false, !job_busy())) { hs::GameId id = g.id; run_job(id, [id, pinned]() { hs::cloud_set_pin(id, !pinned); }); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Kept games are the last to be moved off the cloud when space runs out");
     ImGui::SameLine();
     const bool lo = g.state == hs::CloudState::LocalOnly && g.local_only == hs::LocalOnlyReason::User;
-    if (button(lo ? "Back up to cloud again" : "Keep on this PC only", ImVec2(0, 0), false, true)) { hs::cloud_set_local_only(g.id, !lo); refresh_cache(true); }
+    if (button(lo ? "Back up to cloud again###local_only" : "Keep on this PC only###local_only", ImVec2(0, 0), false, true)) { hs::cloud_set_local_only(g.id, !lo); refresh_cache(true); }
     ImGui::SameLine();
     if (!H.confirm_remove) {
         if (button("Remove from cloud", ImVec2(0, 0), false, true)) H.confirm_remove = true;
@@ -307,7 +308,7 @@ void games_panel() {
     static bool only_attn = false;
     const int attn = attention_count(C.games);
     if (!C.games.empty()) {
-        if (button(only_attn ? "Show all games" : ("Needs attention (" + std::to_string(attn) + ")").c_str(), ImVec2(0, 0), only_attn || attn > 0)) only_attn = !only_attn;
+        if (button(only_attn ? "Show all games###attn_filter" : ("Needs attention (" + std::to_string(attn) + ")###attn_filter").c_str(), ImVec2(0, 0), only_attn || attn > 0)) only_attn = !only_attn;   // one id: the pad focus stays on it
         if (attn > 0) { ImGui::SameLine(); pill((std::to_string(attn) + (attn == 1 ? " game needs you" : " games need you")).c_str(), ui::mix(ui::BAD, IM_COL32_BLACK, 0.5f)); }
         if (only_attn && attn == 0) ImGui::TextDisabled("Nothing needs attention. All your saves are in step.");
         ImGui::Dummy(ImVec2(0, sp(0.5f)));
@@ -344,7 +345,7 @@ void games_panel() {
             ImGui::SameLine();
         }
         const bool open = g_open == g.id.gkey();
-        if (button(open ? "Hide history" : "History and options", ImVec2(0, 0), false, true)) {
+        if (button(open ? "Hide history###history_opts" : "History and options###history_opts", ImVec2(0, 0), false, true)) {   // one id: the pad focus stays on it
             if (open) g_open.clear();
             else { g_open = g.id.gkey(); open_history(g.id); }
         }
