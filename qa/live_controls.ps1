@@ -38,7 +38,8 @@ $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden -ArgumentList @(
     '--save-dir', "$work\sv", '--state-dir', "$work\st", '--headless', '--realtime', '--frames', '2000000', '--control', $ctl,
     '--game-key', 'qa-live', '--controls', $pf, '--log', "$work\rr.log")
 Remove-Item Env:RETRORUN_PAD_SCRIPT, Env:RETRORUN_PAD_LOG
-function Masks { @(Select-String -Path "$work\rr.log" -Pattern 'padscript: frame (\d+) mask 0x([0-9a-f]+)' | ForEach-Object { [pscustomobject]@{ frame = [long]$_.Matches[0].Groups[1].Value; mask = [Convert]::ToInt32($_.Matches[0].Groups[2].Value, 16) } }) }
+function Masks { if (-not (Test-Path "$work\rr.log")) { return @() }   # the runner has not created its log yet (Select-String on a missing path stops the script)
+    @(Select-String -Path "$work\rr.log" -Pattern 'padscript: frame (\d+) mask 0x([0-9a-f]+)' | ForEach-Object { [pscustomobject]@{ frame = [long]$_.Matches[0].Groups[1].Value; mask = [Convert]::ToInt32($_.Matches[0].Groups[2].Value, 16) } }) }
 # wait for the runner to log its first scripted-pad mask (generous: a busy PC can take far longer than a fixed 3 s to start the core)
 $until = (Get-Date).AddSeconds(90)
 while ((Get-Date) -lt $until -and @(Masks).Count -lt 1 -and -not $p.HasExited) { Start-Sleep -Milliseconds 200 }
