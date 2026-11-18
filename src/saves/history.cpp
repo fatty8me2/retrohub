@@ -139,7 +139,13 @@ bool history_snapshot(const std::string& hist_dir, const std::string& battery_di
     char id[32];
     std::snprintf(id, sizeof id, "%012lld", (long long)ts);
     std::string sid = id;
-    for (auto& e : have) if (e.id == sid) { ts++; std::snprintf(id, sizeof id, "%012lld", (long long)ts); sid = id; break; }
+    /* the first FREE id: make_snapshot empties its folder first, so stepping only once (three snapshots within one second) removed the
+     * second snapshot and put the third in its place */
+    for (bool taken = true; taken;) {
+        taken = false;
+        for (auto& e : have) if (e.id == sid) { taken = true; break; }
+        if (taken) { ts++; std::snprintf(id, sizeof id, "%012lld", (long long)ts); sid = id; }
+    }
     if (!make_snapshot(h / P(sid), b, ts, device, max_file)) return false;
     have = history_list(hist_dir);
     std::error_code ec;
