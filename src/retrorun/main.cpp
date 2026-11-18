@@ -4003,13 +4003,17 @@ int Frontend::run(const Args& args) {
             { for (int i = 0; i < link_n; i++) if (owner[i] >= 0) link_apply_blob(i, link_blob_from_disk(i)); link_loaded = true; }
     } else load_srm();
     ra_start();
-    if (!link && a.resume && !online && a.net.empty() && !a.ds_link) {
-        if (fs::exists(fs::u8path(state_path("auto")))) load_state("auto");
-    }
+    /* The hub passes --resume with every launch and adds --load-state for "Resume" from a chosen state: that state replaces the auto resume, which
+     * is only the fallback when it cannot be restored. (Loading auto.state first cost a second load, a "Loaded state auto" toast, and under the
+     * chosen state's port plan a false "This save was made with ... adapter" refusal.) */
+    bool resumed = false;
     if (!a.load_state_path.empty() && !link && !online && a.net.empty() && !a.ds_link && ra_.allow(cheevos::Feature::LoadState)) {
         std::vector<uint8_t> sb;
-        if (read_file(a.load_state_path, &sb) && plan_matches(a.load_state_path) && core.unserialize(sb.data(), sb.size())) set_status("Resumed from saved state");
+        if (read_file(a.load_state_path, &sb) && plan_matches(a.load_state_path) && core.unserialize(sb.data(), sb.size())) { set_status("Resumed from saved state"); resumed = true; ra_.reset(); }
         else rlog("load-state: could not restore %s", a.load_state_path.c_str());
+    }
+    if (!resumed && !link && a.resume && !online && a.net.empty() && !a.ds_link) {
+        if (fs::exists(fs::u8path(state_path("auto")))) load_state("auto");
     }
 
     cheats_init();
