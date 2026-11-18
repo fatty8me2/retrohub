@@ -885,7 +885,15 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         }
     }
     auto sess = std::make_shared<hubemu::SaveSession>(hubemu::begin_session(e, inst, battery, "", wiiu_tid, hubemu::nx_manifest_suffix(kind)));
-    autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary);
+    autotest_log("external: save session " + std::string(sess->active ? "active" : "inactive") + " " + sess->summary + (sess->error.empty() ? "" : " ERROR " + sess->error));
+    if (sess->active && !sess->error.empty()) {
+        /* The vault -> emulator copy had a problem (the emulator's own copy is untouched; the game still starts). Said now, in the hub, and cleared:
+         * left in place it came back after the game as "Could not copy the save into the vault", hid any real copy-back failure behind it, and kept
+         * the pending-session journal for a pointless replay. (An inactive session copies nothing back, so its error stays for the after-exit note.) */
+        hublog::warn("external: save copy into %s: %s", hubemu::name(kind), sess->error.c_str());
+        set_notice("Your newest save could not be put into " + std::string(hubemu::name(kind)) + " first: " + sess->error, 15.0);
+        sess->error.clear();
+    }
     /* Pending-session journal (session_journal.h): what the after-exit work needs, so it still happens when RetroHub is closed during play
      * (replayed at the next start once the emulator has ended) and the Cemu overrides below are put back when the spawn fails. */
     auto jr = std::make_shared<hubjournal::Entry>();
