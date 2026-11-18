@@ -75,6 +75,17 @@ void draw_update_popup() {
  * panel sees the press, so Y only ever acts on a glyph that was on screen. */
 static double g_toast_pad_t0 = -1.0;   // t0 of the toast that showed the Y glyph last frame (-1 = none)
 static std::vector<hubui::notice::Box> g_toasts_moved;   // this frame's toasts placed clear of a dialog (off their stack): friend cards keep off them
+/* The mouse the same way: toasts are only drawn (over the page, after it), so a click on an action box also reached whatever the page has
+ * under it (a tile, an option row, a list row). draw_toasts records the action boxes it drew; toast_mouse_input() runs at the start of the
+ * next frame and, for a left click inside one, makes the button the toasts' own for this frame: no page item or panel sees that click. */
+static std::vector<ImRect> g_toast_hits;   // the action boxes drawn last frame (window pixels)
+static ImGuiID toast_mouse_owner() { static const ImGuiID id = ImHashStr("##toast_actions"); return id; }
+static void toast_mouse_input() {
+    if (g_toast_hits.empty() || !ImGui::IsMouseClicked(ImGuiMouseButton_Left)) return;
+    const ImVec2 mp = ImGui::GetIO().MousePos;
+    for (const ImRect& r : g_toast_hits)
+        if (r.Contains(mp)) { ImGui::SetKeyOwner(ImGuiKey_MouseLeft, toast_mouse_owner(), ImGuiInputFlags_LockThisFrame); return; }
+}
 static hubui::padspots::ToastPadEnv toast_pad_env() {
     hubui::padspots::ToastPadEnv e;
     e.pad_mode = A.pad_mode;
@@ -110,6 +121,7 @@ static void toast_pad_input() {
 
 float draw_toasts(float bottom, float right, float top) {
     double now = ImGui::GetTime();
+    g_toast_hits.clear();
     A.toasts.erase(std::remove_if(A.toasts.begin(), A.toasts.end(), [&](const Toast& t) { return t.until < now; }), A.toasts.end());
     { void scan_toast_prune(); scan_toast_prune(); }   // help_ui.cpp: a scan-result toast never survives into a running game
     int pad_i = -1;   // the toast that shows the Y glyph
@@ -192,7 +204,10 @@ float draw_toasts(float bottom, float right, float top) {
             dl->AddRectFilled(b0, b1, hov ? ui::scale_alpha(t.col, 0.55f) : ui::scale_alpha(t.col, 0.3f), sp(0.75f));
             dl->AddText(f, fs, ImVec2(b0.x + sp(1.f), b0.y + (b1.y - b0.y - ls.y) * 0.5f), ui::TEXT, t.action_label.c_str());
             if (i == pad_i) ui::key_hint(dl, ImVec2(b0.x - hint_w, (b0.y + b1.y - ui::F.cap->FontSize - sp(0.75f)) * 0.5f), true, "Y", "", "");   // Y presses it
-            if (hov && ImGui::IsMouseClicked(0)) { auto fn = t.action; A.toasts[i].until = 0; if (fn) fn(); return bottom - y_bot; }
+            g_toast_hits.push_back(ImRect(b0, b1));
+            /* the click: ours when toast_mouse_input() locked it for the toasts (the plain check sees a locked button as up), else the plain one */
+            const bool click = ImGui::IsMouseClicked(ImGuiMouseButton_Left, ImGuiInputFlags_None, toast_mouse_owner()) || ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+            if (hov && click) { auto fn = t.action; A.toasts[i].until = 0; if (fn) fn(); return bottom - y_bot; }
         }
         if (!on_stack) continue;   // moved clear of a dialog: the stack does not grow
         if (t.top) y_top += h + sp(1.f);
@@ -402,6 +417,7 @@ void draw_frame() {
         return;
     }
     toast_pad_input();   // Y on a toast's action: before any page or panel reads that press
+    toast_mouse_input();   // the same for a click on a toast's action
     if (A.page != A.last_page || A.view != A.last_view) { if (A.page != A.last_page) A.page_focus_req = true; A.last_page = A.page; A.last_view = A.view; A.nav_seed = true; }
     {   // a modal/menu just closed and the pad lost its focus: land on the page's default item again
         static bool was_popup = false;
