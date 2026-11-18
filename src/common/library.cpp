@@ -1,5 +1,6 @@
 #include "winutil.h"
 #include "json.h"
+#include "durable_write.h"
 #include "miniz.h"
 #include "library.h"
 #include "library_scan_info.h"
@@ -2665,7 +2666,9 @@ bool read_text(const fs::path& p, std::string* out) {
     return true;
 }
 
-/* Write via temp file + replace so a crash never leaves a truncated file. */
+/* Write via temp file + replace so a crash never leaves a truncated file. durable::commit_replace flushes the temp file to disk first (a
+ * bare rename can still leave a zero-length library.json after a power cut: every play time and favourite gone) and retries a moment
+ * while another program holds the file. */
 bool write_text_atomic(const fs::path& p, const std::string& text) {
     fs::path tmp = p;
     tmp += L".tmp";
@@ -2675,7 +2678,7 @@ bool write_text_atomic(const fs::path& p, const std::string& text) {
         f.write(text.data(), (std::streamsize)text.size());
         if (!f) return false;
     }
-    if (!MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    if (!durable::commit_replace(tmp.wstring(), p.wstring())) {
         std::error_code ec;
         fs::remove(tmp, ec);
         return false;
