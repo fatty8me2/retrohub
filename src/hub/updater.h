@@ -49,7 +49,10 @@ void tick();                     // every frame, UI thread: starts the deferred 
 bool downloading();                // true from start_update() until failure or handoff (including while the install waits for a game)
 bool update_deferred();            // downloaded and verified, waiting for the game(s) to close
 float download_progress();         // 0..1, or -1 when unknown
-bool installer_started();          // true => quit the app now
+bool installer_started();          // true => quit the app now (false again once the installer ended while the app stayed open)
+#ifdef RETROHUB_UPDATER_TESTING
+void handoff_for_test(void* applier_process);   // tests only: pretend begin_handoff started this process (owned from here); nullptr resets
+#endif
 void shutdown();                   // the app is leaving: stop waiting, drop the unused installer copy, join the startup pass
 std::string manual_download_url(); // release page to download by hand (shown when verification fails)
 
@@ -195,6 +198,10 @@ private:
  * so shutdown() can end a running one at once (its exit code is then non-zero); no child is started once shutdown() began. */
 int run_command(const std::string& cmd, const std::function<void(const std::string&)>& onLine, unsigned long timeout_ms = 0xFFFFFFFFul);
 int live_child_count();   // children currently registered (tests)
+/* Unpacks <dir>\<zip_name> into the existing folder <dir>\<out_name> with tar_exe (absolute path). Windows' tar.exe reads its arguments in
+ * the ANSI code page, so a path with letters outside it cannot be opened: both names go in RELATIVE to dir, which becomes tar's working
+ * directory (handed over as UTF-16). Returns tar's exit code (-2 timed out, -1 could not start). */
+int unpack_zip(const std::string& tar_exe, const std::string& dir, const std::string& zip_name, const std::string& out_name, unsigned long timeout_ms);
 #ifdef RETROHUB_UPDATER_TESTING
 void reset_quit_for_test();   // tests only: undo shutdown()'s "leaving" state
 #endif

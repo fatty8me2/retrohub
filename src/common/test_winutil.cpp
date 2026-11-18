@@ -28,6 +28,21 @@ int main() {
     CHECK(w == L"caf\u00e9 \u65e5\u672c \U0001F600");
     CHECK(winutil::to_utf8(w) == u8);
     CHECK(winutil::to_wide("").empty() && winutil::to_utf8(std::wstring()).empty() && winutil::to_utf8((const wchar_t*)nullptr).empty());
+
+    /* getenv_utf8: a path variable with non-ASCII letters (a profile like C:\Users\Zoë) comes back as UTF-8, which std::getenv (ANSI)
+     * does not; an unset variable is "" / false, an empty one is "" / true. */
+    {
+        const wchar_t* name = L"RETROHUB_WINUTIL_TEST_PATH";
+        const std::wstring val = L"C:\\Users\\Zo\u00eb_\u0416\\AppData\\Roaming";
+        SetEnvironmentVariableW(name, val.c_str());
+        std::string got;
+        CHECK(winutil::getenv_utf8("RETROHUB_WINUTIL_TEST_PATH", &got) && got == winutil::to_utf8(val));
+        CHECK(winutil::getenv_utf8("RETROHUB_WINUTIL_TEST_PATH") == "C:\\Users\\Zo\xC3\xAB_\xD0\x96\\AppData\\Roaming");
+        SetEnvironmentVariableW(name, L"");
+        CHECK(winutil::getenv_utf8("RETROHUB_WINUTIL_TEST_PATH", &got) && got.empty());
+        SetEnvironmentVariableW(name, nullptr);
+        CHECK(!winutil::getenv_utf8("RETROHUB_WINUTIL_TEST_PATH", &got) && got.empty());
+    }
     CHECK(winutil::to_wide("\xFF\xFE").size() == 2);   // invalid UTF-8 -> U+FFFD per bad byte, no crash
 
     /* exe location */

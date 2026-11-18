@@ -7,6 +7,8 @@
  *
  * Parsing and link building are pure. The single-instance handoff uses a named mutex (who is primary) and a
  * named pipe (a second launch sends its code to the primary). Nothing here creates a window. */
+#include <functional>
+#include <memory>
 #include <string>
 
 #include <windows.h>
@@ -94,3 +96,12 @@ private:
 bool invite_send(const std::wstring& pipe_name, const std::wstring& code, DWORD timeout_ms = 3000);
 bool invite_send_play(const std::wstring& pipe_name, const std::wstring& key, DWORD timeout_ms = 3000);
 bool invite_send_show(const std::wstring& pipe_name, DWORD timeout_ms = 3000);
+
+/* A second launch whose hand-over got no answer. The usual cause is a RetroHub that is still closing: its pipe server is already
+ * stopped, but the process (whose handle keeps the mutex alive) has not ended yet. Running on beside it would leave this launch
+ * non-primary for good (no pipe server: every later invite link or --play opens yet another hub) while both write the same files.
+ * So: drop our handle, wait for that process to end and open the mutex again; true when *inst is the primary now. hand_over is retried
+ * about every 2 s in case the other one is only slow: when it takes the request, *handed = true and the result is false. After
+ * budget_ms: false (the caller carries on as before). */
+bool invite_wait_for_primary(std::unique_ptr<InviteInstance>* inst, const std::wstring& mutex_name,
+                             const std::function<bool(DWORD timeout_ms)>& hand_over, DWORD budget_ms, bool* handed);

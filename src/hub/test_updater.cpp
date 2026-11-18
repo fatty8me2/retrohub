@@ -925,6 +925,78 @@ int main(int argc, char** argv) {
         CHECK(live_child_count() == 0);
     }
 
+    // --- the hand-off: "quit now" only while the installer still runs (a game started meanwhile keeps RetroHub open, the installer gives up) ---
+    {
+        const std::string sd = system_dir();
+        auto spawn = [](const std::string& cmd) -> HANDLE {   // a hidden child of our own; returns its process handle
+            std::wstring w(cmd.begin(), cmd.end());
+            STARTUPINFOW si{}; si.cb = sizeof si;
+            PROCESS_INFORMATION pi{};
+            if (!CreateProcessW(nullptr, &w[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return nullptr;
+            CloseHandle(pi.hThread);
+            return pi.hProcess;
+        };
+        HANDLE live = spawn("\"" + sd + "\\ping.exe\" -n 60 127.0.0.1");   // harmless, long-running, loopback only
+        CHECK(live != nullptr);
+        if (live) {
+            handoff_for_test(live);
+            CHECK(installer_started());                   // the installer is waiting for us: leave
+            CHECK(installer_started());
+            TerminateProcess(live, 3);                     // our own child, by handle: it "gave up" (exit 3 = postponed)
+            WaitForSingleObject(live, 10000);
+            CHECK(!installer_started());                  // RetroHub stays open; it does not close by itself after the game
+            CHECK(downloading());                         // the update waits for the game again (tick() hands it over later)
+            CHECK(status() == kReadyText);
+            handoff_for_test(nullptr);
+        }
+        HANDLE dead = spawn("\"" + sd + "\\cmd.exe\" /c exit 7");
+        CHECK(dead != nullptr);
+        if (dead) {
+            WaitForSingleObject(dead, 10000);
+            handoff_for_test(dead);
+            CHECK(!installer_started());                  // any other early end: a failure the player can retry
+            CHECK(!downloading() && !update_deferred());
+            CHECK(status().rfind("Error:", 0) == 0);
+            handoff_for_test(nullptr);
+        }
+        handoff_for_test(nullptr);
+        CHECK(!installer_started() && !downloading());
+    }
+
+    // --- the unpack works in a folder whose name is outside the ANSI code page (tar.exe reads ANSI arguments) ---
+    {
+        namespace fs = std::filesystem;
+        std::string tar, terr;
+        if (!find_system_tool("tar.exe", &tar, &terr)) {
+            std::printf("unpack: no tar.exe (%s); skipped\n", terr.c_str());
+        } else {
+            const fs::path tmp = fs::temp_directory_path();
+            const std::wstring pid = std::to_wstring(GetCurrentProcessId());
+            const fs::path ascii = tmp / (L"rh_unpack_src_" + pid);
+            const fs::path odd = tmp / (L"rh_unpack_\x0416\x0436_\x30C6\x30B9\x30C8_" + pid);   // Cyrillic + Japanese: not in code page 1252
+            std::error_code ec;
+            fs::remove_all(ascii, ec); fs::remove_all(odd, ec);
+            fs::create_directories(ascii, ec);
+            fs::create_directories(odd / L"staged", ec);
+            { std::ofstream f(ascii / L"hello.txt", std::ios::binary); f << "hi there"; }
+            const std::string a8 = ascii.u8string();
+            const int mk = run_command("\"" + tar + "\" -a -cf \"" + a8 + "\\pack.zip\" -C \"" + a8 + "\" hello.txt", [](const std::string&) {});
+            if (mk != 0 || !fs::exists(ascii / L"pack.zip", ec)) {
+                std::printf("unpack: could not build the test zip (tar exit %d); skipped\n", mk);
+            } else {
+                fs::rename(ascii / L"pack.zip", odd / L"update.zip", ec);
+                CHECK(!ec);
+                CHECK(unpack_zip(tar, odd.u8string(), "update.zip", "staged", 60000) == 0);
+                std::string got;
+                { std::ifstream f(odd / L"staged" / L"hello.txt", std::ios::binary); std::stringstream ss; ss << f.rdbuf(); got = ss.str(); }
+                CHECK(got == "hi there");
+                CHECK(unpack_zip(tar, odd.u8string(), "missing.zip", "staged", 60000) != 0);   // a failure is still reported
+                CHECK(unpack_zip(tar, "", "update.zip", "staged", 60000) == -1);
+            }
+            fs::remove_all(ascii, ec); fs::remove_all(odd, ec);
+        }
+    }
+
     std::printf("current_version=%s launch_check_disabled=%d\n", current_version().c_str(), (int)launch_check_disabled());
     std::printf("unit checks: %s\n", g_fail ? "FAILED" : "all passed");
 

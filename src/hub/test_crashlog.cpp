@@ -233,10 +233,11 @@ static bool run_helper(const std::wstring& exe, const fs::path& dir, const wchar
     return w == WAIT_OBJECT_0;
 }
 
-static void test_child_crash(const std::wstring& helper, const wchar_t* mode, const char* expect_name) {
+static void test_child_crash(const std::wstring& helper, const wchar_t* mode, const char* expect_name, DWORD* exit_code = nullptr) {
     fs::path d = fresh(expect_name);
     DWORD code = 0;
     CHECK(run_helper(helper, d, mode, &code));
+    if (exit_code) *exit_code = code;
     CHECK(code != 0 && code != 3 && code != 99);
     auto reports = crashrep::list_reports(dir8(d));
     CHECK(reports.size() == 1);
@@ -270,9 +271,19 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         std::wstring helper = fs::u8path(argv[1]).wstring();
         test_child_crash(helper, L"av", "ACCESS_VIOLATION");
+        {   /* our filter chains to an overlay's filter that chains back to ours (reassert() put ours in front again): one report, and the
+             * process still ends with the original exception, not in an endless filter -> filter -> filter recursion */
+            DWORD code = 0;
+            test_child_crash(helper, L"av-chained", "ACCESS_VIOLATION", &code);
+            CHECK(code == 0xC0000005u);
+        }
         test_child_crash(helper, L"terminate", "C++ exception");        // uncaught throw: the unhandled-exception filter sees it
         test_child_crash(helper, L"terminate-call", "STD_TERMINATE");   // std::terminate() / abort(): the terminate handler
         test_child_crash(helper, L"overflow", "STACK_OVERFLOW");
+        /* std::set_terminate only covers the thread that called it (the UCRT keeps the handler per thread), so a worker thread's
+         * uncaught exception ends in abort(): the SIGABRT handler must still write the report. */
+        test_child_crash(helper, L"thread-throw", "ABORT");
+        test_child_crash(helper, L"thread-abort", "ABORT");
         {   // two crashes into one folder (usually the same second) never overwrite each other
             fs::path d = fresh("twice");
             DWORD c1 = 0, c2 = 0;

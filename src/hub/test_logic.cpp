@@ -129,6 +129,22 @@ static void test_settings_robust() {
         Settings again; CHECK(hubui::load_settings(file, &again) && again.name == "exact");   // a fresh successful load lifts the guard
         CHECK(hubui::save_settings(file, again));
     }
+    /* a file that is there but is not valid JSON: the load fails (defaults), but a copy is kept before the next save replaces it */
+    {
+        const std::wstring wcopy = wfile + L".unreadable";
+        const std::string broken = "{\n  \"name\": \"mine\",\n  \"rom_folders\": [\"E:\\\\Games\"],\n  \"vault_dir\": \"F:\\\\Saves\",\n";   // cut off
+        { std::ofstream f(fs::path(wfile), std::ios::binary | std::ios::trunc); f << broken; }
+        Settings d; bool kept = false;
+        CHECK(!hubui::load_settings(file, &d, &kept) && kept && d.name.empty());
+        CHECK(slurp_w(wcopy) == broken);                   // the player's folders survive in the copy
+        CHECK(hubui::save_settings(file, d));              // saving is still allowed (it is not a locked file)
+        Settings back; CHECK(hubui::load_settings(file, &back, &kept) && !kept);
+        CHECK(slurp_w(wcopy) == broken);                   // a good load leaves the copy alone
+        /* an empty file holds nothing worth keeping: no copy */
+        fs::remove(fs::path(wcopy), ec);
+        { std::ofstream f(fs::path(wfile), std::ios::binary | std::ios::trunc); f << "  \r\n"; }
+        Settings e; CHECK(!hubui::load_settings(file, &e, &kept) && !kept && !fs::exists(fs::path(wcopy)));
+    }
     fs::remove_all(base, ec);
 }
 

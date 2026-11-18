@@ -404,6 +404,26 @@ bool invite_send_show(const std::wstring& pipe_name, DWORD timeout_ms) {
     return pipe_call(pipe_name, L"show", timeout_ms);
 }
 
+bool invite_wait_for_primary(std::unique_ptr<InviteInstance>* inst, const std::wstring& mutex_name,
+                             const std::function<bool(DWORD)>& hand_over, DWORD budget_ms, bool* handed) {
+    if (handed) *handed = false;
+    if (!inst) return false;
+    if (*inst && (*inst)->is_primary()) return true;
+    const ULONGLONG t0 = GetTickCount64();
+    ULONGLONG next_try = t0 + 2000;
+    for (;;) {
+        inst->reset();   // our own handle must not keep the closing hub's mutex alive
+        Sleep(100);
+        inst->reset(new InviteInstance(mutex_name));
+        if ((*inst)->is_primary()) return true;
+        if (GetTickCount64() - t0 >= budget_ms) return false;
+        if (hand_over && GetTickCount64() >= next_try) {
+            if (hand_over(500)) { if (handed) *handed = true; return false; }
+            next_try = GetTickCount64() + 2000;
+        }
+    }
+}
+
 bool invite_parse_account_url(const std::wstring& url, std::wstring* code) {
     std::string c;
     if (!hubnet::invite_link_code(winutil::to_utf8(url), &c)) return false;

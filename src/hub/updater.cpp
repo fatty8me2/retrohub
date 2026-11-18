@@ -76,6 +76,7 @@ struct Pending {
     std::string smash_sha256; // ... and --smash-sha256 <hash>: it refuses unless the installed BattleShip.exe still has this hash
 };
 Pending& s_pending = *new Pending;   // guarded by s_mu
+HANDLE s_applier = nullptr;         // guarded by s_mu: the installer begin_handoff started (closed once it is seen to have ended)
 detail::Gate s_gate;          // UI thread only (tick)
 bool (*s_session_probe)() = nullptr;
 
@@ -173,8 +174,10 @@ void kill_children() {   // by handle only; under the lock, so a handle is never
 }
 
 constexpr int kRunTimedOut = -2;
-/* timeout_ms: when the process runs longer it is ended by its own handle (never by name) and kRunTimedOut is returned. */
-int run_capture(std::string cmd, const std::function<void(const std::string&)>& onLine, DWORD timeout_ms = INFINITE) {
+/* timeout_ms: when the process runs longer it is ended by its own handle (never by name) and kRunTimedOut is returned.
+ * cwd (UTF-8, optional): the child's working directory, handed over as UTF-16. */
+int run_capture(std::string cmd, const std::function<void(const std::string&)>& onLine, DWORD timeout_ms = INFINITE,
+                const std::string& cwd = std::string()) {
     HANDLE rd = nullptr, wr = nullptr;
     SECURITY_ATTRIBUTES sa{}; sa.nLength = sizeof(sa); sa.bInheritHandle = TRUE;
     if (!CreatePipe(&rd, &wr, &sa, 0)) return -1;
@@ -183,7 +186,8 @@ int run_capture(std::string cmd, const std::function<void(const std::string&)>& 
     si.hStdOutput = wr; si.hStdError = wr;
     PROCESS_INFORMATION pi{};
     std::wstring wcmd = W(cmd);
-    BOOL ok = CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    const std::wstring wcwd = W(cwd);
+    BOOL ok = CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, wcwd.empty() ? nullptr : wcwd.c_str(), &si, &pi);
     CloseHandle(wr);
     if (!ok) { CloseHandle(rd); return -1; }
     if (!register_child(pi.hProcess)) TerminateProcess(pi.hProcess, 1);   // the app is leaving: do not let it run
@@ -600,6 +604,11 @@ void OwnedThread::detach() { std::lock_guard<std::mutex> l(mu_); if (th_.joinabl
 
 int run_command(const std::string& cmd, const std::function<void(const std::string&)>& onLine, unsigned long timeout_ms) {
     return run_capture(cmd, onLine, (DWORD)timeout_ms);
+}
+
+int unpack_zip(const std::string& tar_exe, const std::string& dir, const std::string& zip_name, const std::string& out_name, unsigned long timeout_ms) {
+    if (tar_exe.empty() || dir.empty() || zip_name.empty() || out_name.empty()) return -1;
+    return run_capture("\"" + tar_exe + "\" -xf \"" + zip_name + "\" -C \"" + out_name + "\"", [](const std::string&) {}, (DWORD)timeout_ms, dir);
 }
 int live_child_count() { std::lock_guard<std::mutex> l(s_child_mu); return (int)s_children.size(); }
 #ifdef RETROHUB_UPDATER_TESTING
@@ -1324,8 +1333,9 @@ void start_update() {
             rm_file(updatesDir + "\\staged.json");
             remove_tree(P(staged), &s_quit);
             std::filesystem::create_directories(P(staged), fec);
-            std::string tarCmd = "\"" + tarExe + "\" -xf \"" + zipPath + "\" -C \"" + staged + "\"";
-            int tarCode = run_capture(tarCmd, [](const std::string&) {}, detail::kTarTimeoutMs);   // a stuck tar is ended by its handle; the install is untouched either way
+            /* tar.exe reads its arguments in the ANSI code page: an install folder with letters outside it (a Cyrillic profile name on an
+             * English Windows ...) could not be opened. The paths go in RELATIVE to updates\, which is tar's working directory. */
+            int tarCode = detail::unpack_zip(tarExe, updatesDir, "update.zip", "staged", detail::kTarTimeoutMs);   // a stuck tar is ended by its handle; the install is untouched either way
             const long long freeAfter = tarCode != 0 ? detail::free_bytes_on(updatesDir) : -1;   // read before the half-unpacked files are removed
             rm_file(zipPath); rm_file(zipPath + ".resume");
             if (tarCode != 0) {
@@ -1432,7 +1442,11 @@ static void begin_handoff(const Pending& p, bool game_active) {
             return;
         }
         CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
+        {   // kept: installer_started() notices an installer that ended while RetroHub was still open
+            std::lock_guard<std::mutex> l(s_mu);
+            if (s_applier) CloseHandle(s_applier);
+            s_applier = pi.hProcess;
+        }
 
         /* Quit only once the installer is confirmed running; it waits for this
          * process to exit before touching any files. */
@@ -1441,7 +1455,11 @@ static void begin_handoff(const Pending& p, bool game_active) {
             Sleep(100);
             started = GetFileAttributesW(marker.c_str()) != INVALID_FILE_ATTRIBUTES;
         }
-        if (!started) { fail(s_quit.load() ? "RetroHub closed before the installer confirmed it had started." : "the installer did not start."); return; }
+        if (!started) {
+            { std::lock_guard<std::mutex> l(s_mu); if (s_applier) { CloseHandle(s_applier); s_applier = nullptr; } }
+            fail(s_quit.load() ? "RetroHub closed before the installer confirmed it had started." : "the installer did not start.");
+            return;
+        }
         ulog("installer started for %s, quitting", p.version.c_str());
         s_progress.store(1.0f);
         s_started.store(true);
@@ -1558,7 +1576,42 @@ bool update_blocked_bad_version() { return s_blocked_bad.load(); }
 bool retry_bad_version() { return start_check(true, true); }
 bool downloading() { return s_downloading.load(); }
 float download_progress() { return s_progress.load(); }
-bool installer_started() { return s_started.load(); }
+/* The installer waits (up to --hub-wait-secs) for this RetroHub to quit. main.cpp quits only once no session runs, so a game started
+ * during the hand-off (a room's launch, Play pressed while the installer was starting) keeps RetroHub open: the installer then gives up
+ * (exit 3, "postponed") and ends. Without this check RetroHub would still say "quit now" and close by itself when the game ended, with no
+ * update and nothing to reopen it. So: true only while the installer is still running. When it gave up, the update goes back to waiting
+ * for the game (tick() hands it over again afterwards); any other early end is a failure the player can retry. */
+bool installer_started() {
+    if (!s_started.load()) return false;
+    HANDLE h = nullptr;
+    { std::lock_guard<std::mutex> l(s_mu); h = s_applier; }
+    if (!h || WaitForSingleObject(h, 0) != WAIT_OBJECT_0) return true;   // still running (or not known): leave as asked
+    DWORD code = 0;
+    if (!GetExitCodeProcess(h, &code)) code = 0xFFFFFFFFul;
+    { std::lock_guard<std::mutex> l(s_mu); if (s_applier == h) { CloseHandle(s_applier); s_applier = nullptr; } }
+    s_started.store(false);
+    s_handing.store(false);
+    if (code == 3) {   // postponed: nothing was changed; the unpacked files and the installer copy are still there
+        ulog("the installer gave up waiting for RetroHub to close (a game was running); the update waits for the game again");
+        s_downloading.store(true);   // "downloaded, waiting for the game(s) to close" again (s_ready is still set)
+        set_status(kReadyText);
+    } else {
+        ulog("the installer ended (exit code %lu) before RetroHub closed; RetroHub stays open", (unsigned long)code);
+        s_ready.store(false);
+        s_deferred.store(false);
+        s_downloading.store(false);
+        set_status("Error: the installer stopped before it could finish. Try the update again.");
+    }
+    return false;
+}
+#ifdef RETROHUB_UPDATER_TESTING
+void handoff_for_test(void* applier_process) {
+    { std::lock_guard<std::mutex> l(s_mu); if (s_applier) CloseHandle(s_applier); s_applier = (HANDLE)applier_process; }
+    const bool on = applier_process != nullptr;
+    s_ready.store(on); s_started.store(on); s_handing.store(on); s_downloading.store(false); s_deferred.store(false);
+    set_status("");
+}
+#endif
 std::string manual_download_url() { return kManualUrl; }
 std::string status() { std::lock_guard<std::mutex> l(s_mu); return s_status; }
 std::string latest_version() { std::lock_guard<std::mutex> l(s_mu); return s_latest; }
