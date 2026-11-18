@@ -277,6 +277,13 @@ TreeSyncReport sync_tree_newest(const std::string& src, const std::string& dst, 
         if (!backup_dir.empty()) {
             fs::path bk = u8(backup_dir) / rel;
             bk += u8("." + tag);
+            /* never replace an earlier backup: the stamp has whole seconds, and copy_keep_time overwrites, so a second backup of the same
+             * file within one second (two syncs into the same _conflicts folder) used to destroy the first one. It gets "-2", "-3"... */
+            {
+                const fs::path b0 = bk;
+                std::error_code e2;
+                for (int n = 2; fs::exists(bk, e2) && n < 1000; ++n) { bk = b0; bk += u8("-" + std::to_string(n)); }
+            }
             if (copy_keep_time(to, bk, e1)) { ++r.backed_up; prune_backups(bk, tag, keep_backups); }
             else { fail("cannot back up " + to_u8(to)); continue; }   // no backup, no overwrite
         }

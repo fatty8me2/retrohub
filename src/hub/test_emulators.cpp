@@ -369,6 +369,23 @@ static void test_tree_sync(const fs::path& dir) {
         CHECK(nb == 10);
         CHECK(sync_tree_newest(pa.u8string(), pb.u8string(), pbk.u8string(), "local.zzz").identical == 1);
     }
+    /* two backups of one file with the same stamp (two syncs into one _conflicts folder within a second) never replace each other */
+    {
+        fs::path ca = dir / "ca", cb = dir / "cb", cbk = dir / "cbk";
+        write_text(cb / "h.sav", "first");
+        set_mtime(cb / "h.sav", 300);
+        write_text(ca / "h.sav", "second");
+        set_mtime(ca / "h.sav", 200);
+        CHECK(sync_tree_newest(ca.u8string(), cb.u8string(), cbk.u8string(), "local.20260101-000000").backed_up == 1);
+        write_text(ca / "h.sav", "third");
+        set_mtime(ca / "h.sav", 100);
+        CHECK(sync_tree_newest(ca.u8string(), cb.u8string(), cbk.u8string(), "local.20260101-000000").backed_up == 1);
+        CHECK(read_text(cb / "h.sav") == "third");
+        bool first = false, second = false;
+        int n = 0;
+        for (auto& de : fs::directory_iterator(cbk)) { ++n; const std::string t = read_text(de.path()); first |= t == "first"; second |= t == "second"; }
+        CHECK(n == 2 && first && second);   // the first backup used to be overwritten by the second
+    }
 
     /* missing source is fine; nothing is ever deleted */
     r = sync_tree_newest((dir / "nope").u8string(), b.u8string(), "", "t");
