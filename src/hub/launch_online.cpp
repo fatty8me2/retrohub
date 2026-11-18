@@ -73,7 +73,12 @@ std::string room_launch_busy_text() {
 
 bool gc_fingerprint_ready(const std::string& path) {
     if (GCO.fp_path == path) return GCO.fp_done;
-    if (GCO.fp_th.joinable()) GCO.fp_th.join();
+    if (GCO.fp_th.joinable()) {
+        /* Another disc is still being hashed (the host flipped between two GameCube games): never wait for it here. This runs on the UI thread
+         * every frame for every room member, and a 1.4 GB disc froze the hub for seconds. Asked again next frame; the join is instant once done. */
+        if (!GCO.fp_done) return false;
+        GCO.fp_th.join();
+    }
     GCO.fp_path = path;
     GCO.fp_done = false;
     GCO.fp_th = std::thread([path]() {
