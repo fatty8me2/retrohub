@@ -44,6 +44,19 @@ int main() {
     CHECK_EQ(report_summary(rep(1, 1, 0), "restored", "restored"), "2 files restored.");
     CHECK_EQ(report_summary(rep(1, 0, 0), "restored", "restored"), "1 file restored.");
     CHECK(!has(report_summary(rep(0, 0, 2), "sent", "received"), "file(s)"));
+    // sync_folder's warning (a game left out because its folder could not be read) is never dropped, and never claims "up to date"
+    {
+        SyncReport w = rep(0, 0, 0);
+        w.warning = "Could not read the save folder of n64/g, so that game was not synced this time.";
+        CHECK_EQ(report_summary(w, "sent", "received"), "Nothing new to sync. Could not read the save folder of n64/g, so that game was not synced this time.");
+        CHECK(!has(report_summary(w, "sent", "received"), "up to date"));
+        SyncReport w2 = rep(1, 0, 0);
+        w2.warning = w.warning;
+        CHECK_EQ(report_summary(w2, "sent", "received"), "1 file sent. Could not read the save folder of n64/g, so that game was not synced this time.");
+        SyncReport w3 = rep(0, 0, 0, false, "disk full");
+        w3.warning = w.warning;
+        CHECK_EQ(report_summary(w3, "sent", "received"), "Failed: disk full");
+    }
     if (g_fail) { std::printf("%d failure(s)\n", g_fail); return 1; }
     std::printf("hub_save_jobs_logic_test: all passed\n");
     return 0;

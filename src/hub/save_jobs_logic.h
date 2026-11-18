@@ -7,9 +7,12 @@
 
 namespace hubsave {
 
+/* sync_folder's warning (a game whose folder could not be read was left out this time) is part of the line: it used to be dropped,
+ * so a game that silently did not sync read as "Everything is already up to date." */
 inline std::string report_summary(const hub::saves::SyncReport& r, const char* sent_word, const char* got_word) {
     if (!r.ok) return "Failed: " + (r.error.empty() ? std::string("unknown error") : r.error);
-    if (r.pushed == 0 && r.pulled == 0 && r.conflicts == 0) return "Everything is already up to date.";
+    const std::string warn = r.warning.empty() ? std::string() : " " + r.warning;
+    if (r.pushed == 0 && r.pulled == 0 && r.conflicts == 0) return (r.warning.empty() ? "Everything is already up to date." : "Nothing new to sync.") + warn;
     auto files = [](int n, const char* word) { return std::to_string(n) + (n == 1 ? " file " : " files ") + word; };
     std::string s;
     if (std::string(sent_word) == got_word) {   // an import: "restored" both ways is one number, not two
@@ -19,7 +22,7 @@ inline std::string report_summary(const hub::saves::SyncReport& r, const char* s
         if (r.pulled) s += (s.empty() ? "" : ", ") + files(r.pulled, got_word);
     }
     if (r.conflicts) s += (s.empty() ? "" : ", ") + std::to_string(r.conflicts) + (r.conflicts == 1 ? " conflict" : " conflicts") + " (the older copy was kept as a backup)";
-    return s + ".";
+    return s + "." + warn;
 }
 
 }  // namespace hubsave
