@@ -1046,10 +1046,10 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
          * retrorun --share-host-save broadcasts them (guests get the bytes before frame 0). Nobody writes into a vault. */
         if (share_save && (is_host || room_my_slot() == 0)) {
             std::error_code ec;
-            std::filesystem::path bd = hub::saves::battery_dir(sys_short(e), e.key);
+            std::filesystem::path bd = std::filesystem::u8path(hub::saves::battery_dir(sys_short(e), e.key));   // UTF-8 paths: a plain path() reads the ANSI code page
             if (std::filesystem::is_directory(bd, ec)) {
                 for (auto& de : std::filesystem::directory_iterator(bd, ec))
-                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
+                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::u8path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
             } else launch_note(true, "No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
         }
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
@@ -1096,10 +1096,10 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         make_dirs(tmp);
         if (share_save && (is_host || room_my_slot() == 0)) {
             std::error_code ec;
-            std::filesystem::path bd = hub::saves::battery_dir(sys_short(e), e.key);
+            std::filesystem::path bd = std::filesystem::u8path(hub::saves::battery_dir(sys_short(e), e.key));   // UTF-8 paths: a plain path() reads the ANSI code page
             if (std::filesystem::is_directory(bd, ec)) {
                 for (auto& de : std::filesystem::directory_iterator(bd, ec))
-                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
+                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::u8path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
             } else launch_note(true, "No saved progress for " + e.title + " on this PC yet - everyone starts with an empty save.", 8.0);
         }
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --save-dir " + quote(tmp) +
@@ -1120,10 +1120,10 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         make_dirs(tmp);
         if (share_save && (is_host || room_my_slot() == 0)) {
             std::error_code ec;
-            std::filesystem::path bd = hub::saves::battery_dir(sys_short(e), e.key);
+            std::filesystem::path bd = std::filesystem::u8path(hub::saves::battery_dir(sys_short(e), e.key));   // UTF-8 paths: a plain path() reads the ANSI code page
             if (std::filesystem::is_directory(bd, ec)) {
                 for (auto& de : std::filesystem::directory_iterator(bd, ec))
-                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
+                    if (de.is_regular_file(ec)) std::filesystem::copy_file(de.path(), std::filesystem::u8path(tmp) / de.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
             } else launch_note(true, "No saved progress for " + e.title + " on this PC yet - everyone starts with an empty memory card.", 8.0);
         }
         std::string args, err;

@@ -377,7 +377,7 @@ bool ps2_online_args(const hub::GameEntry& e, const std::string& net, const std:
     std::filesystem::copy_file(std::filesystem::u8path(bios.dir + "\\" + bios.file), std::filesystem::u8path(bios_dir + "\\" + bios.file), std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) { *err = "Could not stage the PlayStation 2 BIOS: " + ec.message(); return false; }
     if (share_save && is_host_card) {   // the host's vault card is COPIED; retrorun sends it to every guest, nothing is written back
-        std::filesystem::path card = std::filesystem::path(hub::saves::battery_dir(sys_short(e), e.key)) / std::filesystem::u8path(hubps2::vault_card_rel(hubemu::pcsx2_safe_key(e.key)));
+        std::filesystem::path card = std::filesystem::u8path(hub::saves::battery_dir(sys_short(e), e.key)) / std::filesystem::u8path(hubps2::vault_card_rel(hubemu::pcsx2_safe_key(e.key)));   // UTF-8 (a plain path() reads the ANSI code page)
         if (std::filesystem::is_regular_file(card, ec)) std::filesystem::copy_file(card, std::filesystem::u8path(sysdir + "\\" + hubps2::staged_card_rel()), std::filesystem::copy_options::overwrite_existing, ec);
         else set_notice("No memory card for " + e.title + " on this PC yet - everyone starts with a blank card.", 8.0);
     }
