@@ -296,9 +296,17 @@ LONG WINAPI unhandled_filter(EXCEPTION_POINTERS* ep);
 LPTOP_LEVEL_EXCEPTION_FILTER g_prev = nullptr;
 
 LONG WINAPI unhandled_filter(EXCEPTION_POINTERS* ep) {
+    /* reassert() chains to the overlay / vendor filter that had replaced ours, and such a filter usually chains to the one it replaced:
+     * ours. Without this guard that is filter -> theirs -> filter -> ... until the stack is gone, and the process hung instead of ending.
+     * Called back on the same thread: step aside and let the exception go on to Windows. (Plain TLS flag: no allocation, no stack.) */
+    static thread_local bool t_in_filter = false;
+    if (t_in_filter) return EXCEPTION_CONTINUE_SEARCH;
+    t_in_filter = true;
     request(ep, "Unhandled exception");
-    if (g_prev && g_prev != unhandled_filter) return g_prev(ep);   // a filter that was installed before ours (vendor / overlay DLL) still gets its turn
-    return EXCEPTION_CONTINUE_SEARCH;   // Windows Error Reporting still runs; this handler shows no dialog itself
+    LONG r = EXCEPTION_CONTINUE_SEARCH;   // Windows Error Reporting still runs; this handler shows no dialog itself
+    if (g_prev && g_prev != unhandled_filter) r = g_prev(ep);   // a filter that was installed before ours (vendor / overlay DLL) still gets its turn
+    t_in_filter = false;
+    return r;
 }
 
 void report_here(const char* kind, uint32_t code) {

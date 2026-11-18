@@ -24,6 +24,14 @@ static std::string to_utf8(const wchar_t* w) {
 
 static const char* phase() { return "helper_phase"; }
 
+/* An overlay / vendor DLL's crash filter installed after ours, chaining to whatever was there before it (that is ours). */
+static LPTOP_LEVEL_EXCEPTION_FILTER g_overlay_prev = nullptr;
+static volatile LONG g_overlay_calls = 0;
+static LONG WINAPI overlay_filter(EXCEPTION_POINTERS* ep) {
+    InterlockedIncrement(&g_overlay_calls);
+    return g_overlay_prev ? g_overlay_prev(ep) : EXCEPTION_CONTINUE_SEARCH;
+}
+
 #pragma optimize("", off)
 static int recurse(volatile int depth) {
     volatile char pad[512];
@@ -48,6 +56,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hublog::info("helper started, profile %s\\AppData peer 192.168.1.5", to_utf8(up).c_str());
     hublog::info("about to crash: %s", to_utf8(mode.c_str()).c_str());
     if (mode == L"av") {
+        *(volatile int*)nullptr = 1;
+    } else if (mode == L"av-chained") {   // an overlay replaced our filter (chaining to ours) and crashrep::reassert() put ours back in front
+        g_overlay_prev = SetUnhandledExceptionFilter(overlay_filter);
+        crashrep::reassert();
         *(volatile int*)nullptr = 1;
     } else if (mode == L"terminate") {
         throw std::runtime_error("boom");
