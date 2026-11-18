@@ -804,6 +804,37 @@ static void test_plain_conflict_surfaces() {
     CHECK(r.action == PrelaunchResult::NeedConflictDecision && r.conflicts.size() == 1);
 }
 
+/* A save that is on this PC but cannot be read right now (another program holds it open without read sharing) is not "absent". The
+ * scan's empty hash used to read as "no local file", three_way answered Pull ("heal"), and the download was written over the file
+ * without a safety copy as soon as the lock was gone: the save this PC made since the last sync was lost. It must be left alone (no
+ * download at all), and once it can be read again it is an ordinary both-sides conflict. */
+static void test_unreadable_local_is_not_pulled_over() {
+    printf(" a local save that cannot be read is left alone, never pulled over\n");
+    Pc pc1("pc1"), pc2("pc2");
+    use(pc1);
+    put(pc1.game() / "battery" / "s.sra", rnd(3000, 61), now_unix() - 5000);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();
+    use(pc2);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();     // pc2 has the base
+    use(pc1);
+    put(pc1.game() / "battery" / "s.sra", rnd(3000, 62), now_unix() - 3000);
+    cloud_prelaunch(G, SyncMode::ReadWrite); play(); exit_game();     // the cloud moves on
+    use(pc2);
+    const fs::path f = pc2.game() / "battery" / "s.sra";
+    put(f, rnd(3000, 63), now_unix() - 2000);                         // pc2 saved too since the last sync
+    HANDLE h = CreateFileW(f.c_str(), GENERIC_READ, FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);   // no read sharing
+    CHECK(h != INVALID_HANDLE_VALUE);
+    const int gets = g_srv->n_get;
+    PrelaunchResult r = cloud_prelaunch(G, SyncMode::ReadWrite);
+    CHECK(g_srv->n_get == gets);                                      // nothing downloaded to put over it
+    CHECK(r.action == PrelaunchResult::Proceed && r.files_pulled == 0);
+    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    CHECK(get(f) == rnd(3000, 63));
+    r = cloud_prelaunch(G, SyncMode::ReadWrite);                       // readable again: both sides changed, the player decides
+    CHECK(r.action == PrelaunchResult::NeedConflictDecision && r.conflicts.size() == 1);
+    CHECK(get(f) == rnd(3000, 63));
+}
+
 static void test_states_never_prompt() {
     printf(" states: newest wins silently\n");
     Pc pc1("pc1"), pc2("pc2");
@@ -1715,6 +1746,7 @@ int main(int argc, char** argv) {
     RUN_SCENARIO(test_account_rivals_two_pcs);
     RUN_SCENARIO(test_conflict);
     RUN_SCENARIO(test_plain_conflict_surfaces);
+    RUN_SCENARIO(test_unreadable_local_is_not_pulled_over);
     RUN_SCENARIO(test_loser_backup_is_taken_before_the_pull);
     RUN_SCENARIO(test_no_copy_no_overwrite);
     RUN_SCENARIO(test_states_switch);
