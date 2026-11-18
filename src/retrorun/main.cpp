@@ -3057,8 +3057,8 @@ void Frontend::do_pacing() {
     if (ff || (a.headless && !a.realtime && !a.ds_link && !rbe)) return;
     // a changed speed paces by timer (vsync/audio pacing are tied to 1x); so does a rewind step, which pushes no audio (pacing.h)
     switch (retrorun::frame_pace(pace, speed, a.headless, feat_ && feat_->rewinding())) {
-        case Pace::Audio:
-            while (audio.fill() > audio.target() && !quit) {
+        case Pace::Audio:   // a "pause" heard in this wait stops the device, so the ring would never drain: leave for pause_tick()
+            while (audio.fill() > audio.target() && !quit && !paused_) {
                 SDL_Delay(1);
                 pump_events(false);
             }
@@ -4137,6 +4137,7 @@ int Frontend::run(const Args& args) {
                 disc_poll();
                 ctl_poll();
                 do_pacing();
+                if (paused_) continue;   // paused during the pacing wait: no frame runs; the next pass is pause_tick()
                 run_core_frame();
                 if (link_active) {
                     link_pump();
