@@ -1,5 +1,6 @@
 /* Test helper for hub_crashlog_test: a tiny windowless program that installs the hub log and the crash handler and then dies on purpose.
- * Not part of RetroHub. Usage: hub_crashlog_test_helper.exe <logs dir> <av|terminate|terminate-call|overflow> . Never shows a dialog. */
+ * Not part of RetroHub. Usage: hub_crashlog_test_helper.exe <logs dir> <av|terminate|terminate-call|overflow|thread-throw|thread-abort> .
+ * Never shows a dialog. */
 #include "crash_report.h"
 #include "hub_log.h"
 
@@ -9,8 +10,10 @@
 #include <windows.h>
 #include <shellapi.h>
 
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 static std::string to_utf8(const wchar_t* w) {
     int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
@@ -52,6 +55,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         std::terminate();
     } else if (mode == L"overflow") {
         return recurse(0);
+    } else if (mode == L"thread-throw") {   // a worker std::thread whose function throws: std::terminate runs on THAT thread
+        std::thread([] { throw std::runtime_error("worker boom"); }).join();
+    } else if (mode == L"thread-abort") {   // abort() on a worker thread
+        std::thread([] { std::abort(); }).join();
     }
     return 3;
 }

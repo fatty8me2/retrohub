@@ -273,6 +273,10 @@ int main(int argc, char** argv) {
         test_child_crash(helper, L"terminate", "C++ exception");        // uncaught throw: the unhandled-exception filter sees it
         test_child_crash(helper, L"terminate-call", "STD_TERMINATE");   // std::terminate() / abort(): the terminate handler
         test_child_crash(helper, L"overflow", "STACK_OVERFLOW");
+        /* std::set_terminate only covers the thread that called it (the UCRT keeps the handler per thread), so a worker thread's
+         * uncaught exception ends in abort(): the SIGABRT handler must still write the report. */
+        test_child_crash(helper, L"thread-throw", "ABORT");
+        test_child_crash(helper, L"thread-abort", "ABORT");
         {   // two crashes into one folder (usually the same second) never overwrite each other
             fs::path d = fresh("twice");
             DWORD c1 = 0, c2 = 0;

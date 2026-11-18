@@ -10,6 +10,7 @@
 #include <windows.h>
 #include <psapi.h>
 
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -76,6 +77,7 @@ const char* exception_name(uint32_t c) {
         case 0xE06D7363u: return "C++ exception";
         case 0xE0485001u: return "STD_TERMINATE";
         case 0xE0485002u: return "PURE_VIRTUAL_CALL";
+        case 0xE0485003u: return "ABORT";
         default: return "unknown";
     }
 }
@@ -331,6 +333,14 @@ void terminate_handler() {
     report_here("std::terminate (uncaught C++ exception or abort)", 0xE0485001u);
     die();
 }
+/* std::set_terminate only covers the thread that called it: the UCRT keeps the terminate handler per thread. Any other thread (every
+ * std::thread worker: its entry is noexcept, so an exception that escapes it calls std::terminate there) ends in the default handler,
+ * abort(), which fast-fails past the unhandled-exception filter. The SIGABRT handler is process-wide, so it catches those (and any other
+ * abort()) and still writes the report. */
+void __cdecl sigabrt_handler(int) {
+    report_here("abort() (an uncaught C++ exception on a worker thread, or abort)", 0xE0485003u);
+    die();
+}
 
 std::wstring widen(const std::string& s) {
     if (s.empty()) return std::wstring();
@@ -384,7 +394,8 @@ void install(const std::string& logs_dir_utf8, const std::string& version, const
         _set_abort_behavior(0, _WRITE_ABORT_MSG);   // abort() must never show a message box
         _set_invalid_parameter_handler(invalid_param);
         _set_purecall_handler(pure_call);
-        std::set_terminate(terminate_handler);
+        std::set_terminate(terminate_handler);   // this (the main) thread only
+        std::signal(SIGABRT, sigabrt_handler);   // every thread: abort(), including std::terminate's default on a worker thread
         g_prev = SetUnhandledExceptionFilter(unhandled_filter);
     } catch (...) {}
 }

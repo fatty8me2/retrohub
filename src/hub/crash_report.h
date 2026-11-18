@@ -39,7 +39,9 @@ bool locate(const Module* mods, int n, uint64_t addr, int* index, uint64_t* offs
 size_t format_report(const Input& in, char* out, size_t cap);
 
 /* ---- handler ---- */
-/* Installs the unhandled-exception filter, the CRT invalid-parameter and pure-call handlers and a std::terminate handler. Reports go to
+/* Installs the unhandled-exception filter, the CRT invalid-parameter and pure-call handlers, a std::terminate handler (the calling thread
+ * only: the UCRT keeps it per thread) and a SIGABRT handler (process-wide: abort() on any thread, which is where an uncaught exception
+ * on a worker thread ends up). Reports go to
  * logs_dir_utf8. phase_fn (optional) returns the UI breadcrumb; hublog::recent_lines supplies the log tail. Keeps the newest 10 reports. */
 void install(const std::string& logs_dir_utf8, const std::string& version, const char* (*phase_fn)() = nullptr);
 
