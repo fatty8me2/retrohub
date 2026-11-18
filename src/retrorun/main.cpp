@@ -44,6 +44,7 @@ namespace slot2 = retrorun::slot2;
 #include "port_plan.h"
 #include "pacing.h"
 #include "save_companion.h"
+#include "save_write.h"
 #include "rollback.h"
 #include "lockstep.h"
 #include "perf_overlay.h"
@@ -284,26 +285,8 @@ static bool read_file(const std::string& path, std::vector<uint8_t>* out) {
     return true;
 }
 
-/* Write to <path>.tmp then rename over <path>, so a crash never leaves a torn file. */
-static bool write_atomic(const std::string& path, const void* data, size_t size) {
-    fs::path p = fs::u8path(path);
-    fs::path tmp = p;
-    tmp += L".tmp";
-    {
-        FILE* f = _wfopen(tmp.c_str(), L"wb");
-        if (!f) return false;
-        bool ok = size == 0 || fwrite(data, 1, size, f) == size;
-        ok = (fflush(f) == 0) && ok;
-        fclose(f);
-        if (!ok) { std::error_code ec; fs::remove(tmp, ec); return false; }
-    }
-    if (!MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        std::error_code ec;
-        fs::remove(tmp, ec);
-        return false;
-    }
-    return true;
-}
+/* Temp file + one atomic replace; at_exit = flushed and retried while another program holds the old file (save_write.h). */
+using retrorun::write_atomic;
 
 /* Status line -> OSD colour. */
 static osd::Kind osd_kind_for(const std::string& s) {
@@ -651,7 +634,7 @@ class Frontend {
     std::string link_rtc(int inst) const { std::string p = link_srm(inst); return p.substr(0, p.size() - 4) + ".rtc"; }
     std::vector<uint8_t> link_blob_from_disk(int inst) const;
     void link_apply_blob(int inst, const std::vector<uint8_t>& blob);
-    void link_save(bool force);
+    void link_save(bool force, bool at_exit = false);
     bool link_loaded = false;   // never write a console save before its real save was loaded into the core
     std::vector<std::vector<uint8_t>> link_saved_;   // last written sram+rtc per console
     SDL_Rect view_src() const;               // portion of the frame shown to this player
@@ -677,7 +660,7 @@ class Frontend {
     bool guest_save_ro = false;   // --share-host-save guest: the save lives in a throwaway dir and is never written back
     std::string rtc_path() const { return srm_path.substr(0, srm_path.size() - 4) + ".rtc"; }
     std::vector<uint8_t> rtc_saved;
-    void save_srm(bool force);
+    void save_srm(bool force, bool at_exit = false);   // at_exit: the session's last write (flushed, retried: save_write.h)
     std::string state_path(const std::string& name) const { return a.state_dir + "\\" + name + ".state"; }
     bool save_state(const std::string& name);
     bool load_state(const std::string& name);
@@ -1737,7 +1720,7 @@ void Frontend::slot2_commit() {
     slot2_work_.clear();
 }
 
-void Frontend::save_srm(bool force) {
+void Frontend::save_srm(bool force, bool at_exit) {
     if (guest_save_ro) return;
     size_t n = 0;
     void* mem = core.save_ram(&n);
@@ -1746,7 +1729,7 @@ void Frontend::save_srm(bool force) {
         size_t nr = 0;
         void* rm = core.memory(RETRO_MEMORY_RTC, &nr);
         if (rm && nr && (force || rtc_saved.size() != nr || memcmp(rtc_saved.data(), rm, nr) != 0) ) {
-            if (write_atomic(rtc_path(), rm, nr)) rtc_saved.assign((uint8_t*)rm, (uint8_t*)rm + nr);
+            if (write_atomic(rtc_path(), rm, nr, at_exit)) rtc_saved.assign((uint8_t*)rm, (uint8_t*)rm + nr);
         }
     }
     if (!force && srm_saved.size() == n && memcmp(srm_saved.data(), mem, n) == 0) return;
@@ -1759,7 +1742,7 @@ void Frontend::save_srm(bool force) {
             rlog("save: %s original kept as %s", bec ? "FAILED to keep" : "size-mismatched", bak.u8string().c_str());
         }
     }
-    if (write_atomic(srm_path, mem, n)) {
+    if (write_atomic(srm_path, mem, n, at_exit)) {
         srm_saved.assign((uint8_t*)mem, (uint8_t*)mem + n);
         rlog("save: wrote %s (%zu bytes)", srm_path.c_str(), n);
     } else {
@@ -2056,7 +2039,7 @@ void Frontend::link_apply_blob(int inst, const std::vector<uint8_t>& b) {
 }
 
 /* Writes only the consoles this PC owns. */
-void Frontend::link_save(bool force) {
+void Frontend::link_save(bool force, bool at_exit) {
     if (!link_loaded) return;
     link_saved_.resize(link_n);
     for (int i = 0; i < link_n; i++) {
@@ -2068,8 +2051,8 @@ void Frontend::link_save(bool force) {
         if (ms) cur.insert(cur.end(), (uint8_t*)ms, (uint8_t*)ms + ns);
         if (mr) cur.insert(cur.end(), (uint8_t*)mr, (uint8_t*)mr + nr);
         if (!force && cur == link_saved_[i]) continue;
-        if (ms && ns) write_atomic(link_srm(i), ms, ns);
-        if (mr && nr) write_atomic(link_rtc(i), mr, nr);
+        if (ms && ns) write_atomic(link_srm(i), ms, ns, at_exit);
+        if (mr && nr) write_atomic(link_rtc(i), mr, nr, at_exit);
         link_saved_[i] = cur;
         rlog("save: console %d wrote %s (%zu + %zu bytes)", i + 1, link_srm(i).c_str(), ns, nr);
     }
@@ -3149,23 +3132,23 @@ void Frontend::finish() {
         if (core.serialize(buf.data(), buf.size()) && write_atomic(sd, buf.data(), buf.size())) rlog("state-dump: %s (%zu bytes)", sd, buf.size());
     }
     if (core.game_loaded() && link) {
-        link_save(false);
+        link_save(false, true);
     } else if (core.game_loaded()) {
-        save_srm(false);
+        save_srm(false, true);
         {   // final clock (the periodic save only writes it together with a changed save RAM)
             size_t nr = 0;
             void* rm = core.memory(RETRO_MEMORY_RTC, &nr);
             if (rm && nr && !guest_save_ro && !is_ds && !rtc_saved.empty() && (rtc_saved.size() != nr || memcmp(rtc_saved.data(), rm, nr) != 0))
-                write_atomic(rtc_path(), rm, nr);
+                write_atomic(rtc_path(), rm, nr, true);
         }
         if (ra_.active() && !cheevos::auto_state_allowed(ra_.hardcore())) {
             rlog("state: hardcore is on; auto.state not written");   // hardcore rules forbid save states, the resume point included
         } else if (!a.selftest && !is_ds && core.serialize_size()) {   // DS states are ~19 MB and the hub never resumes them
             size_t n = core.serialize_size();
             std::vector<uint8_t> buf(n);
-            if (core.serialize(buf.data(), n) && write_atomic(state_path("auto"), buf.data(), n)) {
+            if (core.serialize(buf.data(), n) && write_atomic(state_path("auto"), buf.data(), n, true)) {
                 const std::string ps = retrorun::plan_signature(pplan) + "\n";
-                write_atomic(plan_file_for(state_path("auto")), ps.data(), ps.size());
+                write_atomic(plan_file_for(state_path("auto")), ps.data(), ps.size(), true);
                 rlog("state: wrote auto.state (%zu bytes)", n);
             }
         }

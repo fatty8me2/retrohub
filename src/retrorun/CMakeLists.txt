@@ -79,6 +79,11 @@ target_link_libraries(retrorun_joinid_test PRIVATE hubcommon hubminiz)
 add_executable(retrorun_ctl_send ctl_send.cpp)
 target_link_libraries(retrorun_ctl_send PRIVATE hubbase)
 
+# Save writes (save_write.h): one attempt in game, flushed + retried at exit while another program holds the old save.
+add_executable(retrorun_savewrite_test test_save_write.cpp)
+target_include_directories(retrorun_savewrite_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(retrorun_savewrite_test PRIVATE hubbase)
+
 # DS Slot-2 GBA cartridge (Wave 3 X3, slot2.h): refusal rules, subsystem pick, save copy-back, backup pruning (pure logic).
 add_executable(retrorun_slot2_test test_slot2.cpp)
 target_include_directories(retrorun_slot2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
