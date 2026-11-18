@@ -18,13 +18,13 @@ bool parse(const std::string& s, int* setting) {
     return true;
 }
 
-void speculate(int n, const std::function<void()>& run, const std::function<void(bool)>& speculative,
+bool speculate(int n, const std::function<void()>& run, const std::function<void(bool)>& speculative,
                const std::function<bool(const void*, size_t)>& load, const std::vector<uint8_t>& saved) {
-    if (n <= 0) return;
+    if (n <= 0) return true;
     if (speculative) speculative(true);
     for (int i = 0; i < n; i++) run();
     if (speculative) speculative(false);
-    load(saved.data(), saved.size());   // the core is back on the real frame; the framebuffer keeps the speculative picture
+    return load(saved.data(), saved.size());   // the core is back on the real frame; the framebuffer keeps the speculative picture
 }
 
 }  // namespace runahead

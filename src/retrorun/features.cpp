@@ -80,7 +80,10 @@ void Features::rewind_step() {
         have = true;   // oldest state reached: hold there
         if (latched_) { latched_ = false; rewinding_ = held_; note("Rewind: reached the start of the history"); }
     }
-    if (have) h_.load(st.data(), st.size());
+    if (have && !h_.load(st.data(), st.size())) {   // the core refused its own state: stepping on would only play forward under "REWIND"
+        disable_rewind("Rewind stopped: the game could not go back");
+        return;
+    }
     if (h_.speculative) h_.speculative(true);
     h_.run();   // draws the restored moment; discarded by the next step / the next normal frame
     if (h_.speculative) h_.speculative(false);
@@ -104,7 +107,12 @@ void Features::frame() {
     if (!h_.save(scratch_.data(), scratch_.size())) { disable_rewind("Rewind stopped: the core cannot save states"); ra_frames_ = 0; return; }
     if (rewind_on_) ring_->push(scratch_.data());
     const uint64_t t_cap = now();
-    if (ra_frames_ > 0) runahead::speculate(ra_frames_, h_.run, h_.speculative, h_.load, scratch_);
+    if (ra_frames_ > 0 && !runahead::speculate(ra_frames_, h_.run, h_.speculative, h_.load, scratch_)) {
+        /* The core did not take its state back, so it stays ahead of the real frame; running ahead again would add ra_frames_ more every
+         * frame (the game would silently run 2-3x too fast). Stop running ahead; the frames already gained cannot be taken back. */
+        ra_frames_ = 0;
+        note("Run-ahead turned off: the game could not go back a frame", Note::Warn);
+    }
     const uint64_t t_end = now();
 
     if (s_.measure && !timing_done_) {
