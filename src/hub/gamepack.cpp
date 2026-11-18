@@ -1213,7 +1213,7 @@ void Installer::start(const std::string& sys, const std::string& title, const st
                                 r = false;
                                 e = "The shared pack's copy of " + this->title + " is not a game RetroHub can play" + (disc ? " (it may be a .bin/.cue disc or another format RetroHub cannot identify)." : ".") + " Tell whoever shares the pack.";
                             } else {
-                                std::ofstream m(S(final_dir / "gamepack.done"), std::ios::binary);   // written only once the files proved to be a game
+                                std::ofstream m(final_dir / "gamepack.done", std::ios::binary);   // written only once the files proved to be a game (a wide path: a UTF-8 string would be read in the ANSI code page)
                                 m << "ok";
                                 const hub::System want_sys = hub::system_from_short(this->sys);
                                 bool any_same = false;
