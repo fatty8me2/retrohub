@@ -1,6 +1,40 @@
 {
   "versions": [
     {
+      "version": "1.46.2",
+      "date": "2026-11-18",
+      "title": "Bug fixes: saves, updates, online rooms and more",
+      "new": [],
+      "improved": [],
+      "fixed": [
+        "Cloud saves: a local save that could not be read (held by another program, or an offline cloud placeholder) could be replaced by the cloud copy. It is now left alone",
+        "Play history: if library.json could not be read, the next game wiped every game's play time, last played date and favourite. It is now kept, and a damaged file is copied aside first",
+        "Saves and play history are now flushed to disk before they replace the old file, so a power cut cannot leave an empty file, and the save written when a game closes is retried if another program holds the file",
+        "Save export no longer stops at an unreadable folder and still says it worked, and the folder sync warning is shown instead of \"up to date\"",
+        "Two backups or history snapshots made in the same second no longer replace each other",
+        "Updates failed to unpack when RetroHub is installed in a folder with non-English letters",
+        "RetroHub could close by itself after a game when an update was postponed during that game",
+        "A hub.json that cannot be read is copied to hub.json.unreadable before RetroHub writes a new one",
+        "Opening RetroHub while it was still closing started a second copy",
+        "A crash on a background thread now writes a crash report, and a crash with some overlays running no longer hangs RetroHub",
+        "Online rooms: a short server blip no longer throws guests out, and a guest who became host keeps the host seat after reconnecting",
+        "Online rooms: Use host's save works on PCs whose folders have non-English letters, and no longer cancels every guest's launch when the host has no save",
+        "GameCube rooms: the hub no longer freezes when the host switches games, or crashes when quitting afterwards",
+        "Rewind no longer races through its history on 120 Hz and 144 Hz monitors, and run-ahead or rewind now turn off with a message if the game cannot reload its own state",
+        "Controllers stop vibrating while the game is paused",
+        "Resume from a chosen save state no longer loads the automatic state first",
+        "DS: F9 no longer skips a screen layout",
+        "Clicking a notice's button no longer also clicks what is underneath it",
+        "Controller: A in the friend picker and on buttons whose text changes (More/Less, cloud buttons, chips) no longer loses the focus",
+        "Library desk: opening a game hidden by the search now lands the list on that game",
+        "Real console startup (GameCube): the region of a startup file is read correctly in profile folders like C:\\Users\\Musa, and an updated file is copied to Dolphin",
+        "Pressing Play on an archived game while another is unpacking no longer freezes the window",
+        "Play time no longer counts the save copy after the game",
+        "Discover: the Decade chip reads 00s for the 2000s",
+        "Invite notes are no longer cut in the middle of a letter"
+      ]
+    },
+    {
       "version": "1.46.1",
       "date": "2026-11-17",
       "title": "Library desk: consoles in release order",
