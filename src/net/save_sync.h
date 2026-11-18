@@ -52,7 +52,8 @@ bool is_battery_ext(const std::string& name);
 /* Reads eligible files from dir (sorted by name, bounded by the limits above). Files that are
  * too large or would exceed the total are listed in *skipped. */
 bool load_save_dir(const std::string& dir, std::vector<SaveFile>* out, std::vector<std::string>* skipped);
-bool write_save_file(const std::string& dir, const std::string& name, const std::vector<uint8_t>& data);
+/* utf8: dir and name are UTF-8 (retrorun); false: the ANSI code page (n64run, whose narrow argv and mupen64plus paths are ANSI). */
+bool write_save_file(const std::string& dir, const std::string& name, const std::vector<uint8_t>& data, bool utf8 = false);
 
 using SendFn = std::function<void(const std::vector<uint8_t>& datagram)>;
 
@@ -87,7 +88,7 @@ class SaveSender {
 /* Client (slot >= 1). */
 class SaveReceiver {
   public:
-    SaveReceiver(int my_slot, int num_slots, const std::string& dir);
+    SaveReceiver(int my_slot, int num_slots, const std::string& dir, bool utf8_dir = false);   // utf8_dir: see write_save_file
     void on_packet(int from, const uint8_t* d, size_t n);
     void tick(uint32_t now_ms, const SendFn& send);
     bool finished() const;         // GO received and every file verified and written
@@ -105,6 +106,7 @@ class SaveReceiver {
     };
     int slot_, num_slots_;
     std::string dir_;
+    bool utf8_dir_ = false;
     int nfiles_ = -1;
     std::vector<File> files_;
     bool go_ = false;
@@ -118,7 +120,7 @@ namespace hubnet { class Session; }
 
 namespace n64run {
 /* Runs the protocol over a started, ready Session (save_sync_net.cpp). host_files is non-null
- * only on slot 0; clients write the verified files into client_dir. False + *err on failure. */
+ * only on slot 0; clients write the verified files into client_dir (UTF-8 when utf8_dir, see write_save_file). False + *err on failure. */
 bool run_save_sync(hubnet::Session& s, int my_slot, uint32_t slot_mask, const std::vector<SaveFile>* host_files,
-                   const std::string& client_dir, uint32_t timeout_ms, std::string* err);
+                   const std::string& client_dir, uint32_t timeout_ms, std::string* err, bool utf8_dir = false);
 }  // namespace n64run

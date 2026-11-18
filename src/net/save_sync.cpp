@@ -85,18 +85,28 @@ bool load_save_dir(const std::string& dir, std::vector<SaveFile>* out, std::vect
     return true;
 }
 
-bool write_save_file(const std::string& dir, const std::string& name, const std::vector<uint8_t>& data) {
+bool write_save_file(const std::string& dir, const std::string& name, const std::vector<uint8_t>& data, bool utf8) {
     if (!valid_save_name(name)) return false;
     std::error_code ec;
-    fs::create_directories(fs::path(dir), ec);
-    fs::path tmp = fs::path(dir) / (name + ".syncing");
+    /* utf8: retrorun's paths are UTF-8; a plain fs::path(std::string) reads them in the ANSI code page, so a data folder with non-ASCII
+     * characters (C:\Users\José\...) named a different, usually uncreatable folder and the guest's host-save sync failed. */
+    fs::path d, base;
+    try {   // u8path throws on bytes that are not UTF-8 (the name comes from the host)
+        d = utf8 ? fs::u8path(dir) : fs::path(dir);
+        base = utf8 ? fs::u8path(name) : fs::path(name);
+    } catch (...) {
+        return false;
+    }
+    fs::create_directories(d, ec);
+    fs::path tmp = d / base;
+    tmp += ".syncing";
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) return false;
         f.write(reinterpret_cast<const char*>(data.data()), (std::streamsize)data.size());
         if (!f) return false;
     }
-    fs::rename(tmp, fs::path(dir) / name, ec);   // replace-in-place so a half-written save never shows up
+    fs::rename(tmp, d / base, ec);   // replace-in-place so a half-written save never shows up
     return !ec;
 }
 
@@ -243,8 +253,8 @@ void SaveSender::tick(uint32_t now_ms, const SendFn& send) {
 }
 
 // ---------------------------------------------------------------- receiver (client)
-SaveReceiver::SaveReceiver(int my_slot, int num_slots, const std::string& dir)
-    : slot_(my_slot), num_slots_(num_slots), dir_(dir) {}
+SaveReceiver::SaveReceiver(int my_slot, int num_slots, const std::string& dir, bool utf8_dir)
+    : slot_(my_slot), num_slots_(num_slots), dir_(dir), utf8_dir_(utf8_dir) {}
 
 void SaveReceiver::on_packet(int from, const uint8_t* d, size_t n) {
     if (n < 1 || failed()) return;
@@ -292,7 +302,7 @@ void SaveReceiver::on_packet(int from, const uint8_t* d, size_t n) {
             f.nhave++;
             if (f.nhave == f.nch) {
                 if (save_hash(f.buf.data(), f.buf.size()) == f.hash) {
-                    if (write_save_file(dir_, f.name, f.buf)) f.verified = true;
+                    if (write_save_file(dir_, f.name, f.buf, utf8_dir_)) f.verified = true;
                     else error_ = "cannot write save file " + f.name + " into " + dir_;
                 } else {
                     // Corrupt: clear and let the host resend. The ACK bitmap goes back to zero.

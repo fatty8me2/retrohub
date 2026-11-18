@@ -227,6 +227,30 @@ static void test_write_failure() {
     CHECK(!snd.all_verified(), "write failure is never ACKed as verified");
 }
 
+// retrorun's save dir is UTF-8: a guest whose data folder has non-ASCII characters (C:\Users\José\...) must write the host's saves
+// THERE, not into the folder an ANSI reading of the same bytes names (which used to fail the sync, or boot the guest without them).
+static void test_utf8_dir() {
+    const fs::path dir = temp_root() / fs::u8path("hostsave \xC3\xA9\xC3\xB8 \xD0\x96");   // "hostsave éø Ж"
+    auto files = make_files(21);
+    files.resize(2);
+    files[0].name = "game.srm";
+    files[1].name = "game.rtc";
+    SaveSender snd(files, 0x3, 1000, 60000);
+    SaveReceiver rcv(1, 8, dir.u8string(), /*utf8_dir=*/true);
+    uint32_t now = 1000;
+    SendFn hs = [&](const std::vector<uint8_t>& m) { rcv.on_packet(0, m.data(), m.size()); };
+    SendFn cs = [&](const std::vector<uint8_t>& m) { snd.on_packet(1, m.data(), m.size()); };
+    for (int i = 0; i < 4000 && !(snd.finished() && rcv.finished()) && !rcv.failed(); i++, now++) { snd.tick(now, hs); rcv.tick(now, cs); }
+    CHECK(!rcv.failed(), "utf8 dir: receiver failed: %s", rcv.error().c_str());
+    CHECK(snd.finished() && rcv.finished(), "utf8 dir: sync finishes");
+    CHECK(same_files(dir, files), "utf8 dir: the files are in the UTF-8 named folder");
+    (void)write_save_file(dir.u8string(), "bad\xC3.srm", files[0].data, true);   // a host name that is not UTF-8: refused or written, never an exception out of here
+    // the default (n64run, ANSI) is unchanged for a plain ASCII folder
+    const fs::path plain = temp_root() / "plain";
+    CHECK(write_save_file(plain.string(), "x.eep", files[0].data), "ansi dir: write");
+    CHECK(fs::exists(plain / "x.eep"), "ansi dir: file written");
+}
+
 // ------------------------------------------------------------------ live server
 static bool live_test(const std::string& server) {
     auto files = make_files(99);
@@ -277,6 +301,7 @@ int main(int argc, char** argv) {
     test_no_files();
     test_pacing();
     test_write_failure();
+    test_utf8_dir();
     if (argc > 1) {
         if (!live_test(argv[1])) g_fail++;
     }
