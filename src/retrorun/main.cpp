@@ -486,6 +486,7 @@ class Frontend {
     int last_mouse_x = -1, last_mouse_y = -1;
     uint64_t cursor_tick = 0;
     uint16_t rumble_lvl[4][2] = {};
+    void rumble_apply(bool on);   // re-send (on) or silence (off) the rumble the core asked for on each local pad
     /* Rewind + run-ahead (features.h): offline only. spec_ = a rewind / run-ahead frame is running (audio muted). */
     std::unique_ptr<retrofeat::Features> feat_;
     bool spec_ = false;
@@ -1572,7 +1573,7 @@ void Frontend::pump_events(bool idle) {
                 case SDL_QUIT: quit = true; break;
                 case SDL_KEYDOWN: handle_key(e.key); break;
                 case SDL_CONTROLLERDEVICEADDED:
-                case SDL_CONTROLLERDEVICEREMOVED: open_pads(); break;
+                case SDL_CONTROLLERDEVICEREMOVED: open_pads(); if (!paused_) rumble_apply(true); break;   // reopening stops every motor: give each port its level back
                 default: break;
             }
         }
@@ -1589,6 +1590,7 @@ void Frontend::pump_events(bool idle) {
         if (rbe) rbe->say_bye();
         else if (lockstep) lockstep->finish();
         finish();
+        rumble_apply(false);   // ExitProcess skips closing the pads, which is what would stop a motor the core left running
         ExitProcess(0);
     }
 }
@@ -1919,10 +1921,22 @@ void Frontend::ctl_poll() {
     }
 }
 
+/* The core only sets the motors while it runs, and every request lasts up to 60 s: a game paused (or left) mid-rumble would keep the pad
+ * buzzing with nothing running. Silence them; on resume the core's last levels come back. */
+void Frontend::rumble_apply(bool on) {
+    if (a.headless) return;
+    for (int i = 0; i < n_local && i < 4 && (size_t)i < pads.size(); i++) {
+        if (!rumble_lvl[i][0] && !rumble_lvl[i][1]) continue;
+        if (on) SDL_GameControllerRumble(pads[i], rumble_lvl[i][0], rumble_lvl[i][1], 60000);
+        else SDL_GameControllerRumble(pads[i], 0, 0, 0);
+    }
+}
+
 void Frontend::set_paused(bool p) {
     if (p == paused_) return;
     paused_ = p;
     audio.pause(p);
+    rumble_apply(!p);
     next_deadline = 0;   // pacing starts afresh: the time spent paused is not owed as frames
     rlog("pause: %s (frame %llu)", p ? "on" : "off", (unsigned long long)frame_no);
     if (p) osd::push("Paused");
