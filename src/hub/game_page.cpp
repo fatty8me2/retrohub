@@ -476,7 +476,9 @@ static void draw_about(Ctx& c) {
     achievements_ui_section(e);   // RetroAchievements progress (only when signed in)
     if (e.system == hub::System::WiiU) {
         for (const std::string& l : wiiu_info_lines(e)) ImGui::TextDisabled("%s", l.c_str());
-        ImGui::TextDisabled("GamePad screen: hold View + RB, or Game menu > Swap GamePad / TV screen (Cemu: Ctrl+Tab).");
+        if (A.st.cemu_manage_controls && hubemu::cemu_p1_pro(hubemu::title_id_from_key(e.key), gs_values_for(e)))   // RetroHub writes Cemu's player 1 (launch_external)
+            ImGui::TextDisabled("Player 1 plays as a Wii U Pro Controller: this game's item and map screens show on the TV.");
+        else ImGui::TextDisabled("GamePad screen: hold View + RB, or Game menu > Swap GamePad / TV screen (Cemu: Ctrl+Tab).");
     }
     { std::string fl = fr_playtime_line(e.key); if (!fl.empty()) ImGui::TextDisabled("Friends: %s", fl.c_str()); }
     if (c.native) ImGui::TextDisabled("Smash Classic keeps its own saves.");

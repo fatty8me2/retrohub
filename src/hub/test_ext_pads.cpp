@@ -365,6 +365,28 @@ static void test_cemu() {
     // mixed XInput + SDL + XInput + SDL
     Pads mix = {xb(0), ds(-1, "d0"), xb(1), bd("b0")};
     check_cemu("4 mixed", mix, {1, 0, 3, 2}, {{"SDLController", "0_030000d"}, {"XInput", "0"}, {"SDLController", "0_030000b"}, {"XInput", "1"}});
+    // player 1 as a Pro Controller (Twilight Princess HD, or the "Player 1 controller" game setting): every player is a Pro Controller, devices unchanged
+    {
+        const hubctl::Profile prof = hubctl::default_profile("wiiu");
+        CemuPads cp = cemu_pads_with_sdl(by_port(mix, {1, 0}), mix);
+        cp.p1_pro = true;
+        fs::path d = fs::temp_directory_path() / ("hub_ext_pads_cemu_pro_" + std::to_string(GetCurrentProcessId()));
+        std::error_code ec;
+        fs::remove_all(d, ec);
+        prepare_cemu_managed(d.string(), prof, cp);
+        const std::string x0 = read_text(d / "portable" / "controllerProfiles" / "controller0.xml"), x1 = read_text(d / "portable" / "controllerProfiles" / "controller1.xml");
+        CHECK(xml_tag(x0, "type") == "Wii U Pro Controller" && xml_tag(x1, "type") == "Wii U Pro Controller");
+        CHECK(xml_tag(x0, "api") == "SDLController" && xml_tag(x0, "uuid") == "0_030000d" && xml_tag(x1, "api") == "XInput" && xml_tag(x1, "uuid") == "0");
+        std::set<int> maps;
+        for (auto& e : xml_entries(x0)) { CHECK(e.first >= 1 && e.first <= 25 && e.first != 11); maps.insert(e.first); }
+        CHECK(maps.size() == 24 && maps.count(12) && maps.count(25));
+        // the GamePad again: player 1's file is rewritten (the marker changed), player 2 stays a Pro Controller
+        cp.p1_pro = false;
+        prepare_cemu_managed(d.string(), prof, cp);
+        CHECK(xml_tag(read_text(d / "portable" / "controllerProfiles" / "controller0.xml"), "type") == "Wii U GamePad");
+        CHECK(xml_tag(read_text(d / "portable" / "controllerProfiles" / "controller1.xml"), "type") == "Wii U Pro Controller");
+        fs::remove_all(d, ec);
+    }
     // the GamePad (player 1) and the Pro Controllers map the same physical buttons: Wii U A must be on the pad's A (XInput 12) for both
     {
         const hubctl::Profile prof = hubctl::default_profile("wiiu");

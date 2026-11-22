@@ -90,7 +90,7 @@ Xbox B -> 3DS A, A -> B, Y -> X, X -> Y, d-pad, LB/RB -> L/R, triggers -> ZL/ZR,
 right stick -> C-stick. Audio is on (Azahar's default). Fullscreen comes from the launch flag.
 
 **Cemu** (`portable\settings.xml`, `portable\controllerProfiles\controller0.xml`, each written only if missing): `settings.xml`
-existing is what suppresses the Getting Started dialog; update checks off. Controller 0 = "Wii U GamePad" for port-order player 1 and controller1-3 = Pro Controllers for players 2-4 (Pro button ids differ from the GamePad's after Minus: Home sits at 11). An XInput pad is addressed by its real XInput slot (its SDL player index), any other pad as an `SDLController` (`<index>_<guid>`); with no stored port order every connected pad is used, in SDL order. Test: `hub_ext_pads_test`.
+existing is what suppresses the Getting Started dialog; update checks off. Controller 0 = "Wii U GamePad" for port-order player 1 and controller1-3 = Pro Controllers for players 2-4 (Pro button ids differ from the GamePad's after Minus: Home sits at 11). Player 1 is a Pro Controller too when the game's "Player 1 controller" setting (`wiiu.p1_controller`) says so; its default, Automatic, does that for Twilight Princess HD (US/EU/JP, `hubemu::cemu_prefers_pro`), whose item and map screens otherwise sit on the GamePad's touch screen. The same applies to a user's own Cemu while "Let RetroHub manage Wii U controls" is on. An XInput pad is addressed by its real XInput slot (its SDL player index), any other pad as an `SDLController` (`<index>_<guid>`); with no stored port order every connected pad is used, in SDL order. Test: `hub_ext_pads_test`.
 
 ## Saves in the vault
 
@@ -168,6 +168,9 @@ Stored in the vault at `<vault>\_settings\game_settings.json`. Layers: option de
   32-digit key lines; they never print key material.
 - **Saves.** Synced folders per game: `usr/save/00050000/<id low>` and `usr/save/0005000e/<id low>`; every account (`user/<persistentId>`, `user/common`) is inside them. Vault
   layout: `<vault>\wiiu\<game key>\battery\usr\save\...`. Unknown-title discs pick up changed folders under both ids. The shader cache is not vaulted.
+- **Player 1 controller** (`wiiu.p1_controller`, Controls): Automatic / Wii U GamePad / Wii U Pro Controller. Automatic = a Pro Controller for
+  Twilight Princess HD (its items and map are touch menus on the GamePad; as a Pro Controller the game shows them on the TV), the GamePad for the rest.
+  Written into `controller0.xml` when RetroHub manages Cemu's controls; the marker changes with it, so switching games rewrites the file.
 - **GamePad screen.** Cemu 2.6's default hotkey "toggle pad screen" is Ctrl+Tab (its first-run assistant lists it). RetroHub sends it when View (Back) + right bumper are held alone (not with Start, Y or a trigger) for a quarter of a second,
   and from Game menu > "Swap GamePad / TV screen". The keys are injected into the focused Cemu window, so the hidden-desktop QA only logs it.
 - **Cover art.** libretro-thumbnails "Nintendo - Wii U": the repository's file list (one GitHub API request, cached) is matched by title with the article moved

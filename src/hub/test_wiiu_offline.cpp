@@ -329,6 +329,72 @@ static void test_gamepad_toggle() {
     CHECK(!hubemu::cemu_toggle_combo(XINPUT_GAMEPAD_BACK | XINPUT_GAMEPAD_Y));       // and so is the cheats / game menu one
 }
 
+/* Player 1's controller type: Twilight Princess HD keeps its item and map screens on the GamePad's touch screen, so with a pad and no touch
+ * screen it plays as a Pro Controller (its menus then show on the TV). The game setting "Player 1 controller" overrides either way. */
+static std::string xml_type(const std::string& x) {
+    size_t a = x.find("<type>"), b = x.find("</type>");
+    return a == std::string::npos || b == std::string::npos ? std::string() : x.substr(a + 6, b - a - 6);
+}
+static void test_player1_controller(const fs::path& dir) {
+    const uint64_t tphd_us = 0x000500001019E500ull, tphd_eu = 0x000500001019E600ull, tphd_jp = 0x000500001019C800ull, sm3dw = 0x0005000010145C00ull;
+    const hub::gs::Option* o = hub::gs::find_option("wiiu.p1_controller");
+    CHECK(o && o->def == "auto" && o->choices.size() == 3 && o->group == std::string("Controls") && (o->systems & hub::gs::sys_bit(System::WiiU)) && !o->help.empty());
+    CHECK(hubemu::cemu_prefers_pro(tphd_us) && hubemu::cemu_prefers_pro(tphd_eu) && hubemu::cemu_prefers_pro(tphd_jp));
+    CHECK(!hubemu::cemu_prefers_pro(sm3dw) && !hubemu::cemu_prefers_pro(0));
+    hub::gs::Values v;   // nothing stored: Automatic
+    CHECK(hubemu::cemu_p1_pro(tphd_us, v) && !hubemu::cemu_p1_pro(sm3dw, v));
+    v["wiiu.p1_controller"] = "auto";
+    CHECK(hubemu::cemu_p1_pro(tphd_eu, v) && !hubemu::cemu_p1_pro(sm3dw, v) && !hubemu::cemu_p1_pro(0, v));
+    v["wiiu.p1_controller"] = "gamepad";
+    CHECK(!hubemu::cemu_p1_pro(tphd_us, v));
+    v["wiiu.p1_controller"] = "pro";
+    CHECK(hubemu::cemu_p1_pro(sm3dw, v));
+    {   // stored per game, resolved for the launch
+        hub::gs::Store st;
+        CHECK(st.resolve(System::WiiU, "wiiu:000500001019e500").at("wiiu.p1_controller") == "auto");
+        CHECK(st.set_game("wiiu:000500001019e500", System::WiiU, "wiiu.p1_controller", "gamepad"));
+        CHECK(!st.set_game("wiiu:000500001019e500", System::WiiU, "wiiu.p1_controller", "touch"));
+        CHECK(!hubemu::cemu_p1_pro(tphd_us, st.resolve(System::WiiU, "wiiu:000500001019e500")));
+        CHECK(!st.set_game("n64:x", System::N64, "wiiu.p1_controller", "pro"));   // Wii U only
+    }
+    /* the user's own Cemu (%APPDATA%\Cemu): their profiles are backed up once, then player 1 follows the game */
+    fs::path ud = dir / "appdata" / "Cemu";
+    const std::string theirs = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<emulated_controller>\n\t<type>Wii U Pro Controller</type>\n\t<controller>\n\t\t<api>SDLController</api>\n"
+                               "\t\t<uuid>0_03009fba5e040000130b000017057200</uuid>\n\t</controller>\n</emulated_controller>\n";
+    write_text(ud / "controllerProfiles" / "controller0.xml", theirs);
+    const hubctl::Profile prof = hubctl::default_profile("wiiu");
+    hubemu::CemuPads pads;
+    pads.xinput = {0};
+    pads.p1_pro = hubemu::cemu_p1_pro(tphd_us, hub::gs::Values());
+    hubemu::prepare_cemu_own(ud.string(), prof, pads, true);
+    CHECK(read_text(ud / "controllerProfiles.retrohub-backup" / "controller0.xml") == theirs);
+    std::string c0 = read_text(ud / "controllerProfiles" / "controller0.xml");
+    CHECK(xml_type(c0) == "Wii U Pro Controller" && c0.find("<api>XInput</api>") != std::string::npos && c0.find("<uuid>0</uuid>") != std::string::npos);
+    CHECK(c0 == hubemu::cemu_pro_profile_xml(prof, 0, 0));   // the same button ids as a Pro Controller player (Home at 11)
+    CHECK(c0.find("<mapping>11</mapping>") == std::string::npos && c0.find("<mapping>25</mapping>") != std::string::npos);
+    const std::string marker_pro = read_text(ud / "controllerProfiles" / "retrohub-pad.txt");
+    /* then Super Mario 3D World (Automatic): the GamePad again, rewritten at once */
+    pads.p1_pro = hubemu::cemu_p1_pro(sm3dw, hub::gs::Values());
+    hubemu::prepare_cemu_own(ud.string(), prof, pads, true);
+    c0 = read_text(ud / "controllerProfiles" / "controller0.xml");
+    CHECK(xml_type(c0) == "Wii U GamePad" && c0 == hubemu::cemu_gamepad_profile_xml(prof, 0));
+    CHECK(read_text(ud / "controllerProfiles" / "retrohub-pad.txt") != marker_pro);
+    CHECK(read_text(ud / "controllerProfiles.retrohub-backup" / "controller0.xml") == theirs);   // the backup stays the user's original
+    /* and back to Twilight Princess HD */
+    pads.p1_pro = true;
+    hubemu::prepare_cemu_own(ud.string(), prof, pads, true);
+    CHECK(xml_type(read_text(ud / "controllerProfiles" / "controller0.xml")) == "Wii U Pro Controller");
+    CHECK(read_text(ud / "controllerProfiles" / "retrohub-pad.txt") == marker_pro);
+    /* not managed: nothing of theirs is touched */
+    fs::path ud2 = dir / "appdata2" / "Cemu";
+    write_text(ud2 / "controllerProfiles" / "controller0.xml", theirs);
+    hubemu::prepare_cemu_own(ud2.string(), prof, pads, false);
+    CHECK(read_text(ud2 / "controllerProfiles" / "controller0.xml") == theirs && !fs::exists(ud2 / "controllerProfiles.retrohub-backup"));
+    /* remote play keeps player 1's type; the guests stay Pro Controllers on DSU */
+    hubemu::CemuPads rp = hubemu::cemu_pads_with_dsu(pads, 2);
+    CHECK(rp.p1_pro && rp.xinput.size() == 3 && rp.dsu[1] == 0 && rp.dsu[2] == 1);
+}
+
 static void test_archive_and_library(const fs::path& dir) {
     fs::path games = dir / "games";
     fs::create_directories(games);
@@ -425,6 +491,7 @@ int main() {
     test_own_settings(dir / "o");
     test_profiles(dir / "p");
     test_gamepad_toggle();
+    test_player1_controller(dir / "c");
     test_archive_and_library(dir / "l");
     test_art_names();
     fs::remove_all(dir, ec);

@@ -60,7 +60,7 @@ int main() {
     /* ---- help: one plain sentence for every option a player would not understand ---- */
     {
         const char* keys[] = {"n64.fb_emulation", "n64.copy_color", "n64.copy_depth", "n64.aa", "n64.fxaa", "n64.texfilter", "scale.integer",
-                              "play.runahead", "nes.region", "snes.region", "gb.color", "wiiu.cpu_mode", "ps2.renderer", "switch.vsync",
+                              "play.runahead", "nes.region", "snes.region", "gb.color", "wiiu.cpu_mode", "wiiu.p1_controller", "ps2.renderer", "switch.vsync",
                               "switch.async_shaders", "switch.preload_shaders", "switch.fast_reads", "switch.gpu_accuracy", "switch.frames_ahead",
                               "switch.framegen", "switch.pacing", "switch.runner"};
         for (const char* k : keys) {

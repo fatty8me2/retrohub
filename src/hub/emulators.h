@@ -144,8 +144,13 @@ std::string azahar_pin_language(const std::string& qt_config_ini);   // pure: [P
 void prepare_cemu_managed(const std::string& install_dir);   // profile = the stored wiiu profile
 void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& profile);
 /* Wii U players in RetroHub port order: xinput[i] = the XInput slot of player i+1 (empty = player 1 on slot 0). Player 1 gets the
- * GamePad profile (controller0.xml), players 2-4 Pro Controllers (controller1-3.xml). */
-struct CemuPads { std::vector<int> xinput; std::vector<std::string> sdl; std::vector<int> dsu; };   // dsu[i] >= 0 = player i is DSU slot dsu[i] (remote Wii U play; Cemu "DSUController" at 127.0.0.1:26760)   // sdl[i] non-empty = player i is an SDL pad (xinput[i] = -1)
+ * GamePad profile (controller0.xml), players 2-4 Pro Controllers (controller1-3.xml). p1_pro: player 1 is a Pro Controller too
+ * (cemu_p1_pro: games such as Twilight Princess HD whose menus otherwise sit on the GamePad's touch screen). */
+struct CemuPads { std::vector<int> xinput; std::vector<std::string> sdl; std::vector<int> dsu; bool p1_pro = false; };   // dsu[i] >= 0 = player i is DSU slot dsu[i] (remote Wii U play; Cemu "DSUController" at 127.0.0.1:26760)   // sdl[i] non-empty = player i is an SDL pad (xinput[i] = -1)
+/* What player 1 plays as, from the game's "Player 1 controller" setting (wiiu.p1_controller): "pro" / "gamepad" as chosen; "auto" (the default)
+ * = a Pro Controller for the titles in cemu_prefers_pro, the Wii U GamePad for every other game. */
+bool cemu_prefers_pro(uint64_t title_id);
+bool cemu_p1_pro(uint64_t title_id, const hub::gs::Values& resolved);
 /* Like cemu_pads_with but non-XInput pads become Cemu "SDLController" players. uuid = "<index>_<SDL GUID>" (index among same-GUID pads
  * in `all_pads`, SDL order). */
 CemuPads cemu_pads_with_sdl(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& all_pads);

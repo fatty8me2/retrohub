@@ -830,12 +830,18 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
                                                   kind == hubemu::Kind::Fritchii ? &hubemu::nx_skip_keys(kind) : nullptr);
         if (perr.empty() && kind == hubemu::Kind::Fritchii) perr = hubemu::prepare_fritchii(inst.dir);   // pins Fritchii's settings migration (after the config write above)
         if (!perr.empty()) { set_notice("Could not set up " + nm + ": " + perr, 12.0); return; }
-    } else if (inst.managed) {
-        { hubctl::Profile pw = controls_profile("wiiu", e.key); hubemu::prepare_cemu_managed(inst.dir, pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw)); }
-    } else if (A.st.cemu_manage_controls) {   // the user's own Cemu: backed up once, then RetroHub's controls (setting is ON by default)
-        const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str();
+    } else if (kind == hubemu::Kind::Cemu && (inst.managed || A.st.cemu_manage_controls)) {   // RetroHub's own Cemu, or the user's own one (backed up once, then RetroHub's controls; setting is ON by default)
         hubctl::Profile pw = controls_profile("wiiu", e.key);
-        hubemu::prepare_cemu_own(hubemu::cemu_user_data_dir(inst.dir, ad ? ad : ""), pw, ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw), true);
+        hubemu::CemuPads cp = ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw);
+        uint64_t tid0 = hubemu::title_id_from_key(e.key);
+        if (!tid0) tid0 = hubemu::wiiu_title_id_of_file(launch_path_for(e));   // archives / file-name keys: read from the unpacked .wua
+        cp.p1_pro = hubemu::cemu_p1_pro(tid0, gs_values_for(e));   // Twilight Princess HD: a Pro Controller, so its item and map screens show on the TV
+        autotest_log(std::string("cemu: player 1 = ") + (cp.p1_pro ? "Wii U Pro Controller" : "Wii U GamePad"));
+        if (inst.managed) hubemu::prepare_cemu_managed(inst.dir, pw, cp);
+        else {
+            const std::string ad_s = winutil::getenv_utf8("APPDATA");
+            hubemu::prepare_cemu_own(hubemu::cemu_user_data_dir(inst.dir, ad_s), pw, cp, true);
+        }
     } else if (ri.dsu_players > 0) {
         set_notice("Remote play needs RetroHub to manage Cemu's controls (Controllers page, Let RetroHub manage Wii U controls) - the guests' controllers won't reach the game otherwise.", 15.0);
     }

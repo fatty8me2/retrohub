@@ -137,6 +137,11 @@ std::vector<Option> build() {
                    {{"game", "Cemu's profile for this game"}, {"single-interp", "Single-core interpreter"}, {"single-rec", "Single-core recompiler"},
                     {"dual-rec", "Dual-core recompiler"}, {"triple-rec", "Triple-core recompiler"}}));
     help("How Cemu runs the console's processor: more cores run faster, but a few games only work on one core.");
+    // What Cemu's player 1 (controller0.xml) is when RetroHub manages Cemu's controls (hubemu::cemu_p1_pro). "auto" = a Pro Controller for the few
+    // games whose GamePad screen menus are worked by touch (Twilight Princess HD: items and map; hubemu::cemu_prefers_pro), the GamePad for the rest.
+    v.push_back(mk("wiiu.p1_controller", "Player 1 controller", "Controls", WIIU, K::Choice, S::Visual, "auto",
+                   {{"auto", "Automatic"}, {"gamepad", "Wii U GamePad"}, {"pro", "Wii U Pro Controller"}}));
+    help("Automatic uses a Pro Controller for games such as Twilight Princess HD whose GamePad menus need a touch screen, and the GamePad for the rest.");
     // ---- PlayStation 2 (PCSX2)
     v.push_back(mk("ps2.res", "Internal resolution", "Video", PS2, K::Choice, S::Visual, "2",
                    {{"1", "1x native"}, {"2", "2x"}, {"3", "3x"}, {"4", "4x"}, {"6", "6x"}, {"8", "8x"}}));

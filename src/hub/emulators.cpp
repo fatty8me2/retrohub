@@ -1405,7 +1405,28 @@ static std::string cemu_sel(const CemuPads& c) {
     std::string s;
     for (size_t i = 0; i < c.xinput.size(); ++i)
         s += std::to_string(i) + "=" + (i < c.dsu.size() && c.dsu[i] >= 0 ? "dsu" + std::to_string(c.dsu[i]) : i < c.sdl.size() && !c.sdl[i].empty() ? c.sdl[i] : std::to_string(c.xinput[i])) + ";";
-    return s == "0=0;" ? "" : s;   // the old single-pad setup keeps its marker hash
+    if (s == "0=0;") s.clear();   // the old single-pad setup keeps its marker hash
+    if (c.p1_pro) s += "p1=pro;";   // player 1 as a Pro Controller: a different file, so a different marker
+    return s;
+}
+
+/* Wii U titles whose GamePad screen holds menus that are worked by touch (TP HD: the item and map screens), so with a pad and no touch
+ * screen they play better with a Pro Controller: the game then shows those screens on the TV and drives them with buttons. Every one of
+ * them supports the Pro Controller. Ids as in Cemu's shipped gameProfiles\default (US, EU, JP). */
+bool cemu_prefers_pro(uint64_t tid) {
+    switch (tid) {
+    case 0x000500001019E500ull: case 0x000500001019E600ull: case 0x000500001019C800ull:   // The Legend of Zelda: Twilight Princess HD
+        return true;
+    default: return false;
+    }
+}
+
+bool cemu_p1_pro(uint64_t tid, const hub::gs::Values& v) {
+    auto it = v.find("wiiu.p1_controller");
+    const std::string c = it == v.end() ? std::string("auto") : it->second;
+    if (c == "pro") return true;
+    if (c == "gamepad") return false;
+    return cemu_prefers_pro(tid);
 }
 
 /* Cemu's SDL pad ids (SDLController.cpp: buttons are SDL's own gamepad button numbers; axes/triggers share the XInput ids). */
@@ -1486,6 +1507,7 @@ std::string cemu_gamepad_profile_xml_sdl(const hubctl::Profile& prof, const std:
 std::string cemu_pro_profile_xml_dsu(const hubctl::Profile& prof, int dsu_slot, int player) { return cemu_pad_xml(prof, 0, player, true, "", dsu_slot); }
 CemuPads cemu_pads_with_dsu(const CemuPads& local, int remote_players) {
     CemuPads c;
+    c.p1_pro = local.p1_pro;
     c.xinput.push_back(!local.xinput.empty() ? local.xinput[0] : 0);
     c.sdl.push_back(!local.sdl.empty() ? local.sdl[0] : std::string());
     c.dsu.push_back(-1);
@@ -1506,7 +1528,7 @@ static void write_cemu_profiles(const std::string& cdir, const hubctl::Profile& 
         bool sdl = i < (int)pads.sdl.size() && !pads.sdl[i].empty();
         int xi = i < (int)pads.xinput.size() && pads.xinput[i] >= 0 ? pads.xinput[i] : 0;
         int ds = i < (int)pads.dsu.size() ? pads.dsu[i] : -1;
-        return cemu_pad_xml(prof, xi, i, i > 0, sdl ? pads.sdl[i] : std::string(), ds);
+        return cemu_pad_xml(prof, xi, i, i > 0 || pads.p1_pro, sdl ? pads.sdl[i] : std::string(), ds);
     };
     /* Up to date only when the marker matches AND every player file still holds what we would write: a player edited by hand in
      * Cemu (say player 2 set to the host's own pad) would otherwise survive and steal a remote guest's DSU slot. */
@@ -1516,7 +1538,7 @@ static void write_cemu_profiles(const std::string& cdir, const hubctl::Profile& 
         same = file_exists(f) && read_text(f) == xml(i);
     }
     if (same) return;
-    write_text(pad, xml(0));   // player 1 = the Wii U GamePad
+    write_text(pad, xml(0));   // player 1 = the Wii U GamePad (a Pro Controller when pads.p1_pro)
     for (int i = 1; i < 4; ++i) {   // players 2-4 = Pro Controllers on the next pads; stale ones from an earlier setup go
         std::string f = join(cdir, "controller" + std::to_string(i) + ".xml");
         if (i < (int)pads.xinput.size()) write_text(f, xml(i));
