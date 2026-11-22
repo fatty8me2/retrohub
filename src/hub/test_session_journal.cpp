@@ -343,6 +343,25 @@ static void test_cemu_reverts_and_spawn_failure() {
     CHECK(rep.replayed == 1 && rd(ud / "settings.xml") == orig && count_files(ud / "gameProfiles") == 0 && !fs::exists(ud / "retrohub-cemu-state.txt"));
     rep = hubjournal::recover(r.jdir_s(), r.cfg(), nullptr);   // a second time: nothing
     CHECK(rep.replayed == 0 && rd(ud / "settings.xml") == orig);
+    // a save session begin_session refused (no vault folder): the game still ran, so the overrides go back after it and the journal is
+    // finished, not kept for a pointless replay at the next start; the error is still there for the after-game note
+    hubemu::prepare_cemu_own_settings(U8(ud), v);
+    hub::GameEntry w;
+    w.system = hub::System::WiiU;
+    w.key = "wiiu:0005000010145c00";
+    hubemu::Install ci;
+    ci.dir = U8(r.inst);
+    ci.exe = U8(r.inst / "Cemu.exe");
+    ci.managed = true;
+    hubemu::SaveSession refused = hubemu::begin_session(w, ci, "", "");
+    CHECK(!refused.active && !refused.error.empty());
+    hubjournal::Entry jr = r.entry(refused);
+    jr.emu_kind = 1; jr.cemu_user = U8(ud); jr.cemu_tid = tid; jr.revert_profile = true; jr.revert_own_settings = true;
+    CHECK(hubjournal::begin(r.jdir_s(), jr) && count_files(r.jdir, ".session") == 1);
+    hubjournal::finish(refused, jr, r.jdir_s());
+    CHECK(count_files(r.jdir, ".session") == 0 && rd(ud / "settings.xml") == orig && !fs::exists(ud / "retrohub-cemu-state.txt"));
+    CHECK(!refused.error.empty());
+    CHECK(hubjournal::recover(r.jdir_s(), r.cfg(), nullptr).replayed == 0);
 }
 
 static void test_switch_account_folder_at_exit() {

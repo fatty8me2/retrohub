@@ -112,9 +112,11 @@ same relative paths, so the vault tree can be copied back verbatim on another PC
   `%LOCALAPPDATA%\RetroHub\save-backups\<game>\<stamp>-before-cemu-launch` (never pruned; no snapshot, no overwrite). The Wii U data dir follows Cemu's rules (`portable` folder, legacy
   `settings.xml` beside the exe, else `%APPDATA%\Cemu`; `mlc_path` from `settings.xml` if set); after the session its folder is backed up into the vault (newer wins).
   Their `%APPDATA%\Cemu\mlc01\usr\save\00050000\1019e500` for Twilight Princess HD is the folder involved on this PC.
-- **No vault folder:** `begin_session` maps nothing when the vault battery path is empty or relative (the session stays inactive with an error,
-  the emulator keeps its own save). Before saves-F4 the Wii U remote-play host passed an empty path, and the save went to `<install>\usr\save\...`
-  and `<install>\.sync\emu--.json` beside RetroHub.exe instead of the vault.
+- **No vault folder:** `begin_session` maps nothing when the vault battery path is not absolute (`hubemu::vault_battery_ok`: empty, relative,
+  `\vault` or drive-relative `C:foo`; `C:/...` and UNC paths are fine). The session stays inactive with an error, the emulator keeps its own save,
+  and the error shows after the game. Its pending-session journal (Cemu: only the settings to put back) is finished at exit, never kept for a replay.
+  Hookshot / Longshot refuse to start in that case. Before saves-F4 the Wii U remote-play host passed an empty path, and the save went to
+  `<install>\usr\save\...` and `<install>\.sync\emu--.json` beside RetroHub.exe instead of the vault.
 - **`.wud`/`.wux`:** the title id is not readable without decrypting, so the save folder is learned from what changed in
   `usr\save\00050000` during a session (exactly one changed folder) and remembered in the vault for next time.
 - Azahar keeps a title's save data (cartridge and digital alike) in `title\00040000\<id low>\data` as the folder `00000001\` plus
@@ -170,7 +172,11 @@ Stored in the vault at `<vault>\_settings\game_settings.json`. Layers: option de
   layout: `<vault>\wiiu\<game key>\battery\usr\save\...`. Unknown-title discs pick up changed folders under both ids. The shader cache is not vaulted.
 - **Player 1 controller** (`wiiu.p1_controller`, Controls): Automatic / Wii U GamePad / Wii U Pro Controller. Automatic = a Pro Controller for
   Twilight Princess HD (its items and map are touch menus on the GamePad; as a Pro Controller the game shows them on the TV), the GamePad for the rest.
-  Written into `controller0.xml` when RetroHub manages Cemu's controls; the marker changes with it, so switching games rewrites the file.
+  TP HD is recognised by its title id (key or `.wua`), its disc serial `AZAE`/`AZAP`/`AZAJ` (a `.wud`/`.wux` key holds the product code, not the id)
+  or the catalog id `tphd` (`hubemu::cemu_prefers_pro`). Written into `controller0.xml` only when RetroHub manages Cemu's controls (its own download, or a
+  user's own Cemu with "Let RetroHub manage Wii U controls" on); the marker changes with it, so switching games rewrites the file. The launch and the
+  game page's line both decide through `cemu_player1_for` (`hubemu::cemu_player1`); a Pro Controller chosen for another game makes no claim about its menus.
+  Not done: `controller0.xml` stays RetroHub's after the session (the user's own is in `controllerProfiles.retrohub-backup`).
 - **GamePad screen.** Cemu 2.6's default hotkey "toggle pad screen" is Ctrl+Tab (its first-run assistant lists it). RetroHub sends it when View (Back) + right bumper are held alone (not with Start, Y or a trigger) for a quarter of a second,
   and from Game menu > "Swap GamePad / TV screen". The keys are injected into the focused Cemu window, so the hidden-desktop QA only logs it.
 - **Cover art.** libretro-thumbnails "Nintendo - Wii U": the repository's file list (one GitHub API request, cached) is matched by title with the article moved

@@ -641,6 +641,11 @@ std::string launch_path_for(const hub::GameEntry& e) {
     return e.path;
 }
 
+hubemu::CemuP1 cemu_player1_for(const hub::GameEntry& e, const hubemu::Install& inst, uint64_t wiiu_tid) {
+    /* no Cemu found yet: Play installs RetroHub's own download, which is always managed */
+    return hubemu::cemu_player1(e, wiiu_tid, inst.exe.empty() || inst.managed, A.st.cemu_manage_controls, gs_values_for(e));
+}
+
 /* Hookshot / Longshot (hookshot.h): the native Ocarina of Time build the player chose plays instead of Lichii. Offline only; its save sits in the same vault folder Lichii uses. */
 static void launch_hookshot(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, hookshot::Flavor fl) {
     const hookshot::FlavorInfo& fi = hookshot::info(fl);
@@ -795,6 +800,9 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         set_notice(std::string(hubemu::name(kind)) + " is already running. Close it first, then start the game from RetroHub.", 10.0);
         return;
     }
+    /* Wii U title id, worked out once (the key, else the unpacked .wua; 0 for .wud/.wux): player 1's controller, the game profile, the save
+     * mapping and the journal all use this one value. (launch_path_for(e) is the `game` below: only PCSX2 swaps in another image.) */
+    const uint64_t wiiu_tid = kind == hubemu::Kind::Cemu ? hubemu::wiiu_title_id_for(e, launch_path_for(e)) : 0;
     if (kind == hubemu::Kind::Azahar) {
         if (inst.managed) { hubctl::Profile p3 = controls_profile("3ds", e.key); hubemu::prepare_azahar(inst.dir, p3, azahar_pad_for(p3)); }
     } else if (kind == hubemu::Kind::Dolphin) {
@@ -830,12 +838,10 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
                                                   kind == hubemu::Kind::Fritchii ? &hubemu::nx_skip_keys(kind) : nullptr);
         if (perr.empty() && kind == hubemu::Kind::Fritchii) perr = hubemu::prepare_fritchii(inst.dir);   // pins Fritchii's settings migration (after the config write above)
         if (!perr.empty()) { set_notice("Could not set up " + nm + ": " + perr, 12.0); return; }
-    } else if (kind == hubemu::Kind::Cemu && (inst.managed || A.st.cemu_manage_controls)) {   // RetroHub's own Cemu, or the user's own one (backed up once, then RetroHub's controls; setting is ON by default)
+    } else if (kind == hubemu::Kind::Cemu && cemu_player1_for(e, inst, wiiu_tid) != hubemu::CemuP1::Unmanaged) {   // RetroHub's own Cemu, or the user's own one (backed up once, then RetroHub's controls; setting is ON by default)
         hubctl::Profile pw = controls_profile("wiiu", e.key);
         hubemu::CemuPads cp = ri.dsu_players > 0 ? hubemu::cemu_pads_with_dsu(cemu_pads_for_own(pw), ri.dsu_players) : cemu_pads_for_own(pw);
-        uint64_t tid0 = hubemu::title_id_from_key(e.key);
-        if (!tid0) tid0 = hubemu::wiiu_title_id_of_file(launch_path_for(e));   // archives / file-name keys: read from the unpacked .wua
-        cp.p1_pro = hubemu::cemu_p1_pro(tid0, gs_values_for(e));   // Twilight Princess HD: a Pro Controller, so its item and map screens show on the TV
+        cp.p1_pro = cemu_player1_for(e, inst, wiiu_tid) == hubemu::CemuP1::Pro;   // Twilight Princess HD: a Pro Controller, so its item and map screens show on the TV
         autotest_log(std::string("cemu: player 1 = ") + (cp.p1_pro ? "Wii U Pro Controller" : "Wii U GamePad"));
         if (inst.managed) hubemu::prepare_cemu_managed(inst.dir, pw, cp);
         else {
@@ -853,13 +859,10 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         if (!hub::ps2::launch_image(game, hub::extract_3ds_dir(e), &img, &ierr)) { set_notice("Could not start " + e.title + ": " + ierr + ".", 12.0); return; }
         game = img;
     }
-    uint64_t wiiu_tid = 0;
     std::string cemu_user;   // Cemu's user data folder (portable\ / beside settings.xml / %APPDATA%\Cemu)
     if (kind == hubemu::Kind::Cemu) {
         const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str();
         cemu_user = inst.managed ? inst.dir + "\\portable" : hubemu::cemu_user_data_dir(inst.dir, ad ? ad : "");
-        wiiu_tid = hubemu::title_id_from_key(e.key);
-        if (!wiiu_tid) wiiu_tid = hubemu::wiiu_title_id_of_file(game);   // archives / disc-less keys: read from the unpacked .wua
         if (inst.managed) hubemu::apply_game_settings(kind, inst.dir, gsv);
         else if (!hubemu::prepare_cemu_own_settings(cemu_user, gsv)) autotest_log("cemu: settings.xml of the own install left untouched (missing or no backup possible)");
         autotest_log("cemu: user data " + cemu_user + " title " + hub::hex16(wiiu_tid));

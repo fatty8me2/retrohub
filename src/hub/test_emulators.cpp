@@ -546,9 +546,24 @@ static void test_sessions(const fs::path& dir) {
             hubemu::end_session(b);
             CHECK(!b.active);
         }
+        CHECK(!hubemu::begin_session(w, ci, "C:battery", vault.u8string()).active);   // drive-relative: the current folder of drive C
         CHECK(fs::is_empty(here, ec));   // no usr\save\..., no .sync\emu--.json
         fs::current_path(cwd0, ec);
         CHECK(read_text(save) == "ZELDA1");   // the emulator's own save is untouched
+        /* what counts as a vault folder (pure, no disk access: a UNC path is never looked up) */
+        CHECK(hubemu::vault_battery_ok("C:\\Users\\x\\vault\\wiiu\\g\\battery") && hubemu::vault_battery_ok("C:/Users/x/vault/wiiu/g/battery/"));
+        CHECK(hubemu::vault_battery_ok("\\\\nas\\share\\vault\\wiiu\\g\\battery") && hubemu::vault_battery_ok("//nas/share/vault/wiiu/g/battery"));
+        CHECK(hubemu::vault_battery_ok("\\\\?\\C:\\vault\\wiiu\\g\\battery"));
+        CHECK(!hubemu::vault_battery_ok("") && !hubemu::vault_battery_ok("\\") && !hubemu::vault_battery_ok("C:foo\\battery") && !hubemu::vault_battery_ok("C:"));
+        CHECK(!hubemu::vault_battery_ok("vault\\wiiu\\g\\battery") && !hubemu::vault_battery_ok("\\vault\\battery") && !hubemu::vault_battery_ok("..\\battery"));
+        CHECK(!hubemu::vault_battery_ok("C:\\bad\xEB\xFF"));   // not UTF-8: refused, never throws
+        /* forward slashes are fine: a real session from "C:/.../battery" */
+        std::string fwd = vb.u8string();
+        for (char& c : fwd) if (c == '\\') c = '/';
+        hubemu::SaveSession f = hubemu::begin_session(w, ci, fwd + "/", vault.u8string());
+        CHECK(f.active && f.error.empty() && f.rels.size() == 2);
+        hubemu::end_session(f);
+        CHECK(f.error.empty() && read_text(vb / "usr" / "save" / "00050000" / "1019e500" / "user" / "80000001" / "slot.sav") == "ZELDA1");
     }
 }
 

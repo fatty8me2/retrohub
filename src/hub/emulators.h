@@ -145,12 +145,22 @@ void prepare_cemu_managed(const std::string& install_dir);   // profile = the st
 void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile& profile);
 /* Wii U players in RetroHub port order: xinput[i] = the XInput slot of player i+1 (empty = player 1 on slot 0). Player 1 gets the
  * GamePad profile (controller0.xml), players 2-4 Pro Controllers (controller1-3.xml). p1_pro: player 1 is a Pro Controller too
- * (cemu_p1_pro: games such as Twilight Princess HD whose menus otherwise sit on the GamePad's touch screen). */
+ * (cemu_player1: games such as Twilight Princess HD whose menus otherwise sit on the GamePad's touch screen). */
 struct CemuPads { std::vector<int> xinput; std::vector<std::string> sdl; std::vector<int> dsu; bool p1_pro = false; };   // dsu[i] >= 0 = player i is DSU slot dsu[i] (remote Wii U play; Cemu "DSUController" at 127.0.0.1:26760)   // sdl[i] non-empty = player i is an SDL pad (xinput[i] = -1)
-/* What player 1 plays as, from the game's "Player 1 controller" setting (wiiu.p1_controller): "pro" / "gamepad" as chosen; "auto" (the default)
- * = a Pro Controller for the titles in cemu_prefers_pro, the Wii U GamePad for every other game. */
-bool cemu_prefers_pro(uint64_t title_id);
-bool cemu_p1_pro(uint64_t title_id, const hub::gs::Values& resolved);
+/* Games that play better with a Pro Controller as player 1 (Twilight Princess HD: its item and map screens are touch menus on the GamePad).
+ * Matched by the title id (`title_id`: from the key, or read from the .wua by wiiu_title_id_for), by the disc serial (.wud/.wux keys carry
+ * no title id: "AZAE" / "AZAP" / "AZAJ") or by the catalog id ("tphd"). */
+bool cemu_prefers_pro(const hub::GameEntry& e, uint64_t title_id);
+/* Cemu's player 1 for a launch of this game. Unmanaged = RetroHub leaves Cemu's controller profiles alone (the user's own Cemu with "Let RetroHub
+ * manage Wii U controls" off); otherwise the game's "Player 1 controller" setting (wiiu.p1_controller): "pro" / "gamepad" as chosen, "auto" (the
+ * default) = Pro for cemu_prefers_pro, the GamePad for every other game. `managed_install`: RetroHub's own Cemu download (always managed),
+ * which is also what plays when no Cemu is installed yet. The launch (launch_external) and the game page both decide through this. */
+enum class CemuP1 { Unmanaged, GamePad, Pro };
+CemuP1 cemu_player1(const hub::GameEntry& e, uint64_t title_id, bool managed_install, bool manage_controls, const hub::gs::Values& resolved);
+/* The game page's line about it: the GamePad-screen hint, or what a Pro Controller player 1 means for this game. */
+std::string cemu_player1_hint(CemuP1 p, const hub::GameEntry& e, uint64_t title_id);
+/* The game's Wii U title id: from the key ("wiiu:000500001019e500"), else read from the .wua at `launch_path` (archives, file-name keys); 0 for .wud/.wux. */
+uint64_t wiiu_title_id_for(const hub::GameEntry& e, const std::string& launch_path);
 /* Like cemu_pads_with but non-XInput pads become Cemu "SDLController" players. uuid = "<index>_<SDL GUID>" (index among same-GUID pads
  * in `all_pads`, SDL order). */
 CemuPads cemu_pads_with_sdl(const std::vector<PadDesc>& by_port, const std::vector<PadDesc>& all_pads);
@@ -265,7 +275,11 @@ struct SaveSession {
     std::string manifest_path;            // <vault>\.sync\emu-<key>.json: what both sides agreed on last time
     std::string psp_disc_id;              // PSP: SAVEDATA folders starting with this id ("ULUS10041") belong to the game; new ones made in the session are picked up at the end
 };
-/* Before launch: vault -> emulator (newest wins; see sync_tree_newest). */
+/* A vault battery folder a save session may use: an absolute path ("C:\..", "C:/..", "\\server\share\.."); "", relative, "\vault" and
+ * drive-relative "C:foo" paths are refused (everything would hang off the current folder). Trailing separators are ignored. Pure. */
+bool vault_battery_ok(const std::string& battery);
+/* Before launch: vault -> emulator (newest wins; see sync_tree_newest). A refused vault path (vault_battery_ok) gives an inactive session
+ * with an error: nothing is copied either way. */
 SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& vault_battery_dir,
                           const std::string& vault_root, uint64_t title_id_override = 0,   // override: Wii U title id read from an unpacked .wua
                           const char* manifest_suffix = "");   // "-fritchii": a second emulator sharing the vault folder keeps its OWN "last agreed" manifest (a shared one would let a stale copy win)

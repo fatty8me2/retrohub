@@ -294,9 +294,12 @@ void run_exit(hubemu::SaveSession& s, const Entry& meta) {
 }
 
 void finish(hubemu::SaveSession& s, const Entry& meta, const std::string& dir) {
+    /* An inactive session copies nothing (no mapping, or begin_session refused the vault folder): its error comes from the launch, not from a
+     * copy-back, and a replay at the next start could not fix it. Only a copy-back error of an active session keeps the journal. */
+    const bool copies = s.active;
     run_exit(s, meta);
     /* file first, then the live entry: the other way round leaves a window where a replay could see the journal with no live entry */
-    if (s.error.empty() && !meta.id.empty()) remove_entry(dir, meta.id);   // an error keeps it: the next start retries (the copy is idempotent)
+    if ((s.error.empty() || !copies) && !meta.id.empty()) remove_entry(dir, meta.id);   // an error keeps it: the next start retries (the copy is idempotent)
     live_drop(meta.id);
 }
 

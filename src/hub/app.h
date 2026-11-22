@@ -622,6 +622,9 @@ std::vector<std::pair<std::string, std::string>> smash_env(const std::string& ex
 RunInfo run_info_for(const hub::GameEntry& e, bool online);
 uint64_t unpacked_size(const hub::GameEntry& e);
 std::string launch_path_for(const hub::GameEntry& e);
+/* Cemu's player 1 for this game with this install (hubemu::cemu_player1 with the hub's settings): the ONE decision the launch writes into
+ * controller0.xml and the game page describes. `wiiu_tid` = hubemu::wiiu_title_id_for(e, launch_path_for(e)). */
+hubemu::CemuP1 cemu_player1_for(const hub::GameEntry& e, const hubemu::Install& inst, uint64_t wiiu_tid);
 void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::string& battery, const std::string& mp_arg = "");
 void start_unzip(const hub::GameEntry& e);
 void play_entry(const hub::GameEntry& e);

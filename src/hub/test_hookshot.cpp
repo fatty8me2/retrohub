@@ -423,6 +423,21 @@ int main() {
         CHECK(!fs::exists(bat / "save" / "5a3c9e1f0b7d24680000000000000001"));
         CHECK(!hookshot::begin_save_session(game("switch:0100abcd12340000"), U8(vault / "switch" / "x" / "battery"), Flavor::Longshot).active);
         CHECK(!hookshot::begin_save_session(oot, "", Flavor::Longshot).active);
+        // no vault folder, or a relative / drive-relative one: refused with an error (Play then does not start), nothing beside the current folder
+        {
+            const fs::path cwd0 = fs::current_path(ec);
+            const fs::path here = tmp / "cwd-hookshot";
+            fs::create_directories(here, ec);
+            fs::current_path(here, ec);
+            for (const std::string& bad : {std::string(), std::string("switch\\switch_0400486024dec000\\battery"), std::string("C:battery"), std::string("\\")}) {
+                hubemu::SaveSession r = hookshot::begin_save_session(oot, bad, Flavor::Hookshot);
+                CHECK(!r.active && !r.error.empty() && r.manifest_path.empty() && r.rels.empty());
+                hubemu::end_session(r);
+            }
+            CHECK(fs::is_empty(here, ec));
+            fs::current_path(cwd0, ec);
+            CHECK(hookshot::begin_save_session(game("switch:0100abcd12340000"), "").error.empty());   // not this game: no session, nothing to report
+        }
         fs::remove_all(fs::u8path(hookshot::user_dir(Flavor::Hookshot)), ec);
         fs::remove_all(fs::u8path(hookshot::user_dir(Flavor::Longshot)), ec);
     }

@@ -157,7 +157,11 @@ hubemu::SaveSession begin_save_session(const hub::GameEntry& e, const std::strin
     std::string battery = battery_in;
     while (!battery.empty() && (battery.back() == '\\' || battery.back() == '/')) battery.pop_back();
     s.battery = battery;
-    if (!supports(e) || battery.empty()) return s;
+    if (!supports(e)) return s;
+    if (!hubemu::vault_battery_ok(battery)) {   // "" or a relative path: the copies would hang off the current folder (as for begin_session). Play then refuses to start.
+        s.error = "this game has no vault folder for its saves (" + (battery.empty() ? std::string("none given") : battery) + ")";
+        return s;
+    }
     /* vault layout: system dir / game dir / battery -> _conflicts/<system>/<game>/battery; manifest .sync/emu-<system>-<game>-hookshot.json */
     const fs::path game = P(battery).parent_path(), sysdir = game.parent_path(), vault = sysdir.parent_path();
     s.backup_dir = S(vault / L"_conflicts" / sysdir.filename() / game.filename() / L"battery");

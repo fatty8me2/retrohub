@@ -335,26 +335,55 @@ static std::string xml_type(const std::string& x) {
     size_t a = x.find("<type>"), b = x.find("</type>");
     return a == std::string::npos || b == std::string::npos ? std::string() : x.substr(a + 6, b - a - 6);
 }
+static GameEntry wiiu_game(const std::string& key, const std::string& serial, const std::string& catalog = "") {
+    GameEntry e;
+    e.system = System::WiiU;
+    e.key = key;
+    e.serial = serial;
+    e.catalog_id = catalog;
+    return e;
+}
 static void test_player1_controller(const fs::path& dir) {
+    using hubemu::CemuP1;
     const uint64_t tphd_us = 0x000500001019E500ull, tphd_eu = 0x000500001019E600ull, tphd_jp = 0x000500001019C800ull, sm3dw = 0x0005000010145C00ull;
+    const GameEntry none = wiiu_game("wiiu:file-x", "");
     const hub::gs::Option* o = hub::gs::find_option("wiiu.p1_controller");
     CHECK(o && o->def == "auto" && o->choices.size() == 3 && o->group == std::string("Controls") && (o->systems & hub::gs::sys_bit(System::WiiU)) && !o->help.empty());
-    CHECK(hubemu::cemu_prefers_pro(tphd_us) && hubemu::cemu_prefers_pro(tphd_eu) && hubemu::cemu_prefers_pro(tphd_jp));
-    CHECK(!hubemu::cemu_prefers_pro(sm3dw) && !hubemu::cemu_prefers_pro(0));
+    CHECK(o && o->help.find("manages Wii U controls") != std::string::npos);   // says it only applies while RetroHub manages them
+    /* which games: the title id (key or .wua), the disc serial (a .wud/.wux key holds no title id), or the catalog id */
+    CHECK(hubemu::cemu_prefers_pro(none, tphd_us) && hubemu::cemu_prefers_pro(none, tphd_eu) && hubemu::cemu_prefers_pro(none, tphd_jp));
+    CHECK(!hubemu::cemu_prefers_pro(none, sm3dw) && !hubemu::cemu_prefers_pro(none, 0));
+    const GameEntry wud_us = wiiu_game("wiiu:wup-p-azae", "AZAE"), wux_eu = wiiu_game("wiiu:wup-p-azap", "AZAP"), wud_jp = wiiu_game("wiiu:wup-p-azaj", "azaj");
+    CHECK(hubemu::title_id_from_key(wud_us.key) == 0 && hubemu::wiiu_title_id_for(wud_us, "") == 0);   // no title id anywhere: only the serial tells
+    CHECK(hubemu::cemu_prefers_pro(wud_us, 0) && hubemu::cemu_prefers_pro(wux_eu, 0) && hubemu::cemu_prefers_pro(wud_jp, 0));
+    CHECK(!hubemu::cemu_prefers_pro(wiiu_game("wiiu:wup-p-arde", "ARDE"), 0));   // Super Mario 3D World on disc
+    CHECK(hubemu::cemu_prefers_pro(wiiu_game("wiiu:file-zelda", "", "tphd"), 0));   // only the catalog knows it
+    CHECK(hubemu::wiiu_title_id_for(wiiu_game("wiiu:000500001019e500", "000500001019E500"), "") == tphd_us);
+    /* the decision: managed (RetroHub's Cemu, or the user's own with "manage" on) + the setting */
     hub::gs::Values v;   // nothing stored: Automatic
-    CHECK(hubemu::cemu_p1_pro(tphd_us, v) && !hubemu::cemu_p1_pro(sm3dw, v));
+    CHECK(hubemu::cemu_player1(none, tphd_us, false, true, v) == CemuP1::Pro && hubemu::cemu_player1(none, sm3dw, false, true, v) == CemuP1::GamePad);
+    CHECK(hubemu::cemu_player1(wud_us, 0, true, false, v) == CemuP1::Pro);           // .wud TP HD, RetroHub's own Cemu
+    CHECK(hubemu::cemu_player1(wud_us, 0, false, false, v) == CemuP1::Unmanaged);    // the user's own Cemu, "manage" off: their profiles stay
     v["wiiu.p1_controller"] = "auto";
-    CHECK(hubemu::cemu_p1_pro(tphd_eu, v) && !hubemu::cemu_p1_pro(sm3dw, v) && !hubemu::cemu_p1_pro(0, v));
+    CHECK(hubemu::cemu_player1(none, tphd_eu, true, true, v) == CemuP1::Pro && hubemu::cemu_player1(none, sm3dw, true, true, v) == CemuP1::GamePad && hubemu::cemu_player1(none, 0, true, true, v) == CemuP1::GamePad);
     v["wiiu.p1_controller"] = "gamepad";
-    CHECK(!hubemu::cemu_p1_pro(tphd_us, v));
+    CHECK(hubemu::cemu_player1(none, tphd_us, true, true, v) == CemuP1::GamePad && hubemu::cemu_player1(wud_us, 0, true, true, v) == CemuP1::GamePad);
+    CHECK(hubemu::cemu_player1(none, tphd_us, false, false, v) == CemuP1::Unmanaged);
     v["wiiu.p1_controller"] = "pro";
-    CHECK(hubemu::cemu_p1_pro(sm3dw, v));
+    CHECK(hubemu::cemu_player1(none, sm3dw, false, true, v) == CemuP1::Pro);
+    /* the game page line: only Twilight Princess HD gets the claim about its menus; a Pro Controller chosen for another game does not */
+    const std::string pad_hint = hubemu::cemu_player1_hint(CemuP1::GamePad, none, sm3dw);
+    CHECK(pad_hint.find("GamePad screen") != std::string::npos && hubemu::cemu_player1_hint(CemuP1::Unmanaged, none, tphd_us) == pad_hint);
+    CHECK(hubemu::cemu_player1_hint(CemuP1::Pro, none, tphd_us).find("item and map screens show on the TV") != std::string::npos);
+    CHECK(hubemu::cemu_player1_hint(CemuP1::Pro, wud_us, 0).find("item and map screens show on the TV") != std::string::npos);
+    const std::string forced = hubemu::cemu_player1_hint(CemuP1::Pro, none, sm3dw);
+    CHECK(forced.find("Pro Controller") != std::string::npos && forced.find("item and map") == std::string::npos);
     {   // stored per game, resolved for the launch
         hub::gs::Store st;
         CHECK(st.resolve(System::WiiU, "wiiu:000500001019e500").at("wiiu.p1_controller") == "auto");
         CHECK(st.set_game("wiiu:000500001019e500", System::WiiU, "wiiu.p1_controller", "gamepad"));
         CHECK(!st.set_game("wiiu:000500001019e500", System::WiiU, "wiiu.p1_controller", "touch"));
-        CHECK(!hubemu::cemu_p1_pro(tphd_us, st.resolve(System::WiiU, "wiiu:000500001019e500")));
+        CHECK(hubemu::cemu_player1(none, tphd_us, false, true, st.resolve(System::WiiU, "wiiu:000500001019e500")) == CemuP1::GamePad);
         CHECK(!st.set_game("n64:x", System::N64, "wiiu.p1_controller", "pro"));   // Wii U only
     }
     /* the user's own Cemu (%APPDATA%\Cemu): their profiles are backed up once, then player 1 follows the game */
@@ -365,7 +394,7 @@ static void test_player1_controller(const fs::path& dir) {
     const hubctl::Profile prof = hubctl::default_profile("wiiu");
     hubemu::CemuPads pads;
     pads.xinput = {0};
-    pads.p1_pro = hubemu::cemu_p1_pro(tphd_us, hub::gs::Values());
+    pads.p1_pro = hubemu::cemu_player1(wud_us, 0, false, true, hub::gs::Values()) == CemuP1::Pro;   // TP HD as a .wud, the user's own Cemu, "manage" on
     hubemu::prepare_cemu_own(ud.string(), prof, pads, true);
     CHECK(read_text(ud / "controllerProfiles.retrohub-backup" / "controller0.xml") == theirs);
     std::string c0 = read_text(ud / "controllerProfiles" / "controller0.xml");
@@ -374,7 +403,7 @@ static void test_player1_controller(const fs::path& dir) {
     CHECK(c0.find("<mapping>11</mapping>") == std::string::npos && c0.find("<mapping>25</mapping>") != std::string::npos);
     const std::string marker_pro = read_text(ud / "controllerProfiles" / "retrohub-pad.txt");
     /* then Super Mario 3D World (Automatic): the GamePad again, rewritten at once */
-    pads.p1_pro = hubemu::cemu_p1_pro(sm3dw, hub::gs::Values());
+    pads.p1_pro = hubemu::cemu_player1(none, sm3dw, false, true, hub::gs::Values()) == CemuP1::Pro;
     hubemu::prepare_cemu_own(ud.string(), prof, pads, true);
     c0 = read_text(ud / "controllerProfiles" / "controller0.xml");
     CHECK(xml_type(c0) == "Wii U GamePad" && c0 == hubemu::cemu_gamepad_profile_xml(prof, 0));
@@ -415,6 +444,26 @@ static void test_archive_and_library(const fs::path& dir) {
         f.write((const char*)wua.data(), (std::streamsize)wua.size());
     }
     library_set_data_dir((dir / "data").string());
+    {   // Twilight Princess HD as a disc image: the key holds the product code, not the title id, so player 1 is decided from the serial
+        fs::path discs = dir / "discs";
+        fs::create_directories(discs);
+        {
+            std::ofstream f(discs / "Zelda TP HD.wud", std::ios::binary);
+            std::string h = "WUP-P-AZAE";
+            h.resize(0x8000, '\0');
+            f.write(h.data(), (std::streamsize)h.size());
+        }
+        auto dl = scan_library({discs.string()}, nullptr);
+        CHECK(dl.size() == 1);
+        if (dl.size() == 1) {
+            const GameEntry& d = dl[0];
+            CHECK(d.system == System::WiiU && d.key == "wiiu:wup-p-azae" && d.serial == "AZAE" && d.issue == "keys");
+            const uint64_t t = hubemu::wiiu_title_id_for(d, d.path);
+            CHECK(t == 0);
+            CHECK(hubemu::cemu_player1(d, t, false, true, hub::gs::Values()) == hubemu::CemuP1::Pro);
+            CHECK(hubemu::cemu_player1_hint(hubemu::cemu_player1(d, t, true, false, hub::gs::Values()), d, t).find("item and map") != std::string::npos);
+        }
+    }
     auto lib = scan_library({games.string()}, nullptr);
     const GameEntry* arch = nullptr;
     const GameEntry* plain = nullptr;

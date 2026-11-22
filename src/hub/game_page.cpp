@@ -28,14 +28,26 @@ namespace {
 
 /* ---------- Wii U details: updates / DLC, Cemu game profile, save accounts, key help ---------- */
 
+/* What the Wii U details need from the disk: the info lines, plus the Cemu install and title id that player 1's controller is decided from
+ * (cemu_player1_for, the same call the launch makes; the game's settings are applied per frame, so a changed setting shows at once). */
+struct WiiuFacts {
+    std::vector<std::string> lines;
+    hubemu::Install inst;
+    uint64_t tid = 0;
+    bool ready = false;   // false until the first scan for this game landed
+};
+
 /* Disk-heavy (Cemu install probe, WUA directory, mlc01 save accounts): runs on a worker thread. */
-std::vector<std::string> wiiu_info_compute(const hub::GameEntry& e, const std::string& cemu_exe) {
-    std::vector<std::string> s_lines;
+WiiuFacts wiiu_info_compute(const hub::GameEntry& e, const std::string& cemu_exe) {
+    WiiuFacts out;
+    std::vector<std::string>& s_lines = out.lines;
     hubemu::Install inst = hubemu::find(hubemu::Kind::Cemu, cemu_exe, e.path);
     std::string game = launch_path_for(e);
     if (e.issue == "extract" && game == e.path) game.clear();   // still packed: nothing to read yet
-    uint64_t tid = hubemu::title_id_from_key(e.key);
-    if (!tid && !game.empty()) tid = hubemu::wiiu_title_id_of_file(game);
+    const uint64_t tid = hubemu::wiiu_title_id_for(e, game);   // as the launch works it out
+    out.inst = inst;
+    out.tid = tid;
+    out.ready = true;
     hub::FsProbe fp = hubemu::wiiu_probe();
     std::string user_data, mlc;
     if (!inst.exe.empty()) {
@@ -67,25 +79,25 @@ std::vector<std::string> wiiu_info_compute(const hub::GameEntry& e, const std::s
         std::string prof = hubemu::cemu_profile_summary(inst.dir, user_data, tid);
         if (!prof.empty()) s_lines.push_back("Cemu profile: " + prof);
     }
-    return s_lines;
+    return out;
 }
 
 /* UI thread: returns the last finished result for this game (empty until the first scan lands). A scan runs in the background when
  * pagecache::need() asks for one: the full-window page re-scans every 4 s as it always did; the desk pane once the cursor has settled on
  * the game (and again after pagecache::invalidate()), never while a game runs. A per-game disk cache shared by every host (its worker
  * outlives any one page), so it is not part of gamepage::State. Screenshot runs scan on the UI thread at the same moments (deterministic). */
-std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
-    struct Bg { std::mutex mu; bool running = false; std::string key; std::vector<std::string> lines; };
+WiiuFacts wiiu_info_lines(const hub::GameEntry& e) {
+    struct Bg { std::mutex mu; bool running = false; std::string key; WiiuFacts lines; };
     static Bg* bg = new Bg();
     static std::string s_key;   // the game the last scan was started for, when, under which pagecache generation
     static double s_at = -100;
     static unsigned s_gen = 0;
-    static std::vector<std::string> s_lines;
+    static WiiuFacts s_lines;
     pagecache::Need n = pagecache::Need::Use;
     {
         std::lock_guard<std::mutex> l(bg->mu);
         if (bg->key == e.key) s_lines = bg->lines;   // only ever show a result computed for THIS game
-        else s_lines.clear();
+        else s_lines = WiiuFacts();
         n = pagecache::need(s_key == e.key, s_gen, s_at, 4.0);
         if (n == pagecache::Need::Use) return s_lines;
         if (bg->running) return s_lines;   // A's scan still running: B's starts on the first frame after it lands
@@ -97,7 +109,7 @@ std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
     qadisk::note_worker("wiiu-info");
     if (g_headless) {   // screenshots stay deterministic: the same scan, on this thread
         qadisk::Scope qs(pagecache::scope_name(n), false);
-        std::vector<std::string> r = wiiu_info_compute(e, A.st.cemu_exe);
+        WiiuFacts r = wiiu_info_compute(e, A.st.cemu_exe);
         std::lock_guard<std::mutex> l(bg->mu);
         bg->key = e.key;
         bg->lines = r;
@@ -106,7 +118,7 @@ std::vector<std::string> wiiu_info_lines(const hub::GameEntry& e) {
     }
     std::thread([e, cemu = A.st.cemu_exe] {
         if (g_io_shutdown) return;
-        std::vector<std::string> r = wiiu_info_compute(e, cemu);
+        WiiuFacts r = wiiu_info_compute(e, cemu);
         if (g_io_shutdown) return;
         std::lock_guard<std::mutex> l(bg->mu);
         bg->key = e.key;
@@ -475,10 +487,11 @@ static void draw_about(Ctx& c) {
     gameinfo_ui_section_held(e, catalog_title(c), 2, nullptr);   // facts + ratings
     achievements_ui_section(e);   // RetroAchievements progress (only when signed in)
     if (e.system == hub::System::WiiU) {
-        for (const std::string& l : wiiu_info_lines(e)) ImGui::TextDisabled("%s", l.c_str());
-        if (A.st.cemu_manage_controls && hubemu::cemu_p1_pro(hubemu::title_id_from_key(e.key), gs_values_for(e)))   // RetroHub writes Cemu's player 1 (launch_external)
-            ImGui::TextDisabled("Player 1 plays as a Wii U Pro Controller: this game's item and map screens show on the TV.");
-        else ImGui::TextDisabled("GamePad screen: hold View + RB, or Game menu > Swap GamePad / TV screen (Cemu: Ctrl+Tab).");
+        const WiiuFacts wf = wiiu_info_lines(e);
+        for (const std::string& l : wf.lines) ImGui::TextDisabled("%s", l.c_str());
+        /* player 1's controller: the launch's own decision (install + title id from the scan, the game's settings as they are now);
+         * nothing until the scan has landed, so the line never flips from one claim to the other */
+        if (wf.ready) ImGui::TextDisabled("%s", hubemu::cemu_player1_hint(cemu_player1_for(e, wf.inst, wf.tid), e, wf.tid).c_str());
     }
     { std::string fl = fr_playtime_line(e.key); if (!fl.empty()) ImGui::TextDisabled("Friends: %s", fl.c_str()); }
     if (c.native) ImGui::TextDisabled("Smash Classic keeps its own saves.");

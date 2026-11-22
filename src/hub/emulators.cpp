@@ -1412,21 +1412,38 @@ static std::string cemu_sel(const CemuPads& c) {
 
 /* Wii U titles whose GamePad screen holds menus that are worked by touch (TP HD: the item and map screens), so with a pad and no touch
  * screen they play better with a Pro Controller: the game then shows those screens on the TV and drives them with buttons. Every one of
- * them supports the Pro Controller. Ids as in Cemu's shipped gameProfiles\default (US, EU, JP). */
-bool cemu_prefers_pro(uint64_t tid) {
+ * them supports the Pro Controller. Title ids as in Cemu's shipped gameProfiles\default, serials from the product code WUP-P-AZA<region>
+ * (a .wud/.wux key holds the product code, not the title id), plus the catalog id. US, EU, JP. */
+bool cemu_prefers_pro(const hub::GameEntry& e, uint64_t tid) {
     switch (tid) {
     case 0x000500001019E500ull: case 0x000500001019E600ull: case 0x000500001019C800ull:   // The Legend of Zelda: Twilight Princess HD
         return true;
-    default: return false;
+    default: break;
     }
+    std::string s = e.serial;
+    for (char& c : s) if (c >= 'a' && c <= 'z') c = char(c - 32);
+    if (s == "AZAE" || s == "AZAP" || s == "AZAJ") return true;
+    return e.catalog_id == "tphd";
 }
 
-bool cemu_p1_pro(uint64_t tid, const hub::gs::Values& v) {
+CemuP1 cemu_player1(const hub::GameEntry& e, uint64_t tid, bool managed_install, bool manage_controls, const hub::gs::Values& v) {
+    if (!managed_install && !manage_controls) return CemuP1::Unmanaged;
     auto it = v.find("wiiu.p1_controller");
     const std::string c = it == v.end() ? std::string("auto") : it->second;
-    if (c == "pro") return true;
-    if (c == "gamepad") return false;
-    return cemu_prefers_pro(tid);
+    if (c == "pro") return CemuP1::Pro;
+    if (c == "gamepad") return CemuP1::GamePad;
+    return cemu_prefers_pro(e, tid) ? CemuP1::Pro : CemuP1::GamePad;
+}
+
+std::string cemu_player1_hint(CemuP1 p, const hub::GameEntry& e, uint64_t tid) {
+    if (p != CemuP1::Pro) return "GamePad screen: hold View + RB, or Game menu > Swap GamePad / TV screen (Cemu: Ctrl+Tab).";
+    if (cemu_prefers_pro(e, tid)) return "Player 1 plays as a Wii U Pro Controller: this game's item and map screens show on the TV.";
+    return "Player 1 plays as a Wii U Pro Controller (this game's Player 1 controller setting).";   // chosen by the player: no claim about the game's menus
+}
+
+uint64_t wiiu_title_id_for(const hub::GameEntry& e, const std::string& launch_path) {
+    const uint64_t t = title_id_from_key(e.key);
+    return t ? t : launch_path.empty() ? 0 : wiiu_title_id_of_file(launch_path);
 }
 
 /* Cemu's SDL pad ids (SDLController.cpp: buttons are SDL's own gamepad button numbers; axes/triggers share the XInput ids). */
@@ -2530,6 +2547,14 @@ NxSaveMap nx_save_map(const std::string& install_dir, uint64_t tid, const std::s
     return m;
 }
 
+bool vault_battery_ok(const std::string& battery_in) {
+    std::string b = battery_in;
+    while (!b.empty() && (b.back() == '\\' || b.back() == '/')) b.pop_back();
+    if (b.empty()) return false;
+    try { return P(b).is_absolute(); }   // drive + root ("C:\", "C:/") or UNC ("\\server\share"); never "C:foo" or "\vault"
+    catch (...) { return false; }        // not valid UTF-8
+}
+
 SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const std::string& battery_in, const std::string&, uint64_t tid_override, const char* manifest_suffix) {
     SaveSession s;
     s.started_unix = (int64_t)std::time(nullptr);
@@ -2538,7 +2563,7 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
     /* No vault folder, or a relative one: every path below would hang off the process's current folder. Until saves-F4 the Wii U remote-play
      * host passed "" here, and its Super Mario 3D World save went to <install>\usr\save\... and <install>\.sync\emu--.json instead of the
      * vault. Never map such a session: the emulator keeps its own save, nothing is copied either way, and the caller reports the error. */
-    if (battery.empty() || !P(battery).is_absolute()) {
+    if (!vault_battery_ok(battery)) {
         s.error = "this game has no vault folder for its saves (" + (battery.empty() ? std::string("none given") : battery) + "), so they were not copied";
         return s;
     }
