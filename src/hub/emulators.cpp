@@ -2513,6 +2513,13 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
     s.started_unix = (int64_t)std::time(nullptr);
     std::string battery = battery_in;
     while (!battery.empty() && (battery.back() == '\\' || battery.back() == '/')) battery.pop_back();
+    /* No vault folder, or a relative one: every path below would hang off the process's current folder. Until saves-F4 the Wii U remote-play
+     * host passed "" here, and its Super Mario 3D World save went to <install>\usr\save\... and <install>\.sync\emu--.json instead of the
+     * vault. Never map such a session: the emulator keeps its own save, nothing is copied either way, and the caller reports the error. */
+    if (battery.empty() || !P(battery).is_absolute()) {
+        s.error = "this game has no vault folder for its saves (" + (battery.empty() ? std::string("none given") : battery) + "), so they were not copied";
+        return s;
+    }
     s.battery = battery;
     /* <vault>\<system>\<game>\battery -> <vault>\_conflicts\<system>\<game>\battery */
     fs::path game = P(battery).parent_path(), sysdir = game.parent_path(), vault = sysdir.parent_path();

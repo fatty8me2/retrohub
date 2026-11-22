@@ -531,6 +531,25 @@ static void test_sessions(const fs::path& dir) {
     CHECK(read_text(vb2 / "usr" / "save" / "00050000" / "10aa0000" / "user" / "s.sav") == "NEWGAME");
     s = hubemu::begin_session(wud, ci, vb2.u8string(), vault.u8string());
     CHECK(s.rels.size() == 1 && s.rels[0] == "usr/save/00050000/10aa0000");   // next session knows the folder
+
+    /* ---- no vault folder, or a relative one: nothing is mapped and nothing lands beside the current folder. Until saves-F4 the Wii U
+     * remote-play host passed "" and its save went to <install>\usr\save\... and <install>\.sync\emu--.json. ---- */
+    {
+        std::error_code ec;
+        const fs::path cwd0 = fs::current_path(ec);
+        const fs::path here = dir / "cwd";
+        fs::create_directories(here);
+        fs::current_path(here, ec);
+        for (const std::string& bad : {std::string(), std::string("relative\\battery"), std::string("\\")}) {
+            hubemu::SaveSession b = hubemu::begin_session(w, ci, bad, vault.u8string());
+            CHECK(!b.active && !b.error.empty() && b.rels.empty() && b.manifest_path.empty());
+            hubemu::end_session(b);
+            CHECK(!b.active);
+        }
+        CHECK(fs::is_empty(here, ec));   // no usr\save\..., no .sync\emu--.json
+        fs::current_path(cwd0, ec);
+        CHECK(read_text(save) == "ZELDA1");   // the emulator's own save is untouched
+    }
 }
 
 static void test_config() {

@@ -108,10 +108,13 @@ same relative paths, so the vault tree can be copied back verbatim on another PC
   (the same `_conflicts` area the sync uses; the newest 10 per file are kept). Nothing is deleted. The vault sync is queued while the
   game runs and starts after the copy-back (`poll_process`).
 - **RetroHub-managed Azahar/Cemu:** both directions as above.
-- **The user's existing Cemu:** its saves are not moved or overwritten. The Wii U data dir follows Cemu's rules (`portable` folder, legacy
-  `settings.xml` beside the exe, else `%APPDATA%\Cemu`; `mlc_path` from `settings.xml` if set). Before launch the vault copy is restored
-  **only if the game's save folder there has no files** (fresh PC); after the session its folder is backed up into the vault (newer wins).
+- **The user's existing Cemu:** the newest save wins like everywhere else, but a file of theirs is only replaced after a copy of it sits in
+  `%LOCALAPPDATA%\RetroHub\save-backups\<game>\<stamp>-before-cemu-launch` (never pruned; no snapshot, no overwrite). The Wii U data dir follows Cemu's rules (`portable` folder, legacy
+  `settings.xml` beside the exe, else `%APPDATA%\Cemu`; `mlc_path` from `settings.xml` if set); after the session its folder is backed up into the vault (newer wins).
   Their `%APPDATA%\Cemu\mlc01\usr\save\00050000\1019e500` for Twilight Princess HD is the folder involved on this PC.
+- **No vault folder:** `begin_session` maps nothing when the vault battery path is empty or relative (the session stays inactive with an error,
+  the emulator keeps its own save). Before saves-F4 the Wii U remote-play host passed an empty path, and the save went to `<install>\usr\save\...`
+  and `<install>\.sync\emu--.json` beside RetroHub.exe instead of the vault.
 - **`.wud`/`.wux`:** the title id is not readable without decrypting, so the save folder is learned from what changed in
   `usr\save\00050000` during a session (exactly one changed folder) and remembered in the vault for next time.
 - Azahar keeps a title's save data (cartridge and digital alike) in `title\00040000\<id low>\data` as the folder `00000001\` plus
