@@ -1,6 +1,18 @@
 {
   "versions": [
     {
+      "version": "1.46.3",
+      "date": "2026-11-22",
+      "title": "Twilight Princess HD fixes",
+      "new": [],
+      "improved": [
+        "Wii U: Twilight Princess HD now plays with a Pro Controller, so its item and map screens are on the TV and work with your controller instead of the GamePad's touch screen. A new Player 1 controller setting (Automatic, Wii U GamePad or Wii U Pro Controller) in each Wii U game's Controls lets you choose. It applies while RetroHub manages Wii U controls"
+      ],
+      "fixed": [
+        "Saves can no longer be written next to RetroHub.exe when a game's save folder is missing. The game keeps its own save and RetroHub says so after the game"
+      ]
+    },
+    {
       "version": "1.46.2",
       "date": "2026-11-18",
       "title": "Bug fixes: saves, updates, online rooms and more",
