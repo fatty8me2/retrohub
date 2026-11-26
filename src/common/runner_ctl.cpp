@@ -145,7 +145,11 @@ std::string ack_path_for(const std::string& ctl) {
 
 static std::string slot_base(const std::string& dir, int slot) {
     std::string d = dir;
+#ifdef _WIN32
     while (!d.empty() && (d.back() == '/' || d.back() == '\\')) d.pop_back();
+#else
+    while (!d.empty() && d.back() == '/') d.pop_back();
+#endif
     return d + "/" + (slot < 0 ? std::string("auto") : "slot" + std::to_string(slot));
 }
 std::string state_file(const std::string& d, int s) { return slot_base(d, s) + ".state"; }
@@ -154,13 +158,21 @@ std::string sidecar_file(const std::string& d, int s) { return slot_base(d, s) +
 
 std::string shots_dir(const std::string& game_dir) {
     std::string d = game_dir;
+#ifdef _WIN32
     while (!d.empty() && (d.back() == '/' || d.back() == '\\')) d.pop_back();
+#else
+    while (!d.empty() && d.back() == '/') d.pop_back();
+#endif
     return d + "/shots";
 }
 
 std::string shot_name(std::time_t t) {
     std::tm tm{};
+#ifdef _WIN32
     localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
     char b[40];
     std::strftime(b, sizeof b, "%Y%m%d-%H%M%S.png", &tm);
     return b;

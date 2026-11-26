@@ -10,9 +10,14 @@
 #include <string>
 #include <system_error>
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
 
 #include "durable_write.h"
+#include "plat/plat.h"
 
 namespace hubcfg {
 
@@ -34,10 +39,19 @@ inline bool write_file(const std::filesystem::path& p, const std::string& bytes,
     if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path(), ec);
     /* A player may mark a config read-only so the hub leaves it alone: the old truncate-and-write failed there, so this fails too
      * (durable::commit_replace would otherwise clear the attribute and replace the file). */
+#if RH_WIN
     DWORD attr = GetFileAttributesW(p.wstring().c_str());
     if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY)) return false;
+#else
+    struct stat st;
+    if (::stat(p.c_str(), &st) == 0 && !(st.st_mode & S_IWUSR)) return false;   // read-only config: leave it alone
+#endif
     if (skip_if_same && same_on_disk(p, bytes)) return true;
+#if RH_WIN
     return durable::write_file_durable(p.wstring(), bytes);
+#else
+    return durable::write_file_durable(durable::utf8_to_wide(p.string()), bytes);   // macOS: UTF-8 path in, UTF-8 path out
+#endif
 }
 
 inline bool write_utf8(const std::string& utf8_path, const std::string& bytes, bool skip_if_same = true) {

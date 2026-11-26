@@ -1,6 +1,17 @@
 #include "durable_write.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
+#include "plat/plat.h"
+#include "winutil.h"
+
+#if !RH_WIN
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -12,6 +23,8 @@
 #include <system_error>
 
 namespace durable {
+
+#if RH_WIN
 
 namespace {
 
@@ -241,5 +254,160 @@ bool write_file_durable(const std::wstring& dst, const void* bytes, size_t len, 
 bool write_file_durable(const std::wstring& dst, const std::string& bytes, int budget_ms) {
     return write_file_durable(dst, bytes.data(), bytes.size(), budget_ms);
 }
+
+#else  // macOS: paths are UTF-8 already; atomic replace = flush temp, rename(), flush the directory
+
+namespace {
+
+const int kWaitMs = 50;
+int attempts_for(int budget_ms) { return std::max(1, budget_ms / kWaitMs + 1); }
+
+/* Errors worth waiting out (a file briefly busy), as ERROR_SHARING_VIOLATION is on Windows. */
+bool retryable(int e) { return e == EBUSY || e == ETXTBSY || e == EAGAIN || e == EINTR; }
+
+std::string u8(const std::wstring& w) { return winutil::to_utf8(w); }
+
+/* fsync() on macOS only hands the data to the drive; F_FULLFSYNC also flushes the drive's cache (the FlushFileBuffers equivalent).
+ * Falls back to fsync() where the filesystem does not support it (some network / FAT volumes). */
+int full_fsync(int fd) { return ::fcntl(fd, F_FULLFSYNC) == 0 ? 0 : ::fsync(fd); }
+
+bool fsync_path(const std::string& path, int flags) {
+    int fd = ::open(path.c_str(), flags);
+    if (fd < 0) return false;
+    bool ok = full_fsync(fd) == 0;
+    int e = errno;
+    ::close(fd);
+    errno = e;
+    return ok;
+}
+
+/* Flush the directory entry so the rename itself survives a power cut. Best effort: some filesystems refuse fsync on a directory. */
+void fsync_dir_of(const std::string& path) {
+    const size_t pos = path.find_last_of('/');
+    const std::string dir = pos == std::string::npos ? std::string(".") : (pos == 0 ? std::string("/") : path.substr(0, pos));
+    int fd = ::open(dir.c_str(), O_RDONLY);
+    if (fd < 0) return;
+    (void)::fsync(fd);
+    ::close(fd);
+}
+
+bool commit_replace_u8(const std::string& tmp, const std::string& dst, int budget_ms) {
+    const int attempts = attempts_for(budget_ms);
+    int err = 0;
+    bool flushed = false;
+    for (int i = 0; i < attempts; ++i) {
+        if (fsync_path(tmp, O_RDONLY)) { flushed = true; break; }
+        err = errno;
+        if (!retryable(err) || i + 1 == attempts) break;
+        plat::sleep_ms(kWaitMs);
+    }
+    if (!flushed) { errno = err; return false; }
+    for (int i = 0; i < attempts; ++i) {
+        if (::rename(tmp.c_str(), dst.c_str()) == 0) { fsync_dir_of(dst); return true; }
+        err = errno;
+        if (!retryable(err) || i + 1 == attempts) break;
+        plat::sleep_ms(kWaitMs);
+    }
+    errno = err;
+    return false;
+}
+
+}  // namespace
+
+bool commit_replace(const std::wstring& tmp, const std::wstring& dst, int budget_ms) {
+    return commit_replace_u8(u8(tmp), u8(dst), budget_ms);
+}
+
+/* No ANSI code page on macOS: a narrow path is already UTF-8. */
+bool commit_replace_ansi(const std::string& tmp, const std::string& dst, int budget_ms) {
+    return commit_replace_u8(tmp, dst, budget_ms);
+}
+
+std::wstring utf8_to_wide(const std::string& utf8) { return winutil::to_wide(utf8); }
+std::wstring legacy_ansi_to_wide(const std::string& utf8) { return winutil::to_wide(utf8); }
+
+bool commit_replace_utf8(const std::string& tmp, const std::string& dst, int budget_ms) {
+    return commit_replace_u8(tmp, dst, budget_ms);
+}
+
+static bool slurp_u8(const std::string& p, std::string* out) {
+    std::ifstream f(std::filesystem::path(p), std::ios::binary);
+    if (!f) return false;
+    out->assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+
+/* Paths whose last read found an existing but unreadable file: writes to them are refused for the rest of the session. */
+static std::mutex g_guard_mu;
+static std::set<std::string>& guarded() { static std::set<std::string> s; return s; }
+static void guard_set(const std::string& p, bool on) { std::lock_guard<std::mutex> l(g_guard_mu); if (on) guarded().insert(p); else guarded().erase(p); }
+static bool guard_has(const std::string& p) { std::lock_guard<std::mutex> l(g_guard_mu); return guarded().count(p) != 0; }
+
+/* Primary / NotFound / Unreadable only: there is no legacy (ANSI-misread) location on macOS. */
+ReadResult read_file_utf8_migrating(const std::string& path, std::string* bytes) {
+    bytes->clear();
+    const int attempts = attempts_for(kRetryShortMs);
+    for (int i = 0; i < attempts; ++i) {
+        if (slurp_u8(path, bytes)) { guard_set(path, false); return ReadResult::Primary; }
+        bytes->clear();
+        struct stat st;
+        if (::stat(path.c_str(), &st) != 0 && (errno == ENOENT || errno == ENOTDIR)) break;   // really absent
+        if (i + 1 == attempts) { guard_set(path, true); return ReadResult::Unreadable; }   // exists but locked / denied
+        plat::sleep_ms(kWaitMs);
+    }
+    guard_set(path, false);
+    return ReadResult::NotFound;
+}
+
+bool write_file_atomic_utf8(const std::string& path, const std::string& bytes, int budget_ms) {
+    const std::string tmp = path + ".tmp";
+    if (guard_has(path)) { errno = EACCES; return false; }   // the real file was unreadable at load
+    {
+        std::ofstream f(std::filesystem::path(tmp), std::ios::binary | std::ios::trunc);
+        if (!f) return false;
+        f.write(bytes.data(), (std::streamsize)bytes.size());
+        f.flush();
+        if (!f.good()) { f.close(); std::error_code ec; std::filesystem::remove(std::filesystem::path(tmp), ec); return false; }
+    }
+    if (!commit_replace_u8(tmp, path, budget_ms)) {
+        int e = errno;
+        std::error_code ec; std::filesystem::remove(std::filesystem::path(tmp), ec);
+        errno = e;
+        return false;
+    }
+    return true;
+}
+
+bool write_file_durable(const std::wstring& dst, const void* bytes, size_t len, int budget_ms) {
+    const std::string d = u8(dst);
+    const std::string tmp = d + ".hubtmp";
+    int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) return false;
+    const unsigned char* p = static_cast<const unsigned char*>(bytes);
+    bool ok = true;
+    while (len && ok) {
+        ssize_t w = ::write(fd, p, len);
+        if (w < 0) { if (errno == EINTR) continue; ok = false; break; }
+        p += w;
+        len -= (size_t)w;
+    }
+    if (ok) ok = full_fsync(fd) == 0;
+    int err = ok ? 0 : errno;
+    ::close(fd);
+    if (ok) ok = commit_replace_u8(tmp, d, budget_ms);
+    else errno = err;
+    if (!ok) {
+        err = errno;
+        ::unlink(tmp.c_str());
+        errno = err;
+    }
+    return ok;
+}
+
+bool write_file_durable(const std::wstring& dst, const std::string& bytes, int budget_ms) {
+    return write_file_durable(dst, bytes.data(), bytes.size(), budget_ms);
+}
+
+#endif
 
 }  // namespace durable

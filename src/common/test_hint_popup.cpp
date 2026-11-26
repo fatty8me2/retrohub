@@ -9,6 +9,7 @@
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
 
+#ifdef _WIN32
 static HWND find_popup() { return FindWindowW(L"RetroHubStartHint", nullptr); }
 
 int main() {
@@ -67,3 +68,24 @@ int main() {
     std::printf(fails ? "hint_popup_test: %d FAILED\n" : "hint_popup_test: ok (owned, not topmost, foreground unchanged; hub callers get no window)\n", fails);
     return fails ? 1 : 0;
 }
+#else
+/* macOS: no native popup yet (TODO(macOS lane 6)); every caller must finish at once and never create anything. */
+int main() {
+    {
+        starthint::Popup hub;
+        hub.tick(nullptr, false, false);
+        CHECK(hub.done());
+    }
+    {
+        starthint::Popup p;
+        CHECK(!p.done());
+        p.tick(nullptr, false, true);
+        CHECK(p.done());
+        p.tick(nullptr, true, true);   // safe to keep calling after it finished
+        p.close();
+        CHECK(p.done());
+    }
+    std::printf(fails ? "hint_popup_test: %d FAILED\n" : "hint_popup_test: ok (macOS: popup is a no-op until lane 6)\n", fails);
+    return fails ? 1 : 0;
+}
+#endif
