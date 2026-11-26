@@ -4,7 +4,24 @@ project(RetroHub LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-    message(FATAL_ERROR "RetroHub is x64-only")
+    message(FATAL_ERROR "RetroHub is 64-bit only")
+endif()
+if (APPLE)
+    # macOS port: Apple Silicon only (docs/MACOS.md).
+    set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "" FORCE)
+    enable_language(OBJCXX)
+elseif (NOT WIN32)
+    message(FATAL_ERROR "RetroHub builds on Windows (x64) and macOS (arm64) only")
+endif()
+
+# Windows system libraries named in target_link_libraries across the tree. Off Windows they are empty targets, so the
+# module CMakeLists keep linking them unconditionally; the macOS replacements are linked where the code needs them.
+if (NOT WIN32)
+    foreach(_winlib advapi32 bcrypt crypt32 d3d11 dxgi gdi32 mf mfplat mfreadwrite mfuuid mmdevapi ole32 oleaut32 opengl32
+                    propsys setupapi shell32 strmiids user32 uuid windowsapp winhttp winmm wmcodecdspuuid ws2_32 xinput)
+        add_library(${_winlib} INTERFACE)
+    endforeach()
 endif()
 
 file(STRINGS "${CMAKE_SOURCE_DIR}/VERSION" HUB_VERSION LIMIT_COUNT 1)
