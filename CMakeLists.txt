@@ -110,6 +110,7 @@ enable_testing()
 # Nothing is baked into the command lines, so set the env var when running ctest; never configure a URL here.
 
 add_test(NAME json_test COMMAND json_test)
+add_test(NAME plat_crypto_test COMMAND plat_crypto_test)   # plat_crypto: MD5/SHA-1/SHA-256/SHA-512, HMAC, random (known vectors)
 add_test(NAME runner_ctl_test COMMAND runner_ctl_test)   # hub<->runner control file, ack, slot/shot paths
 add_test(NAME cheevos_test COMMAND cheevos_test)   # RetroAchievements: config/cache, hardcore rules, mocked login + rc_client session (no network, no RA account)
 add_test(NAME osd_test COMMAND osd_test)   # OSD toast queue + font renderer

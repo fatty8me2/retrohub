@@ -1,6 +1,13 @@
 # Shared JSON reader/writer + Windows helpers (UTF-8/UTF-16, exe dir, quoting, file I/O). Tiny static lib, no deps.
 add_library(hubbase STATIC json.cpp winutil.cpp durable_write.cpp cheats.cpp runner_ctl.cpp start_hint.cpp hint_popup.cpp osd.cpp)
 target_link_libraries(hubbase PUBLIC user32 gdi32)
+target_sources(hubbase PRIVATE plat/plat_crypto.cpp)   # docs/MACOS.md: hashes / HMAC / random on both platforms
+target_link_libraries(hubbase PUBLIC bcrypt)
+if(APPLE)
+    target_link_libraries(hubbase PUBLIC "-framework Security" "-framework CoreFoundation")
+endif()
+add_executable(plat_crypto_test plat/test_plat_crypto.cpp)
+target_link_libraries(plat_crypto_test PRIVATE hubbase)
 target_include_directories(hubbase PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubbase PUBLIC cxx_std_17)
 

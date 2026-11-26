@@ -18,6 +18,10 @@ tests green: push the branch and check the Windows CI run (`.github/workflows/ci
 ## Rules for ported code
 
 - `src/common/plat/plat.h`: `RH_WIN` / `RH_MAC`, `plat::kSep`, `plat::join`, monotonic clock, `sleep_ms`, `lib_open` / `lib_sym`.
+- `plat.h` file helpers: `plat::fopen_path(std::filesystem::path, "rb")` (replaces `_wfopen(p.wstring().c_str(), L"rb")`),
+  `plat::fseek64` / `plat::ftell64` (replace `_fseeki64` / `_ftelli64`), `plat::local_tm` / `plat::utc_tm` (localtime_s / gmtime_s).
+- `src/common/plat/plat_crypto.h` (in hubbase): `plat::Hasher` / `plat::hash` / `plat::hmac` (MD5, SHA-1, SHA-256, SHA-512),
+  `plat::random_bytes`, `plat::hex`. BCrypt on Windows, CommonCrypto on macOS. Replacing a BCrypt hash sequence with it is fine.
 - `src/common/plat/plat_sock.h`: include it instead of `<winsock2.h>`; `plat::socket_t`, `kBadSocket`, `sock_init`, `sock_close`,
   `sock_error`, `sock_would_block`, `sock_set_nonblocking`, `udp_ignore_connreset`, `sock_setopt`, `sock_poll`.
 - Windows behaviour stays byte-identical: same API calls, same paths, same file names. Put Windows-only code under `#if RH_WIN`
@@ -33,7 +37,7 @@ tests green: push the branch and check the Windows CI run (`.github/workflows/ci
 | # | Area | State |
 |---|---|---|
 | 0 | CMake for Apple arm64, `plat.h`, `plat_sock.h`, this doc | done |
-| 1 | `src/common` hubbase (winutil, durable_write, u8file, cfg_write, hint_popup, osd, runner_ctl, start_hint, net_probe) | |
+| 1 | `src/common` hubbase (winutil, durable_write, u8file, cfg_write, hint_popup, osd, runner_ctl, start_hint, net_probe) | done |
 | 2 | `src/net` on `plat_sock.h` | |
 | 3 | rest of `src/common` (hubcommon: bcrypt -> CommonCrypto, kanto, ...) | |
 | 4 | `src/saves` (winhttp -> NSURLSession or libcurl, bcrypt) | |

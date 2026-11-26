@@ -20,6 +20,9 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <ctime>
+#include <filesystem>
 #include <string>
 
 #if RH_WIN
@@ -75,6 +78,48 @@ inline uint32_t current_pid() {
     return (uint32_t)GetCurrentProcessId();
 #else
     return (uint32_t)getpid();
+#endif
+}
+
+/* fopen by std::filesystem::path (replaces `_wfopen(p.wstring().c_str(), L"rb")`; mode is the narrow mode, e.g. "rb"). */
+inline FILE* fopen_path(const std::filesystem::path& p, const char* mode) {
+#if RH_WIN
+    wchar_t wm[8] = {};
+    for (int i = 0; i < 7 && mode[i]; ++i) wm[i] = (wchar_t)(unsigned char)mode[i];
+    return _wfopen(p.c_str(), wm);
+#else
+    return std::fopen(p.c_str(), mode);
+#endif
+}
+/* 64-bit seek / tell (replaces _fseeki64 / _ftelli64). */
+inline int fseek64(FILE* f, int64_t off, int whence) {
+#if RH_WIN
+    return _fseeki64(f, off, whence);
+#else
+    return fseeko(f, (off_t)off, whence);
+#endif
+}
+inline int64_t ftell64(FILE* f) {
+#if RH_WIN
+    return _ftelli64(f);
+#else
+    return (int64_t)ftello(f);
+#endif
+}
+
+/* localtime / gmtime, thread-safe (localtime_s / localtime_r). */
+inline bool local_tm(std::time_t t, std::tm* out) {
+#if RH_WIN
+    return localtime_s(out, &t) == 0;
+#else
+    return localtime_r(&t, out) != nullptr;
+#endif
+}
+inline bool utc_tm(std::time_t t, std::tm* out) {
+#if RH_WIN
+    return gmtime_s(out, &t) == 0;
+#else
+    return gmtime_r(&t, out) != nullptr;
 #endif
 }
 
