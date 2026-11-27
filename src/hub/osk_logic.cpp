@@ -302,6 +302,28 @@ void FolderBrowser::refresh() {
                 std::string d = std::string(1, (char)('A' + i)) + ":\\";
                 entries.push_back({FolderEntry::Drive, d, d});
             }
+#else
+        /* macOS: no drive letters. The empty folder is the top list: the home shortcuts, then "/" and every mounted volume under /Volumes. */
+        if (const char* home = std::getenv("HOME"); home && *home) {
+            for (const char* n : {"Desktop", "Documents", "Downloads"}) {
+                std::string p = std::string(home) + "/" + n;
+                if (fs::is_directory(P(p), ec)) entries.push_back({FolderEntry::Shortcut, n, p});
+            }
+            entries.push_back({FolderEntry::Shortcut, "Home", home});
+        }
+        entries.push_back({FolderEntry::Drive, "/", "/"});
+        {
+            std::vector<FolderEntry> vols;
+            for (fs::directory_iterator it(P("/Volumes"), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+                std::error_code e2;
+                if (!it->is_directory(e2)) continue;
+                std::string name = S8(it->path().filename());
+                if (name.empty() || name[0] == '.') continue;
+                vols.push_back({FolderEntry::Drive, name, S8(it->path())});
+            }
+            std::sort(vols.begin(), vols.end(), [](const FolderEntry& x, const FolderEntry& y) { return lower(x.name) < lower(y.name); });
+            entries.insert(entries.end(), vols.begin(), vols.end());
+        }
 #endif
         if (sel >= (int)entries.size()) sel = 0;
         return;

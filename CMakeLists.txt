@@ -205,8 +205,10 @@ add_test(NAME findgames_test COMMAND findgames_test)                   # Find my
 add_test(NAME hub_friend_games_test COMMAND hub_friend_games_test)   # greyed-out friend games: identity, ghosts, badge text, publish hash/debounce
 add_test(NAME hub_gamepack_test COMMAND hub_gamepack_test)           # GamePack: Drive listing HTML parse, entity decode, safe names (no network)
 add_test(NAME hub_discover_test COMMAND hub_discover_test ${CMAKE_SOURCE_DIR}/data/recommended.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv)   # Discover: recommended.json schema (13 consoles, fields, no dupes, no URLs) + library/pack status matching
+if(WIN32)   # PowerShell script: bash port pending on macOS
 add_test(NAME pack_install_e2e COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/pack_install_e2e.ps1)   # pack install -> scan -> ghost dropped -> unpack, fake Drive on loopback
 set_tests_properties(pack_install_e2e PROPERTIES SKIP_RETURN_CODE 77)   # fw2-ci: the script exits 77 when qa_gamepack.exe or python is missing
+endif()
 add_test(NAME hub_boot_art_test COMMAND hub_boot_art_test)   # boot-animation art: every System has console + media art
 add_test(NAME hub_theme_test COMMAND hub_theme_test)   # every theme preset defines every palette slot and meets text contrast
 add_test(NAME hub_picker_test COMMAND hub_picker_test)   # room game picker: search, chips, sections, virtual layout
@@ -328,7 +330,9 @@ add_test(NAME real_boot_test COMMAND real_boot_test)                       # rea
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
 add_test(NAME hub_gameinfo_test COMMAND hub_gameinfo_test)   # game info: offline metadata, Wikidata matching on recorded fixtures, cache
 add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit checks only
-add_test(NAME hub_apply_test COMMAND hub_apply_test $<TARGET_FILE:RetroHub>)   # scratch dirs only, never relaunches
+if(WIN32)   # Win32 update applier only (see src/hub/CMakeLists.txt)
+  add_test(NAME hub_apply_test COMMAND hub_apply_test $<TARGET_FILE:RetroHub>)   # scratch dirs only, never relaunches
+endif()
 add_test(NAME hub_shell_test COMMAND hub_shell_test)
 add_test(NAME hub_changelog_test COMMAND hub_changelog_test ${CMAKE_SOURCE_DIR}/data/changelog.json)   # patch notes parser + show-once rule
 add_test(NAME hub_welcome_test COMMAND hub_welcome_test)   # Welcome back card: versions since, collapse/cap, labels, keyword->page, show/defer rules

@@ -5,6 +5,8 @@
 #include "net_internal.h"
 #include "session.h"
 
+#include "plat/plat.h"
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -70,7 +72,7 @@ static void offline_tests(const std::string& root)
     CHECK(code.size() == 12 && code.compare(0, 3, "RH-") == 0 && code[7] == '-', "%s", code.c_str());
     CHECK(friend_code("7kq2m9xdaaaaaaaaaaaaaaaaaa") == "RH-7KQ2-M9XD");
 
-    std::string d = root + "id1\\", v = root + "vault1\\";
+    std::string d = root + "id1" + plat::kSep, v = root + "vault1" + plat::kSep;
     Identity i1 = identity_load_or_create(d, v);
     Identity i2 = identity_load_or_create(d, v);
     CHECK(i1.user_id == i2.user_id && i1.secret == i2.secret);
@@ -82,7 +84,7 @@ static void offline_tests(const std::string& root)
 
     /* identity adoption after a vault sync (new PC created its own identity first) */
     {
-        std::string d2 = root + "adopt\\data\\", v2 = root + "adopt\\vault\\";
+        std::string d2 = root + "adopt" + plat::kSep + "data" + plat::kSep, v2 = root + "adopt" + plat::kSep + "vault" + plat::kSep;
         Identity mine = identity_load_or_create(d2, v2);     // "new PC" identity, mirrored to the vault
         CHECK(!identity_adopt_vault_if_older(d2, v2, nullptr), "same identity: nothing to adopt");
         Identity orig = identity_generate();
@@ -142,7 +144,7 @@ static void offline_tests(const std::string& root)
     /* conversation persistence */
     {
         FriendsClient c;
-        c.set_paths(root + "id2\\", "");
+        c.set_paths(root + "id2" + plat::kSep, "");
         // not started: conversation() lazily loads (empty)
         CHECK(c.conversation("aaaaaaaaaaaaaaaaaaaaaaaaaa").empty());
     }
@@ -152,15 +154,15 @@ static std::unique_ptr<Peer> make_peer(const std::string& root, const std::strin
 {
     auto p = std::make_unique<Peer>();
     p->name = name;
-    p->dir = root + name + "\\data\\";
-    p->vault = root + name + "\\vault\\";
+    p->dir = root + name + plat::kSep + "data" + plat::kSep;
+    p->vault = root + name + plat::kSep + "vault" + plat::kSep;
     p->c.set_paths(p->dir, p->vault);
     return p;
 }
 
 int main(int argc, char** argv)
 {
-    std::string root = (fs::temp_directory_path() / ("hubfriends_" + std::to_string(now_ms()))).string() + "\\";
+    std::string root = (fs::temp_directory_path() / ("hubfriends_" + std::to_string(now_ms()))).string() + plat::kSep;
     fs::create_directories(root);
 
     offline_tests(root);

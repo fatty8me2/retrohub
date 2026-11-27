@@ -23,6 +23,8 @@
 #include <system_error>
 #include <vector>
 
+#include "plat/plat.h"
+
 #include "durable_write.h"
 #include "gba_save.h"
 #include "json.h"
@@ -203,13 +205,13 @@ inline std::string vault_file(const std::string& battery_dir, const std::string&
     std::vector<std::string> names;
     std::error_code ec;
     for (auto& de : fs::directory_iterator(U(d), ec)) if (!ec && de.is_regular_file(ec)) names.push_back(de.path().filename().u8string());
-    return d + "\\" + vault_file_name(rom_path, save_stem, names);
+    return d + plat::kSep + vault_file_name(rom_path, save_stem, names);
 }
 /* Dolphin (Core::GetSavePath): <SavesPath>/<rom file stem>-<SI port + 1>.sav */
 inline std::string dolphin_save_file(const std::string& saves_dir, const std::string& rom_path, int si_port) {
     std::string d = saves_dir;
     while (!d.empty() && (d.back() == '/' || d.back() == '\\')) d.pop_back();
-    return d + "\\" + file_stem_of(rom_path) + "-" + std::to_string(si_port + 1) + ".sav";
+    return d + plat::kSep + file_stem_of(rom_path) + "-" + std::to_string(si_port + 1) + ".sav";
 }
 
 inline bool read_all(const std::string& p, std::string* out) {
@@ -240,7 +242,7 @@ inline bool backup_file(const std::string& file, const std::string& dir) {
     fs::create_directories(U(dir), ec);
     const std::string name = U(file).filename().u8string();
     for (int n = 1; n < 10000; ++n) {
-        std::string b = dir + "\\" + name + "." + std::to_string(n) + ".bak";
+        std::string b = dir + plat::kSep + name + "." + std::to_string(n) + ".bak";
         if (!fs::exists(U(b), ec)) return write_atomic(b, data);
     }
     return false;

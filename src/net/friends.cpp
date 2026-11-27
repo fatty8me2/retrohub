@@ -557,7 +557,7 @@ bool parse_playtime_reply(const std::string& text, std::map<std::string, std::ve
 }
 
 struct FriendsClient::Impl {
-    std::string data_dir = ".\\userdata\\", vault_dir;
+    std::string data_dir = std::string(".") + plat::kSep + "userdata" + plat::kSep, vault_dir;
     std::string server, name = "Player";
     Identity id;
     WsClient ws;

@@ -385,9 +385,11 @@ target_link_libraries(hub_np3ds_test PRIVATE hublogic hubcommon)
 target_compile_definitions(hub_np3ds_test PRIVATE N3DS_JOIN_PS1="${CMAKE_SOURCE_DIR}/data/helpers/n3ds_join.ps1")
 
 # Native update applier: unit tests + integration dry-run of `RetroHub.exe --apply-update` in scratch dirs.
+if(WIN32)   # the applier is the Win32 `RetroHub.exe --apply-update`; macOS updates through updater_mac.mm (no applier to test)
 add_executable(hub_apply_test test_update_apply.cpp update_apply.cpp)
 target_link_libraries(hub_apply_test PRIVATE hubbase shell32)
 add_dependencies(hub_apply_test RetroHub)
+endif()
 # ---- Clickable invite links (retrohub://join/<CODE>, --join <CODE>, single-instance handoff) ----
 add_library(hubinvite STATIC invite.cpp)
 target_include_directories(hubinvite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

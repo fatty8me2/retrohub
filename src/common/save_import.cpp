@@ -1,6 +1,7 @@
 #include "save_import.h"
 #include "gba_save.h"
 #include "durable_write.h"
+#include "plat/plat.h"
 
 #include <algorithm>
 #include <chrono>
@@ -42,7 +43,13 @@ std::string trim(std::string s) {
 std::string join(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
     if (a.back() == '\\' || a.back() == '/') return a + b;
+#if RH_WIN
     return a + "\\" + b;
+#else
+    /* macOS: '/' unless the base is itself a Windows-style path (a retroarch.cfg / config.ini value copied from a PC) */
+    const bool win_style = a.find('/') == std::string::npos && a.find('\\') != std::string::npos;
+    return a + (win_style ? '\\' : plat::kSep) + b;
+#endif
 }
 
 bool read_file(const std::string& path, std::string* out, size_t max = 64u << 20) {
@@ -191,8 +198,8 @@ std::vector<Folder> detect_folders(const Env& env) {
     std::vector<std::string> parents;
     for (const std::string& p : {sd, env.programfiles, env.programfiles_x86, env.userprofile, join(env.userprofile, "Desktop"),
                                  join(env.userprofile, "Downloads"), env.documents, env.localappdata.empty() ? std::string() : join(env.localappdata, "Programs"),
-                                 env.programfiles.empty() ? std::string() : join(join(env.programfiles, "Steam"), "steamapps\\common"),
-                                 env.programfiles_x86.empty() ? std::string() : join(join(env.programfiles_x86, "Steam"), "steamapps\\common")})
+                                 env.programfiles.empty() ? std::string() : join(join(join(env.programfiles, "Steam"), "steamapps"), "common"),
+                                 env.programfiles_x86.empty() ? std::string() : join(join(join(env.programfiles_x86, "Steam"), "steamapps"), "common")})
         if (!p.empty()) parents.push_back(p);
 
     /* RetroArch */
@@ -220,14 +227,17 @@ std::vector<Folder> detect_folders(const Env& env) {
     /* Dolphin */
     {
         add(Source::Dolphin, join(join(env.appdata, "Dolphin Emulator"), "GC"));
+#if !RH_WIN
+        add(Source::Dolphin, join(join(env.appdata, "Dolphin"), "GC"));   // macOS: ~/Library/Application Support/Dolphin/GC
+#endif
         add(Source::Dolphin, join(join(env.documents, "Dolphin Emulator"), "GC"));
-        add(Source::Dolphin, join(join(env.userprofile, "Documents\\Dolphin Emulator"), "GC"));
+        add(Source::Dolphin, join(join(join(env.userprofile, "Documents"), "Dolphin Emulator"), "GC"));
         for (auto& p : parents) for (auto& k : kids(p, "Dolphin")) { add(Source::Dolphin, join(join(k, "User"), "GC")); add(Source::Dolphin, join(k, "GC")); }
     }
     /* PCSX2 */
     {
         add(Source::PCSX2, join(join(env.documents, "PCSX2"), "memcards"));
-        add(Source::PCSX2, join(join(env.userprofile, "Documents\\PCSX2"), "memcards"));
+        add(Source::PCSX2, join(join(join(env.userprofile, "Documents"), "PCSX2"), "memcards"));
         add(Source::PCSX2, join(join(env.appdata, "PCSX2"), "memcards"));
         for (auto& p : parents) for (auto& k : kids(p, "PCSX2")) add(Source::PCSX2, join(k, "memcards"));
     }
@@ -651,7 +661,7 @@ bool convert(const Row& r, const GameRef& g, const Ctx& ctx, std::vector<OutFile
             else if (d.size() == 32768) {
                 std::string all;
                 std::string dir = dir_with_slash(ctx.battery_dir ? ctx.battery_dir(g) : std::string());
-                if (!dir.empty()) { std::string ex; if (read_file(dir + "\\" + n, &ex) && ex.size() == 131072) all = ex; }
+                if (!dir.empty()) { std::string ex; if (read_file(join(dir, n), &ex) && ex.size() == 131072) all = ex; }
                 if (all.empty()) for (int i = 0; i < 4; ++i) all += blank_mempak(g.key + "#" + std::to_string(i));
                 int slot = std::max(0, std::min(3, r.controller));
                 std::memcpy(&all[(size_t)slot * 32768], d.data(), 32768);

@@ -158,7 +158,7 @@ static void lint() {
     // Every marked site, by file -> number of lines. A new marked site means editing this table on purpose.
     const std::map<std::string, int> known_hub = {
         {"tv_mode.cpp", 5},    // F11 / Settings checkbox with no game (may_enter_tv_mode) / leave / startup fullscreen (guarded by game_active) / post-exit re-fullscreen (hub already focused)
-        {"launch.cpp", 6},     // hub_menu_topmost (View+Y menu open only, cleared on close), force_foreground (2: user's View+Y open / close only), focus_hub restore, focus_game restore, flash_taskbar (guarded by game_active), focus_game (raises the GAME), flash_taskbar (guarded by game_active)
+        {"launch.cpp", 9},     // 6 Windows sites + 3 macOS sites in the #else branch (the lint reads source text, so BOTH platforms count all 9): focus_hub SDL_RestoreWindow + SDL_RaiseWindow (user View+Y hotkey) and hub_menu_topmost SDL_SetWindowAlwaysOnTop (View+Y menu only, cleared on close). Windows: hub_menu_topmost (View+Y menu open only, cleared on close), force_foreground (2: user's View+Y open / close only), focus_hub restore, focus_game restore, flash_taskbar (guarded by game_active), focus_game (raises the GAME), flash_taskbar (guarded by game_active)
         {"quickmenu.cpp", 2},  // GameCube NetPlay Dolphin: restore + SetForegroundWindow of the GAME after the player closes their own View+Y menu (hub is the foreground process then)
         {"emu_live.cpp", 3},   // manual dev tool hub_emu_live, not part of RetroHub.exe
     };
