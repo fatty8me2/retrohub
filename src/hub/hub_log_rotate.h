@@ -5,16 +5,21 @@
 #include <cstddef>
 #include <cstdint>
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <filesystem>
+#endif
 
 namespace hublog {
 
 constexpr unsigned long long kMaxBytes = 1ull << 20;   // rotate once hub.log reaches 1 MB
 constexpr int kKeepFiles = 3;                          // hub.log, hub.1.log, hub.2.log
 
+#if defined(_WIN32)
 inline std::wstring file_name(const std::wstring& dir, int index) {
     return dir + (index == 0 ? L"hub.log" : L"hub." + std::to_wstring(index) + L".log");
 }
@@ -30,6 +35,21 @@ inline void rotate(const std::wstring& dir, int keep = kKeepFiles) {
     for (int i = keep - 2; i >= 0; --i)
         MoveFileExW(file_name(dir, i).c_str(), file_name(dir, i + 1).c_str(), MOVEFILE_REPLACE_EXISTING);
 }
+#else
+/* macOS: UTF-8 paths, std::filesystem. dir ends in '/'. */
+inline std::string file_name(const std::string& dir, int index) {
+    return dir + (index == 0 ? "hub.log" : "hub." + std::to_string(index) + ".log");
+}
+inline bool needs_rotation(unsigned long long current_size, unsigned long long incoming, unsigned long long max_bytes = kMaxBytes) {
+    return current_size > 0 && current_size + incoming > max_bytes;
+}
+inline void rotate(const std::string& dir, int keep = kKeepFiles) {
+    if (keep < 1) return;
+    std::error_code ec;
+    std::filesystem::remove(file_name(dir, keep - 1), ec);
+    for (int i = keep - 2; i >= 0; --i) std::filesystem::rename(file_name(dir, i), file_name(dir, i + 1), ec);
+}
+#endif
 
 inline char lower_ascii(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
 

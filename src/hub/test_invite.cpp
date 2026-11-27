@@ -5,6 +5,25 @@
 #include "winutil.h"
 #include "invite.h"
 
+#if !defined(_WIN32)
+/* macOS: stand-ins for the few Win32 calls the checks use. The pipe is a Unix socket and the mutex an flock file (see invite.h). */
+#include <mach-o/dyld.h>
+#include <spawn.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <chrono>
+#include <thread>
+extern char** environ;
+typedef unsigned long DWORD;
+typedef unsigned long long ULONGLONG;
+static ULONGLONG GetTickCount64() { return (ULONGLONG)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+static DWORD GetTickCount() { return (DWORD)GetTickCount64(); }
+static void Sleep(DWORD ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
+static DWORD GetCurrentProcessId() { return (DWORD)getpid(); }
+#endif
+
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -17,6 +36,7 @@ static void check(bool ok, const char* what) {
     if (!ok) ++g_fail;
 }
 
+#if defined(_WIN32)
 static std::wstring self_exe() { return winutil::exe_path_w(); }
 
 static DWORD run_child(const std::wstring& args) {
@@ -34,6 +54,35 @@ static DWORD run_child(const std::wstring& args) {
     CloseHandle(pi.hProcess);
     return code;
 }
+#else
+static std::string self_exe_path() {
+    char b[4096];
+    uint32_t n = sizeof b;
+    if (_NSGetExecutablePath(b, &n) != 0) return std::string();
+    return b;
+}
+
+static DWORD run_child(const std::wstring& args) {   // args: space separated, optionally "quoted"; re-split like the Windows command line
+    std::vector<std::string> v;
+    v.push_back(self_exe_path());
+    std::wstring cur;
+    bool q = false, has = false;
+    for (wchar_t c : args) {
+        if (c == L'"') { q = !q; has = true; continue; }
+        if (c == L' ' && !q) { if (has) { v.push_back(winutil::to_utf8(cur)); cur.clear(); has = false; } continue; }
+        cur += c; has = true;
+    }
+    if (has) v.push_back(winutil::to_utf8(cur));
+    std::vector<char*> argv;
+    for (auto& x : v) argv.push_back(&x[0]);
+    argv.push_back(nullptr);
+    pid_t pid = 0;
+    if (posix_spawn(&pid, v[0].c_str(), nullptr, nullptr, argv.data(), environ) != 0) return 999;
+    int st = 0;
+    if (waitpid(pid, &st, 0) < 0) return 998;
+    return WIFEXITED(st) ? (DWORD)WEXITSTATUS(st) : 998;
+}
+#endif
 
 static void parsing_tests() {
     std::wstring c;
@@ -90,8 +139,13 @@ static void link_tests() {
 
 static void single_instance_tests() {
     DWORD id = GetCurrentProcessId();
+#if defined(_WIN32)
     std::wstring mutex = L"Local\\RetroHubTest.Mutex." + std::to_wstring(id);
     std::wstring pipe = L"\\\\.\\pipe\\RetroHubTest.Pipe." + std::to_wstring(id);
+#else
+    std::wstring mutex = L"RetroHubTest.Mutex." + std::to_wstring(id) + L".lock";   // plain names live under $TMPDIR
+    std::wstring pipe = L"RetroHubTest.Pipe." + std::to_wstring(id) + L".sock";
+#endif
 
     InviteInstance first(mutex);
     check(first.is_primary(), "first holder is primary");
@@ -127,20 +181,42 @@ static void single_instance_tests() {
     check(server.take_play(&key) && key == L"k1" && server.take(&got) && got == L"ABCDEF", "mixed queue keeps kinds separate");
 
     /* A client that connects and never writes must not block the next client. */
+#if defined(_WIN32)
     HANDLE silent = CreateFileW(pipe.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
     check(silent != INVALID_HANDLE_VALUE, "silent client connects");
+#else
+    int silent = socket(AF_UNIX, SOCK_STREAM, 0);
+    {
+        const char* t = getenv("TMPDIR");
+        std::string path = std::string(t && *t ? t : "/tmp/");
+        if (path.back() != '/') path += '/';
+        path += winutil::to_utf8(pipe);
+        sockaddr_un a{};
+        a.sun_family = AF_UNIX;
+        std::snprintf(a.sun_path, sizeof a.sun_path, "%s", path.c_str());
+        check(connect(silent, (sockaddr*)&a, sizeof a) == 0, "silent client connects");
+    }
+#endif
     DWORD t0 = GetTickCount();
     rc = run_child(L"--send \"" + pipe + L"\" ABCDEF");
     check(rc == 0 && server.take(&got) && got == L"ABCDEF", "message delivered despite a silent client");
     check(GetTickCount() - t0 < 2900, "silent client dropped by the read deadline");
+#if defined(_WIN32)
     if (silent != INVALID_HANDLE_VALUE) CloseHandle(silent);
+#else
+    if (silent >= 0) close(silent);
+#endif
 
     server.stop();
 }
 
 /* A launch that finds the mutex but gets no answer on the pipe (the other hub is closing): it waits and becomes the primary. */
 static void wait_primary_tests() {
+#if defined(_WIN32)
     const std::wstring mutex = L"Local\\RetroHubTest.WaitMutex." + std::to_wstring(GetCurrentProcessId());
+#else
+    const std::wstring mutex = L"RetroHubTest.WaitMutex." + std::to_wstring(GetCurrentProcessId()) + L".lock";
+#endif
     auto first = std::make_unique<InviteInstance>(mutex);
     check(first->is_primary(), "wait: the first holder is primary");
     auto second = std::make_unique<InviteInstance>(mutex);
@@ -207,6 +283,7 @@ static void play_tests() {
     check(invite_play_arguments(L"abc") == L"--play abc", "shortcut arguments");
 }
 
+#if defined(_WIN32)
 int wmain(int argc, wchar_t** argv) {
     if (argc == 4 && std::wstring(argv[1]) == L"--send") {
         return invite_send(argv[2], argv[3], 3000) ? 0 : 1;
@@ -222,3 +299,20 @@ int wmain(int argc, wchar_t** argv) {
     std::printf("%s\n", g_fail ? "FAILED" : "all passed");
     return g_fail ? 1 : 0;
 }
+#else
+int main(int argc, char** argv) {
+    std::vector<std::wstring> w;
+    for (int i = 0; i < argc; ++i) w.push_back(winutil::to_wide(argv[i]));
+    if (argc == 4 && w[1] == L"--send") return invite_send(w[2], w[3], 3000) ? 0 : 1;
+    if (argc == 4 && w[1] == L"--sendplay") return invite_send_play(w[2], w[3], 3000) ? 0 : 1;
+    if (argc == 3 && w[1] == L"--sendshow") return invite_send_show(w[2], 3000) ? 0 : 1;
+    parsing_tests();
+    play_tests();
+    night_tests();
+    link_tests();
+    single_instance_tests();
+    wait_primary_tests();
+    std::printf("%s\n", g_fail ? "FAILED" : "all passed");
+    return g_fail ? 1 : 0;
+}
+#endif

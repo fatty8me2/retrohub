@@ -4,8 +4,10 @@
 #include <cstdio>
 #include <string>
 #include <thread>
+#if defined(_WIN32)
 #include <windows.h>
 #include <objbase.h>
+#endif
 #include "toast.h"
 #include "toast_worker.h"
 
@@ -13,6 +15,7 @@ int main() {
     int fails = 0;
     std::string xml = hubtoast::build_invite_xml("Bob", "Smash 64", "ZXCV23");
     std::string err;
+#if defined(_WIN32)
     // Also from a thread that already owns an STA (like the UI thread): must still work.
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (!hubtoast::toast_winrt_selftest(xml, &err)) { std::printf("FAIL: init+xml load (STA caller): %s\n", err.c_str()); ++fails; }
@@ -23,6 +26,12 @@ int main() {
     if (hubtoast::system_scheduler().schedule(xml, "gntest", "gamenight", 4102444800000LL)) { std::printf("FAIL: schedule accepted during a game\n"); ++fails; }
     hubtoast::set_game_probe(nullptr);
     CoUninitialize();
+#else
+    // macOS: system toasts are not supported yet. Nothing may claim to be available or to have shown / scheduled anything.
+    if (hubtoast::system_notifier().available() || hubtoast::system_notifier().show(xml, "t")) { std::printf("FAIL: macOS notifier claims support\n"); ++fails; }
+    if (hubtoast::system_scheduler().available() || hubtoast::system_scheduler().schedule(xml, "gntest", "gamenight", 4102444800000LL)) { std::printf("FAIL: macOS scheduler claims support\n"); ++fails; }
+    if (hubtoast::toast_winrt_selftest(xml, &err) || err.empty()) { std::printf("FAIL: macOS selftest must report not supported\n"); ++fails; }
+#endif
     // The toast worker: post() never waits for a running job, jobs run in order on ONE thread that is not the caller, stop() drains and joins.
     {
         std::atomic<int> seen{0}, order_ok{1};

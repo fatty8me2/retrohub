@@ -3,6 +3,9 @@
 #include "json.h"
 #include "update_apply.h"
 #include "popup_guard.h"
+#include <cstdlib>
+
+#if defined(_WIN32)
 
 #include <algorithm>
 #include <atomic>
@@ -1045,3 +1048,78 @@ bool try_apply_mode(int* exit_code) {
 
 } // namespace apply
 } // namespace hubupdate
+#else
+/* macOS: there is no installer process. The applier (copy files over the running install, boot watch, rollback) is the Windows
+ * update flow; the macOS update replaces the .app bundle instead (TODO(macOS lane 9)). Every entry point here reports "nothing to do"
+ * or "not supported" so callers (updater.cpp, main.cpp) behave as on a PC with no pending update. */
+#include <string>
+#include <vector>
+
+namespace hubupdate {
+namespace apply {
+
+bool is_excluded(const std::wstring&) { return false; }
+bool is_safe_rel(const std::wstring& rel) {
+    if (rel.empty() || rel[0] == L'/' || rel[0] == L'\\' || rel.find(L':') != std::wstring::npos) return false;
+    size_t i = 0;
+    while (i <= rel.size()) {
+        size_t j = rel.find_first_of(L"/\\", i);
+        if (j == std::wstring::npos) j = rel.size();
+        if (rel.compare(i, j - i, L"..") == 0) return false;
+        i = j + 1;
+    }
+    return true;
+}
+bool path_is_under(const std::wstring&, const std::wstring&) { return false; }
+bool is_smash_classic_file(const std::wstring&) { return false; }
+std::vector<std::wstring> list_staged(const std::wstring&, bool) { return {}; }
+std::string sha256_file_hex(const std::wstring&) { return std::string(); }
+std::string plain_reason(unsigned long) { return "an unknown error"; }
+std::vector<Running> processes_under(const std::wstring&, const std::vector<unsigned long>&) { return {}; }
+WaitOutcome wait_for_old_processes(const Options&, std::wstring*) { return WaitOutcome::Clear; }
+std::wstring default_status_path(const std::wstring& install) { return install + L"/userdata/update_status.json"; }
+bool write_status(const std::wstring&, const Status&) { return false; }
+bool read_status(const std::wstring&, Status*) { return false; }
+std::string status_line(const Status& s) { return s.reason.empty() ? s.result : s.reason; }
+bool take_status(const std::wstring&, Status*) { return false; }
+Result apply_files(const Options&) {
+    Result r;
+    r.error = L"applying updates is not supported on macOS yet";
+    return r;
+}
+RecoverReport recover_interrupted(const std::wstring&, const std::string&, const std::wstring&) { return RecoverReport(); }
+std::wstring boot_ok_path(const std::wstring& install) { return install + L"/updates/boot_ok"; }
+std::wstring bad_version_path(const std::wstring& install) { return install + L"/updates/bad_version.json"; }
+bool bad_version_read(const std::wstring&, BadVersion*) { return false; }
+bool bad_version_write(const std::wstring&, const BadVersion&) { return false; }
+void bad_version_clear(const std::wstring&) {}
+bool version_lower(const std::string& a, const std::string& b) {
+    auto parse = [](const std::string& v, std::vector<int>* out) {
+        size_t at = (!v.empty() && (v[0] == 'v' || v[0] == 'V')) ? 1 : 0;
+        while (at < v.size()) {
+            size_t end = at;
+            while (end < v.size() && v[end] >= '0' && v[end] <= '9') end++;
+            if (end == at) return false;
+            out->push_back(std::atoi(v.substr(at, end - at).c_str()));
+            if (end >= v.size()) break;
+            if (v[end] != '.') return false;
+            at = end + 1;
+        }
+        return !out->empty();
+    };
+    std::vector<int> x, y;
+    if (!parse(a, &x) || !parse(b, &y)) return false;
+    while (x.size() < y.size()) x.push_back(0);
+    while (y.size() < x.size()) y.push_back(0);
+    return x < y;
+}
+void note_boot_ok() {}                        // no applier is watching this start
+void set_own_version(const std::string&) {}
+bool write_boot_marker(const std::wstring&, const std::string&) { return false; }
+bool boot_marker_matches(const std::wstring&, const std::string&) { return false; }
+int run(const Options&) { return 1; }
+bool try_apply_mode(int*) { return false; }   // there is no --apply-update mode on macOS
+
+} // namespace apply
+} // namespace hubupdate
+#endif  // _WIN32

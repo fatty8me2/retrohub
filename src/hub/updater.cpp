@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -29,6 +30,16 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <shellapi.h>
+#define UPD_SEP "\\"
+#else
+#include <crt_externs.h>
+#include <sys/mount.h>
+#include <sys/statvfs.h>
+#include "plat/plat.h"
+#include "plat/plat_crypto.h"
+#include "plat/plat_http.h"
+#define UPD_SEP "/"
+#endif
 
 #include "hub_version.h"
 #include "update_apply.h"
@@ -46,14 +57,21 @@ namespace {
 constexpr const char* kLatestReleaseApi = "https://api.github.com/repos/fatty8me2/retrohub/releases/latest";
 constexpr const char* kDownloadPrefix = "https://github.com/fatty8me2/retrohub/releases/download/";
 constexpr const char* kLegacyDownloadPrefix = "https://github.com/fatty8me2/smash-classic/releases/download/";
+#if defined(_WIN32)
 constexpr const char* kPlatformAssetName = "BattleShip-windows.zip";
 constexpr const char* kHubAssetNameC = "RetroHub-windows.zip";
+#else
+/* TODO(macOS lane 9): the release script publishes the macOS package under these names (a signed, notarized .dmg listed in the signed
+ * SHA256SUMS.txt). Until a release carries them, the check reports "no update for this platform" and nothing is offered. */
+constexpr const char* kPlatformAssetName = "RetroHub-macos-arm64.dmg";
+constexpr const char* kHubAssetNameC = "RetroHub-macos-arm64-hub.zip";   // the Windows hub-only split does not exist on macOS: never published
+#endif
 constexpr const char* kSigAssetNameC = "SHA256SUMS.txt.sig";
 constexpr const char* kSumsAssetName = "SHA256SUMS.txt";
 constexpr const char* kManualUrl = "https://github.com/fatty8me2/retrohub/releases/latest";
 
 std::atomic<bool> s_checked{false};
-std::atomic<unsigned long long> s_last_fail_ms{0};   // GetTickCount64 of the last FAILED check (network / unreadable answer)
+std::atomic<unsigned long long> s_last_fail_ms{0};   // tick (ms) of the last FAILED check (network / unreadable answer)
 std::atomic<bool> s_available{false};
 std::atomic<bool> s_checking{false};
 std::atomic<bool> s_failed{false};
@@ -76,7 +94,9 @@ struct Pending {
     std::string smash_sha256; // ... and --smash-sha256 <hash>: it refuses unless the installed BattleShip.exe still has this hash
 };
 Pending& s_pending = *new Pending;   // guarded by s_mu
+#if defined(_WIN32)
 HANDLE s_applier = nullptr;         // guarded by s_mu: the installer begin_handoff started (closed once it is seen to have ended)
+#endif
 detail::Gate s_gate;          // UI thread only (tick)
 bool (*s_session_probe)() = nullptr;
 
@@ -103,8 +123,17 @@ detail::DiscardGuard& s_discard = *new detail::DiscardGuard;   // guarded by s_m
  * contain non-ASCII characters, e.g. a profile folder with an accent. */
 std::wstring W(const std::string& s) { return winutil::to_wide(s); }
 std::string U8(const std::wstring& s) { return winutil::to_utf8(s); }
+#if defined(_WIN32)
 std::filesystem::path P(const std::string& s) { return std::filesystem::path(W(s)); }
 void rm_file(const std::string& p) { DeleteFileW(W(p).c_str()); }
+unsigned long long tick_ms() { return GetTickCount64(); }
+void sleep_ms(unsigned ms) { Sleep(ms); }
+#else
+std::filesystem::path P(const std::string& s) { return std::filesystem::path(s); }   // UTF-8 paths
+void rm_file(const std::string& p) { std::error_code ec; std::filesystem::remove(P(p), ec); }
+unsigned long long tick_ms() { return plat::tick_ms(); }
+void sleep_ms(unsigned ms) { plat::sleep_ms(ms); }
+#endif
 
 void set_status(const std::string& s) { std::lock_guard<std::mutex> l(s_mu); s_status = s; }
 
@@ -115,6 +144,7 @@ std::string trim_slash(std::string s) {
 
 void ulog(const char* fmt, ...) {
     std::string dir = hub::data_dir() + "logs";
+#if defined(_WIN32)
     CreateDirectoryW(W(dir).c_str(), nullptr);
     FILE* f = _wfopen(W(dir + "\\updater.log").c_str(), L"ab");
     if (!f) return;
@@ -126,6 +156,21 @@ void ulog(const char* fmt, ...) {
     SYSTEMTIME t; GetLocalTime(&t);
     std::fprintf(f, "[%04d-%02d-%02d %02d:%02d:%02d] %s\r\n", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, buf);
     std::fclose(f);
+#else
+    std::error_code mkec;
+    std::filesystem::create_directories(P(dir), mkec);
+    FILE* f = plat::fopen_path(P(dir + "/updater.log"), "ab");
+    if (!f) return;
+    char buf[1024];
+    va_list ap; va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    hublog::info("updater: %s", buf);
+    std::tm t{};
+    plat::local_tm(std::time(nullptr), &t);
+    std::fprintf(f, "[%04d-%02d-%02d %02d:%02d:%02d] %s\n", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, buf);
+    std::fclose(f);
+#endif
 }
 
 /* ---------------- JSON: shared reader (src/common/json.h); GitHub's payload is an object, extra bytes tolerated ---------------- */
@@ -152,6 +197,7 @@ std::vector<int> parse_version(const std::string& v) {
     return parts;
 }
 
+#if defined(_WIN32)
 /* Every child process a worker waits on (curl, tar) is registered here, so shutdown() can end it by its handle. */
 std::mutex& s_child_mu = *new std::mutex;
 std::vector<HANDLE>& s_children = *new std::vector<HANDLE>;   // guarded by s_child_mu
@@ -172,8 +218,14 @@ void kill_children() {   // by handle only; under the lock, so a handle is never
     std::lock_guard<std::mutex> l(s_child_mu);
     for (HANDLE h : s_children) TerminateProcess(h, 1);
 }
+#else
+std::mutex& s_child_mu = *new std::mutex;
+std::vector<int>& s_children = *new std::vector<int>;   // macOS: no child processes are run by the updater yet (see run_command)
+void kill_children() {}
+#endif
 
 constexpr int kRunTimedOut = -2;
+#if defined(_WIN32)
 /* timeout_ms: when the process runs longer it is ended by its own handle (never by name) and kRunTimedOut is returned.
  * cwd (UTF-8, optional): the child's working directory, handed over as UTF-16. */
 int run_capture(std::string cmd, const std::function<void(const std::string&)>& onLine, DWORD timeout_ms = INFINITE,
@@ -219,7 +271,6 @@ int run_capture(std::string cmd, const std::function<void(const std::string&)>& 
     CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
     return timedOut.load() ? kRunTimedOut : (int)code;
 }
-
 std::string sha256_file(const std::string& path, const std::atomic<bool>* cancel = nullptr) {   // "" on error or when *cancel turned true
     BCRYPT_ALG_HANDLE alg = nullptr; BCRYPT_HASH_HANDLE hash = nullptr; std::string hex;
     if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) return hex;
@@ -243,6 +294,25 @@ std::string sha256_file(const std::string& path, const std::atomic<bool>* cancel
     BCryptCloseAlgorithmProvider(alg, 0);
     return hex;
 }
+#else
+/* TODO(macOS lane 9): the macOS update is a .dmg that the app replaces itself from; no external tool is run. */
+int run_capture(std::string, const std::function<void(const std::string&)>&, unsigned long = 0xFFFFFFFFul, const std::string& = std::string()) { return -1; }
+std::string sha256_file(const std::string& path, const std::atomic<bool>* cancel = nullptr) {   // "" on error or when *cancel turned true
+    std::ifstream in(P(path), std::ios::binary);
+    if (!in) return std::string();
+    plat::Hasher h(plat::HashAlg::Sha256);
+    if (!h.ok()) return std::string();
+    std::vector<char> buf(1 << 16);
+    while (in) {
+        if (cancel && cancel->load()) return std::string();   // a large file must not hold up the app leaving
+        in.read(buf.data(), (std::streamsize)buf.size());
+        const std::streamsize n = in.gcount();
+        if (n > 0) h.update(buf.data(), (size_t)n);
+    }
+    if (!in.eof()) return std::string();
+    return plat::hex(h.finish());
+}
+#endif
 
 /* Growing UTF-16 buffer: long or non-ASCII install paths are not truncated. */
 std::string exe_path() { return winutil::exe_path(); }
@@ -510,6 +580,7 @@ void set_pubkey_for_test(const unsigned char pub[64]) {
 }
 #endif
 
+#if defined(_WIN32)
 bool verify_ecdsa_p256(const unsigned char pub[64], const void* msg, size_t msgLen, const void* sigDer, size_t sigLen) {
     unsigned char rs[64];
     if (!pub || !der_to_raw_rs(sigDer, sigLen, rs)) return false;
@@ -532,6 +603,16 @@ bool verify_ecdsa_p256(const unsigned char pub[64], const void* msg, size_t msgL
     if (hashAlg) BCryptCloseAlgorithmProvider(hashAlg, 0);
     return ok;
 }
+#else
+}   // namespace detail
+bool hubupdate_mac_ecdsa_verify(const unsigned char pub[64], const void* msg, size_t msgLen, const void* sigDer, size_t sigLen);   // updater_mac.mm (Security.framework)
+namespace detail {
+bool verify_ecdsa_p256(const unsigned char pub[64], const void* msg, size_t msgLen, const void* sigDer, size_t sigLen) {
+    unsigned char rs[64];
+    if (!pub || !der_to_raw_rs(sigDer, sigLen, rs)) return false;   // the same strict DER rules as Windows; Security.framework then verifies the DER signature
+    return hubupdate_mac_ecdsa_verify(pub, msg, msgLen, sigDer, sigLen);
+}
+#endif
 
 bool sums_are_trusted(const std::string& tag, const std::string& sums, const std::string& sig, std::string* why) {
     unsigned char pub[64];
@@ -578,8 +659,8 @@ OwnedThread::~OwnedThread() { if (th_.joinable()) th_.detach(); }
 
 bool OwnedThread::join_locked(unsigned ms) {
     if (!th_.joinable()) return true;
-    const unsigned long long t0 = GetTickCount64();
-    while (!done_->load() && GetTickCount64() - t0 < ms) Sleep(5);
+    const unsigned long long t0 = tick_ms();
+    while (!done_->load() && tick_ms() - t0 < ms) sleep_ms(5);
     if (!done_->load()) return false;
     th_.join();
     return true;
@@ -603,18 +684,19 @@ bool OwnedThread::join_for(unsigned ms) { std::lock_guard<std::mutex> l(mu_); re
 void OwnedThread::detach() { std::lock_guard<std::mutex> l(mu_); if (th_.joinable()) th_.detach(); }
 
 int run_command(const std::string& cmd, const std::function<void(const std::string&)>& onLine, unsigned long timeout_ms) {
-    return run_capture(cmd, onLine, (DWORD)timeout_ms);
+    return run_capture(cmd, onLine, (unsigned long)timeout_ms);
 }
 
 int unpack_zip(const std::string& tar_exe, const std::string& dir, const std::string& zip_name, const std::string& out_name, unsigned long timeout_ms) {
     if (tar_exe.empty() || dir.empty() || zip_name.empty() || out_name.empty()) return -1;
-    return run_capture("\"" + tar_exe + "\" -xf \"" + zip_name + "\" -C \"" + out_name + "\"", [](const std::string&) {}, (DWORD)timeout_ms, dir);
+    return run_capture("\"" + tar_exe + "\" -xf \"" + zip_name + "\" -C \"" + out_name + "\"", [](const std::string&) {}, (unsigned long)timeout_ms, dir);
 }
 int live_child_count() { std::lock_guard<std::mutex> l(s_child_mu); return (int)s_children.size(); }
 #ifdef RETROHUB_UPDATER_TESTING
 void reset_quit_for_test() { s_quit.store(false); }
 #endif
 
+#if defined(_WIN32)
 std::string system_dir() {
     wchar_t buf[MAX_PATH + 1];
     UINT n = GetSystemDirectoryW(buf, MAX_PATH);
@@ -638,13 +720,36 @@ bool resolve_system_tool(const std::string& dir, const char* exe, std::string* p
 }
 
 bool find_system_tool(const char* exe, std::string* path, std::string* err) { return resolve_system_tool(system_dir(), exe, path, err); }
+#else
+std::string system_dir() { return ""; }   // no Windows system folder; the updater runs no external tool on macOS (TODO(macOS lane 9))
 
+bool resolve_system_tool(const std::string& dir, const char* exe, std::string* path, std::string* err) {
+    if (dir.empty() || !exe || !*exe) {
+        if (err) *err = std::string("RetroHub does not run ") + (exe ? exe : "external tools") + " to update itself on macOS.";
+        return false;
+    }
+    std::string p = trim_slash(dir) + "/" + exe;
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(P(p), ec)) {
+        if (err) *err = std::string(exe) + " was not found at " + p + ", so RetroHub cannot update itself. Download manually: " + kManualUrl;
+        return false;
+    }
+    if (path) *path = p;
+    return true;
+}
+
+bool find_system_tool(const char* exe, std::string* path, std::string* err) { return resolve_system_tool(system_dir(), exe, path, err); }
+
+#endif
+
+#if defined(_WIN32)
 /* The quoted absolute path of curl.exe, or "" (+ *err). */
 static std::string curl_cmd(std::string* err) {
     std::string p, e;
     if (!find_system_tool("curl.exe", &p, &e)) { if (err) *err = e; return ""; }
     return "\"" + p + "\"";
 }
+#endif
 
 std::string download_flags(bool resume) {
     return " -fL -# --connect-timeout 30 --speed-limit " + std::to_string(kStallBytesPerSec) + " --speed-time " + std::to_string(kStallSeconds) +
@@ -700,11 +805,19 @@ std::string low_space_message(unsigned long long needed, unsigned long long have
            " but only " + format_bytes(have, false) + " is free. Free up some space and try again.";
 }
 
+#if defined(_WIN32)
 long long free_bytes_on(const std::string& path) {
     ULARGE_INTEGER avail{}, total{}, freeAll{};
     if (!GetDiskFreeSpaceExW(W(path).c_str(), &avail, &total, &freeAll)) return -1;
     return (long long)avail.QuadPart;
 }
+#else
+long long free_bytes_on(const std::string& path) {
+    struct statvfs sv;
+    if (::statvfs(path.c_str(), &sv) != 0) return -1;
+    return (long long)sv.f_bavail * (long long)sv.f_frsize;   // available to this user
+}
+#endif
 
 long long zip_unpacked_size(const std::string& zipPath) {
     std::ifstream in(P(zipPath), std::ios::binary | std::ios::ate);
@@ -739,6 +852,7 @@ long long zip_unpacked_size(const std::string& zipPath) {
     return (long long)total;
 }
 
+#if defined(_WIN32)
 bool fetch_sums(const std::string& sumsUrl, const std::string& scratch, std::string* text, std::string* err) {
     std::string sp = scratch + ".sums";
     rm_file(sp);
@@ -835,6 +949,55 @@ bool download_verified(const FetchSpec& f, const std::string& zipPath, std::stri
     rm_file(recPath);   // complete and verified: nothing left to resume
     return true;
 }
+#else
+/* macOS: the signed checksum list and its signature come over plat::http (NSURLSession). The zip download / install itself is not
+ * supported yet (TODO(macOS lane 9): the .dmg download, its Gatekeeper check and the replace-and-relaunch). */
+static bool http_fetch_small(const std::string& url, size_t max_bytes, std::string* out) {
+    plat::http::Request rq;
+    rq.url = url;
+    rq.headers.push_back({"User-Agent", "RetroHub-Updater"});
+    rq.timeout_ms = 30000;
+    bool too_big = false;
+    rq.on_data = [&](const char* d, size_t n) {
+        if (out->size() + n > max_bytes) { too_big = true; return false; }
+        out->append(d, n);
+        return true;
+    };
+    plat::http::Response rs;
+    const bool ok = plat::http::perform(rq, &rs);
+    return ok && !too_big && rs.status == 200;
+}
+
+bool fetch_sums(const std::string& sumsUrl, const std::string&, std::string* text, std::string* err) {
+    std::string sums;
+    if (!http_fetch_small(sumsUrl, 262144, &sums) || sums.empty()) { if (err) *err = "could not download SHA256SUMS.txt to verify the update."; return false; }
+    if (text) *text = sums;
+    return true;
+}
+
+bool fetch_sig(const std::string& sigUrl, const std::string&, std::string* bytes, std::string* err) {
+    std::string sig;
+    if (!http_fetch_small(sigUrl, 1024, &sig) || sig.empty()) { if (err) *err = kUnsignedMessage; return false; }
+    if (bytes) *bytes = sig;
+    return true;
+}
+
+bool download_verified(const FetchSpec& f, const std::string& zipPath, std::string* err,
+                       const std::function<void(const std::string&)>&) {
+    auto bad = [&](const std::string& m) { rm_file(zipPath); if (err) *err = m; return false; };
+    std::string sums = f.sums_text, sig = f.sig_bytes;
+    if (sums.empty()) {
+        if (f.sums_url.empty()) return bad(verdict_message(Verdict::NoSums));
+        std::string e;
+        if (!fetch_sums(f.sums_url, zipPath, &sums, &e)) return bad(e);
+        if (f.sig_url.empty()) { ulog("release %s has no %s", f.tag.c_str(), kSigAssetNameC); return bad(kUnsignedMessage); }
+        if (!fetch_sig(f.sig_url, zipPath, &sig, &e)) { ulog("release %s: could not fetch %s", f.tag.c_str(), kSigAssetNameC); return bad(e); }
+    }
+    std::string why;
+    if (!sums_are_trusted(f.tag, sums, sig, &why)) return bad(why);
+    return bad("installing updates is not supported on macOS yet. Download manually: " + std::string(kManualUrl));
+}
+#endif
 
 /* ---- the deferred hand-off: a downloaded update waits for the game(s) to close ---- */
 GateState gate_step(Gate& g, bool ready, bool session_busy, bool install_busy, unsigned long long now_ms, unsigned long long settle_ms) {
@@ -859,6 +1022,7 @@ BadVerdict bad_version_verdict(const std::string& cand, const std::string& bad, 
 std::string bad_version_message(const std::string& cand, const std::string& cur) {
     return "Version " + strip_v(cand) + " could not start on this PC, so RetroHub stayed on version " + strip_v(cur) + ".";
 }
+#if defined(_WIN32)
 bool bad_version_gate(const std::wstring& install, const std::string& cand, bool retry, std::string* why) {
     apply::BadVersion b;
     if (!apply::bad_version_read(install, &b) || b.version.empty()) return false;   // none, or unreadable: ignored
@@ -873,10 +1037,13 @@ bool bad_version_gate(const std::wstring& install, const std::string& cand, bool
     }
     return false;
 }
+#else
+bool bad_version_gate(const std::wstring&, const std::string&, bool, std::string*) { return false; }   // the applier's bad_version.json is a Windows installer record
+#endif
 
 void discard_blocked_artifacts(const std::string& updatesDir, const std::string& tag) {
     if (strip_v(tag).empty()) return;
-    const std::string staged = updatesDir + "\\staged", manifest = updatesDir + "\\staged.json", zip = updatesDir + "\\update.zip";
+    const std::string staged = updatesDir + UPD_SEP "staged", manifest = updatesDir + UPD_SEP "staged.json", zip = updatesDir + UPD_SEP "update.zip";
     {   // the unpacked folder, only when its manifest names this tag
         std::string text;
         { std::ifstream in(P(manifest), std::ios::binary); if (in) { std::stringstream ss; ss << in.rdbuf(); text = ss.str(); } }   // closed before anything is deleted
@@ -917,6 +1084,13 @@ std::string discard_message(const std::string& tag) {
 /* Regular files under dir: {relative path with '/', absolute path, size}, sorted by relative path. false when the walk failed. */
 struct StagedWalkEntry { std::string rel; std::filesystem::path abs; long long size = 0; };
 /* Files a shell or an antivirus drops into a folder on its own: desktop.ini, Thumbs.db, anything hidden AND system. Never part of an update. */
+#if !defined(_WIN32)
+static bool is_shell_dropping(const std::filesystem::path& p) {
+    std::string n = p.filename().string();
+    for (char& c : n) c = (char)tolower((unsigned char)c);
+    return n == ".ds_store" || n == "desktop.ini" || n == "thumbs.db" || n.rfind("._", 0) == 0;
+}
+#else
 static bool is_shell_dropping(const std::filesystem::path& p) {
     std::wstring n = p.filename().wstring();
     for (wchar_t& c : n) c = (wchar_t)towlower(c);
@@ -924,6 +1098,12 @@ static bool is_shell_dropping(const std::filesystem::path& p) {
     DWORD a = GetFileAttributesW(p.c_str());
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_HIDDEN) && (a & FILE_ATTRIBUTE_SYSTEM);
 }
+#endif
+#if defined(_WIN32)
+static std::string path_u8(const std::filesystem::path& p) { return U8(p.wstring()); }
+#else
+static std::string path_u8(const std::filesystem::path& p) { return p.string(); }
+#endif
 static bool walk_staged(const std::string& dir, std::vector<StagedWalkEntry>* out) {
     std::error_code ec;
     const std::filesystem::path base = P(dir);
@@ -933,7 +1113,11 @@ static bool walk_staged(const std::string& dir, std::vector<StagedWalkEntry>* ou
         if (!it->is_regular_file(e2) || is_shell_dropping(it->path())) continue;
         StagedWalkEntry w;
         w.abs = it->path();
+        #if defined(_WIN32)
         w.rel = U8(std::filesystem::relative(w.abs, base, e2).generic_wstring());
+#else
+        w.rel = std::filesystem::relative(w.abs, base, e2).generic_string();
+#endif
         if (e2 || w.rel.empty()) return false;
         w.size = (long long)it->file_size(e2);
         if (e2) return false;
@@ -959,7 +1143,7 @@ bool hash_staged(const std::string& dir, std::vector<StagedFile>* out, const std
     for (const StagedWalkEntry& w : walk) {
         if (cancel && cancel->load()) return false;
         StagedFile f;
-        f.path = w.rel; f.size = w.size; f.sha256 = sha256_file(U8(w.abs.wstring()), cancel);
+        f.path = w.rel; f.size = w.size; f.sha256 = sha256_file(path_u8(w.abs), cancel);
         if (f.sha256.empty()) return false;
         r.push_back(std::move(f));
     }
@@ -979,7 +1163,7 @@ bool verify_staged_list(const std::string& dir, const std::vector<StagedFile>& l
     }
     for (const StagedWalkEntry& w : walk) {   // then the contents
         if (cancel && cancel->load()) return false;
-        if (sha256_file(U8(w.abs.wstring()), cancel) != lower(want[w.rel]->sha256)) return false;
+        if (sha256_file(path_u8(w.abs), cancel) != lower(want[w.rel]->sha256)) return false;
     }
     return true;
 }
@@ -1029,15 +1213,16 @@ bool parse_staged_manifest(const std::string& text, StagedInfo* out) {
 
 bool staged_reusable(const std::string& updates_dir, const std::string& version, bool* hub_only, std::string* smash_sha256,
                      const std::atomic<bool>* cancel) {
-    std::ifstream in(P(updates_dir + "\\staged.json"), std::ios::binary);
+    std::ifstream in(P(updates_dir + UPD_SEP "staged.json"), std::ios::binary);
     if (!in || version.empty()) return false;
     std::stringstream ss; ss << in.rdbuf();
     StagedInfo m;
     if (!parse_staged_manifest(ss.str(), &m) || m.version != version) return false;
-    const std::string staged = updates_dir + "\\staged";
+    const std::string staged = updates_dir + UPD_SEP "staged";
     for (const char* req : {"RetroHub.exe", "BattleShip.exe"}) {
         if (m.hub_only && std::strcmp(req, "BattleShip.exe") == 0) continue;   // a hub-only payload carries none of Smash Classic's files
-        if (GetFileAttributesW(W(staged + "\\" + req).c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+        std::error_code fe;
+        if (!std::filesystem::exists(P(staged + UPD_SEP + req), fe)) return false;
     }
     StagedInfo now = scan_staged(staged);
     if (now.files != m.files || now.bytes != m.bytes) return false;
@@ -1052,14 +1237,14 @@ bool staged_reusable(const std::string& updates_dir, const std::string& version,
 
 bool write_staged_manifest(const std::string& updates_dir, const std::string& version, bool hub_only, const std::string& smash_sha256,
                            const std::atomic<bool>* cancel) {
-    StagedInfo s = scan_staged(updates_dir + "\\staged");
-    if (!hash_staged(updates_dir + "\\staged", &s.list, cancel)) return false;
+    StagedInfo s = scan_staged(updates_dir + UPD_SEP "staged");
+    if (!hash_staged(updates_dir + UPD_SEP "staged", &s.list, cancel)) return false;
     s.files = (long long)s.list.size();
     s.version = version;
     s.hub_only = hub_only;
     s.smash_sha256 = hub_only ? smash_sha256 : std::string();
     if (s.files <= 0 || version.empty()) return false;
-    return winutil::write_file_atomic(updates_dir + "\\staged.json", staged_manifest_json(s));
+    return winutil::write_file_atomic(updates_dir + UPD_SEP "staged.json", staged_manifest_json(s));
 }
 
 } // namespace detail
@@ -1072,6 +1257,7 @@ bool launch_check_disabled() {
         const char* env = std::getenv(name);
         if (env && env[0] != '\0' && env[0] != '0') return true;
     }
+#if defined(_WIN32)
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     bool found = false;
@@ -1079,13 +1265,20 @@ bool launch_check_disabled() {
         if (wcscmp(argv[i], L"--no-update-check") == 0) found = true;
     if (argv) LocalFree(argv);
     return found;
+#else
+    const int argc = *_NSGetArgc();
+    char** argv = *_NSGetArgv();
+    for (int i = 1; argv && i < argc; i++)
+        if (std::strcmp(argv[i], "--no-update-check") == 0) return true;
+    return false;
+#endif
 }
 
 /* retryBad is passed to the check THIS call starts (never kept in a flag): "Try again" can clear the bad-version record only through the check
  * it actually started, so an automatic check can never clear it. Returns false when no check was started. */
 static bool start_check(bool force, bool retryBad) {
     if (s_checking.load() || s_downloading.load()) return false;
-    if (!force && !detail::check_retry_due(s_checked.load(), s_last_fail_ms.load(), GetTickCount64())) return false;
+    if (!force && !detail::check_retry_due(s_checked.load(), s_last_fail_ms.load(), tick_ms())) return false;
     if (!force && launch_check_disabled()) {
         s_checked.store(true);
         set_status("Update check disabled.");
@@ -1101,15 +1294,33 @@ static bool start_check(bool force, bool retryBad) {
     if (s_quit.load()) { s_checking.store(false); return false; }   // the app is leaving
     if (!s_check_th.start([retryBad]() {
         std::string response;
+#if defined(_WIN32)
         std::string cpath, curlErr;
         const bool haveCurl = detail::find_system_tool("curl.exe", &cpath, &curlErr);
         if (!haveCurl) ulog("check failed: %s", curlErr.c_str());
         std::string cmd = "\"" + cpath + "\" -fLsS -m 10 -H \"User-Agent: RetroHub-Updater\" "
                           "-H \"Accept: application/vnd.github+json\" \"" + kLatestReleaseApi + "\"";
         int code = haveCurl ? run_capture(cmd, [&](const std::string& l) { response += l; }) : -1;
+#else
+        /* macOS: the same GitHub API request over plat::http (NSURLSession, system TLS). */
+        const bool haveCurl = true;
+        const std::string curlErr;
+        int code = -1;
+        {
+            plat::http::Request rq;
+            rq.url = kLatestReleaseApi;
+            rq.headers.push_back({"User-Agent", "RetroHub-Updater"});
+            rq.headers.push_back({"Accept", "application/vnd.github+json"});
+            rq.timeout_ms = 10000;
+            rq.connect_timeout_ms = 10000;
+            plat::http::Response rs;
+            if (plat::http::perform(rq, &rs) && rs.status >= 200 && rs.status < 300) { response = rs.body; code = 0; }
+            else code = rs.status ? rs.status : -1;
+        }
+#endif
         if (code != 0 || response.empty()) {
-            ulog("check failed (curl exit %d)", code);
-            s_checked.store(false); s_last_fail_ms.store(GetTickCount64() | 1);   // a network failure is not an answer: the next automatic check may retry, spaced
+            ulog("check failed (%s %d)", haveCurl ? "http" : "curl exit", code);
+            s_checked.store(false); s_last_fail_ms.store(tick_ms() | 1);   // a network failure is not an answer: the next automatic check may retry, spaced
             s_failed.store(true);
             set_status(haveCurl ? "Unable to check for updates." : "Unable to check for updates: " + curlErr);
             s_checking.store(false);
@@ -1118,7 +1329,7 @@ static bool start_check(bool force, bool retryBad) {
         detail::Release rel = detail::parse_release(response);
         if (!rel.ok) {
             ulog("check failed: unreadable release JSON");
-            s_checked.store(false); s_last_fail_ms.store(GetTickCount64() | 1);
+            s_checked.store(false); s_last_fail_ms.store(tick_ms() | 1);
             s_failed.store(true);
             set_status("Unable to read update information.");
             s_checking.store(false);
@@ -1140,7 +1351,7 @@ static bool start_check(bool force, bool retryBad) {
             s_blocked_bad.store(true);
             set_status(badWhy);
             ulog("latest %s is the version that could not start here; not offered (%s)", rel.tag.c_str(), badWhy.c_str());
-            detail::discard_blocked_artifacts(trim_slash(hub::exe_dir()) + "\\updates", rel.tag);   // it will never be used: do not keep its files
+            detail::discard_blocked_artifacts(trim_slash(hub::exe_dir()) + UPD_SEP "updates", rel.tag);   // it will never be used: do not keep its files
         } else if ((rel.has_asset || rel.has_hub_asset) && (rel.sums_url.empty() || rel.sig_url.empty())) {
             /* Unsigned (or no checksums): refused up front, nothing is offered or downloaded. */
             s_failed.store(true);
@@ -1174,6 +1385,7 @@ void set_session_probe(bool (*fn)()) { s_session_probe = fn; }
 /* Download, verify and unpack may run during a game (the player asked for the update); only the hand-off to the installer waits.
  * Calling this again while an update is downloading or waiting for a game to close does nothing, so every caller (About page,
  * startup popup, the bell, a room's "UPDATE NOW") is safe as it is. */
+#if defined(_WIN32)
 void start_update() {
     bool expected = false;
     if (!s_downloading.compare_exchange_strong(expected, true)) return;
@@ -1402,7 +1614,15 @@ void start_update() {
         s_downloading.store(false);
     }
 }
+#else
+void start_update() {
+    /* TODO(macOS lane 9): download the signed .dmg, verify it against SHA256SUMS.txt.sig (the check already does), replace the .app and relaunch. */
+    set_status("Error: updating RetroHub is not supported on macOS yet. Download manually: " + std::string(kManualUrl));
+    ulog("start_update refused: the macOS update is not implemented yet");
+}
+#endif
 
+#if defined(_WIN32)
 /* Launches the TEMP installer and waits for its "started" marker, then asks the app to quit (installer_started()). The installer waits
  * for this process to exit before touching any file, and never terminates a game. */
 static void begin_handoff(const Pending& p, bool game_active) {
@@ -1470,7 +1690,7 @@ static void begin_handoff(const Pending& p, bool game_active) {
 void tick() {
     if (s_quit.load()) return;
     const bool ready = s_ready.load() && !s_started.load();
-    const unsigned long long now = GetTickCount64();
+    const unsigned long long now = tick_ms();
     bool session = false, leftover = false;
     if (ready) {
         session = s_session_probe && s_session_probe();
@@ -1504,17 +1724,31 @@ void tick() {
         default: break;   // Settling / Done
     }
 }
+#else
+void tick() {}   // macOS: nothing is downloaded or handed over (see start_update)
+#endif
 
 bool update_deferred() { return s_deferred.load(); }
 
+#if !defined(_WIN32)
+void shutdown() {
+    s_quit.store(true);
+    const unsigned long long t0 = tick_ms();   // the check thread is joined (bounded); nothing else runs on macOS yet
+    for (detail::OwnedThread* t : {&s_check_th, &s_download_th, &s_handoff_th}) {
+        const unsigned long long used = tick_ms() - t0;
+        if (!t->join_for(used >= 5000 ? 0u : (unsigned)(5000 - used))) { ulog("shutdown: an updater thread did not end in time; detaching it"); t->detach(); }
+    }
+    if (s_startup_th.joinable()) s_startup_th.join();
+}
+#else
 void shutdown() {
     s_quit.store(true);
     kill_children();   // a running curl or tar is ended by its handle (never the installer: it is not registered); its worker then returns at once
     /* No worker may outlive this call: it joins the check, download and hand-off threads (bounded; each wakes within moments because its
      * child is gone and it checks s_quit between steps). One that still does not end is detached and logged: a last resort. */
-    const unsigned long long t0 = GetTickCount64();   // ONE deadline for all three: leaving takes at most about 5 s in total
+    const unsigned long long t0 = tick_ms();   // ONE deadline for all three: leaving takes at most about 5 s in total
     for (detail::OwnedThread* t : {&s_check_th, &s_download_th, &s_handoff_th}) {
-        const unsigned long long used = GetTickCount64() - t0;
+        const unsigned long long used = tick_ms() - t0;
         if (!t->join_for(used >= 5000 ? 0u : (unsigned)(5000 - used))) { ulog("shutdown: an updater thread did not end in time; detaching it"); t->detach(); }
     }
     if (s_ready.load() && !s_handing.load()) {   // downloaded but never handed over: the unpacked files stay for next time, the unused installer copy goes
@@ -1524,7 +1758,14 @@ void shutdown() {
     }
     if (s_startup_th.joinable()) s_startup_th.join();
 }
+#endif
 
+#if !defined(_WIN32)
+void startup_pass_async() {
+    if (s_startup_started.exchange(true)) return;
+    s_startup_done.store(true);   // no installer exists on macOS: nothing to repair, no failure note to show
+}
+#else
 void startup_pass_async() {
     if (s_startup_started.exchange(true)) return;
     apply::set_own_version(current_version());   // note_boot_ok() (main.cpp) records this version as started, with or without --boot-ok
@@ -1546,6 +1787,7 @@ void startup_pass_async() {
         s_startup_done.store(true);
     });
 }
+#endif
 
 bool take_startup_notes(std::vector<std::string>* out) {
     if (!s_startup_done.exchange(false)) return false;
@@ -1581,6 +1823,7 @@ float download_progress() { return s_progress.load(); }
  * (exit 3, "postponed") and ends. Without this check RetroHub would still say "quit now" and close by itself when the game ended, with no
  * update and nothing to reopen it. So: true only while the installer is still running. When it gave up, the update goes back to waiting
  * for the game (tick() hands it over again afterwards); any other early end is a failure the player can retry. */
+#if defined(_WIN32)
 bool installer_started() {
     if (!s_started.load()) return false;
     HANDLE h = nullptr;
@@ -1604,6 +1847,10 @@ bool installer_started() {
     }
     return false;
 }
+#else
+bool installer_started() { return false; }   // there is no installer process on macOS
+#endif
+#if defined(_WIN32)
 #ifdef RETROHUB_UPDATER_TESTING
 void handoff_for_test(void* applier_process) {
     { std::lock_guard<std::mutex> l(s_mu); if (s_applier) CloseHandle(s_applier); s_applier = (HANDLE)applier_process; }
@@ -1611,6 +1858,7 @@ void handoff_for_test(void* applier_process) {
     s_ready.store(on); s_started.store(on); s_handing.store(on); s_downloading.store(false); s_deferred.store(false);
     set_status("");
 }
+#endif
 #endif
 std::string manual_download_url() { return kManualUrl; }
 std::string status() { std::lock_guard<std::mutex> l(s_mu); return s_status; }

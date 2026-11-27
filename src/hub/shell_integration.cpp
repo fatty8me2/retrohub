@@ -1,10 +1,15 @@
 /* Windows shell integration (see shell_integration.h). */
 #include "winutil.h"
 #include "shell_integration.h"
+#if defined(_WIN32)
 #include "resource.h"
+#else
+#include "plat/plat.h"
+#endif
 #include "invite.h"
 
 #include <SDL.h>
+#if defined(_WIN32)
 #include <SDL_syswm.h>
 #include <windows.h>
 #include <shlobj.h>
@@ -12,6 +17,7 @@
 #include <propkey.h>
 #include <propvarutil.h>
 #include <objbase.h>
+#endif
 
 #include <algorithm>
 #include <cstdlib>
@@ -21,6 +27,7 @@
 #include <cstring>
 #include <cwchar>
 
+#if defined(_WIN32)
 namespace {
 
 std::wstring exe_path() { return winutil::exe_path_w(); }
@@ -311,3 +318,127 @@ void shell_ensure_url_protocol() {
         RegCloseKey(key);
     }
 }
+#else  // macOS
+/* macOS: there are no .lnk files, registry associations or Start Menu. File types and the retrohub:// scheme are declared in the
+ * app bundle's Info.plist (CFBundleDocumentTypes / CFBundleURLTypes) and registered by LaunchServices; the Dock icon comes from the
+ * bundle. Anything that needs that is "not supported" here. Only the pure logic (names, dev-build policy, .ico bytes) is real. */
+#include <cstdio>
+#include <cstdlib>
+#include <cwctype>
+#include <string>
+#include <vector>
+#include <algorithm>
+
+namespace {
+
+std::wstring exe_path() { return winutil::to_wide(winutil::exe_path()); }
+
+std::wstring dir_of(const std::wstring& p) {
+    size_t s = p.find_last_of(L"/");
+    return s == std::wstring::npos ? L"" : p.substr(0, s);
+}
+
+}   // namespace
+
+// TODO(macOS lane 9): the app id / Dock identity comes from CFBundleIdentifier in Info.plist.
+void shell_set_app_id() {}
+
+// TODO(macOS lane 9): the window / Dock icon is the bundle's .icns (CFBundleIconFile).
+void shell_set_window_icon(SDL_Window*) {}
+
+// TODO(macOS lane 9): .lnk shortcuts do not exist on macOS (Dock / Launchpad entries are the .app itself).
+bool shell_read_shortcut(const std::wstring&, ShellLinkInfo*) { return false; }
+bool shell_write_shortcut(const std::wstring&, const std::wstring&, bool* ok, bool) { if (ok) *ok = false; return false; }
+bool shell_write_game_shortcut(const std::wstring&, const std::wstring&, const std::wstring&, const std::wstring&, const std::wstring&) { return false; }
+void shell_ensure_start_menu_shortcut() {}
+void shell_ensure_desktop_shortcut(bool) {}
+bool shell_refresh_icons() { return false; }
+
+// TODO(macOS lane 9): retrohub:// is declared by CFBundleURLTypes in Info.plist; the Apple Event handler is url_events_mac.mm.
+void shell_ensure_url_protocol() {}
+
+std::wstring shell_shortcut_dir() {
+    const char* ov = std::getenv("HUB_SHORTCUT_DIR");   // scratch override for tests/screenshots
+    if (ov && *ov) return winutil::to_wide(ov);
+    return L"";   // no Desktop shortcuts on macOS yet: refuse
+}
+
+std::wstring shell_game_shortcut_name(const std::wstring& title) {
+    std::wstring s;
+    for (wchar_t ch : title) {
+        if (ch < 32 || wcschr(L"<>:\"/\\|?*", ch)) ch = L' ';
+        s += ch;
+    }
+    while (!s.empty() && (s.back() == L' ' || s.back() == L'.')) s.pop_back();
+    size_t b = 0;
+    while (b < s.size() && s[b] == L' ') ++b;
+    s = s.substr(b);
+    if (s.empty()) s = L"Game";
+    if (s.size() > 80) s.resize(80);
+    return s + L".lnk";
+}
+
+bool shell_write_ico(const std::wstring& ico_path, const unsigned char* rgba, int w, int h) {
+    if (!rgba || w <= 0 || h <= 0) return false;
+    const int N = 128;
+    std::vector<unsigned char> bgra((size_t)N * N * 4, 0);   // transparent canvas, image letter-boxed in the middle
+    double sc = std::min((double)N / w, (double)N / h);
+    int tw = std::max(1, (int)(w * sc)), th = std::max(1, (int)(h * sc));
+    int ox = (N - tw) / 2, oy = (N - th) / 2;
+    for (int y = 0; y < th; ++y)
+        for (int x = 0; x < tw; ++x) {
+            int sx = std::min(w - 1, (int)(x / sc)), sy = std::min(h - 1, (int)(y / sc));
+            const unsigned char* s = rgba + ((size_t)sy * w + sx) * 4;
+            unsigned char* d = &bgra[((size_t)(N - 1 - (oy + y)) * N + (ox + x)) * 4];   // bottom-up
+            d[0] = s[2]; d[1] = s[1]; d[2] = s[0]; d[3] = s[3];
+        }
+    std::vector<unsigned char> mask((size_t)N * N / 8, 0);   // AND mask ignored for 32-bit, all zero
+    unsigned char bi[40] = {};   // BITMAPINFOHEADER, little endian
+    auto put32 = [](unsigned char* p, uint32_t v) { p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); p[2] = (unsigned char)(v >> 16); p[3] = (unsigned char)(v >> 24); };
+    const uint32_t image = (uint32_t)(bgra.size() + mask.size());
+    put32(bi, 40); put32(bi + 4, (uint32_t)N); put32(bi + 8, (uint32_t)N * 2); bi[12] = 1; bi[14] = 32; put32(bi + 20, image);
+    unsigned char dir[22] = {0, 0, 1, 0, 1, 0};
+    dir[6] = (unsigned char)N; dir[7] = (unsigned char)N; dir[10] = 1; dir[12] = 32;
+    put32(dir + 14, (uint32_t)(sizeof bi + image));
+    put32(dir + 18, 22);
+    FILE* f = plat::fopen_path(std::filesystem::path(winutil::to_utf8(ico_path)), "wb");
+    if (!f) return false;
+    bool ok = std::fwrite(dir, 1, 22, f) == 22 && std::fwrite(bi, 1, sizeof bi, f) == sizeof bi &&
+              std::fwrite(bgra.data(), 1, bgra.size(), f) == bgra.size() && std::fwrite(mask.data(), 1, mask.size(), f) == mask.size();
+    std::fclose(f);
+    return ok;
+}
+
+bool shell_path_looks_like_dev_build(const std::wstring& exe, bool (*dir_has)(const std::wstring&, const wchar_t*)) {
+    auto has = dir_has ? dir_has : [](const std::wstring& d, const wchar_t* n) {
+        return std::filesystem::exists(std::filesystem::path(winutil::to_utf8(d + L"/" + n)));
+    };
+    std::wstring low = exe;
+    for (auto& ch : low) { ch = (wchar_t)towlower(ch); if (ch == L'\\') ch = L'/'; }
+    std::wstring d = dir_of(low);
+    std::wstring dslash = d + L"/";
+    for (const wchar_t* seg : {L"/build/", L"/wt/", L"/worktrees/", L"/_deps/", L"/cmakefiles/"})
+        if (dslash.find(seg) != std::wstring::npos) return true;
+    if (dslash.find(L"/build-") != std::wstring::npos) return true;   // build-mac, build-mac-6c, ...
+    auto ends = [](const std::wstring& s, const std::wstring& suf) { return s.size() >= suf.size() && s.compare(s.size() - suf.size(), suf.size(), suf) == 0; };
+    if (ends(d, L"/release") || ends(d, L"/debug")) {
+        if (ends(dir_of(d), L"/bin")) return true;   // .../bin/Release = a CMake output folder
+    }
+    if (low.find(L".app/contents/macos") != std::wstring::npos) return false;   // a bundle is an install, whatever is above it
+    std::wstring cur = dir_of(exe);   // dev markers in the exe folder or up to 5 ancestors
+    for (int i = 0; i < 6 && !cur.empty(); ++i) {
+        if (has(cur, L"CMakeCache.txt")) return true;   // a CMake build tree
+        if (has(cur, L"CMakeLists.txt") && (i == 0 || has(cur, L".git"))) return true;   // a source checkout
+        if (i == 0 && has(cur, L".git")) return true;
+        cur = dir_of(cur);
+    }
+    return false;
+}
+
+bool shell_registration_allowed() {
+    auto set = [](const char* n) { const char* v = std::getenv(n); return v && *v && std::string(v) != "0"; };
+    if (set("RETROHUB_NO_SHELL") || std::getenv("HUB_SCREENSHOT") || std::getenv("RETROHUB_TEST")) return false;
+    return !shell_path_looks_like_dev_build(exe_path());
+}
+
+#endif  // _WIN32

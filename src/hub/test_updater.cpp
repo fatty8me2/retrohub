@@ -1,4 +1,5 @@
 // Console test for the updater: pure logic + a live release check (no download/install).
+#if defined(_WIN32)
 #include "updater.h"
 #include "update_apply.h"
 
@@ -1013,3 +1014,191 @@ int main(int argc, char** argv) {
     if (latest_version().empty()) { std::printf("FAIL: live check returned no version\n"); g_fail++; }
     return g_fail ? 1 : 0;
 }
+#else
+/* macOS: the platform-independent logic (versions, release JSON, trust, checksums, signature verification through Security.framework,
+ * resume records, space maths, the staged-file manifest) and the "not supported" answers of the install half. The throwaway keys / signatures
+ * below were made with openssl (never the publisher's key): `openssl dgst -sha256 -sign` writes the same DER signature the release script does. */
+#include "updater.h"
+#include "update_apply.h"
+
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <thread>
+#include <unistd.h>
+#include <vector>
+
+using namespace hubupdate;
+using namespace hubupdate::detail;
+
+static int g_fail = 0;
+#define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); g_fail++; } } while (0)
+
+static bool hex2(const char* h, unsigned char* out, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        unsigned v;
+        if (std::sscanf(h + i * 2, "%2x", &v) != 1) return false;
+        out[i] = (unsigned char)v;
+    }
+    return true;
+}
+
+namespace {
+const char* kPubA = "663b07d5f9ebee08eaf57328b8bcb9d0683a8d9118a236604037b926f1fab64818179c87a0cdcc5ab715ea022c1e6c4daeb64db723dbb3175ba386d27fd45240";
+const char* kPubB = "8b4e3cad66ddc9e696410025200944b98c86df77578df94c655a0a83fe132c7b5f948318661972813004404e3062c31744c7a92f44111208c4784c0f0c121791";
+const char* kMsg = "abc123  RetroHub-macos-arm64.dmg\n";   // signed with key A
+const char* kSigA = "3045022013f196ec2f6e3f5c79a3d7f5ffbc1d7e20a46e6766aaa111abb54625f073f4700221009a7d919cb5d1330d04dba75b0f0d3cfbfda42a4c7a358bc55996c5a162093de0";
+}
+
+static void signature_tests() {
+    unsigned char pubA[64], pubB[64], sig[71];
+    CHECK(hex2(kPubA, pubA, 64) && hex2(kPubB, pubB, 64) && hex2(kSigA, sig, 71));
+    const size_t n = std::strlen(kMsg);
+    CHECK(verify_ecdsa_p256(pubA, kMsg, n, sig, sizeof sig));                       // the good signature verifies
+    CHECK(!verify_ecdsa_p256(pubB, kMsg, n, sig, sizeof sig));                      // another publisher's key does not
+    std::string tampered = kMsg; tampered[0] = 'b';
+    CHECK(!verify_ecdsa_p256(pubA, tampered.data(), tampered.size(), sig, sizeof sig));   // one changed byte in the checksum list
+    CHECK(!verify_ecdsa_p256(pubA, kMsg, n - 1, sig, sizeof sig));                  // truncated list
+    unsigned char bad[71]; std::memcpy(bad, sig, 71); bad[40] ^= 1;
+    CHECK(!verify_ecdsa_p256(pubA, kMsg, n, bad, sizeof bad));                       // a flipped bit in the signature
+    CHECK(!verify_ecdsa_p256(pubA, kMsg, n, sig, sizeof sig - 1));                  // truncated signature
+    unsigned char trail[72]; std::memcpy(trail, sig, 71); trail[71] = 0;
+    CHECK(!verify_ecdsa_p256(pubA, kMsg, n, trail, sizeof trail));                   // trailing byte after the DER sequence
+    CHECK(!verify_ecdsa_p256(pubA, kMsg, n, nullptr, 0) && !verify_ecdsa_p256(nullptr, kMsg, n, sig, sizeof sig));
+    unsigned char raw[64]; CHECK(der_to_raw_rs(sig, sizeof sig, raw) && raw[0] == 0x13 && raw[63] == 0xe0);
+
+    set_pubkey_for_test(pubA);   // sums_are_trusted uses the (test) key
+    std::string why;
+    const std::string sig_s((const char*)sig, sizeof sig);
+    CHECK(sums_are_trusted("v9.9.9", kMsg, sig_s, &why));
+    CHECK(!sums_are_trusted("v9.9.9", kMsg, "", &why) && why == kUnsignedMessage);
+    CHECK(!sums_are_trusted("v9.9.9", tampered, sig_s, &why) && why == kUnsignedMessage);
+    CHECK(!sums_are_trusted("v9.9.9", "", sig_s, &why));
+    set_pubkey_for_test(pubB);
+    CHECK(!sums_are_trusted("v9.9.9", kMsg, sig_s, &why));
+    set_pubkey_for_test(nullptr);
+    CHECK(!sums_are_trusted("v9.9.9", kMsg, sig_s, &why));   // the real publisher key does not trust the throwaway signature
+    unsigned char real[64];
+    CHECK(hex2(kReleasePubKeyHex, real, 64));
+}
+
+static void logic_tests() {
+    CHECK(compare_versions("v1.2.3", "1.2.3") == 0 && compare_versions("1.10.0", "1.9.9") == 1 && compare_versions("v1.2", "1.2.1") == -1);
+    CHECK(is_trusted_download_url("https://github.com/fatty8me2/retrohub/releases/download/v1.8.0/x.dmg"));
+    CHECK(!is_trusted_download_url("https://evil.example.com/x.dmg") && !is_trusted_download_url("http://github.com/fatty8me2/retrohub/releases/download/v1/x"));
+    CHECK(strip_markdown("## Hi\r\n- **Faster** [notes](https://x.y) `code`").find("**") == std::string::npos);
+
+    const std::string P = "https://github.com/fatty8me2/retrohub/releases/download/v1.8.0/";
+    const std::string json = std::string(R"({"tag_name":"v1.8.0","body":"x","assets":[{"name":")") + kFullAssetName + R"(","size":1234,"digest":"sha256:ab","browser_download_url":")" + P + kFullAssetName +
+        R"("},{"name":"SHA256SUMS.txt","size":10,"browser_download_url":")" + P + R"(SHA256SUMS.txt"},{"name":"SHA256SUMS.txt.sig","size":71,"browser_download_url":")" + P + R"(SHA256SUMS.txt.sig"}]})";
+    Release r = parse_release(json);
+    CHECK(r.ok && r.tag == "v1.8.0" && r.has_asset && r.size == 1234 && r.url == P + kFullAssetName && r.sums_url == P + "SHA256SUMS.txt" && r.sig_url == P + "SHA256SUMS.txt.sig");
+    CHECK(!r.has_hub_asset);
+    Release windows_only = parse_release(R"({"tag_name":"v9.0.0","assets":[{"name":"BattleShip-windows.zip","size":10,"browser_download_url":"https://github.com/fatty8me2/retrohub/releases/download/v9.0.0/BattleShip-windows.zip"}]})");
+    CHECK(windows_only.ok && !windows_only.has_asset);   // a Windows-only release offers nothing on macOS
+    Release evil = parse_release(std::string(R"({"tag_name":"v9.0.0","assets":[{"name":")") + kFullAssetName + R"(","size":10,"browser_download_url":"https://evil.example.com/x.dmg"}]})");
+    CHECK(evil.ok && !evil.has_asset);
+    CHECK(!parse_release("not json").ok);
+
+    const std::string H(64, 'a');
+    auto m = parse_sha256sums(H + std::string("  ") + kFullAssetName + "\n" + std::string(64, 'b') + " *other.zip\n# c\nzz nope\n");
+    CHECK(m.size() == 2 && m[kFullAssetName] == H);
+    std::string sums = H + "  " + kFullAssetName + "\n";
+    CHECK(verify_hashes("v9.9.9", H, &sums, "", kFullAssetName) == Verdict::Ok);
+    CHECK(verify_hashes("v9.9.9", std::string(64, 'c'), &sums, "", kFullAssetName) == Verdict::ZipMismatch);
+    CHECK(verify_hashes("v9.9.9", H, &sums, "sha256:" + std::string(64, 'd'), kFullAssetName) == Verdict::DigestMismatch);
+    CHECK(verify_hashes("v9.9.9", H, nullptr, "", kFullAssetName) == Verdict::NoSums);
+    CHECK(verify_hashes("v9.9.9", "zz", &sums, "", kFullAssetName) == Verdict::BadSums);
+
+    CHECK(choose_payload(r, "", "") == Payload::Full);
+    Release none; none.ok = true;
+    CHECK(choose_payload(none, "", "") == Payload::None);
+
+    Gate g;
+    CHECK(gate_step(g, false, false, false, 0) == GateState::NotReady);
+    CHECK(gate_step(g, true, true, false, 0) == GateState::Held && gate_step(g, true, false, false, 100) == GateState::Settling);
+    CHECK(gate_step(g, true, false, false, 100 + kSettleMs) == GateState::Go && gate_step(g, true, false, false, 100 + kSettleMs) == GateState::Done);
+    CHECK(check_retry_due(false, 0, 1) && !check_retry_due(true, 0, 1) && !check_retry_due(false, 1000, 1000 + kCheckRetryMs - 1) && check_retry_due(false, 1000, 1000 + kCheckRetryMs));
+    CHECK(bad_version_verdict("v1.2.3", "1.2.3", false) == BadVerdict::Skip && bad_version_verdict("v1.2.3", "1.2.3", true) == BadVerdict::ForcedRetry && bad_version_verdict("v1.2.4", "1.2.3", false) == BadVerdict::Proceed);
+
+    ResumeKey k; k.tag = "v1.40.0"; k.asset = kFullAssetName; k.sha256 = H; k.size = 1000;
+    const std::string rec = resume_record_json(k);
+    CHECK(resume_eligible(rec, k, 500) && !resume_eligible(rec, k, 0) && !resume_eligible(rec, k, 1000));
+    { ResumeKey w = k; w.sha256 = std::string(64, 'b'); CHECK(!resume_eligible(rec, w, 500)); }
+    CHECK(space_needed_for_download(1000, 400) == 600 + 1000 + kSpaceMargin && space_needed_for_unpack(10) == 10 + kSpaceMargin);
+    CHECK(enough_space(10, -1) && !enough_space(10, 5) && enough_space(10, 10));
+    CHECK(format_bytes(300ull << 20, true) == "300 MB" && format_bytes(0, false) == "under 1 MB");
+    CHECK(free_bytes_on("/tmp") > 0);
+
+    DiscardGuard dg;
+    CHECK(discard_allowed(dg, "v1")); note_discard(dg, "v1"); note_discard(dg, "v1");
+    CHECK(!discard_allowed(dg, "v1") && discard_allowed(dg, "v2")); note_staged_ok(dg); CHECK(discard_allowed(dg, "v1"));
+}
+
+static void staged_tests() {
+    namespace fs = std::filesystem;
+    const fs::path d = fs::temp_directory_path() / ("rh_upd_test_" + std::to_string((long)getpid()));
+    std::error_code ec; fs::remove_all(d, ec);
+    fs::create_directories(d / "staged" / "sub", ec);
+    { std::ofstream(d / "staged" / "a.bin", std::ios::binary) << "hello"; }
+    { std::ofstream(d / "staged" / "sub" / "b.txt", std::ios::binary) << "world"; }
+    { std::ofstream(d / "staged" / ".DS_Store", std::ios::binary) << "junk"; }   // a Finder drop is never part of an update
+    const std::string staged = (d / "staged").string();
+    StagedInfo si = scan_staged(staged);
+    CHECK(si.files == 2 && si.bytes == 10);
+    std::vector<StagedFile> list;
+    CHECK(hash_staged(staged, &list, nullptr) && list.size() == 2 && list[0].path == "a.bin" && list[1].path == "sub/b.txt");
+    CHECK(list[0].sha256 == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");   // sha256("hello")
+    CHECK(sha256_file_hex(staged + "/a.bin") == list[0].sha256 && sha256_file_hex(staged + "/missing").empty());
+    CHECK(verify_staged_list(staged, list, nullptr));
+    { std::ofstream(d / "staged" / "a.bin", std::ios::binary) << "HELLO"; }
+    CHECK(!verify_staged_list(staged, list, nullptr));   // same size, different bytes
+    StagedInfo m; m.version = "v1.2.3"; m.files = 2; m.bytes = 10; m.list = list;
+    StagedInfo back;
+    CHECK(parse_staged_manifest(staged_manifest_json(m), &back) && back.version == "v1.2.3" && back.list.size() == 2 && back.list[1].sha256 == list[1].sha256);
+    CHECK(!parse_staged_manifest("{\"version\":\"\"}", &back));
+    CHECK(!staged_reusable(d.string(), "v1.2.3"));   // no manifest on disk
+    fs::remove_all(d, ec);
+}
+
+static void platform_tests() {
+    std::string p, e;
+    CHECK(system_dir().empty() && !find_system_tool("curl.exe", &p, &e) && !e.empty());   // macOS runs no external update tool
+    CHECK(run_command("/bin/echo hi", [](const std::string&) {}) == -1 && live_child_count() == 0);
+    CHECK(unpack_zip("", "", "", "", 1000) == -1);
+    CHECK(!launch_check_disabled() || std::getenv("RETROHUB_NO_UPDATE_CHECK"));
+    start_update();   // not supported: says so, never pretends to install
+    CHECK(!downloading() && status().find("not supported on macOS") != std::string::npos && !installer_started());
+    tick();
+    CHECK(!apply::try_apply_mode(nullptr));
+    CHECK(apply::version_lower("v1.2.3", "1.10.0") && !apply::version_lower("1.2.3", "1.2.3") && !apply::version_lower("x", "1.0"));
+    FetchSpec f; f.tag = "v9.9.9"; f.zip_url = "https://github.com/fatty8me2/retrohub/releases/download/v9.9.9/x.dmg"; f.size = 1;
+    std::string err;
+    CHECK(!download_verified(f, "/tmp/rh_never.dmg", &err, nullptr) && !err.empty());   // no sums: refused before anything is fetched
+    OwnedThread ot;
+    std::atomic<bool> go{false};
+    CHECK(ot.start([&] { while (!go.load()) std::this_thread::sleep_for(std::chrono::milliseconds(5)); }) && ot.running() && !ot.join_for(50));
+    go = true;
+    CHECK(ot.join_for(2000) && !ot.running());
+}
+
+int main(int argc, char** argv) {
+    const bool offline = argc > 1 && std::strcmp(argv[1], "--offline") == 0;
+    signature_tests();
+    logic_tests();
+    staged_tests();
+    platform_tests();
+    if (!offline) {   // live check against the real GitHub API (never downloads or installs)
+        check_async(true);
+        for (int i = 0; i < 300 && checking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::printf("live check: failed=%d available=%d latest=%s status=%s\n", (int)check_failed(), (int)update_available(), latest_version().c_str(), status().c_str());
+        CHECK(!latest_version().empty() || check_failed());
+    }
+    shutdown();
+    std::printf(g_fail ? "hub_updater_test: %d FAILED\n" : "hub_updater_test: all passed\n", g_fail);
+    return g_fail ? 1 : 0;
+}
+#endif

@@ -8,6 +8,10 @@
 #include <string>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
+static unsigned long GetCurrentProcessId() { return (unsigned long)getpid(); }
+static unsigned long long GetTickCount64() { return (unsigned long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 #endif
 
 namespace fs = std::filesystem;

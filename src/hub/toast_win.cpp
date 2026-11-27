@@ -2,6 +2,7 @@
  * runtime dependency. Toasts never take focus; Focus Assist suppresses them automatically. */
 #include "toast.h"
 
+#if defined(_WIN32)
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -172,3 +173,39 @@ bool toast_winrt_selftest(const std::string& xml, std::string* err) {
 }
 
 }  // namespace hubtoast
+#else
+/* macOS: system notifications go through UNUserNotificationCenter, which needs a bundled, signed app (and the notification
+ * permission prompt). Not supported yet: available() is false, so every caller (toast.cpp should_toast / notify_*) falls back to the
+ * in-app toast and bell, exactly like a dev build on Windows. */
+#include <string>
+#include "popup_guard.h"
+#include "shell_integration.h"
+#include "toast_worker.h"
+
+namespace hubtoast {
+namespace {
+bool (*g_game_probe)() = nullptr;
+
+// TODO(macOS lane 9): UNUserNotificationCenter once the .app is signed (show / schedule / cancel, activation -> retrohub://).
+struct SystemNotifier : INotifier {
+    bool available() const override { return false; }
+    bool show(const std::string&, const std::string&) override { return false; }
+};
+struct SystemScheduler : IScheduler {
+    bool available() const override { return false; }
+    bool schedule(const std::string&, const std::string&, const std::string&, int64_t) override { return false; }
+    bool cancel(const std::string&, const std::string&) override { return true; }   // nothing could have been scheduled
+};
+}  // namespace
+
+IScheduler& system_scheduler() { static SystemScheduler s; return s; }
+void set_game_probe(bool (*fn)()) { g_game_probe = fn; }
+void shutdown() {}
+INotifier& system_notifier() { static SystemNotifier n; return n; }
+bool toast_winrt_selftest(const std::string&, std::string* err) {
+    if (err) *err = "system toasts are not supported on macOS yet";
+    return false;
+}
+
+}  // namespace hubtoast
+#endif

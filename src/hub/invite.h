@@ -11,7 +11,11 @@
 #include <memory>
 #include <string>
 
+#if defined(_WIN32)
 #include <windows.h>
+#else
+#include <cstdint>
+#endif
 
 /* Room-code alphabet matches the Worker's CODE_RE (server/cloudflare/src/index.js): 6 chars, no 0/1/I/O. */
 bool invite_is_valid_code(const std::wstring& code);
@@ -25,14 +29,14 @@ bool invite_parse_command_line(const std::wstring& cmdline, std::wstring* code);
 /* Account invite codes (owner-made, XXXX-XXXX; see net/invite_logic.h): retrohub://invite/<CODE> or "--invite <CODE>". Returns the code as "ABCD-EFGH". */
 bool invite_parse_account_url(const std::wstring& url, std::wstring* code);
 bool invite_parse_account_command_line(const std::wstring& cmdline, std::wstring* code);
-bool invite_send_account(const std::wstring& pipe_name, const std::wstring& code, DWORD timeout_ms = 3000);
+bool invite_send_account(const std::wstring& pipe_name, const std::wstring& code, unsigned long timeout_ms = 3000);
 
 /* Game night reminder click: retrohub://night/<id>, id = "<uid>@<start seconds>" (see gamenight_logic.h make_id). Strictly validated:
  * uid = 1..60 of [A-Za-z0-9_.-], '@', 1..11 digits. Anything else is refused (never used as a path or command). */
 bool invite_is_valid_night_id(const std::wstring& id);
 bool invite_parse_night_url(const std::wstring& url, std::wstring* id);
 bool invite_parse_night_command_line(const std::wstring& cmdline, std::wstring* id);
-bool invite_send_night(const std::wstring& pipe_name, const std::wstring& id, DWORD timeout_ms = 3000);
+bool invite_send_night(const std::wstring& pipe_name, const std::wstring& id, unsigned long timeout_ms = 3000);
 
 /* One-click favorites: "RetroHub.exe --play <game key>" (library key: lowercase [a-z0-9._-], at most 120 chars). */
 bool invite_is_valid_game_key(const std::wstring& key);
@@ -54,6 +58,19 @@ std::wstring invite_protocol_command(const std::wstring& exe);
 /* Single-instance handoff. Production names: see the constants below. */
 extern const wchar_t* const INVITE_MUTEX_NAME;   // Local\RetroHub.SingleInstance
 extern const wchar_t* const INVITE_PIPE_NAME;    // \\.\pipe\RetroHub.Invite
+/* macOS: the "mutex" is an flock(2) lock file and the "pipe" is a Unix domain socket. A name that starts with '/' is used as the
+ * path; any other name (the production names above are "hub.lock" / "hub.sock") is a file name under the runtime dir given to
+ * invite_set_runtime_dir() (the hub data dir; $TMPDIR when never set). A socket path over 103 bytes (sockaddr_un) falls back to
+ * $TMPDIR/rh-<hash of the path>.sock, on both the server and the client side. */
+#if !defined(_WIN32)
+void invite_set_runtime_dir(const std::string& dir_utf8);
+/* Delivers a retrohub:// URL that arrived as an Apple Event (url_events_mac.mm) into the same queue the socket feeds.
+ * Returns false when the URL is not a recognised retrohub link. Safe from any thread, before or after InviteServer::start. */
+bool invite_deliver_url(const std::string& url_utf8);
+/* url_events_mac.mm: registers the kAEGetURL handler (call after SDL_Init(SDL_INIT_VIDEO), which installs SDL's own) and writes NSPasteboard. */
+void invite_install_url_handler();
+bool invite_copy_text_utf8(const std::string& text_utf8);
+#endif
 
 class InviteInstance {   // holds the named mutex; is_primary() is true for the first holder
 public:
@@ -63,7 +80,11 @@ public:
     InviteInstance& operator=(const InviteInstance&) = delete;
     bool is_primary() const { return primary_; }
 private:
+#if defined(_WIN32)
     HANDLE mutex_ = nullptr;
+#else
+    int fd_ = -1;
+#endif
     bool primary_ = false;
 };
 
@@ -83,19 +104,24 @@ private:
     void push(int kind, const std::wstring& text);
     void run();
     std::wstring pipe_;
+#if defined(_WIN32)
     HANDLE thread_ = nullptr;
     volatile LONG stop_ = 0;
     CRITICAL_SECTION lock_{};
     bool lock_ready_ = false;
     struct Msg { int kind; std::wstring text; } queue_[16];
     int count_ = 0;
+#else
+    struct Impl;
+    Impl* impl_ = nullptr;   // listener thread + sockets; the message queue is process-wide (see invite_deliver_url)
+#endif
 };
 
 /* Second-launch side: sends a code to the primary. Retries until timeout_ms while the primary starts up.
  * Returns true when the primary accepted the code. */
-bool invite_send(const std::wstring& pipe_name, const std::wstring& code, DWORD timeout_ms = 3000);
-bool invite_send_play(const std::wstring& pipe_name, const std::wstring& key, DWORD timeout_ms = 3000);
-bool invite_send_show(const std::wstring& pipe_name, DWORD timeout_ms = 3000);
+bool invite_send(const std::wstring& pipe_name, const std::wstring& code, unsigned long timeout_ms = 3000);
+bool invite_send_play(const std::wstring& pipe_name, const std::wstring& key, unsigned long timeout_ms = 3000);
+bool invite_send_show(const std::wstring& pipe_name, unsigned long timeout_ms = 3000);
 
 /* A second launch whose hand-over got no answer. The usual cause is a RetroHub that is still closing: its pipe server is already
  * stopped, but the process (whose handle keeps the mutex alive) has not ended yet. Running on beside it would leave this launch
@@ -104,4 +130,4 @@ bool invite_send_show(const std::wstring& pipe_name, DWORD timeout_ms = 3000);
  * about every 2 s in case the other one is only slow: when it takes the request, *handed = true and the result is false. After
  * budget_ms: false (the caller carries on as before). */
 bool invite_wait_for_primary(std::unique_ptr<InviteInstance>* inst, const std::wstring& mutex_name,
-                             const std::function<bool(DWORD timeout_ms)>& hand_over, DWORD budget_ms, bool* handed);
+                             const std::function<bool(unsigned long timeout_ms)>& hand_over, unsigned long budget_ms, bool* handed);

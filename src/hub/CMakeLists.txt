@@ -33,7 +33,7 @@ add_executable(hub_states_test test_state_slots.cpp)
 target_link_libraries(hub_states_test PRIVATE hublogic)
 
 add_executable(hub_launch_text_test test_launch_text.cpp)   # online launch guard, host view of guest failures, launch wording, UTF-8 file helpers
-target_include_directories(hub_launch_text_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(hub_launch_text_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 add_executable(hub_online_caps_test test_online_caps.cpp)
 target_link_libraries(hub_online_caps_test PRIVATE hublogic hubcommon)
 add_executable(hub_picker_test test_picker.cpp)
@@ -159,7 +159,11 @@ target_include_directories(hubconv PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hubconv PUBLIC hubminiz ws2_32 winhttp)
 target_compile_features(hubconv PUBLIC cxx_std_17)
 add_executable(hub_convenience_test test_convenience.cpp)
+target_include_directories(hub_convenience_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(hub_convenience_test PRIVATE hubconv)
+if(APPLE)
+    target_link_libraries(hub_convenience_test PRIVATE hubbase)   # plat::http (nettest.cpp on macOS)
+endif()
 
 # Hub log (rotating, scrubbed) + RetroHub's own crash report (no dbghelp / minidump: see hang_watchdog.cpp)
 add_library(hubcrashlog STATIC hub_log.cpp crash_report.cpp)
@@ -228,6 +232,10 @@ target_link_libraries(hub_updater_test PRIVATE hubcommon bcrypt shell32 ws2_32)
 target_link_libraries(hub_updater_test PRIVATE hubversion)
 target_link_libraries(hub_updater_test PRIVATE hubcrashlog)   # updater.cpp forwards its log lines to hublog::info
 target_compile_definitions(hub_updater_test PRIVATE RETROHUB_UPDATER_TESTING)   # the test-only key override in updater.cpp; never defined for RetroHub.exe
+if(APPLE)   # macOS: ECDSA verification through Security.framework (the Windows build uses BCrypt)
+    target_sources(hub_updater_test PRIVATE updater_mac.mm)
+    target_link_libraries(hub_updater_test PRIVATE "-framework Security" "-framework Foundation")
+endif()
 
 # ---- Branding: icon + version resources, Windows shell integration (assets/brand/retrohub.ico) ----
 set(RH_BRAND_RC_DIRS ${HUB_VERSION_GEN} ${CMAKE_CURRENT_SOURCE_DIR})
@@ -376,6 +384,10 @@ target_include_directories(hubinvite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(hubinvite PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../net)
 target_link_libraries(hubinvite PUBLIC hubbase shell32 user32 advapi32)
 target_compile_features(hubinvite PUBLIC cxx_std_17)
+if(APPLE)   # Apple Event URL handler (retrohub://...) + NSPasteboard
+    target_sources(hubinvite PRIVATE url_events_mac.mm)
+    target_link_libraries(hubinvite PUBLIC "-framework Cocoa")
+endif()
 target_link_libraries(RetroHub PRIVATE hubinvite advapi32)
 target_link_libraries(hub_shell_test PRIVATE hubinvite advapi32)
 target_link_libraries(hub_toast_win_test PRIVATE hubinvite advapi32)

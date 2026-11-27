@@ -29,6 +29,61 @@
 
 #include <cstring>
 
+#if !defined(_WIN32)
+#include <crt_externs.h>
+#include <pwd.h>
+#include <sys/resource.h>
+#include <unistd.h>
+#include "plat/plat.h"
+#endif
+
+/* ---- Platform helpers: the Windows spelling is exactly what main.cpp always used; macOS gets the POSIX equivalent ---- */
+namespace {
+#if defined(_WIN32)
+const char kSepS[] = "\\";
+unsigned long long hub_tick() { return GetTickCount64(); }
+void hub_sleep_ms(unsigned ms) { Sleep(ms); }
+unsigned long hub_pid() { return GetCurrentProcessId(); }
+const wchar_t* hub_cmdline_w() { return GetCommandLineW(); }
+std::filesystem::path hub_path(const std::string& u8) { return std::filesystem::path(W(u8)); }
+double hub_qpc_ms() {
+    static LARGE_INTEGER f = [] { LARGE_INTEGER q{}; QueryPerformanceFrequency(&q); return q; }();
+    LARGE_INTEGER i; QueryPerformanceCounter(&i);
+    return (double)i.QuadPart * 1000.0 / (double)f.QuadPart;
+}
+double hub_cpu_seconds() {   // CPU the process really used (kernel + user): independent of how busy the rest of the PC is
+    FILETIME ct, et, kt, ut;
+    if (!GetProcessTimes(GetCurrentProcess(), &ct, &et, &kt, &ut)) return 0.0;
+    auto to_s = [](const FILETIME& f) { return (double)(((unsigned long long)f.dwHighDateTime << 32) | f.dwLowDateTime) / 1e7; };
+    return to_s(kt) + to_s(ut);
+}
+std::string hub_user_name() {
+    wchar_t un[128];
+    DWORD ul = 128;
+    return GetUserNameW(un, &ul) ? U(un) : "";
+}
+#else
+const char kSepS[] = "/";
+unsigned long long hub_tick() { return plat::tick_ms(); }
+void hub_sleep_ms(unsigned ms) { plat::sleep_ms(ms); }
+unsigned long hub_pid() { return (unsigned long)plat::current_pid(); }
+std::wstring& cmdline_store() { static std::wstring s; return s; }   // argv, quoted the Windows way, so the one command-line parser in invite.cpp serves both platforms
+const wchar_t* hub_cmdline_w() { return cmdline_store().c_str(); }
+std::filesystem::path hub_path(const std::string& u8) { return std::filesystem::path(u8); }   // UTF-8 paths
+double hub_qpc_ms() { return (double)plat::now_us() / 1000.0; }
+double hub_cpu_seconds() {
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) != 0) return 0.0;
+    return (double)ru.ru_utime.tv_sec + (double)ru.ru_utime.tv_usec / 1e6 + (double)ru.ru_stime.tv_sec + (double)ru.ru_stime.tv_usec / 1e6;
+}
+std::string hub_user_name() {
+    if (const char* u = std::getenv("USER")) if (*u) return u;
+    if (const passwd* pw = getpwuid(getuid())) return pw->pw_name ? pw->pw_name : "";
+    return "";
+}
+#endif
+}  // namespace
+
 /* ---- Plan 4 shell helpers (bell notes for the updater, the launch tips card, the idle throttle) ---- */
 namespace {
 
@@ -75,10 +130,10 @@ void draw_launch_tips(bool shot_force) {
     if (shot_force) el_ms = 1500.0;   // HUB_SHOT_LAUNCH_TIPS: a frozen frame of the card for screenshots
     else {
         if (g_headless || !A.proc || !A.run.pad_exit) return;
-        el_ms = (double)(GetTickCount64() - A.run.start_tick);
+        el_ms = (double)(hub_tick() - A.run.start_tick);
         if (el_ms > 20000.0) return;                         // an emulator that never shows a window: give up quietly
-        static ULONGLONG checked_tick = 0; static bool game_window_up = false;
-        const ULONGLONG now = GetTickCount64();
+        static unsigned long long checked_tick = 0; static bool game_window_up = false;
+        const unsigned long long now = hub_tick();
         if (now - checked_tick > 250) { checked_tick = now; game_window_up = running_game_hwnd() != nullptr; }
         if (game_window_up) return;                          // its window is up: the hub is behind it, nothing to show here
     }
@@ -131,7 +186,7 @@ static int hub_main();
 
 /* Last-resort guard: an exception nobody caught (for example a std::filesystem path conversion) is written to the log and the
  * process leaves with a normal exit code, instead of std::terminate -> abort -> a silent 0xC0000409. */
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+static int hub_entry() {
     try {
         return hub_main();
     } catch (const std::exception& e) {
@@ -144,6 +199,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     return hubupdate::apply::kStartFailExit;
 }
 
+#if defined(_WIN32)
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) { return hub_entry(); }
+#else
+/* macOS: a plain main(). SDL_MAIN_HANDLED (app.h) means SDL does not wrap it; SDL_SetMainReady() is called in hub_main. */
+int main(int argc, char** argv) {
+    std::wstring line;   // what hub_cmdline_w() would hold: the invite / --play / --background parsers all read this form
+    for (int i = 0; i < argc; ++i) { if (i) line += L' '; line += winutil::quote_arg(winutil::to_wide(argv[i])); }
+    cmdline_store() = line;
+    return hub_entry();
+}
+#endif
+
 static int hub_main() {
     { int rc; if (hubupdate::apply::try_apply_mode(&rc)) return rc; }   // --apply-update: window-less updater mode
     const bool autotest = autotest_active();   // QA room driver: isolated instance, no shell/registry/update side effects
@@ -152,19 +219,22 @@ static int hub_main() {
     const char* shot_path = std::getenv("HUB_SCREENSHOT") ? shot_path_store.c_str() : nullptr;
     // Single instance + command-line actions: `retrohub://join/<CODE>`, `--join <CODE>`, `--play <game key>`.
     std::wstring cmd_join, cmd_play;
-    const bool has_join = invite_parse_command_line(GetCommandLineW(), &cmd_join);
-    const bool has_play = invite_parse_play(GetCommandLineW(), &cmd_play);
+    const bool has_join = invite_parse_command_line(hub_cmdline_w(), &cmd_join);
+    const bool has_play = invite_parse_play(hub_cmdline_w(), &cmd_play);
     std::wstring cmd_acct;   // retrohub://invite/XXXX-XXXX or --invite XXXX-XXXX: an account invite code for the waiting screen
-    const bool has_acct = invite_parse_account_command_line(GetCommandLineW(), &cmd_acct);
+    const bool has_acct = invite_parse_account_command_line(hub_cmdline_w(), &cmd_acct);
     std::wstring cmd_night;   // retrohub://night/<id>: a game night reminder toast was clicked
-    const bool has_night = invite_parse_night_command_line(GetCommandLineW(), &cmd_night);
+    const bool has_night = invite_parse_night_command_line(hub_cmdline_w(), &cmd_night);
     std::string pending_night;
     std::unique_ptr<InviteInstance> instance;
     InviteServer invite_srv;
+#if !defined(_WIN32)
+    invite_set_runtime_dir(hub::data_dir());   // the lock file and the socket live in the data folder (invite.h)
+#endif
     if (!shot_path && !autotest) {
         instance.reset(new InviteInstance(INVITE_MUTEX_NAME));
         if (!instance->is_primary()) {   // already running: hand the request over (or just ask it to show itself) and leave
-            auto hand_over = [&](DWORD ms) {
+            auto hand_over = [&](unsigned long ms) {
                 return has_night ? invite_send_night(INVITE_PIPE_NAME, cmd_night, ms) : has_acct ? invite_send_account(INVITE_PIPE_NAME, cmd_acct, ms) : has_join ? invite_send(INVITE_PIPE_NAME, cmd_join, ms) : has_play ? invite_send_play(INVITE_PIPE_NAME, cmd_play, ms) : invite_send_show(INVITE_PIPE_NAME, ms);
             };
             if (hand_over(3000)) return 0;
@@ -187,24 +257,32 @@ static int hub_main() {
     else {   /* a normal run ignores every screenshot aid, whatever the environment holds (docs/QA_SHOTS.md): drop HUB_SHOT_* (and the
               * QA path overrides) before anything reads one, so a stray variable can never press a button, write a file or open a dialog */
         std::vector<std::string> drop = {"HUB_SHORTCUT_DIR", "HUB_CHEEVOS_CFG", "HUB_CHEEVOS_DIR", "HUB_GAMEINFO_CACHE"};
+#if defined(_WIN32)
         if (wchar_t* env = GetEnvironmentStringsW()) {
             for (const wchar_t* p = env; *p; p += wcslen(p) + 1)
                 if (wcsncmp(p, L"HUB_SHOT_", 9) == 0) { const std::wstring kv = p; drop.push_back(U(kv.substr(0, kv.find(L'=')))); }
             FreeEnvironmentStringsW(env);
         }
         for (const std::string& k : drop) _putenv_s(k.c_str(), "");   // (an empty value removes it from the process environment)
+#else
+        for (char** e = *_NSGetEnviron(); e && *e; ++e)
+            if (std::strncmp(*e, "HUB_SHOT_", 9) == 0) { const std::string kv = *e; drop.push_back(kv.substr(0, kv.find('='))); }
+        for (const std::string& k : drop) unsetenv(k.c_str());
+#endif
     }
     if (qm_e2e_active()) qm_e2e_boot();   // HUB_QM_E2E (needs HUB_SCREENSHOT): only the test's virtual joystick exists
     SDL_SetMainReady();
+#if defined(_WIN32)
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
+#endif
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");   // smooth downscaling of cover art
     const bool log_on = !shot_path && !autotest;   // QA drivers never write to the player's logs folder
     if (log_on) {   // hub.log + crash report (docs/ARCHITECTURE.md, "Logs and crash reports"); a crash note for the previous run is queued here
-        hublog::init(hub::data_dir() + "logs\\", HUB_VERSION_STR);
-        crashrep::install(hub::data_dir() + "logs\\", HUB_VERSION_STR, &hang_watchdog_current_phase);
-        crash_report_ui_init(hub::data_dir() + "logs\\");
+        hublog::init(hub::data_dir() + "logs" + kSepS, HUB_VERSION_STR);
+        crashrep::install(hub::data_dir() + "logs" + kSepS, HUB_VERSION_STR, &hang_watchdog_current_phase);
+        crash_report_ui_init(hub::data_dir() + "logs" + kSepS);
         hublog::info("startup: process began");
     }
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {
@@ -213,6 +291,9 @@ static int hub_main() {
         hublog::shutdown();
         return hubupdate::apply::kStartFailExit;
     }
+#if !defined(_WIN32)
+    invite_install_url_handler();   // retrohub:// Apple Events -> the same queue as the socket (SDL_Init installed SDL's own handler: replace it now)
+#endif
 
     float ddpi = 96.f;
     SDL_GetDisplayDPI(0, &ddpi, nullptr, nullptr);
@@ -230,7 +311,7 @@ static int hub_main() {
     hublog::info("startup: settings loaded (+%llu ms)", hublog::since_start_ms());
     {   // D2: Reduce motion's first-run default follows Windows "Show animations"; after that it is the player's own choice
         bool key_saved = false;
-        { std::ifstream hin(std::filesystem::path(W(A.settings_path)), std::ios::binary); std::stringstream hs; hs << hin.rdbuf(); key_saved = hs.str().find("\"reduce_motion\"") != std::string::npos; }
+        { std::ifstream hin(hub_path(A.settings_path), std::ios::binary); std::stringstream hs; hs << hin.rdbuf(); key_saved = hs.str().find("\"reduce_motion\"") != std::string::npos; }
         if (!g_headless) {
             const bool want = hubdisplay::initial_reduce_motion(key_saved, A.st.reduce_motion, hubdisplay::os_animations_on());
             if (want != A.st.reduce_motion || !key_saved) { A.st.reduce_motion = want; A.dirty = true; }
@@ -242,7 +323,7 @@ static int hub_main() {
     const std::string installer_hand = hub::data_dir() + "installer_games_dir.txt";
     bool installer_prefill_kept = false;   // the hand-off file stays until the first-run wizard is finished or skipped (see below)
     {   // the installer's chosen games folder (written by a FRESH install only, never by an upgrade): merged into rom_folders
-        std::ifstream in(std::filesystem::path(W(installer_hand)), std::ios::binary);
+        std::ifstream in(hub_path(installer_hand), std::ios::binary);
         if (in) {
             std::stringstream ss; ss << in.rdbuf(); in.close();
             const std::string text = ss.str();
@@ -256,7 +337,7 @@ static int hub_main() {
             /* A screenshot run uses the merged folders for this run only: it writes no hub.json and keeps the hand-off file (C: QA_SHOTS.md) */
             const bool saved = !changed || (!g_headless && hubui::save_settings(A.settings_path, A.st));   // keep the file if saving failed: retry next start
             if (usable && fresh) { hubui::wiz::set_installer_prefill(true); installer_prefill_kept = !g_headless; }
-            else if (saved && !g_headless) { std::error_code ec; std::filesystem::remove(std::filesystem::path(W(installer_hand)), ec); }
+            else if (saved && !g_headless) { std::error_code ec; std::filesystem::remove(hub_path(installer_hand), ec); }
         }
     }
     if (const char* pg = std::getenv("HUB_START_PAGE")) {   // screenshot/testing aid: 0 Library, 1 Online, 2 Saves, 3 Controllers, 4 Settings, 5 Updates (6 = Updates too: the old What's new page), 7 Discover
@@ -270,9 +351,7 @@ static int hub_main() {
         if (std::string(vw) == "all") A.view = LibView::All;
     }
     if (A.st.name.empty() || A.st.name == "Player") {   // default to the Windows user name
-        wchar_t un[128];
-        DWORD ul = 128;
-        std::string u = GetUserNameW(un, &ul) ? U(un) : "";
+        std::string u = hub_user_name();
         A.st.name = hubui::sanitize_player_name(u);
     }
     // No ROM folder is assumed: an empty library offers detected folders as one-click "Add" suggestions.
@@ -282,7 +361,7 @@ static int hub_main() {
         const std::string sv = winutil::getenv_utf8("HUB_SHOT_VAULT");   // UTF-8 (std::getenv is ANSI: u8path would throw on an accented folder)
         std::string dir = !sv.empty() ? sv : (std::filesystem::temp_directory_path() / "retrohub-shot-vault").u8string();
         if (sv.empty() && std::getenv("HUB_SHOT_CUSTOM_SHELVES")) {   // its made-up shelves go into the vault's prefs: a vault of this run only (removed at exit), never the shared scratch one
-            dir = (std::filesystem::temp_directory_path() / ("retrohub-shot-vault-run-" + std::to_string(GetCurrentProcessId()))).u8string();
+            dir = (std::filesystem::temp_directory_path() / ("retrohub-shot-vault-run-" + std::to_string(hub_pid()))).u8string();
             shot_run_vault = dir;
         }
         std::error_code ec;
@@ -336,7 +415,7 @@ static int hub_main() {
     hubdisplay::set_dpi_scale(dpi_s);
     /* Never open over a running game: `--background` (the update relaunch passes it) or a full-screen / busy app up front means the
      * window is shown minimised without activation instead (see popup_guard.h). */
-    const bool quiet_start = !shot_path && hubguard::start_quiet(wcsstr(GetCommandLineW(), L"--background") != nullptr, game_active());
+    const bool quiet_start = !shot_path && hubguard::start_quiet(wcsstr(hub_cmdline_w(), L"--background") != nullptr, game_active());
     A.win = SDL_CreateWindow("RetroHub", win_x, win_y, win_w, win_h,
                              SDL_WINDOW_RESIZABLE | ((shot_path || quiet_start) ? 0 : SDL_WINDOW_SHOWN));
     if (A.win && start_max && !quiet_start) SDL_MaximizeWindow(A.win);   // the window was just created for the player (never while minimised for a game)
@@ -352,10 +431,12 @@ static int hub_main() {
         hublog::info("startup: window + renderer ready (+%llu ms), renderer %s, %dx%d", hublog::since_start_ms(), SDL_GetRendererInfo(ren, &ri) == 0 && ri.name ? ri.name : "?", win_w, win_h);
     }
     if (!shot_path) { hubdisplay::seed_monitor(A.win); hubdisplay::apply_min_size(A.win, S); }   // clamped to the work area (L3); headless shots keep the size they ask for
-    S = tvmode::init(A.win, g_headless, S, hubtv::has_tv_flag(GetCommandLineW()) || std::getenv("HUB_TV") != nullptr, A.st.tv_start, win_h);   // TV mode scale (fonts are built next)
+    S = tvmode::init(A.win, g_headless, S, hubtv::has_tv_flag(hub_cmdline_w()) || std::getenv("HUB_TV") != nullptr, A.st.tv_start, win_h);   // TV mode scale (fonts are built next)
+#if defined(_WIN32)
     SDL_SysWMinfo wm;
     SDL_VERSION(&wm.version);
     if (SDL_GetWindowWMInfo(A.win, &wm)) A.hwnd = wm.info.win.window;
+#endif
     if (quiet_start) hub_show_noactivate();
     if (!shot_path && !autotest) {
         shell_set_window_icon(A.win);
@@ -375,7 +456,7 @@ static int hub_main() {
     ImGui_ImplSDL2_InitForSDLRenderer(A.win, ren);
     ImGui_ImplSDLRenderer2_Init(ren);
     ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoAll);   // any connected pad drives the UI, hot-plug included
-    hubart::init(ren, hub::data_dir() + "art\\");
+    hubart::init(ren, hub::data_dir() + "art" + kSepS);
     lib_fake_art_init(ren);
     qm_init(ren);
     hublog::info("startup: UI ready (+%llu ms)", hublog::since_start_ms());
@@ -403,7 +484,11 @@ static int hub_main() {
             *managed = i.managed;
             return true;
         };
+#if defined(_WIN32)
         jc.appdata = winutil::getenv_utf8("APPDATA");   // UTF-8 like the launch that wrote the journal (std::getenv is ANSI: an accented profile never matched, the save never reached the vault)
+#else
+        jc.appdata = winutil::getenv_utf8("HOME") + "/Library/Application Support";   // where macOS emulators keep their user data
+#endif
         hubjournal::start_recovery(hubjournal::pending_dir(hub::data_dir()), jc, [](const hubjournal::Entry& e) {
             if (e.system_short.empty() || e.game_key.empty()) return;
             hub::saves::touch_game(e.system_short, e.game_key, e.title);
@@ -420,13 +505,13 @@ static int hub_main() {
 
     {   // UI hang watchdog: a stalled UI thread leaves userdata\logs\hang-<time>.txt (breadcrumb phases). HUB_HANG_SECS overrides the 5 s.
         const char* hs = std::getenv("HUB_HANG_SECS");
-        hang_watchdog_start(hub::data_dir() + "logs\\", hs ? std::max(1.0, std::atof(hs)) : 5.0);
+        hang_watchdog_start(hub::data_dir() + "logs" + kSepS, hs ? std::max(1.0, std::atof(hs)) : 5.0);
     }
     qadisk::install();   // QA only (HUB_SHOT_DISKIO=1 in a screenshot run): count the game page's file-system calls
     hublog::info("startup: services started, entering main loop (+%llu ms), %d games", hublog::since_start_ms(), (int)A.lib.size());
     bool running = true;
     bool log_game_on = false;   // hub.log: a hub-launched game process starting / ending
-    ULONGLONG log_game_t0 = 0;
+    unsigned long long log_game_t0 = 0;
     int hang_test_frame = 0;   // HUB_HANG_TEST: main-loop iterations (ImGui frames may already be past 30 after the boot screen)
 
     /* Idle throttle (idle_logic.h): while the hub is in the background the loop keeps pumping every poller at its old cadence but draws a
@@ -445,24 +530,18 @@ static int hub_main() {
     const double exit_after_s = (fps_report && *fps_report && std::getenv("HUB_EXIT_AFTER")) ? std::atof(std::getenv("HUB_EXIT_AFTER")) : 0.0;
     unsigned long long last_render_ms = 0, last_activity_ms = 0, prev_frame_hash = 0;
     unsigned long long n_loops = 0, n_presented = 0, n_waits = 0;
-    LARGE_INTEGER qpc_f{}; QueryPerformanceFrequency(&qpc_f);
-    auto qpc_ms = [&]() { LARGE_INTEGER i; QueryPerformanceCounter(&i); return (double)i.QuadPart * 1000.0 / (double)qpc_f.QuadPart; };
+    auto qpc_ms = [&]() { return hub_qpc_ms(); };
     double ms_pump = 0, ms_ui = 0, ms_raster = 0, ms_present = 0, q_iter = 0, q_ui = 0, q_raster = 0, q_present = 0;   // HUB_FPS_REPORT: where a frame's time goes
     std::vector<double> frame_ms;   // HUB_FPS_REPORT: whole-iteration time of every drawn frame (median / worst in the report)
-    const ULONGLONG run_t0 = GetTickCount64();
-    auto cpu_seconds = []() {   // CPU the process really used (kernel + user): independent of how busy the rest of the PC is
-        FILETIME ct, et, kt, ut;
-        if (!GetProcessTimes(GetCurrentProcess(), &ct, &et, &kt, &ut)) return 0.0;
-        auto to_s = [](const FILETIME& f) { return (double)(((unsigned long long)f.dwHighDateTime << 32) | f.dwLowDateTime) / 1e7; };
-        return to_s(kt) + to_s(ut);
-    };
+    const unsigned long long run_t0 = hub_tick();
+    auto cpu_seconds = []() { return hub_cpu_seconds(); };
     bool warm_taken = false;   // HUB_FPS_REPORT: the first 3 s (fonts, library, textures) are start-up, not steady state
     double warm_cpu = 0, warm_secs = 0;
     unsigned long long warm_presented = 0, warm_loops = 0;
     bool prefill_cleanup_pending = installer_prefill_kept;
 
     while (running) {
-        const ULONGLONG iter_t0 = GetTickCount64();
+        const unsigned long long iter_t0 = hub_tick();
         bool input_this_iter = false, dirty_this_iter = false;
         ++n_loops;
         if (fps_report) {
@@ -476,7 +555,7 @@ static int hub_main() {
             if (log_game_on) { log_game_t0 = iter_t0; hublog::info("game process started: %s (emulator kind %d)", A.run.title.c_str(), A.run.emu_kind); }
             else hublog::info("game process ended after %llu s", (unsigned long long)((iter_t0 - log_game_t0) / 1000));   // the exit code is logged by launch.cpp's poll_process once it adopts hublog
         }
-        if (g_headless && std::getenv("HUB_HANG_TEST") && ++hang_test_frame == 30) hang_watchdog_phase("hang_test"), Sleep((DWORD)(std::atof(std::getenv("HUB_HANG_TEST")) * 1000));   // QA: simulate a hang
+        if (g_headless && std::getenv("HUB_HANG_TEST") && ++hang_test_frame == 30) hang_watchdog_phase("hang_test"), hub_sleep_ms((unsigned)(std::atof(std::getenv("HUB_HANG_TEST")) * 1000));   // QA: simulate a hang
         hang_watchdog_phase("events");
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -599,7 +678,7 @@ static int hub_main() {
         if (prefill_cleanup_pending && A.st.setup_done) {   // the first-run wizard was finished or skipped: the installer's hand-off file has done its job
             prefill_cleanup_pending = false;
             hubui::wiz::set_installer_prefill(false);
-            std::error_code ec; std::filesystem::remove(std::filesystem::path(W(installer_hand)), ec);
+            std::error_code ec; std::filesystem::remove(hub_path(installer_hand), ec);
         }
 
         if (SDL_GetWindowFlags(A.win) & SDL_WINDOW_MINIMIZED) { hubupdate::apply::note_boot_ok(); SDL_Delay(50); continue; }   // up, but minimised behind a game: no frame will be presented, so this counts as started
@@ -623,7 +702,7 @@ static int hub_main() {
             if (!d.render) {
                 hang_watchdog_phase("idle_wait");
                 SDL_WaitEventTimeout(nullptr, d.wait_ms);   // input wakes it at once; nothing is consumed
-                if (const int pad = hubidle::pad_ms(GetTickCount64() - iter_t0)) SDL_Delay((Uint32)pad);   // noise events must not make the pumps spin
+                if (const int pad = hubidle::pad_ms(hub_tick() - iter_t0)) SDL_Delay((Uint32)pad);   // noise events must not make the pumps spin
                 ++n_waits;
                 continue;
             }
@@ -764,10 +843,10 @@ static int hub_main() {
         if (idle_on) {   // idle throttle: did anything on screen change since the previous frame? (keeps the capped fast cadence while it does)
             if (bg_this_iter) {
                 const unsigned long long h = hash_draw_data(ImGui::GetDrawData());
-                if (h != prev_frame_hash) last_activity_ms = GetTickCount64();
+                if (h != prev_frame_hash) last_activity_ms = hub_tick();
                 prev_frame_hash = h;
             } else prev_frame_hash = 0;
-            last_render_ms = GetTickCount64();
+            last_render_ms = hub_tick();
         }
         if (shot_path) {
             if (!SH.pending_shot.empty()) {   // shot:<name> from HUB_SHOT_PAD -> <stem>-<name>.bmp
@@ -804,7 +883,7 @@ static int hub_main() {
     }
 
     if (fps_report && *fps_report) {   // QA: how many frames were really presented, and how often the pumps ran (docs/ARCHITECTURE.md, "Idle throttle")
-        const double secs = std::max(0.001, (double)(GetTickCount64() - run_t0) / 1000.0);
+        const double secs = std::max(0.001, (double)(hub_tick() - run_t0) / 1000.0);
         const double cpu = cpu_seconds();
         const double ssecs = warm_taken ? std::max(0.001, secs - warm_secs) : secs;   // steady state = after the first 3 s
         const double scpu = warm_taken ? cpu - warm_cpu : cpu;
@@ -849,7 +928,9 @@ static int hub_main() {
     if (A.cloud_gate.th.joinable()) A.cloud_gate.th.join();
     cloud_shutdown();
     hub::flush_library_state();
+#if defined(_WIN32)
     if (A.proc) CloseHandle(A.proc);
+#endif
     for (auto* p : A.pads) SDL_GameControllerClose(p);
     g_io_shutdown = true;
     hubart::shutdown();
@@ -860,7 +941,9 @@ static int hub_main() {
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(A.win);
     SDL_Quit();
+#if defined(_WIN32)
     CoUninitialize();
+#endif
     if (!shot_run_vault.empty() && shot_run_vault.find("retrohub-shot-vault-run-") != std::string::npos) {   // only the folder this run made for itself
         std::error_code ec;
         std::filesystem::remove_all(std::filesystem::u8path(shot_run_vault), ec);

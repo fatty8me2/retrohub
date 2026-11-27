@@ -17,8 +17,12 @@
 #include <cstring>
 #include <SDL.h>
 
+#if defined(_WIN32)
 #include <windows.h>
 #include <winhttp.h>
+#else
+#include "plat/plat_http.h"
+#endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -259,6 +263,7 @@ struct OfflineScope {
     ~OfflineScope() { t_offline = old; }
 };
 
+#if defined(_WIN32)
 /* status: HTTP status, or 0 for a transport failure. */
 bool http_get(const std::string& url, std::string* body, int* status, size_t max_bytes = 64u << 20) {
     *status = 0;
@@ -325,6 +330,47 @@ bool http_get(const std::string& url, std::string* body, int* status, size_t max
     if (!ok) *status = 0;
     return ok;
 }
+#else
+/* status: HTTP status, or 0 for a transport failure. macOS: plat::http (NSURLSession shares one session, proxies and the system certificate store). */
+bool http_get(const std::string& url, std::string* body, int* status, size_t max_bytes = 64u << 20) {
+    *status = 0;
+    body->clear();
+    if (t_offline) { ++g_offline_refused; return false; }
+    std::string host_u8;
+    {   // scheme://host[:port]/path
+        const size_t se = url.find("://");
+        if (se == std::string::npos) return false;
+        size_t he = url.find_first_of("/?#", se + 3);
+        host_u8 = url.substr(se + 3, he == std::string::npos ? std::string::npos : he - (se + 3));
+        const size_t pc = host_u8.rfind(':');
+        if (pc != std::string::npos) host_u8.erase(pc);
+        if (host_u8.empty()) return false;
+    }
+    if (!netgate::acquire(host_u8)) return false;   // spaced per site, and blocked while a Retry-After runs
+    plat::http::Request rq;
+    rq.url = url;
+    rq.headers.push_back({"User-Agent", "RetroHub"});
+    rq.connect_timeout_ms = 5000;
+    rq.timeout_ms = 20000;
+    bool too_big = false;
+    rq.on_data = [&](const char* d, size_t n) {
+        if (body->size() + n > max_bytes) { too_big = true; return false; }
+        body->append(d, n);
+        return true;
+    };
+    plat::http::Response rs;
+    const bool ok = plat::http::perform(rq, &rs) && !too_big;
+    *status = rs.status;
+    if (rs.status == 429 || rs.status == 503) {
+        int secs = 120;
+        auto it = rs.headers.find("retry-after");
+        if (it != rs.headers.end()) secs = std::atoi(it->second.c_str()) > 0 ? std::atoi(it->second.c_str()) : 120;
+        netgate::block(host_u8, secs);
+    }
+    if (!ok) *status = 0;
+    return ok;
+}
+#endif
 
 /* ---------- DAT cache ---------- */
 

@@ -1,15 +1,19 @@
 /* Console test for shell_integration: writes .lnk files into %TEMP% only (never the real Start Menu). */
 #include "winutil.h"
 #include "shell_integration.h"
+#if defined(_WIN32)
 #include <windows.h>
 #include <shobjidl.h>
 #include <objbase.h>
+#endif
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
 
+#if defined(_WIN32)
 int main() {
     wchar_t tmp[MAX_PATH];
     GetTempPathW(MAX_PATH, tmp);
@@ -104,3 +108,59 @@ int main() {
     std::printf(fails ? "hub_shell_test: %d FAILED\n" : "hub_shell_test: all passed\n", fails);
     return fails ? 1 : 0;
 }
+#else
+/* macOS: shortcuts / registry do not exist (not supported, TODO(macOS lane 9)); the pure logic is checked for real. */
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <unistd.h>
+int main() {
+    std::string tmp = std::filesystem::temp_directory_path().string() + "/retrohub_shell_test_" + std::to_string(getpid());
+    std::filesystem::create_directories(tmp);
+    const std::wstring exe = winutil::to_wide(winutil::exe_path());
+
+    bool ok = true;
+    CHECK(!shell_write_shortcut(winutil::to_wide(tmp) + L"/x.lnk", exe, &ok) && !ok);   // not supported: false, and no file
+    CHECK(!std::filesystem::exists(tmp + "/x.lnk"));
+    ShellLinkInfo i;
+    CHECK(!shell_read_shortcut(winutil::to_wide(tmp) + L"/x.lnk", &i));
+    CHECK(!shell_refresh_icons());
+    CHECK(!shell_write_game_shortcut(winutil::to_wide(tmp) + L"/g.lnk", exe, L"n64-abc", L"Mario", L""));
+
+    CHECK(shell_game_shortcut_name(L"Super: Mario/Kart?") == L"Super  Mario Kart.lnk");
+    CHECK(shell_game_shortcut_name(L"  ") == L"Game.lnk");
+    unsigned char px[4 * 4 * 4];
+    for (int k = 0; k < 16; ++k) { px[k*4] = 200; px[k*4+1] = 50; px[k*4+2] = 20; px[k*4+3] = 255; }
+    const std::wstring ico = winutil::to_wide(tmp) + L"/g.ico";
+    CHECK(shell_write_ico(ico, px, 4, 4));
+    CHECK(std::filesystem::file_size(tmp + "/g.ico") == 22 + 40 + 128*128*4 + 128*128/8);
+    setenv("HUB_SHORTCUT_DIR", "/scratch", 1);
+    CHECK(shell_shortcut_dir() == L"/scratch");
+    unsetenv("HUB_SHORTCUT_DIR");
+    CHECK(shell_shortcut_dir().empty());   // never the real Desktop
+
+    auto none = [](const std::wstring&, const wchar_t*) { return false; };
+    CHECK(!shell_path_looks_like_dev_build(L"/Applications/RetroHub.app/Contents/MacOS/RetroHub", none));
+    CHECK(!shell_path_looks_like_dev_build(L"/Users/u/Applications/RetroHub.app/Contents/MacOS/RetroHub", none));
+    CHECK(shell_path_looks_like_dev_build(L"/Users/u/wt/version-check/build/bin/RetroHub", none));
+    CHECK(shell_path_looks_like_dev_build(L"/Users/u/retrohub/build-mac/bin/RetroHub", none));
+    CHECK(shell_path_looks_like_dev_build(L"/x/foo/bin/Release/RetroHub", none));
+    CHECK(shell_path_looks_like_dev_build(L"/x/app/RetroHub", [](const std::wstring& d, const wchar_t* n) {
+        return d == L"/x" && (std::wstring(n) == L".git" || std::wstring(n) == L"CMakeLists.txt"); }));
+    CHECK(!shell_path_looks_like_dev_build(L"/Users/u/Games/RetroHub", [](const std::wstring& d, const wchar_t* n) {
+        return d == L"/Users/u" && std::wstring(n) == L".git"; }));
+    CHECK(shell_path_looks_like_dev_build(L"/x/app/RetroHub", [](const std::wstring& d, const wchar_t* n) {
+        return d == L"/x" && std::wstring(n) == L"CMakeCache.txt"; }));
+    setenv("RETROHUB_NO_SHELL", "1", 1);
+    CHECK(!shell_registration_allowed());
+    unsetenv("RETROHUB_NO_SHELL");
+    setenv("HUB_SCREENSHOT", "x.bmp", 1);
+    CHECK(!shell_registration_allowed());
+    unsetenv("HUB_SCREENSHOT");
+    CHECK(!shell_registration_allowed());   // this test exe lives in a build tree
+
+    std::filesystem::remove_all(tmp);
+    std::printf(fails ? "hub_shell_test: %d FAILED\n" : "hub_shell_test: all passed\n", fails);
+    return fails ? 1 : 0;
+}
+#endif

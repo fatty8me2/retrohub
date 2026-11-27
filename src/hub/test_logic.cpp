@@ -3,7 +3,9 @@
 #include "logic.h"
 #include "dupes_logic.h"
 #include "settings_tabs.h"
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 #include "durable_write.h"
 #include <iterator>
 #include <string>
@@ -35,8 +37,19 @@ static void test_dupes() {
 }
 
 
+#if defined(_WIN32)
+typedef std::wstring TPath;   // Windows: the wide spelling of the UTF-8 path (the code under test resolves it the same way)
+static TPath tp(const std::string& u8) { return durable::utf8_to_wide(u8); }
+#define TL(x) L##x
+#define PSEP "\\"
+#else
+typedef std::string TPath;    // macOS: paths are UTF-8 already
+static TPath tp(const std::string& u8) { return u8; }
+#define TL(x) x
+#define PSEP "/"
+#endif
 /* ---- settings by UTF-8 path: non-ASCII round trip, legacy (ANSI-misread) location migration, ASCII unchanged, failed save ---- */
-static std::string slurp_w(const std::wstring& w) { std::ifstream f(std::filesystem::path(w), std::ios::binary); return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()); }
+static std::string slurp_w(const TPath& w) { std::ifstream f(std::filesystem::path(w), std::ios::binary); return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()); }
 static void test_settings_paths() {
     namespace fs = std::filesystem;
     using hubui::Settings;
@@ -46,25 +59,30 @@ static void test_settings_paths() {
     Settings s; s.name = "Zo\xC3\xAB"; s.games_dest = "D:\\g\xE6\x97\xA5";
     const char* dirs[] = { "plain_ascii", "Zo\xC3\xAB_\xD0\x96_\xE6\x97\xA5\xE6\x9C\xAC", "caf\xC3\xA9" };
     for (const char* d : dirs) {
-        const std::string dir = u8(base) + "\\" + d, file = dir + "\\hub.json";
-        const std::wstring wdir = durable::utf8_to_wide(dir), wfile = durable::utf8_to_wide(file);
+        const std::string dir = u8(base) + PSEP + d, file = dir + PSEP "hub.json";
+        const TPath wdir = tp(dir), wfile = tp(file);
         fs::create_directories(fs::path(wdir), ec);
         CHECK(hubui::save_settings(file, s));
-        CHECK(fs::exists(fs::path(wfile)) && !fs::exists(fs::path(wfile + L".tmp")));
+        CHECK(fs::exists(fs::path(wfile)) && !fs::exists(fs::path(wfile + TL(".tmp"))));
         Settings r; CHECK(hubui::load_settings(file, &r) && r.name == s.name && r.games_dest == s.games_dest);
+        #if defined(_WIN32)
         const bool ascii = durable::legacy_ansi_to_wide(file) == wfile;
+#else
+        const bool ascii = true;   // macOS has no ANSI-misread legacy location
+#endif
         std::printf("  settings path '%s': %s\n", d, ascii ? "legacy == correct (byte-identical behaviour)" : "legacy differs (mojibake path)");
         /* failed save (a directory squats on the temp name) leaves the previous file byte-identical */
         const std::string before = slurp_w(wfile);
-        fs::create_directories(fs::path(wfile + L".tmp"), ec);
+        fs::create_directories(fs::path(wfile + TL(".tmp")), ec);
         Settings s2 = s; s2.name = "changed";
         CHECK(!hubui::save_settings(file, s2) && slurp_w(wfile) == before);
-        fs::remove_all(fs::path(wfile + L".tmp"), ec);
+        fs::remove_all(fs::path(wfile + TL(".tmp")), ec);
         if (ascii) {   // identical resolution: exactly one file, no migration side effects
             int n = 0; for (auto& e : fs::directory_iterator(fs::path(wdir))) { (void)e; ++n; }
             CHECK(n == 1);
         }
     }
+#if defined(_WIN32)
     /* legacy migration: the old code would have used the UTF-8 bytes as an ANSI path */
     {
         const std::string dir = u8(base) + "\\mig_Zo\xC3\xAB_\xD0\x96", file = dir + "\\hub.json";
@@ -88,7 +106,8 @@ static void test_settings_paths() {
         }
         fs::remove_all(olddir, ec);
     }
-    { Settings r; CHECK(!hubui::load_settings(u8(base) + "\\nope_\xC3\xA9\\hub.json", &r)); }
+#endif
+    { Settings r; CHECK(!hubui::load_settings(u8(base) + PSEP "nope_\xC3\xA9" PSEP "hub.json", &r)); }
     fs::remove_all(base, ec);
 }
 
@@ -100,7 +119,7 @@ static void test_settings_robust() {
     const fs::path base = fs::temp_directory_path() / "hub_utf8paths_test2";
     std::error_code ec; fs::remove_all(base, ec); fs::create_directories(base, ec);
     const std::string file = (base / "hub.json").u8string();   // ASCII path
-    const std::wstring wfile = durable::utf8_to_wide(file);
+    const TPath wfile = tp(file);
     Settings s; s.name = "exact"; s.games_dest = "D:\\g";
     CHECK(hubui::save_settings(file, s));
     CHECK(slurp_w(wfile) == hubui::settings_to_json(s));   // bytes written == serializer output, nothing added or translated
@@ -114,6 +133,7 @@ static void test_settings_robust() {
         CHECK(hubui::save_settings(file, r));
         Settings r2; CHECK(hubui::load_settings(file, &r2) && r2.name == "exact" && r2.games_dest == "D:\\g");
     }
+#if defined(_WIN32)
     /* an existing file that is held open exclusively: no legacy fallback, load fails, and saves are refused so defaults never replace it */
     {
         const std::string before = slurp_w(wfile);
@@ -129,9 +149,10 @@ static void test_settings_robust() {
         Settings again; CHECK(hubui::load_settings(file, &again) && again.name == "exact");   // a fresh successful load lifts the guard
         CHECK(hubui::save_settings(file, again));
     }
+#endif
     /* a file that is there but is not valid JSON: the load fails (defaults), but a copy is kept before the next save replaces it */
     {
-        const std::wstring wcopy = wfile + L".unreadable";
+        const TPath wcopy = wfile + TL(".unreadable");
         const std::string broken = "{\n  \"name\": \"mine\",\n  \"rom_folders\": [\"E:\\\\Games\"],\n  \"vault_dir\": \"F:\\\\Saves\",\n";   // cut off
         { std::ofstream f(fs::path(wfile), std::ios::binary | std::ios::trunc); f << broken; }
         Settings d; bool kept = false;

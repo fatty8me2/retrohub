@@ -3,15 +3,75 @@
 #include "invite.h"
 #include "invite_logic.h"
 
+#if defined(_WIN32)
 #include <shellapi.h>
 #include <sddl.h>
+#else
+#include "plat/plat.h"
+#include <atomic>
+#include <chrono>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cwchar>
+#include <fcntl.h>
+#include <filesystem>
+#include <mutex>
+#include <poll.h>
+#include <sys/file.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <thread>
+#include <unistd.h>
+#endif
 
 #include <cstring>
 #include <cwctype>
 #include <vector>
 
+#if defined(_WIN32)
 const wchar_t* const INVITE_MUTEX_NAME = L"Local\\RetroHub.SingleInstance";
 const wchar_t* const INVITE_PIPE_NAME = L"\\\\.\\pipe\\RetroHub.Invite";
+#else
+const wchar_t* const INVITE_MUTEX_NAME = L"hub.lock";   // under invite_set_runtime_dir()
+const wchar_t* const INVITE_PIPE_NAME = L"hub.sock";
+
+/* Local stand-ins so the portable parsing below stays the same text as on Windows. */
+typedef wchar_t* LPWSTR;
+#define _wcsicmp wcscasecmp
+static LPWSTR* CommandLineToArgvW(const wchar_t* cmd, int* argc_out) {   // the CRT / CommandLineToArgvW quoting rules
+    std::vector<std::wstring> a;
+    std::wstring cur;
+    bool in_q = false, has = false;
+    const std::wstring s = cmd ? cmd : L"";
+    for (size_t i = 0; i < s.size();) {
+        wchar_t c = s[i];
+        if (c == L'\\') {
+            size_t n = 0;
+            while (i < s.size() && s[i] == L'\\') { ++n; ++i; }
+            if (i < s.size() && s[i] == L'"') { cur.append(n / 2, L'\\'); has = true; if (n % 2) { cur += L'"'; ++i; } }
+            else { cur.append(n, L'\\'); has = true; }
+            continue;
+        }
+        if (c == L'"') { in_q = !in_q; has = true; ++i; continue; }
+        if ((c == L' ' || c == L'\t') && !in_q) { if (has) { a.push_back(cur); cur.clear(); has = false; } ++i; continue; }
+        cur += c; has = true; ++i;
+    }
+    if (has) a.push_back(cur);
+    size_t chars = 0;
+    for (auto& x : a) chars += x.size() + 1;
+    void* blk = std::malloc(sizeof(LPWSTR) * (a.size() + 1) + sizeof(wchar_t) * (chars + 1));
+    if (!blk) return nullptr;
+    LPWSTR* v = (LPWSTR*)blk;
+    wchar_t* w = (wchar_t*)(v + a.size() + 1);
+    for (size_t i = 0; i < a.size(); ++i) { v[i] = w; std::wmemcpy(w, a[i].c_str(), a[i].size() + 1); w += a[i].size() + 1; }
+    v[a.size()] = nullptr;
+    *argc_out = (int)a.size();
+    return v;
+}
+static void LocalFree(LPWSTR* p) { std::free(p); }
+#endif
 
 namespace {
 
@@ -179,6 +239,7 @@ std::wstring invite_web_link(const std::wstring& code, const std::wstring& host_
     return std::wstring(kWebBase) + c;
 }
 
+#if defined(_WIN32)
 bool invite_copy_text(const std::wstring& text) {
     if (!OpenClipboard(nullptr)) return false;
     bool ok = false;
@@ -197,11 +258,15 @@ bool invite_copy_text(const std::wstring& text) {
     CloseClipboard();
     return ok;
 }
+#else
+bool invite_copy_text(const std::wstring& text) { return invite_copy_text_utf8(winutil::to_utf8(text)); }   // NSPasteboard: url_events_mac.mm
+#endif
 
 std::wstring invite_protocol_command(const std::wstring& exe) {
     return L"\"" + exe + L"\" \"%1\"";
 }
 
+#if defined(_WIN32)
 static const DWORD kClientReadMs = 2000;   // a connected client must send its message within this
 
 /* ---- single instance ---- */
@@ -348,6 +413,226 @@ bool InviteServer::take_play(std::wstring* key) { return pop(1, key); }
 bool InviteServer::take_account(std::wstring* code) { return pop(3, code); }
 bool InviteServer::take_night(std::wstring* id) { return pop(4, id); }
 bool InviteServer::take_show() { return pop(2, nullptr); }
+#else
+static const unsigned long kClientReadMs = 2000;   // a connected client must send its message within this
+
+/* ---- single instance (macOS): an flock(2) lock file instead of the named mutex ---- */
+namespace {
+
+std::mutex g_q_mu;
+struct QMsg { int kind; std::wstring text; };
+std::vector<QMsg> g_queue;   // process-wide: the socket thread and the Apple Event handler both feed it
+std::string g_runtime_dir;
+
+std::string tmp_dir() {
+    const char* t = std::getenv("TMPDIR");
+    std::string d = (t && *t) ? t : "/tmp";
+    if (d.back() != '/') d += '/';
+    return d;
+}
+
+std::string resolve_path(const std::wstring& name) {
+    std::string n = winutil::to_utf8(name);
+    if (!n.empty() && n[0] == '/') return n;
+    std::string dir;
+    { std::lock_guard<std::mutex> l(g_q_mu); dir = g_runtime_dir; }
+    if (dir.empty()) dir = tmp_dir();
+    if (dir.back() != '/') dir += '/';
+    return dir + n;
+}
+
+std::string fnv_hex(const std::string& s) {
+    unsigned long long h = 1469598103934665603ull;
+    for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; }
+    char b[24];
+    std::snprintf(b, sizeof b, "%016llx", h);
+    return b;
+}
+
+/* sockaddr_un.sun_path holds 104 bytes on macOS: a longer path falls back to $TMPDIR/rh-<hash>.sock (same on both sides). */
+std::string socket_path(const std::wstring& name) {
+    std::string p = resolve_path(name);
+    if (p.size() < sizeof(((sockaddr_un*)nullptr)->sun_path)) return p;
+    return tmp_dir() + "rh-" + fnv_hex(p) + ".sock";
+}
+
+bool make_addr(const std::string& path, sockaddr_un* a) {
+    std::memset(a, 0, sizeof *a);
+    if (path.size() >= sizeof a->sun_path) return false;
+    a->sun_family = AF_UNIX;
+    a->sun_len = (uint8_t)sizeof *a;
+    std::memcpy(a->sun_path, path.c_str(), path.size() + 1);
+    return true;
+}
+
+}  // namespace
+
+void invite_set_runtime_dir(const std::string& dir_utf8) {
+    std::lock_guard<std::mutex> l(g_q_mu);
+    g_runtime_dir = dir_utf8;
+}
+
+InviteInstance::InviteInstance(const std::wstring& mutex_name) {
+    const std::string path = resolve_path(mutex_name);
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+    fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (fd_ < 0) return;
+    if (::flock(fd_, LOCK_EX | LOCK_NB) == 0) primary_ = true;
+}
+
+InviteInstance::~InviteInstance() {
+    if (fd_ >= 0) ::close(fd_);   // closing drops the flock
+}
+
+struct InviteServer::Impl {
+    std::thread thread;
+    int listen_fd = -1;
+    int wake_r = -1, wake_w = -1;
+    std::atomic<bool> stop{false};
+    std::string path;
+};
+
+InviteServer::~InviteServer() {
+    stop();
+}
+
+static void queue_push(int kind, const std::wstring& text) {
+    std::lock_guard<std::mutex> l(g_q_mu);
+    if (g_queue.size() < 16) g_queue.push_back({kind, text});
+}
+
+/* Classifies one wire message ("ABCDEF", "play:<key>", "acct:<code>", "night:<id>", "show"); true when valid and queued. */
+static bool handle_message(const std::wstring& text) {
+    if (text == L"show") { queue_push(2, L""); return true; }
+    if (text.compare(0, 5, L"acct:") == 0) {
+        if (hubnet::invite_valid(winutil::to_utf8(text.substr(5)))) {
+            queue_push(3, winutil::to_wide(hubnet::invite_format(winutil::to_utf8(text.substr(5)))));
+            return true;
+        }
+        return false;
+    }
+    if (text.compare(0, 6, L"night:") == 0) {
+        std::wstring id = text.substr(6);
+        if (invite_is_valid_night_id(id)) { queue_push(4, id); return true; }
+        return false;
+    }
+    if (text.compare(0, 5, L"play:") == 0) {
+        std::wstring key = text.substr(5);
+        if (invite_is_valid_game_key(key)) { queue_push(1, key); return true; }
+        return false;
+    }
+    std::wstring code = invite_normalize_code(text);
+    if (invite_is_valid_code(code)) { queue_push(0, code); return true; }
+    return false;
+}
+
+bool invite_deliver_url(const std::string& url_utf8) {
+    const std::wstring u = winutil::to_wide(url_utf8);
+    std::wstring v;
+    if (invite_parse_url(u, &v)) { queue_push(0, v); return true; }
+    if (invite_parse_account_url(u, &v)) { queue_push(3, v); return true; }
+    if (invite_parse_night_url(u, &v)) { queue_push(4, v); return true; }
+    return false;
+}
+
+template <class Impl>
+static void serve(Impl* im) {   // template: Impl is private to InviteServer, a deduced type needs no access
+    while (!im->stop.load()) {
+        pollfd fds[2] = {{im->listen_fd, POLLIN, 0}, {im->wake_r, POLLIN, 0}};
+        if (::poll(fds, 2, -1) < 0) { if (errno == EINTR) continue; break; }
+        if (fds[1].revents || im->stop.load()) break;
+        if (!(fds[0].revents & POLLIN)) continue;
+        int c = ::accept(im->listen_fd, nullptr, nullptr);
+        if (c < 0) continue;
+        char buf[kPipeMsgMax + 1] = {};
+        size_t got = 0;
+        bool ok = false;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (;;) {   // the client sends one message and half-closes; a silent client is dropped after kClientReadMs
+            int left = 2000 - (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+            if (left <= 0) break;
+            pollfd cp = {c, POLLIN, 0};
+            int r = ::poll(&cp, 1, left);
+            if (r < 0 && errno == EINTR) continue;
+            if (r <= 0) break;
+            ssize_t n = ::read(c, buf + got, kPipeMsgMax - got);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) { ok = got > 0; break; }   // EOF: the message is complete
+            got += (size_t)n;
+            if (got >= kPipeMsgMax) { ok = true; break; }
+        }
+        if (ok) {
+            bool accepted = handle_message(winutil::to_wide(std::string(buf, got)));
+            const char* reply = accepted ? "OK" : "ERR";
+            ssize_t ignored = ::write(c, reply, accepted ? 2 : 3);
+            (void)ignored;
+        }
+        ::close(c);
+    }
+}
+
+bool InviteServer::start(const std::wstring& pipe_name) {
+    if (impl_) return false;
+    pipe_ = pipe_name;
+    const std::string path = socket_path(pipe_name);
+    sockaddr_un addr;
+    if (!make_addr(path, &addr)) return false;
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+    ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+    ::unlink(path.c_str());   // we hold the single-instance lock, so a socket file here is stale
+    if (::bind(fd, (sockaddr*)&addr, sizeof addr) != 0 || ::listen(fd, 8) != 0) { ::close(fd); return false; }
+    ::chmod(path.c_str(), 0600);   // only the current user may talk to it
+    int p[2];
+    if (::pipe(p) != 0) { ::close(fd); ::unlink(path.c_str()); return false; }
+    ::fcntl(p[0], F_SETFD, FD_CLOEXEC);
+    ::fcntl(p[1], F_SETFD, FD_CLOEXEC);
+    impl_ = new Impl();
+    impl_->listen_fd = fd;
+    impl_->wake_r = p[0];
+    impl_->wake_w = p[1];
+    impl_->path = path;
+    impl_->thread = std::thread([im = impl_] { serve(im); });
+    return true;
+}
+
+void InviteServer::stop() {
+    if (!impl_) return;
+    impl_->stop = true;
+    char b = 1;
+    ssize_t ignored = ::write(impl_->wake_w, &b, 1);
+    (void)ignored;
+    if (impl_->thread.joinable()) impl_->thread.join();
+    ::close(impl_->listen_fd);
+    ::close(impl_->wake_r);
+    ::close(impl_->wake_w);
+    ::unlink(impl_->path.c_str());
+    delete impl_;
+    impl_ = nullptr;
+}
+
+void InviteServer::push(int kind, const std::wstring& text) { queue_push(kind, text); }
+
+bool InviteServer::pop(int kind, std::wstring* text) {
+    std::lock_guard<std::mutex> l(g_q_mu);
+    for (size_t i = 0; i < g_queue.size(); ++i) {
+        if (g_queue[i].kind != kind) continue;
+        if (text) *text = g_queue[i].text;
+        g_queue.erase(g_queue.begin() + (long)i);
+        return true;
+    }
+    return false;
+}
+
+bool InviteServer::take(std::wstring* code) { return pop(0, code); }
+bool InviteServer::take_play(std::wstring* key) { return pop(1, key); }
+bool InviteServer::take_account(std::wstring* code) { return pop(3, code); }
+bool InviteServer::take_night(std::wstring* id) { return pop(4, id); }
+bool InviteServer::take_show() { return pop(2, nullptr); }
+#endif  // _WIN32
 
 bool invite_is_valid_game_key(const std::wstring& key) {
     if (key.empty() || key.size() > 120) return false;
@@ -375,6 +660,7 @@ bool invite_parse_play(const std::wstring& cmdline, std::wstring* key) {
 
 std::wstring invite_play_arguments(const std::wstring& key) { return L"--play " + key; }
 
+#if defined(_WIN32)
 static bool pipe_call(const std::wstring& pipe_name, const std::wstring& text, DWORD timeout_ms) {
     std::string msg_utf8 = winutil::to_utf8(text);
     std::vector<char> msg(msg_utf8.begin(), msg_utf8.end());
@@ -423,6 +709,76 @@ bool invite_wait_for_primary(std::unique_ptr<InviteInstance>* inst, const std::w
         }
     }
 }
+#else
+/* One request on the Unix socket: connect (retrying until the deadline while the primary starts), send, half-close, read OK/ERR. */
+static bool pipe_call(const std::wstring& pipe_name, const std::wstring& text, unsigned long timeout_ms) {
+    const std::string msg = winutil::to_utf8(text);
+    sockaddr_un addr;
+    if (!make_addr(socket_path(pipe_name), &addr)) return false;
+    const auto t0 = std::chrono::steady_clock::now();
+    auto elapsed = [&] { return (unsigned long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count(); };
+    for (;;) {
+        int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd >= 0) {
+            ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+            if (::connect(fd, (sockaddr*)&addr, sizeof addr) == 0) {
+                bool ok = false;
+                if (::write(fd, msg.data(), msg.size()) == (ssize_t)msg.size()) {
+                    ::shutdown(fd, SHUT_WR);
+                    char reply[8] = {};
+                    size_t got = 0;
+                    pollfd p = {fd, POLLIN, 0};
+                    while (got < sizeof reply && ::poll(&p, 1, 2500) > 0) {
+                        ssize_t n = ::read(fd, reply + got, sizeof reply - got);
+                        if (n <= 0) break;
+                        got += (size_t)n;
+                    }
+                    ok = got >= 2 && reply[0] == 'O' && reply[1] == 'K';
+                }
+                ::close(fd);
+                return ok;
+            }
+            ::close(fd);
+        }
+        if (elapsed() >= timeout_ms) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));   // primary still starting, or busy
+    }
+}
+
+bool invite_send(const std::wstring& pipe_name, const std::wstring& code, unsigned long timeout_ms) {
+    std::wstring c = invite_normalize_code(code);
+    return invite_is_valid_code(c) && pipe_call(pipe_name, c, timeout_ms);
+}
+bool invite_send_play(const std::wstring& pipe_name, const std::wstring& key, unsigned long timeout_ms) {
+    return invite_is_valid_game_key(key) && pipe_call(pipe_name, L"play:" + key, timeout_ms);
+}
+bool invite_send_night(const std::wstring& pipe_name, const std::wstring& id, unsigned long timeout_ms) {
+    return invite_is_valid_night_id(id) && pipe_call(pipe_name, L"night:" + id, timeout_ms);
+}
+bool invite_send_show(const std::wstring& pipe_name, unsigned long timeout_ms) {
+    return pipe_call(pipe_name, L"show", timeout_ms);
+}
+
+bool invite_wait_for_primary(std::unique_ptr<InviteInstance>* inst, const std::wstring& mutex_name,
+                             const std::function<bool(unsigned long)>& hand_over, unsigned long budget_ms, bool* handed) {
+    if (handed) *handed = false;
+    if (!inst) return false;
+    if (*inst && (*inst)->is_primary()) return true;
+    const unsigned long long t0 = plat::tick_ms();
+    unsigned long long next_try = t0 + 2000;
+    for (;;) {
+        inst->reset();   // our own descriptor must not keep the closing hub's lock alive
+        plat::sleep_ms(100);
+        inst->reset(new InviteInstance(mutex_name));
+        if ((*inst)->is_primary()) return true;
+        if (plat::tick_ms() - t0 >= budget_ms) return false;
+        if (hand_over && plat::tick_ms() >= next_try) {
+            if (hand_over(500)) { if (handed) *handed = true; return false; }
+            next_try = plat::tick_ms() + 2000;
+        }
+    }
+}
+#endif  // _WIN32
 
 bool invite_parse_account_url(const std::wstring& url, std::wstring* code) {
     std::string c;
@@ -447,7 +803,7 @@ bool invite_parse_account_command_line(const std::wstring& cmdline, std::wstring
     if (found && code) *code = result;
     return found;
 }
-bool invite_send_account(const std::wstring& pipe_name, const std::wstring& code, DWORD timeout_ms) {
+bool invite_send_account(const std::wstring& pipe_name, const std::wstring& code, unsigned long timeout_ms) {
     const std::string c = winutil::to_utf8(code);
     return hubnet::invite_valid(c) && pipe_call(pipe_name, L"acct:" + winutil::to_wide(hubnet::invite_format(c)), timeout_ms);
 }

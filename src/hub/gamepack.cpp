@@ -1,11 +1,17 @@
 #include "console_names.h"
 #include "gamepack.h"
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <winhttp.h>
+#else
+#include "plat/plat.h"
+#include "plat/plat_http.h"
+#include "winutil.h"
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -26,7 +32,11 @@
 namespace fs = std::filesystem;
 
 static fs::path P(const std::string& s) { return fs::u8path(s); }
+#if defined(_WIN32)
 static std::wstring W(const std::string& s) { return P(s).wstring(); }
+#else
+static std::wstring W(const std::string& s) { return winutil::to_wide(s); }
+#endif
 static std::string S(const fs::path& p) { auto u = p.u8string(); return std::string(u.begin(), u.end()); }
 
 namespace hubgp {
@@ -340,6 +350,7 @@ bool parse_packs_json(const std::string& text, std::vector<std::string>* out) {
     return true;
 }
 
+#if defined(_WIN32)
 /* QA only: RETROHUB_QA=1 + RETROHUB_GP_BASE=127.0.0.1:<port> sends every GamePack request (community list, Drive listings,
  * downloads) to a local plain-HTTP fake instead of GitHub / Google Drive. Loopback only; ignored otherwise. */
 static bool qa_base(INTERNET_PORT* port) {
@@ -383,6 +394,42 @@ static bool http_get(const std::wstring& host, const std::wstring& path, std::st
     WinHttpCloseHandle(ses);
     return ok;
 }
+#else
+/* macOS: the same requests on plat::http (NSURLSession). */
+typedef unsigned short INTERNET_PORT;
+
+static bool qa_base(INTERNET_PORT* port) {
+    const char* q = std::getenv("RETROHUB_QA");
+    const char* b = std::getenv("RETROHUB_GP_BASE");
+    if (!q || std::strcmp(q, "1") != 0 || !b || std::strncmp(b, "127.0.0.1:", 10) != 0) return false;
+    int p = std::atoi(b + 10);
+    if (p <= 0 || p > 65535) return false;
+    *port = (INTERNET_PORT)p;
+    return true;
+}
+
+/* Plain GET that returns the whole body (folder listings are small). */
+static bool http_get(const std::wstring& host, const std::wstring& path, std::string* body, std::string* err) {
+    INTERNET_PORT qp = 0;
+    const bool qa = qa_base(&qp);
+    plat::http::Request rq;
+    rq.url = (qa ? "http://127.0.0.1:" + std::to_string(qp) : "https://" + winutil::to_utf8(host)) + winutil::to_utf8(path);
+    rq.headers.push_back({"User-Agent", "RetroHub"});
+    bool too_large = false;
+    rq.on_data = [&](const char* d, size_t n) {
+        if (body->size() + n > (16u << 20)) { too_large = true; return false; }   // listings are small; never buffer a huge reply
+        body->append(d, n);
+        return true;
+    };
+    plat::http::Response rs;
+    const bool got = plat::http::perform(rq, &rs);
+    if (too_large) { *err = "listing too large"; return false; }
+    if (rs.status == 0) { *err = "could not reach Google Drive"; return false; }
+    if (rs.status != 200) { *err = "server answered " + std::to_string(rs.status); return false; }
+    if (!got) { *err = "download interrupted"; return false; }
+    return true;
+}
+#endif
 
 /* The shared community pack list: data/packs.json on GitHub (main branch, live). Every client fetches it, so a
  * link added there is installable for everyone without per-user setup. The last good list stays in memory; a
@@ -653,6 +700,7 @@ void SpeedMeter::add(double t, uint64_t bytes) {
 static std::map<std::string, uint64_t> g_sizes;   // file id -> bytes (probed once)
 static std::mutex g_sizes_mu;
 
+#if defined(_WIN32)
 /* One Drive download request, following the big-file confirm page. probe_only: stop after the headers and report the size. */
 static bool fetch_file(const std::string& file_id, const std::string& out_path, std::atomic<uint64_t>* got, std::atomic<uint64_t>* total,
                        std::atomic<bool>* stop, std::string* err, bool probe_only, uint64_t* size_out) {
@@ -757,6 +805,118 @@ static bool fetch_file(const std::string& file_id, const std::string& out_path, 
     WinHttpCloseHandle(ses);
     return ok;
 }
+#else
+/* macOS: one Drive download request on plat::http, following the big-file confirm page (same flow as the Windows code above). */
+static bool fetch_file(const std::string& file_id, const std::string& out_path, std::atomic<uint64_t>* got, std::atomic<uint64_t>* total,
+                       std::atomic<bool>* stop, std::string* err, bool probe_only, uint64_t* size_out) {
+    if (!valid_id(file_id)) { *err = "bad file id"; return false; }
+    bool ok = false;
+    const fs::path part = P(out_path + ".part");   // written here, renamed over out_path only once complete
+    INTERNET_PORT qp = 0;
+    const bool qa = qa_base(&qp);
+    const std::string base = qa ? "http://127.0.0.1:" + std::to_string(qp) : std::string("https://drive.usercontent.google.com");
+    std::string pq = "/download?id=" + file_id + "&export=download&confirm=t";
+    bool dropped_part = false;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        uint64_t offset = 0;
+        if (!probe_only) {
+            std::error_code ec;
+            const auto sz = fs::file_size(part, ec);
+            if (!ec) offset = (uint64_t)sz;
+        }
+        plat::http::Request rq;
+        rq.url = base + pq;
+        rq.headers.push_back({"User-Agent", "RetroHub"});
+        if (offset) rq.headers.push_back({"Range", "bytes=" + std::to_string(offset) + "-"});
+        plat::http::Response rs;
+        std::string page;
+        FILE* f = nullptr;
+        bool decided = false, is_page = false, stopped_probe = false, cancelled = false, write_failed = false;
+        uint64_t mine = 0, full = 0;
+        bool resume = false;
+        auto header = [&](const char* k) { auto it = rs.headers.find(k); return it == rs.headers.end() ? std::string() : it->second; };
+        auto classify = [&]() {   // from the response headers (they arrive before the first body byte)
+            const std::string ct = header("content-type");
+            is_page = ct.find("text/html") != std::string::npos || rs.status == 403 || rs.status == 429 || rs.status == 416;
+            const uint64_t clen = (uint64_t)std::strtoull(header("content-length").c_str(), nullptr, 10);
+            uint64_t r0 = 0, r1 = 0, rt = 0;
+            const bool have_range = rs.status == 206 && parse_content_range(header("content-range"), &r0, &r1, &rt);
+            resume = rs.status == 206 && have_range && r0 == offset;
+            full = resume ? (rt ? rt : offset + clen) : clen;   // the whole file's size
+        };
+        rq.on_data = [&](const char* d, size_t n) {
+            if (!decided) {
+                decided = true;
+                classify();
+                if (!is_page && rs.status != 200 && rs.status != 206) return false;   // an error status: its body is not wanted
+                if (!is_page) {
+                    if (probe_only) { stopped_probe = true; return false; }   // headers are enough: the body is never read
+                    if (total) *total = full;
+                    mine = resume ? offset : 0;
+                    if (got) *got = mine;
+                    f = plat::fopen_path(part, resume ? "ab" : "wb");
+                    if (!f) { write_failed = true; return false; }
+                }
+            }
+            if (is_page) { if (page.size() < (512u << 10)) page.append(d, n); return true; }
+            if (stop && stop->load()) { cancelled = true; return false; }
+            if (std::fwrite(d, 1, n, f) != n) { write_failed = true; return false; }
+            mine += n;
+            if (got) *got += n;
+            return true;
+        };
+        const bool done = plat::http::perform(rq, &rs);
+        if (f) { std::fclose(f); f = nullptr; }
+        if (!decided && rs.status) classify();   // no body at all (empty file, 416, a HEAD-like answer)
+        if (rs.status == 0) { *err = "could not reach Google Drive"; break; }
+        if (rs.status == 416 && offset && !dropped_part) {   // the partial file does not fit the server's copy: start over
+            std::error_code ec;
+            fs::remove(part, ec);
+            dropped_part = true;
+            continue;
+        }
+        if (is_page || rs.status == 403 || rs.status == 429) {
+            std::string kind = drive_html_kind(page);
+            std::string next;
+            if ((kind == "confirm" || kind.empty()) && attempt < 3 && parse_confirm_form(page, &next) && next != pq) { pq = next; continue; }
+            if (kind == "quota" || rs.status == 429 || rs.status == 403) *err = kind == "signin" ? "signin" : "quota";
+            else if (kind == "signin") *err = "signin";
+            else if (rs.status != 200 && rs.status != 206) *err = "server answered " + std::to_string(rs.status);
+            else *err = "quota";
+            break;
+        }
+        if (rs.status != 200 && rs.status != 206) { *err = "server answered " + std::to_string(rs.status); break; }
+        if (probe_only) {
+            if (size_out) *size_out = full;
+            ok = true;
+            break;
+        }
+        if (cancelled) { *err = "cancelled"; std::error_code ec; fs::remove(part, ec); break; }
+        if (write_failed) { *err = "disk write failed"; std::error_code ec; fs::remove(part, ec); break; }
+        if (!decided) {   // an empty 200: nothing to write, but an empty file is still a file
+            if (total) *total = full;
+            f = plat::fopen_path(part, "wb");
+            if (!f) { *err = "cannot write " + out_path; break; }
+            std::fclose(f);
+            mine = 0;
+        } else if (!done) { *err = "download interrupted"; break; }   // an interrupted network keeps the .part for a resume
+        (void)stopped_probe;
+        if (full && mine != full) { *err = "download incomplete"; break; }
+        std::error_code ec;
+        fs::rename(part, P(out_path), ec);   // replaces an existing file
+        if (ec) { *err = "cannot write " + out_path; break; }
+        ok = true;
+        break;
+    }
+    return ok;
+}
+#endif
+
+#if defined(_WIN32)
+static void plat_sleep(unsigned ms) { Sleep(ms); }
+#else
+static void plat_sleep(unsigned ms) { plat::sleep_ms(ms); }
+#endif
 
 bool download_file(const std::string& file_id, const std::string& out_path,
                    std::atomic<uint64_t>* got, std::atomic<uint64_t>* total,
@@ -767,7 +927,7 @@ bool download_file(const std::string& file_id, const std::string& out_path,
         if (fetch_file(file_id, out_path, got, total, stop, &e, false, nullptr)) return true;
         if (e != "download interrupted" && e != "could not reach Google Drive") break;
         if (stop && stop->load()) { e = "cancelled"; break; }
-        for (int i = 0; i < 10 && !(stop && stop->load()); ++i) Sleep(100 * (tries + 1));
+        for (int i = 0; i < 10 && !(stop && stop->load()); ++i) plat_sleep(100 * (tries + 1));
     }
     *err = e;
     return false;
@@ -855,7 +1015,12 @@ std::vector<hubui::fg::Ghost> pack_only_ghosts(const std::vector<hubui::fg::Owne
     return out;
 }
 
-std::string pack_root() { return hub::data_dir() + "gamepack\\"; }
+#if defined(_WIN32)
+#define GP_SEP "\\"
+#else
+#define GP_SEP "/"
+#endif
+std::string pack_root() { return hub::data_dir() + "gamepack" GP_SEP; }
 
 bool installed(const std::string& sys_short, const std::string& title) {
     if (sys_short.empty()) return false;
@@ -1054,7 +1219,7 @@ bool index_source(const std::string& sys_short) {
 /* background install job                                              */
 /* ------------------------------------------------------------------ */
 
-std::string staging_root() { return hub::data_dir() + "gamepack-tmp\\"; }
+std::string staging_root() { return hub::data_dir() + "gamepack-tmp" GP_SEP; }
 std::string install_dir(const std::string& sys_short, const std::string& title) { return S(P(pack_root()) / sys_short / safe_name(title)); }
 
 bool uninstall(const std::string& sys_short, const std::string& title) {
