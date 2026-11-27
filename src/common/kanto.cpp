@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cwctype>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -15,6 +17,7 @@
 
 #include "json.h"
 #include "miniz.h"
+#include "plat/plat.h"
 #include "winutil.h"
 
 #ifdef _WIN32
@@ -169,8 +172,8 @@ bool keep_on_reinstall(const std::string& rel) {
 }
 
 bool inspect_zip(const std::string& zip_path, Package* out) {
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, winutil::to_wide(zip_path).c_str(), L"rb") != 0 || !f) return false;
+    FILE* f = plat::fopen_path(P(zip_path), "rb");
+    if (!f) return false;
     mz_zip_archive za;
     memset(&za, 0, sizeof za);
     if (!mz_zip_reader_init_cfile(&za, f, 0, 0)) { fclose(f); return false; }
@@ -286,8 +289,8 @@ bool install_current(const std::string& dir, const Package& p) {
 static bool write_stream(const fs::path& to, const std::function<bool(FILE*)>& fn) {
     std::error_code ec;
     fs::create_directories(to.parent_path(), ec);
-    FILE* o = nullptr;
-    if (_wfopen_s(&o, to.wstring().c_str(), L"wb") != 0 || !o) return false;
+    FILE* o = plat::fopen_path(to, "wb");
+    if (!o) return false;
     bool ok = fn(o);
     fclose(o);
     return ok;
@@ -299,8 +302,8 @@ bool install(const Package& p, const std::string& dir_in, const std::function<bo
     fs::create_directories(P(dir), ec);
     uint64_t total = 0, done = 0;
     if (p.is_zip) {
-        FILE* f = nullptr;
-        if (_wfopen_s(&f, winutil::to_wide(p.path).c_str(), L"rb") != 0 || !f) { *err = "Could not open the Kanto Together zip."; return false; }
+        FILE* f = plat::fopen_path(P(p.path), "rb");
+        if (!f) { *err = "Could not open the Kanto Together zip."; return false; }
         mz_zip_archive za;
         memset(&za, 0, sizeof za);
         if (!mz_zip_reader_init_cfile(&za, f, 0, 0)) { fclose(f); *err = "The Kanto Together zip is damaged."; return false; }
@@ -554,10 +557,21 @@ std::string redact_log_text(const std::string& in) {
 void write_log(const std::string& dir, const std::string& line) {
     std::error_code ec;
     fs::create_directories(P(dir), ec);
-    SYSTEMTIME t; GetLocalTime(&t);
     char nm[64], ts[32];
+#if RH_WIN
+    SYSTEMTIME t; GetLocalTime(&t);
     std::snprintf(nm, sizeof nm, "kanto-%04d-%02d-%02d.log", t.wYear, t.wMonth, t.wDay);
     std::snprintf(ts, sizeof ts, "%02d:%02d:%02d.%03d ", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+#else
+    // Same local-time string as the Windows branch (docs/MACOS.md).
+    const auto wall = std::chrono::system_clock::now();
+    std::time_t tt = std::chrono::system_clock::to_time_t(wall);
+    int ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(wall.time_since_epoch()).count() % 1000;
+    std::tm tm{};
+    plat::local_tm(tt, &tm);
+    std::snprintf(nm, sizeof nm, "kanto-%04d-%02d-%02d.log", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+    std::snprintf(ts, sizeof ts, "%02d:%02d:%02d.%03d ", tm.tm_hour, tm.tm_min, tm.tm_sec, ms);
+#endif
     std::ofstream f(P(dir) / nm, std::ios::binary | std::ios::app);
     if (f) f << ts << redact_log_text(line) << "\r\n";
     f.close();

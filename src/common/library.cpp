@@ -12,11 +12,14 @@
 #include "ps2.h"
 #include "psp.h"
 #include "nx.h"
+#include "plat/plat.h"
 
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -48,8 +51,17 @@ namespace fs = std::filesystem;
 std::wstring to_wide(const std::string& s) { return winutil::to_wide(s); }
 
 std::string to_utf8(const std::wstring& s) { return winutil::to_utf8(s); }
+#if RH_MAC
+std::string to_utf8(const std::string& s) { return s; }   // path::native() is already UTF-8 here
+#endif
 
-fs::path utf8_path(const std::string& s) { return fs::path(to_wide(s)); }
+fs::path utf8_path(const std::string& s) {
+#if RH_WIN
+    return fs::path(to_wide(s));
+#else
+    return fs::path(s);
+#endif
+}
 std::string path_utf8(const fs::path& p) { return to_utf8(p.native()); }
 
 std::string ascii_lower(std::string s) {

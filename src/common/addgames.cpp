@@ -1,5 +1,6 @@
 #include "addgames.h"
 #include "library_scan_info.h"
+#include "plat/plat.h"
 #include "ps1.h"
 #include "winutil.h"
 
@@ -7,13 +8,9 @@
 #include <cctype>
 #include <filesystem>
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
+#if RH_WIN
 #include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -30,8 +27,7 @@ std::string leaf_of(const std::string& p) {
     return c == std::string::npos ? t : t.substr(c + 1);
 }
 std::string pjoin(const std::string& a, const std::string& b) {
-    if (a.empty()) return b;
-    return (a.back() == '\\' || a.back() == '/') ? a + b : a + "\\" + b;
+    return plat::join(a, b);   // '\\' on Windows, '/' on macOS
 }
 }  // namespace
 
@@ -72,8 +68,12 @@ std::string console_folder(System s) {
 std::string console_folder(System s, bool nx2) { return s == System::Switch && nx2 ? "Switch 2" : console_folder(s); }
 
 bool is_absolute_path(const std::string& p) {
+#if RH_WIN
     if (p.size() >= 3 && std::isalpha((unsigned char)p[0]) && p[1] == ':' && (p[2] == '\\' || p[2] == '/')) return true;
     return p.size() >= 3 && p[0] == '\\' && p[1] == '\\';
+#else
+    return !p.empty() && p[0] == '/';
+#endif
 }
 
 std::set<std::string> index_keys(const std::string& root, const std::atomic<bool>* stop) {
@@ -170,14 +170,14 @@ std::string summary_text(const std::vector<Item>& items) {
 bool copy_file(const std::string& src, const std::string& dst, uint64_t* copied_total,
                const std::function<bool(uint64_t, uint64_t)>& progress, std::string* err) {
     auto fail = [&](const std::string& m) { if (err) *err = m; return false; };
-    FILE* in = _wfopen(winutil::to_wide(src).c_str(), L"rbN");
+    FILE* in = plat::fopen_path(P(src), "rbN");
     if (!in) return fail("could not read the file");
-    std::wstring part = winutil::to_wide(dst) + L".part";
-    FILE* out = _wfopen(part.c_str(), L"wbN");
+    std::string part = dst + ".part";
+    FILE* out = plat::fopen_path(P(part), "wbN");
     if (!out) { std::fclose(in); return fail("could not write to the games folder"); }
-    _fseeki64(in, 0, SEEK_END);
-    uint64_t total = (uint64_t)_ftelli64(in);
-    _fseeki64(in, 0, SEEK_SET);
+    plat::fseek64(in, 0, SEEK_END);
+    uint64_t total = (uint64_t)plat::ftell64(in);
+    plat::fseek64(in, 0, SEEK_SET);
     std::vector<char> buf(4u << 20);
     uint64_t done = 0;
     bool ok = true, cancelled = false;
@@ -193,9 +193,21 @@ bool copy_file(const std::string& src, const std::string& dst, uint64_t* copied_
     }
     std::fclose(in);
     if (std::fclose(out) != 0 && ok) { ok = false; e = "not enough disk space (or the drive is not writable)"; }
-    if (ok && !cancelled && !MoveFileExW(part.c_str(), winutil::to_wide(dst).c_str(), 0)) { ok = false; e = "could not finish writing the file"; }
+    if (ok && !cancelled) {
+#if RH_WIN
+        if (!MoveFileExW(winutil::to_wide(part).c_str(), winutil::to_wide(dst).c_str(), 0)) { ok = false; e = "could not finish writing the file"; }
+#else
+        std::error_code me;
+        fs::rename(P(part), P(dst), me);
+        if (me) { ok = false; e = "could not finish writing the file"; }
+#endif
+    }
     if (!ok || cancelled) {
-        DeleteFileW(part.c_str());
+#if RH_WIN
+        DeleteFileW(winutil::to_wide(part).c_str());
+#else
+        { std::error_code de; fs::remove(P(part), de); }
+#endif
         return fail(cancelled ? "cancelled" : e);
     }
     return true;
@@ -279,8 +291,21 @@ void Job::run(std::vector<std::string> files, std::string root, std::set<std::st
         }
         uint64_t need = size;   // library-10: a PlayStation set needs room for every bin, not just the cue
         for (const std::string& c : comps) { std::error_code ce; uint64_t cs = fs::file_size(P(c), ce); if (!ce) need += cs; }
-        ULARGE_INTEGER freeb{};
-        if (GetDiskFreeSpaceExW(winutil::to_wide(dir).c_str(), &freeb, nullptr, nullptr) && freeb.QuadPart < need + (64ull << 20)) {
+        uint64_t free_bytes = 0;
+        bool have_free = false;
+#if RH_WIN
+        {
+            ULARGE_INTEGER freeb{};
+            if (GetDiskFreeSpaceExW(winutil::to_wide(dir).c_str(), &freeb, nullptr, nullptr)) { free_bytes = freeb.QuadPart; have_free = true; }
+        }
+#else
+        {
+            std::error_code spe;
+            const fs::space_info si = fs::space(P(dir), spe);
+            if (!spe) { free_bytes = si.available; have_free = true; }
+        }
+#endif
+        if (have_free && free_bytes < need + (64ull << 20)) {
             finish(Outcome::Failed, "not enough free disk space");
             continue;
         }

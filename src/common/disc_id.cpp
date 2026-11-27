@@ -10,6 +10,7 @@
 
 #include "libchdr/chd.h"
 #include "miniz.h"
+#include "plat/plat.h"
 #include "winutil.h"
 
 namespace hub { namespace disc {
@@ -151,7 +152,7 @@ static size_t slice_read(void* buf, size_t sz, size_t n, void* a) {
     uint64_t want = uint64_t(sz) * n;
     if (s->pos >= s->size || sz == 0) return 0;
     if (want > s->size - s->pos) want = (s->size - s->pos) / sz * sz;
-    if (_fseeki64(s->f, (long long)(s->base + s->pos), SEEK_SET) != 0) return 0;
+    if (plat::fseek64(s->f, (int64_t)(s->base + s->pos), SEEK_SET) != 0) return 0;
     size_t got = std::fread(buf, 1, (size_t)want, s->f);
     s->pos += got;
     return got / sz;
@@ -183,7 +184,7 @@ struct Disc::Impl {
     int64_t cached = -1;
     ~Impl() { if (chd) chd_close(chd); if (f) std::fclose(f); }
     bool at(uint64_t off, void* buf, size_t n) {
-        if (_fseeki64(f, (long long)off, SEEK_SET) != 0) return false;
+        if (plat::fseek64(f, (int64_t)off, SEEK_SET) != 0) return false;
         return std::fread(buf, 1, n, f) == n;
     }
 };
@@ -205,7 +206,7 @@ bool Disc::chd_finish(Impl& d) {
 bool Disc::open_chd_slice(const std::string& path, uint64_t base, uint64_t size) {
     p_ = std::make_shared<Impl>();
     Impl& d = *p_;
-    FILE* f = _wfopen(winutil::to_wide(path).c_str(), L"rb");
+    FILE* f = plat::fopen_path(fs::u8path(path), "rb");
     if (!f) return false;
     Slice* s = new Slice{f, base, size, 0};
     chd_error e = chd_open_core_file_callbacks(&kSliceCb, s, CHD_OPEN_READ, nullptr, &d.chd);   // owns f and s from here on (closed on failure too)
@@ -217,16 +218,16 @@ bool Disc::open(const std::string& path) {
     p_ = std::make_shared<Impl>();
     Impl& d = *p_;
     if (lower(u8(fs::u8path(path).extension())) == ".chd") {
-        FILE* f = _wfopen(winutil::to_wide(path).c_str(), L"rb");
+        FILE* f = plat::fopen_path(fs::u8path(path), "rb");
         if (!f) return false;
         Slice* s = new Slice{f, 0, 0, 0};
-        _fseeki64(f, 0, SEEK_END);
-        s->size = (uint64_t)_ftelli64(f);
+        plat::fseek64(f, 0, SEEK_END);
+        s->size = (uint64_t)plat::ftell64(f);
         chd_error e = chd_open_core_file_callbacks(&kSliceCb, s, CHD_OPEN_READ, nullptr, &d.chd);
         if (e != CHDERR_NONE) { d.chd = nullptr; return false; }
         return chd_finish(d);
     }
-    d.f = _wfopen(winutil::to_wide(path).c_str(), L"rb");
+    d.f = plat::fopen_path(fs::u8path(path), "rb");
     if (!d.f) return false;
     std::string ext = lower(u8(fs::u8path(path).extension()));
     uint8_t h[32];

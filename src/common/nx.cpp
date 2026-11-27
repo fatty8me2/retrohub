@@ -8,6 +8,8 @@
 #include <filesystem>
 #include <vector>
 
+#include "plat/plat.h"
+
 namespace fs = std::filesystem;
 
 namespace hub::nx {
@@ -40,21 +42,16 @@ std::string cstr(const uint8_t* d, size_t max) {
 }
 
 bool read_at(const fs::path& path, uint64_t off, size_t len, std::vector<uint8_t>* out, uint64_t* file_size = nullptr) {
-    FILE* f = nullptr;
-#ifdef _WIN32
-    f = _wfopen(path.c_str(), L"rb");
-#else
-    f = std::fopen(path.string().c_str(), "rb");
-#endif
+    FILE* f = plat::fopen_path(path, "rb");
     if (!f) return false;
     bool ok = false;
-    if (_fseeki64(f, 0, SEEK_END) == 0) {
-        long long sz = _ftelli64(f);
+    if (plat::fseek64(f, 0, SEEK_END) == 0) {
+        int64_t sz = plat::ftell64(f);
         if (file_size) *file_size = sz < 0 ? 0 : (uint64_t)sz;
         if (sz >= 0 && (uint64_t)sz > off) {
             size_t want = (size_t)std::min<uint64_t>(len, (uint64_t)sz - off);
             out->assign(want, 0);
-            if (_fseeki64(f, (long long)off, SEEK_SET) == 0) ok = std::fread(out->data(), 1, want, f) == want;
+            if (plat::fseek64(f, (int64_t)off, SEEK_SET) == 0) ok = std::fread(out->data(), 1, want, f) == want;
         }
     }
     std::fclose(f);
