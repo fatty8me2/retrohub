@@ -689,7 +689,7 @@ class Frontend {
     std::string rtc_path() const { return srm_path.substr(0, srm_path.size() - 4) + ".rtc"; }
     std::vector<uint8_t> rtc_saved;
     void save_srm(bool force, bool at_exit = false);   // at_exit: the session's last write (flushed, retried: save_write.h)
-    std::string state_path(const std::string& name) const { return a.state_dir + "\\" + name + ".state"; }
+    std::string state_path(const std::string& name) const { return a.state_dir + plat::kSep + name + ".state"; }
     bool save_state(const std::string& name);
     bool load_state(const std::string& name);
     bool plan_matches(const std::string& state_file);   // port plan (4-pad adapter on/off) stored next to the state vs this run's
@@ -959,7 +959,7 @@ bool Frontend::setup_paths() {
     if (lower(a.system) == "nes" && (!a.net.empty() || a.synctest)) core.overrides["nestopia_ram_power_state"] = "0x00";   // random power-on RAM would differ per PC
     if ((!a.net.empty() || a.synctest) && !a.link && !is_ds) core.overrides["sameboy_rtc"] = "accurate";   // cycle-based clock: wall time would desync lockstep
     rom_stem = a.save_stem.empty() ? fs::u8path(a.rom).stem().u8string() : a.save_stem;
-    srm_path = a.save_dir + "\\" + rom_stem + ".srm";
+    srm_path = a.save_dir + plat::kSep + rom_stem + ".srm";
     // The save folder is per game (same key on every PC), but the ROM file name is not: the same game
     // copied under another file name (e.g. "Other Name (USA).gba" on PC B) would look for its own .srm and
     // miss the synced save. If there is no <stem>.srm and exactly one .srm here, that is this game's save.
@@ -1826,13 +1826,13 @@ bool Frontend::save_state(const std::string& name) {
     if (!write_atomic(state_path(name), buf.data(), n)) { set_status("Save state failed (disk)"); return false; }
     { const std::string ps = retrorun::plan_signature(pplan) + "\n"; write_atomic(plan_file_for(state_path(name)), ps.data(), ps.size()); }
     {   // thumbnail + sidecar next to the state (runner_ctl.h contract)
-        write_frame_image_scaled(a.state_dir + "\\" + name + ".png", core.frame(), runctl::kThumbWidth);
+        write_frame_image_scaled(a.state_dir + plat::kSep + name + ".png", core.frame(), runctl::kThumbWidth);
         runctl::Sidecar sc;
         sc.game_key = a.game_key;
         sc.time = (long long)std::time(nullptr);
         sc.playtime = (long long)(SDL_GetTicks64() / 1000);
         sc.disc = is_ps1 ? (int)core.disc_index() : 0;
-        runctl::write_text_atomic(a.state_dir + "\\" + name + ".json", runctl::make_sidecar(sc));
+        runctl::write_text_atomic(a.state_dir + plat::kSep + name + ".json", runctl::make_sidecar(sc));
     }
     set_status("Saved state " + name);
     return true;
@@ -1840,7 +1840,7 @@ bool Frontend::save_state(const std::string& name) {
 
 bool Frontend::take_screenshot(std::string* where) {
     if (a.shot_dir.empty()) { set_status("Screenshots are not available here"); return false; }
-    std::string p = a.shot_dir + "\\" + runctl::shot_name(std::time(nullptr));
+    std::string p = a.shot_dir + plat::kSep + runctl::shot_name(std::time(nullptr));
     if (!write_frame_image(p, core.frame())) { set_status("Screenshot failed"); return false; }
     if (where) *where = p;
     set_status("Screenshot saved");

@@ -117,3 +117,27 @@ Options retrorun/the hub set (names verified with `retrorun --list-options`): `b
 - Multitap: retrorun sets port 2 to `RETRO_DEVICE_JOYPAD_MULTITAP` (0x101) with `--multitap`, `--players >= 3` or three or more pads; `--no-multitap` forces it off (game setting "Multitap").
 - Cheats via `retro_cheat_set`: SNES Game Genie `XXXX-XXXX` or Pro Action Replay `AAAAAAVV` (format `par`/`ar`); NES Game Genie 6/8 letters or raw `AAAA:VV` / `AAAA:CC:VV`.
 - Re-verify both cores with `powershell -File qa\nes_snes_synctest.ps1` after changing a nightly.
+
+## macOS (arm64)
+
+Same core set as Windows, as `.dylib` files in `<build>/bin/cores/` (`.info` files in `cores/info/`).
+
+- **Buildbot cores:** `scripts/fetch-cores.sh [build-dir] [--force] [--strict]` (default build dir `build-mac`) downloads
+  `https://buildbot.libretro.com/nightly/apple/osx/arm64/latest/<core>_libretro.dylib.zip` for mGBA, Gambatte, SameBoy, melonDS DS, Nestopia
+  and Snes9x. Each zip is unpacked in a fresh temp dir, the `.dylib` is hashed and only it is moved into `cores/`. Every core is pinned by
+  SHA-256 in the script. Same policy as the `.ps1`: the `latest` folder moves, so a different hash only warns (and the newer build is
+  installed); `--strict` refuses it instead. Re-run `qa/gb_gba_synctest.sh` after updating a pin.
+- **Built from source:** `sameboy_rb_libretro.dylib` and `beetle_psx_libretro.dylib` (rollback-patched SameBoy and Beetle PSX, see above) are
+  ordinary clang `MODULE` targets on macOS (clang accepts the GNU C extensions, so no MinGW). The build copies them into
+  `<build>/bin/cores/`. Windows keeps the MinGW gcc build unchanged. `beetle_psx` drops `-DARCH_X86` on arm64.
+- **Verified (2026-11-27, `qa/gb_gba_synctest.sh`, 900 frames, SyncTest depth 8, 0 mismatches):** Gambatte, SameBoy, `sameboy_rb`, mGBA; the
+  `.srm` is written. Beetle PSX loads and reports "Beetle PSX (rollback)" (no PS1 BIOS or game was run).
+
+| Core | Size (bytes) | SHA-256 |
+|---|---|---|
+| mgba_libretro.dylib | 2829600 | `54ae92e80b012013f6d777fb3158b9f925be22c97896049b8549614d7514f505` |
+| gambatte_libretro.dylib | 3916184 | `5314745e75a0041347b91328edb97684e9744b2642a90edbf125b317af407925` |
+| sameboy_libretro.dylib | 324296 | `bd66272935c44fc234430f763f2abc97f3d03f235521f31e2757f53374101e40` |
+| melondsds_libretro.dylib | 6069656 | `81ac8a8d0dd97dcea99839c0587b18a2cf42a593e4cb1a59f2b0b7ae7af71852` |
+| nestopia_libretro.dylib | 6073464 | `c54566c7c2311c5c115589e578c231a3f053c3c6f420e9e53beee43f70ede8fd` |
+| snes9x_libretro.dylib | 3006440 | `e911f924314819f29cf5c4c69147818c089dd54fbe02aaf525847f610f55120e` |

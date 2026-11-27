@@ -9,18 +9,20 @@
 # with a MinGW-w64 gcc (MSYS2 mingw64, or -DSAMEBOY_RB_GCC=<path>). Without one this target is skipped and retrorun stays on lockstep
 # netplay for SameBoy (it refuses --rollback for any core it has not verified).
 include(FetchContent)
-set(SAMEBOY_RB_GCC "" CACHE FILEPATH "MinGW-w64 gcc.exe used to build sameboy_rb_libretro.dll")
-if(NOT SAMEBOY_RB_GCC)
-    find_program(SAMEBOY_RB_GCC_FOUND NAMES x86_64-w64-mingw32-gcc gcc
-        HINTS $ENV{MSYS2_ROOT}/mingw64/bin C:/msys64/mingw64/bin C:/msys64/ucrt64/bin NO_DEFAULT_PATH)
-    if(NOT SAMEBOY_RB_GCC_FOUND)
-        find_program(SAMEBOY_RB_GCC_FOUND NAMES x86_64-w64-mingw32-gcc)
+if(NOT APPLE)
+    set(SAMEBOY_RB_GCC "" CACHE FILEPATH "MinGW-w64 gcc.exe used to build sameboy_rb_libretro.dll")
+    if(NOT SAMEBOY_RB_GCC)
+        find_program(SAMEBOY_RB_GCC_FOUND NAMES x86_64-w64-mingw32-gcc gcc
+            HINTS $ENV{MSYS2_ROOT}/mingw64/bin C:/msys64/mingw64/bin C:/msys64/ucrt64/bin NO_DEFAULT_PATH)
+        if(NOT SAMEBOY_RB_GCC_FOUND)
+            find_program(SAMEBOY_RB_GCC_FOUND NAMES x86_64-w64-mingw32-gcc)
+        endif()
+        set(SAMEBOY_RB_GCC "${SAMEBOY_RB_GCC_FOUND}")
     endif()
-    set(SAMEBOY_RB_GCC "${SAMEBOY_RB_GCC_FOUND}")
-endif()
-if(NOT SAMEBOY_RB_GCC OR NOT EXISTS "${SAMEBOY_RB_GCC}")
-    message(STATUS "sameboy_rb_libretro: no MinGW gcc found (set -DSAMEBOY_RB_GCC=...), skipping; GB/GBC netplay stays on lockstep")
-    return()
+    if(NOT SAMEBOY_RB_GCC OR NOT EXISTS "${SAMEBOY_RB_GCC}")
+        message(STATUS "sameboy_rb_libretro: no MinGW gcc found (set -DSAMEBOY_RB_GCC=...), skipping; GB/GBC netplay stays on lockstep")
+        return()
+    endif()
 endif()
 
 FetchContent_Declare(sameboy
@@ -32,7 +34,9 @@ if(NOT sameboy_POPULATED)
     FetchContent_Populate(sameboy)
 endif()
 
-get_filename_component(SB_GCC_DIR "${SAMEBOY_RB_GCC}" DIRECTORY)   # cc1/as/ld and runtime DLLs live next to gcc
+if(NOT APPLE)
+    get_filename_component(SB_GCC_DIR "${SAMEBOY_RB_GCC}" DIRECTORY)   # cc1/as/ld and runtime DLLs live next to gcc
+endif()
 set(GEN ${CMAKE_CURRENT_BINARY_DIR}/gen)
 file(MAKE_DIRECTORY ${GEN})
 include(${CMAKE_CURRENT_SOURCE_DIR}/patch_libretro.cmake)
@@ -49,6 +53,25 @@ set(SB_SRC
     ${LC}/compat/fopen_utf8.c ${LC}/encodings/encoding_utf.c ${LC}/file/file_path.c ${LC}/file/file_path_io.c
     ${LC}/streams/file_stream.c ${LC}/streams/file_stream_transforms.c ${LC}/string/stdstring.c ${LC}/time/rtime.c
     ${LC}/vfs/vfs_implementation.c)
+
+if(APPLE)
+    # macOS: plain clang compiles SameBoy's GNU C extensions, so this is an ordinary MODULE target (no MinGW, no version script:
+    # libretro.h's RETRO_API marks the entry points visibility("default"), everything else is hidden).
+    add_library(sameboy_rb_libretro MODULE ${SB_SRC})
+    set_target_properties(sameboy_rb_libretro PROPERTIES PREFIX "" SUFFIX ".dylib" C_STANDARD 11 C_EXTENSIONS ON
+        C_VISIBILITY_PRESET hidden POSITION_INDEPENDENT_CODE ON)
+    target_compile_options(sameboy_rb_libretro PRIVATE -w -O2)
+    target_compile_definitions(sameboy_rb_libretro PRIVATE NDEBUG __LIBRETRO__ _GNU_SOURCE _USE_MATH_DEFINES
+        GB_DISABLE_TIMEKEEPING GB_DISABLE_REWIND GB_DISABLE_DEBUGGER GB_DISABLE_CHEATS GB_INTERNAL
+        "GB_VERSION=\"1.0.4\"" "GIT_VERSION=\" aa158a8\"")
+    target_include_directories(sameboy_rb_libretro PRIVATE ${SB} ${SB}/libretro ${LC}/include)
+    target_link_libraries(sameboy_rb_libretro PRIVATE m)
+    add_dependencies(retrorun sameboy_rb_libretro)
+    add_custom_command(TARGET sameboy_rb_libretro POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:retrorun>/cores
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:sameboy_rb_libretro> $<TARGET_FILE_DIR:retrorun>/cores/sameboy_rb_libretro.dylib)
+    return()
+endif()
 
 # retrorun's rollback gate recognises this core by its library name ("SameBoy (rollback)") and by this DLL name.
 set(SB_DLL ${CMAKE_CURRENT_BINARY_DIR}/sameboy_rb_libretro.dll)

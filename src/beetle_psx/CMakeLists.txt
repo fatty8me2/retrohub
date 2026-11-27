@@ -12,21 +12,25 @@
 # (FetchContent + database generation live in fetch.cmake, included from the top-level CMakeLists before hubcommon)
 
 # ---- the core ----
-set(BEETLE_GCC "" CACHE FILEPATH "MinGW-w64 gcc.exe used to build beetle_psx_libretro.dll")
-if(NOT BEETLE_GCC)
-    find_program(BEETLE_GCC_FOUND NAMES x86_64-w64-mingw32-gcc gcc
-        HINTS $ENV{MSYS2_ROOT}/mingw64/bin C:/msys64/mingw64/bin C:/msys64/ucrt64/bin NO_DEFAULT_PATH)
-    if(NOT BEETLE_GCC_FOUND)
-        find_program(BEETLE_GCC_FOUND NAMES x86_64-w64-mingw32-gcc)
+if(NOT APPLE)
+    set(BEETLE_GCC "" CACHE FILEPATH "MinGW-w64 gcc.exe used to build beetle_psx_libretro.dll")
+    if(NOT BEETLE_GCC)
+        find_program(BEETLE_GCC_FOUND NAMES x86_64-w64-mingw32-gcc gcc
+            HINTS $ENV{MSYS2_ROOT}/mingw64/bin C:/msys64/mingw64/bin C:/msys64/ucrt64/bin NO_DEFAULT_PATH)
+        if(NOT BEETLE_GCC_FOUND)
+            find_program(BEETLE_GCC_FOUND NAMES x86_64-w64-mingw32-gcc)
+        endif()
+        set(BEETLE_GCC "${BEETLE_GCC_FOUND}")
     endif()
-    set(BEETLE_GCC "${BEETLE_GCC_FOUND}")
-endif()
-if(NOT BEETLE_GCC OR NOT EXISTS "${BEETLE_GCC}")
-    message(STATUS "beetle_psx_libretro: no MinGW gcc found (set -DBEETLE_GCC=...), skipping; PlayStation games cannot be played")
-    return()
+    if(NOT BEETLE_GCC OR NOT EXISTS "${BEETLE_GCC}")
+        message(STATUS "beetle_psx_libretro: no MinGW gcc found (set -DBEETLE_GCC=...), skipping; PlayStation games cannot be played")
+        return()
+    endif()
 endif()
 
-get_filename_component(BG_DIR "${BEETLE_GCC}" DIRECTORY)
+if(NOT APPLE)
+    get_filename_component(BG_DIR "${BEETLE_GCC}" DIRECTORY)
+endif()
 set(B ${BEETLE_SRC})
 set(LC ${B}/libretro-common)
 set(PSX ${B}/mednafen/psx)
@@ -59,6 +63,27 @@ set(BEETLE_SOURCES
     ${LC}/streams/trans_stream.c ${LC}/streams/trans_stream_pipe.c ${LC}/streams/trans_stream_deflate.c
     ${LC}/vfs/vfs_hybrid.c)
 list(REMOVE_DUPLICATES BEETLE_SOURCES)
+
+if(APPLE)
+    # macOS (arm64): plain clang builds this tree (GNU C is fine for clang). Same sources and defines as the MinGW build, minus
+    # ARCH_X86 (this is arm64; the flag only selects x86 fast paths) and winmm. Interpreter only, software renderer only.
+    add_library(beetle_psx_libretro MODULE ${BEETLE_SOURCES})
+    set_target_properties(beetle_psx_libretro PROPERTIES PREFIX "" SUFFIX ".dylib" C_STANDARD 11 C_EXTENSIONS ON
+        C_VISIBILITY_PRESET hidden POSITION_INDEPENDENT_CODE ON)
+    target_compile_options(beetle_psx_libretro PRIVATE -w -O2 -fwrapv -fsigned-char -fomit-frame-pointer -include ${B}/include/debug.h)
+    target_compile_definitions(beetle_psx_libretro PRIVATE
+        "GIT_VERSION=\" ea14d6a\"" NEED_CD WANT_32BPP NEED_DEINTERLACER WANT_THREADING HAVE_THREADS HAVE_PBP
+        HAVE_CHD HAVE_RCHD HAVE_RCHD_DEFLATE HAVE_RCHD_LZMA HAVE_RCHD_FLAC HAVE_RCHD_ZSTD HAVE_RFLAC HAVE_RZSTD
+        MEDNAFEN_VERSION_NUMERIC=9386 STDC_HEADERS __STDC_LIMIT_MACROS __LIBRETRO__ _LOW_ACCURACY_ _FILE_OFFSET_BITS=64
+        __STDC_CONSTANT_MACROS NDEBUG)
+    target_include_directories(beetle_psx_libretro PRIVATE ${B} ${B}/mednafen ${B}/mednafen/include ${LC}/include ${B}/include)
+    target_link_libraries(beetle_psx_libretro PRIVATE m pthread)
+    add_dependencies(retrorun beetle_psx_libretro)
+    add_custom_command(TARGET beetle_psx_libretro POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:retrorun>/cores
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:beetle_psx_libretro> $<TARGET_FILE_DIR:retrorun>/cores/beetle_psx_libretro.dylib)
+    return()
+endif()
 
 set(BEETLE_DLL ${CMAKE_CURRENT_BINARY_DIR}/beetle_psx_libretro.dll)
 # Interpreter only (no HAVE_LIGHTREC): deterministic. Software renderer only (no HAVE_HW). -O2, static runtime.
