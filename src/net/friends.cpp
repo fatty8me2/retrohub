@@ -1,4 +1,5 @@
 #include "friends.h"
+#include "plat/plat.h"
 #include "winutil.h"
 #include "liveness_logic.h"
 #include "log.h"
@@ -304,7 +305,7 @@ static std::string backup_stamp()
 {
     time_t t = time(nullptr);
     struct tm tmv;
-    localtime_s(&tmv, &t);
+    plat::local_tm(t, &tmv);
     char b[32];
     strftime(b, sizeof b, "%Y%m%d-%H%M%S", &tmv);
     return b;
@@ -473,7 +474,7 @@ std::set<std::string> read_retired_ids(const std::string& data_dir)
     std::istringstream in(text);
     std::string line;
     while (std::getline(in, line)) {
-        while (!line.empty() && (line.back() == '' || line.back() == ' ')) line.pop_back();
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
         if (!line.empty()) out.insert(line);
     }
     return out;
@@ -1014,7 +1015,7 @@ struct FriendsClient::Impl {
         std::istringstream in(text);
         std::string line;
         while (std::getline(in, line)) {
-            while (!line.empty() && line.back() == '') line.pop_back();
+            while (!line.empty() && line.back() == '\r') line.pop_back();
             size_t t = line.find('\t');
             if (t != std::string::npos && t > 0) bnames[line.substr(0, t)] = line.substr(t + 1);
         }
@@ -1035,7 +1036,7 @@ struct FriendsClient::Impl {
         std::istringstream in(text);
         std::string line;
         while (std::getline(in, line)) {
-            while (!line.empty() && (line.back() == '' || line.back() == ' ')) line.pop_back();
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
             if (!line.empty()) out.insert(line);
         }
         return out;

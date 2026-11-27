@@ -2,11 +2,20 @@
 #include "net_internal.h"
 #include "session.h"
 
+#include "plat/plat.h"
+#include "plat/plat_crypto.h"
+#if RH_WIN
 #include <windows.h>
 #include <bcrypt.h>
 #include <wincrypt.h>
 #include <winhttp.h>
+#else
+#include "plat/plat_http.h"
+#include <CommonCrypto/CommonCryptor.h>
+#include <CommonCrypto/CommonKeyDerivation.h>
+#endif
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <stdexcept>
@@ -21,7 +30,7 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr DWORD kPbkdf2Iters = 200000;
+constexpr unsigned kPbkdf2Iters = 200000;
 constexpr char kAad[] = "rh-link-v1";
 constexpr size_t kSaltLen = 16, kIvLen = 12, kTagLen = 16;
 constexpr char kAlphabet[] = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -34,6 +43,7 @@ bool is_b32(const std::string& s, size_t len)
     return true;
 }
 
+#if RH_WIN
 bool random_bytes(uint8_t* p, size_t n)
 {
     return BCRYPT_SUCCESS(BCryptGenRandom(nullptr, p, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG));
@@ -106,6 +116,153 @@ bool aes_gcm(bool encrypt, const uint8_t key[32], const uint8_t iv[kIvLen], std:
     return ok;
 }
 
+#else
+bool random_bytes(uint8_t* p, size_t n)
+{
+    return plat::random_bytes(p, n);
+}
+
+std::string b64enc(const std::vector<uint8_t>& v)
+{
+    static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string o;
+    size_t i = 0;
+    for (; i + 2 < v.size(); i += 3) {
+        unsigned x = (v[i] << 16) | (v[i + 1] << 8) | v[i + 2];
+        o += T[x >> 18]; o += T[(x >> 12) & 63]; o += T[(x >> 6) & 63]; o += T[x & 63];
+    }
+    if (i + 1 == v.size()) {
+        unsigned x = v[i] << 16;
+        o += T[x >> 18]; o += T[(x >> 12) & 63]; o += "==";
+    } else if (i + 2 == v.size()) {
+        unsigned x = (v[i] << 16) | (v[i + 1] << 8);
+        o += T[x >> 18]; o += T[(x >> 12) & 63]; o += T[(x >> 6) & 63]; o += '=';
+    }
+    return o;
+}
+
+/* Like CryptStringToBinaryA(CRYPT_STRING_BASE64): skips whitespace, optional '=' padding. */
+bool b64dec(const std::string& s, std::vector<uint8_t>* out)
+{
+    out->clear();
+    unsigned acc = 0;
+    int bits = 0;
+    size_t pad = 0;
+    for (char c : s) {
+        int v;
+        if (c >= 'A' && c <= 'Z') v = c - 'A';
+        else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
+        else if (c >= '0' && c <= '9') v = c - '0' + 52;
+        else if (c == '+') v = 62;
+        else if (c == '/') v = 63;
+        else if (c == '=') { ++pad; continue; }
+        else if (c == ' ' || c == '\r' || c == '\n' || c == '\t') continue;
+        else return false;
+        if (pad) return false;
+        acc = (acc << 6) | (unsigned)v;
+        bits += 6;
+        if (bits >= 8) { bits -= 8; out->push_back((uint8_t)(acc >> bits)); acc &= (1u << bits) - 1; }
+    }
+    return true;
+}
+
+bool derive_key(const std::string& code, const uint8_t* salt, uint8_t key[32])
+{
+    return CCKeyDerivationPBKDF(kCCPBKDF2, code.data(), code.size(), salt, kSaltLen, kCCPRFHmacAlgSHA256, kPbkdf2Iters, key, 32) ==
+           kCCSuccess;
+}
+
+/* AES-256-GCM (NIST SP 800-38D, 96-bit IV) built on single-block AES (CommonCrypto has no public GCM): CTR for the data,
+ * GHASH over AAD + ciphertext for the tag. Same bytes as BCrypt's GCM. */
+struct Block { uint64_t hi, lo; };
+
+bool aes_block(const uint8_t key[32], const uint8_t in[16], uint8_t out[16])
+{
+    size_t moved = 0;
+    return CCCrypt(kCCEncrypt, kCCAlgorithmAES, kCCOptionECBMode, key, 32, nullptr, in, 16, out, 16, &moved) == kCCSuccess &&
+           moved == 16;
+}
+
+Block load_block(const uint8_t* p)
+{
+    Block b{0, 0};
+    for (int i = 0; i < 8; ++i) { b.hi = (b.hi << 8) | p[i]; b.lo = (b.lo << 8) | p[8 + i]; }
+    return b;
+}
+
+void store_block(Block b, uint8_t* p)
+{
+    for (int i = 7; i >= 0; --i) { p[i] = (uint8_t)b.hi; b.hi >>= 8; p[8 + i] = (uint8_t)b.lo; b.lo >>= 8; }
+}
+
+Block gf_mul(Block x, Block h)   // x * h in GF(2^128), GCM bit order
+{
+    Block z{0, 0}, v = h;
+    for (int i = 0; i < 128; ++i) {
+        bool bit = i < 64 ? ((x.hi >> (63 - i)) & 1) : ((x.lo >> (127 - i)) & 1);
+        if (bit) { z.hi ^= v.hi; z.lo ^= v.lo; }
+        bool lsb = v.lo & 1;
+        v.lo = (v.lo >> 1) | (v.hi << 63);
+        v.hi >>= 1;
+        if (lsb) v.hi ^= 0xE100000000000000ULL;
+    }
+    return z;
+}
+
+Block ghash_update(Block y, Block h, const uint8_t* d, size_t n)   // zero-pads the last partial block
+{
+    for (size_t i = 0; i < n; i += 16) {
+        uint8_t blk[16] = {0};
+        std::memcpy(blk, d + i, std::min<size_t>(16, n - i));
+        Block b = load_block(blk);
+        y.hi ^= b.hi; y.lo ^= b.lo;
+        y = gf_mul(y, h);
+    }
+    return y;
+}
+
+bool aes_gcm(bool encrypt, const uint8_t key[32], const uint8_t iv[kIvLen], std::vector<uint8_t>& data, uint8_t tag[kTagLen])
+{
+    uint8_t zero[16] = {0}, hb[16];
+    if (!aes_block(key, zero, hb)) return false;
+    Block h = load_block(hb);
+
+    uint8_t j0[16] = {0};
+    std::memcpy(j0, iv, kIvLen);
+    j0[15] = 1;
+    uint8_t ctr[16];
+    std::memcpy(ctr, j0, 16);
+    std::vector<uint8_t> out(data.size());
+    for (size_t i = 0; i < data.size(); i += 16) {
+        for (int k = 15; k >= 12; --k) if (++ctr[k]) break;   // inc32
+        uint8_t ks[16];
+        if (!aes_block(key, ctr, ks)) return false;
+        for (size_t k = 0; k < 16 && i + k < data.size(); ++k) out[i + k] = data[i + k] ^ ks[k];
+    }
+    const std::vector<uint8_t>& ct = encrypt ? out : data;
+    Block y{0, 0};
+    y = ghash_update(y, h, (const uint8_t*)kAad, sizeof kAad - 1);
+    y = ghash_update(y, h, ct.data(), ct.size());
+    Block lens{(uint64_t)(sizeof kAad - 1) * 8, (uint64_t)ct.size() * 8};
+    y.hi ^= lens.hi; y.lo ^= lens.lo;
+    y = gf_mul(y, h);
+    uint8_t s[16], ej0[16], t[16];
+    store_block(y, s);
+    if (!aes_block(key, j0, ej0)) return false;
+    for (int k = 0; k < 16; ++k) t[k] = s[k] ^ ej0[k];
+    if (encrypt) {
+        std::memcpy(tag, t, kTagLen);
+    } else {
+        unsigned diff = 0;
+        for (size_t k = 0; k < kTagLen; ++k) diff |= (unsigned)(t[k] ^ tag[k]);
+        if (diff) return false;
+    }
+    data = out;
+    return true;
+}
+
+#endif
+
 std::string identity_to_json(const Identity& id)
 {
     return "{\"user_id\":" + std::string("\"") + json::escape(id.user_id) + "\",\"secret\":\"" + json::escape(id.secret) +
@@ -126,6 +283,7 @@ bool identity_from_json(const std::string& text, Identity* out)
     return true;
 }
 
+#if RH_WIN
 /* ---- HTTPS POST (WinHTTP), path like "/link/create" ---- */
 
 struct HttpResult { int status = 0; std::string body; };
@@ -189,6 +347,51 @@ bool http_post(const std::string& server, const std::string& path, const std::st
     WinHttpCloseHandle(hs);
     return ok;
 }
+
+#else
+/* ---- HTTPS POST (plat::http, NSURLSession), path like "/link/create" ---- */
+
+struct HttpResult { int status = 0; std::string body; };
+
+bool http_post(const std::string& server, const std::string& path, const std::string& body, HttpResult* r, std::string* err)
+{
+    std::string base = server.empty() ? default_server() : server;
+    bool secure = true;
+    for (const char* p : {"wss://", "https://"})
+        if (base.rfind(p, 0) == 0) base = base.substr(std::strlen(p));
+    for (const char* p : {"ws://", "http://"}) {
+        if (base.rfind(p, 0) == 0) { base = base.substr(std::strlen(p)); secure = false; }
+    }
+    while (!base.empty() && base.back() == '/') base.pop_back();
+    if (!secure) {
+        /* Credentials must not travel in clear text: plain http/ws only for loopback or an explicit dev flag. */
+        std::string h = base.substr(0, base.find(':'));
+        bool local = h == "localhost" || h == "127.0.0.1" || h == "[::1]";
+        const char* dev = std::getenv("RETROHUB_ALLOW_INSECURE_LINK");
+        if (!local && !(dev && dev[0] == '1')) { *err = "refusing an unencrypted link server"; return false; }
+    }
+    size_t colon = base.find(':');
+    if (colon != std::string::npos) {
+        try {
+            int pv = std::stoi(base.substr(colon + 1));
+            if (pv < 1 || pv > 65535) throw std::out_of_range("port");
+        } catch (...) { *err = "invalid server address"; return false; }
+    }
+    plat::http::Request req;
+    req.method = "POST";
+    req.url = std::string(secure ? "https://" : "http://") + base + path;
+    req.headers = {{"User-Agent", "RetroHub/link"}, {"Content-Type", "application/json"}};
+    req.body = body;
+    req.connect_timeout_ms = 5000;
+    req.timeout_ms = 10000;
+    plat::http::Response resp;
+    if (!plat::http::perform(req, &resp)) { *err = "could not reach the server"; return false; }
+    r->status = resp.status;
+    r->body = resp.body;
+    return true;
+}
+
+#endif
 
 /* Server error text: the "error" field, or a generic message. */
 std::string server_error(const HttpResult& r)
@@ -267,16 +470,7 @@ bool link_create_code(const std::string& server, const Identity& id, std::string
 
 std::string sha256_hex(const std::string& s)
 {
-    BCRYPT_ALG_HANDLE h = nullptr;
-    uint8_t d[32] = {0};
-    if (BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&h, BCRYPT_SHA256_ALGORITHM, nullptr, 0))) {
-        BCryptHash(h, nullptr, 0, (PUCHAR)s.data(), (ULONG)s.size(), d, 32);
-        BCryptCloseAlgorithmProvider(h, 0);
-    }
-    static const char* hx = "0123456789abcdef";
-    std::string o;
-    for (uint8_t b : d) { o += hx[b >> 4]; o += hx[b & 15]; }
-    return o;
+    return plat::hex(plat::hash(plat::HashAlg::Sha256, s));   // same bytes as the BCrypt SHA-256 it replaces
 }
 
 std::string random_account_code()
