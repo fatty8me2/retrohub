@@ -1,20 +1,18 @@
 #include "findgames.h"
 
+#include "plat/plat.h"
 #include "winutil.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <deque>
+#include <filesystem>
 #include <set>
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
+#if RH_WIN
 #include <windows.h>
+#endif
 
 namespace hub { namespace fg {
 
@@ -46,8 +44,8 @@ static std::string lower(std::string s) {
 
 std::string norm_path(const std::string& p) {
     std::string s = lower(p);
-    for (char& c : s) if (c == '/') c = '\\';
-    while (!s.empty() && s.back() == '\\') s.pop_back();
+    for (char& c : s) if (c == '/') c = plat::kSep;   // '\' on Windows: byte-identical to before
+    while (!s.empty() && s.back() == plat::kSep) s.pop_back();
     return s;
 }
 
@@ -64,13 +62,18 @@ static std::vector<std::string> split_path(const std::string& p) {
 
 static std::string join_path(const std::vector<std::string>& c, size_t n) {
     std::string s;
-    for (size_t i = 0; i < n && i < c.size(); ++i) { if (i) s += '\\'; s += c[i]; }
+#if !RH_WIN
+    if (n > 0 && !c.empty()) s += '/';   // split_path dropped the leading empty component: macOS paths are rooted at "/"
+#endif
+    for (size_t i = 0; i < n && i < c.size(); ++i) { if (i) s += plat::kSep; s += c[i]; }
+#if RH_WIN
     if (n == 1 && !c.empty() && c[0].size() == 2 && c[0][1] == ':') s += '\\';   // "D:" -> "D:\"
+#endif
     return s;
 }
 
 static bool is_under(const std::string& child, const std::string& parent) {   // both normalized; equal counts
-    return child == parent || (child.size() > parent.size() && child.compare(0, parent.size(), parent) == 0 && child[parent.size()] == '\\');
+    return child == parent || (child.size() > parent.size() && child.compare(0, parent.size(), parent) == 0 && child[parent.size()] == plat::kSep);
 }
 
 std::vector<Folder> collapse_folders(const std::vector<DirCount>& dirs, const std::vector<Root>& roots) {
@@ -167,13 +170,17 @@ static std::string trim(const std::string& s) {
 }
 
 static bool abs_path(const std::string& p) {
+#if RH_WIN
     return p.size() >= 3 && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':' && (p[2] == '\\' || p[2] == '/');
+#else
+    return !p.empty() && p[0] == '/';
+#endif
 }
 
 static void push_unique(std::vector<std::string>& v, std::string p) {
     p = trim(p);
     if (!abs_path(p)) return;
-    for (char& c : p) if (c == '/') c = '\\';
+    for (char& c : p) if (c == '/') c = plat::kSep;
     for (const std::string& q : v) if (norm_path(q) == norm_path(p)) return;
     v.push_back(p);
 }
@@ -231,11 +238,18 @@ std::vector<std::string> parse_qt_gamedirs(const std::string& text) {
 namespace {
 
 struct Item { std::string path; int depth; bool library; };
+namespace fs = std::filesystem;
 
 std::string ext_of(const std::wstring& name) {
     size_t dot = name.rfind(L'.');
     if (dot == std::wstring::npos || dot == 0) return "";
     return lower(winutil::to_utf8(name.substr(dot)));
+}
+
+std::string ext_of_u8(const std::string& name) {
+    size_t dot = name.rfind('.');
+    if (dot == std::string::npos || dot == 0) return "";
+    return lower(name.substr(dot));
 }
 
 }
@@ -259,16 +273,17 @@ std::vector<Folder> scan_roots(const std::vector<Root>& roots, Control* ctl, con
         ctl->dirs = dirs;
         { std::lock_guard<std::mutex> lk(ctl->mu); ctl->current = it.path; }
 
+        DirCount dc;
+        dc.path = it.path;
+        int seen = 0;
+        const int max_depth = it.library ? opt.max_depth_library : opt.max_depth_generic;
+#if RH_WIN
         std::wstring pat = winutil::to_wide(it.path);
         while (!pat.empty() && (pat.back() == L'\\' || pat.back() == L'/')) pat.pop_back();
         pat += L"\\*";
         WIN32_FIND_DATAW fd;
         HANDLE h = FindFirstFileExW(pat.c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
         if (h == INVALID_HANDLE_VALUE) continue;
-        DirCount dc;
-        dc.path = it.path;
-        int seen = 0;
-        const int max_depth = it.library ? opt.max_depth_library : opt.max_depth_generic;
         do {
             if (ctl->cancel || ++seen > opt.max_dir_entries) break;
             const std::wstring name = fd.cFileName;
@@ -287,6 +302,27 @@ std::vector<Folder> scan_roots(const std::vector<Root>& roots, Control* ctl, con
             }
         } while (FindNextFileW(h, &fd));
         FindClose(h);
+#else
+        {
+            std::error_code de;
+            fs::directory_iterator dit(fs::path(it.path), fs::directory_options::skip_permission_denied, de);
+            if (de) continue;
+            for (const fs::directory_entry& e : dit) {
+                if (ctl->cancel || ++seen > opt.max_dir_entries) break;
+                const std::string name = e.path().filename().string();
+                std::error_code ee;
+                if (e.is_directory(ee)) {
+                    if (ee || e.is_symlink(ee)) continue;   // symlinks (loops)
+                    if (skip_dir_name(name) || it.depth >= max_depth) continue;
+                    q.push_back({plat::join(it.path, name), it.depth + 1, it.library});
+                } else {
+                    int s = classify_ext(ext_of_u8(name));
+                    if (s >= 0) { ++dc.c.n[s]; ++ctl->games; }
+                    else if (s == kArchive) ++dc.c.archives;
+                }
+            }
+        }
+#endif
         if (dc.c.total() > 0) counted.push_back(dc);
     }
     ctl->done = true;
@@ -296,13 +332,23 @@ std::vector<Folder> scan_roots(const std::vector<Root>& roots, Control* ctl, con
 /* ---- where to look ---- */
 
 static bool dir_exists(const std::string& p) {
+#if RH_WIN
     DWORD a = GetFileAttributesW(winutil::to_wide(p).c_str());
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    std::error_code ec;
+    return fs::is_directory(fs::path(p), ec);
+#endif
 }
 
 static std::string env(const char* n) {
+#if RH_WIN
     const wchar_t* v = _wgetenv(winutil::to_wide(n).c_str());
     return v ? winutil::to_utf8(v) : std::string();
+#else
+    const char* v = std::getenv(n);
+    return v ? std::string(v) : std::string();
+#endif
 }
 
 std::vector<Root> default_roots() {
@@ -314,8 +360,13 @@ std::vector<Root> default_roots() {
         out.push_back({p, library});
     };
     const std::string test_home = env("HUB_FINDGAMES_HOME");
+#if RH_WIN
     const std::string home = !test_home.empty() ? test_home : env("USERPROFILE");
+#else
+    const std::string home = !test_home.empty() ? test_home : env("HOME");
+#endif
     if (home.empty()) return out;
+#if RH_WIN
     for (const char* sub : {"Desktop", "Documents", "Downloads"}) add(home + "\\" + sub, false);
     for (const char* od : {"OneDrive", "OneDrive - Personal"})
         for (const char* sub : {"Desktop", "Documents"}) add(home + "\\" + od + "\\" + sub, false);
@@ -359,6 +410,53 @@ std::vector<Root> default_roots() {
         } while (FindNextFileW(h, &fd));
         FindClose(h);
     }
+#else
+    // macOS: the same home subfolders; Windows-only folders (OneDrive, the Everything\Games* dirs) are not there.
+    for (const char* sub : {"Desktop", "Documents", "Downloads"}) add(plat::join(home, sub), false);
+    for (const char* sub : {"Documents/RetroHub Games", "Games", "ROMs", "Roms", "Emulation", "RetroArch/roms"}) add(plat::join(home, sub), true);
+    if (!test_home.empty()) return out;
+
+    auto cfg = [&](const std::string& path, std::vector<std::string> (*parse)(const std::string&)) {
+        std::string text;
+        if (!path.empty() && winutil::read_file(path, &text)) for (const std::string& p : parse(text)) add(p, true);
+    };
+    const std::string appdata = plat::join(home, "Library/Application Support");
+    add(plat::join(appdata, "RetroArch/roms"), true);
+    /* App folder names on macOS (from memory, not verified on a Mac with each emulator installed): Dolphin keeps its user folder in
+     * ~/Library/Application Support/Dolphin ("Dolphin Emulator" is the Windows name); Cemu and Azahar use their own name under
+     * Application Support; Azahar / Citra keep qt-config.ini in a config/ subfolder. A missing file is simply skipped. */
+    cfg(plat::join(appdata, "Dolphin/Config/Dolphin.ini"), parse_dolphin_ini_paths);
+    cfg(plat::join(appdata, "Cemu/settings.xml"), parse_cemu_xml_paths);
+    cfg(plat::join(appdata, "Azahar/config/qt-config.ini"), parse_qt_gamedirs);
+    cfg(plat::join(appdata, "Citra/config/qt-config.ini"), parse_qt_gamedirs);
+
+    {   // the volume roots ("/" and each mounted volume under /Volumes): game-ish folders one level down, same shortlist as the drive sweep on Windows
+        std::vector<std::string> bases{"/"};
+        {
+            std::error_code ve;
+            fs::directory_iterator vit(fs::path("/Volumes"), fs::directory_options::skip_permission_denied, ve);
+            if (!ve) for (const fs::directory_entry& v : vit) {
+                std::error_code ee;
+                if (v.is_directory(ee) && !v.is_symlink(ee)) bases.push_back(plat::join("/Volumes", v.path().filename().string()));   // the boot volume is a symlink to "/"
+            }
+        }
+        for (const std::string& base : bases) {
+            std::error_code de;
+            fs::directory_iterator dit(fs::path(base), fs::directory_options::skip_permission_denied, de);
+            if (de) continue;
+            int n = 0;
+            for (const fs::directory_entry& e : dit) {
+                if (++n > 2000) break;
+                std::error_code ee;
+                if (!e.is_directory(ee) || e.is_symlink(ee)) continue;
+                const std::string nm = lower(e.path().filename().string());
+                if (nm == "games" || nm == "rom" || nm == "roms" || nm == "emulation" || nm == "emulators" || nm == "retroarch" ||
+                    nm == "retro games" || nm == "game roms" || nm == "retrohub games")
+                    add(plat::join(base, e.path().filename().string()), true);
+            }
+        }
+    }
+#endif
     return out;
 }
 

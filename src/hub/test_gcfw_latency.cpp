@@ -3,10 +3,14 @@
  * forwarder -> echo -> back. The test thread mimics the hub: it calls update() on a ~60 Hz UI tick only.
  * Threaded forwarder (default): median RTT must stay well under one UI frame. RETROHUB_GCFW_NOTHREAD=1 shows the old per-frame pump.
  * usage: hub_gcfw_latency [server]   ($RETROHUB_TEST_SERVER) */
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "../common/plat/plat_sock.h"
+#if RH_WIN
 #include <windows.h>
 #include <mmsystem.h>
+#else
+using SOCKET = int;
+static const int INVALID_SOCKET = -1;
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -20,23 +24,27 @@
 
 static SOCKET udp_bind(int port) {
     SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK); a.sin_port = htons((u_short)port);
-    if (bind(s, (sockaddr*)&a, sizeof a) != 0) { closesocket(s); return INVALID_SOCKET; }
+    sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK); a.sin_port = htons((uint16_t)port);
+    if (bind(s, (sockaddr*)&a, sizeof a) != 0) { plat::sock_close(s); return INVALID_SOCKET; }
     return s;
 }
 /* Wait up to ms for a datagram (select, not SO_RCVTIMEO: a timed-out recv leaves a Winsock socket in an indeterminate state). */
 static int recv_wait(SOCKET s, char* b, int cap, int ms, sockaddr_in* from = nullptr) {
     fd_set fs; FD_ZERO(&fs); FD_SET(s, &fs);
     timeval tv{0, ms * 1000};
-    if (select(0, &fs, nullptr, nullptr, &tv) <= 0) return 0;
-    int fl = sizeof(sockaddr_in);
-    return recvfrom(s, b, cap, 0, (sockaddr*)from, from ? &fl : nullptr);
+    if (select((int)s + 1, &fs, nullptr, nullptr, &tv) <= 0) return 0;   // (the first argument is ignored by Winsock)
+    plat::socklen fl = sizeof(sockaddr_in);
+    return (int)recvfrom(s, b, cap, 0, (sockaddr*)from, from ? &fl : nullptr);
 }
 
 int main(int argc, char** argv) {
     std::string server = hubnet::test_server_or_exit(argc, argv);
+#if RH_WIN
     WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
     timeBeginPeriod(1);
+#else
+    plat::sock_init();
+#endif
     const int port = 27311;
     SOCKET echo = udp_bind(port);
     if (echo == INVALID_SOCKET) { printf("FAIL echo bind\n"); return 1; }
@@ -52,40 +60,42 @@ int main(int argc, char** argv) {
     bool ok = host.start_host_forward(server, code, 1, plan, "gc", &err) && guest.start_guest(server, code, 1, plan, 1, &err, "gc");
     if (!ok) { printf("FAIL start: %s\n", err.c_str()); quit = true; echo_th.join(); return 1; }
     for (int i = 0; i < 1500 && !(host.ready() && guest.ready()); ++i) {
-        host.update(); guest.update(); Sleep(16);
+        host.update(); guest.update(); plat::sleep_ms(16);
         if (host.failed() || guest.failed()) break;
     }
     if (!host.ready() || !guest.ready()) { printf("FAIL connect: %s / %s\n", host.status().c_str(), guest.status().c_str()); quit = true; echo_th.join(); return 1; }
-    Sleep(1500);   // pings settle
+    plat::sleep_ms(1500);   // pings settle
     printf("connected: relayed=%d ping=%d ms\n", (int)guest.any_relayed(), guest.worst_ping_ms());
 
     SOCKET dol = udp_bind(0);
-    sockaddr_in fw{}; fw.sin_family = AF_INET; fw.sin_addr.s_addr = htonl(INADDR_LOOPBACK); fw.sin_port = htons((u_short)guest.connect_port());
+    sockaddr_in fw{}; fw.sin_family = AF_INET; fw.sin_addr.s_addr = htonl(INADDR_LOOPBACK); fw.sin_port = htons((uint16_t)guest.connect_port());
     std::vector<double> rtt;
-    LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
+    const int64_t fq = plat::perf_freq();
     std::atomic<bool> ui_quit{false};
-    std::thread ui([&] { while (!ui_quit) { host.update(); guest.update(); Sleep(16); } });   // the hub's UI tick
+    std::thread ui([&] { while (!ui_quit) { host.update(); guest.update(); plat::sleep_ms(16); } });   // the hub's UI tick
     for (int i = 0; i < 180; ++i) {
-        LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
+        const int64_t t0 = plat::perf_counter();
         char msg[16]; int n = snprintf(msg, sizeof msg, "p%d", i);
         sendto(dol, msg, n, 0, (sockaddr*)&fw, sizeof fw);
         char b[64];
         for (;;) {
             int r = recv_wait(dol, b, sizeof b, 20);
-            LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
-            double ms = (t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;
+            const int64_t t1 = plat::perf_counter();
+            double ms = (t1 - t0) * 1000.0 / (double)fq;
             if (r == n && memcmp(b, msg, n) == 0) { rtt.push_back(ms); break; }
             if (ms > 300) break;   // lost
         }
-        Sleep(16);
+        plat::sleep_ms(16);
     }
     ui_quit = true; ui.join();
     quit = true; echo_th.join();
     const bool relayed = guest.any_relayed();
     printf("datagrams: guest out %llu in %llu, host out %llu in %llu; echo replied %d (recv errors %d)\n", guest.datagrams_out(), guest.datagrams_in(), host.datagrams_out(), host.datagrams_in(), echoed.load(), echo_err.load());
     host.stop(); guest.stop();
-    closesocket(dol); closesocket(echo);
+    plat::sock_close(dol); plat::sock_close(echo);
+#if RH_WIN
     timeEndPeriod(1);
+#endif
     if (rtt.size() < 150) { printf("FAIL only %zu/180 echoes came back\n", rtt.size()); return 1; }
     std::sort(rtt.begin(), rtt.end());
     double med = rtt[rtt.size() / 2], p95 = rtt[rtt.size() * 95 / 100];

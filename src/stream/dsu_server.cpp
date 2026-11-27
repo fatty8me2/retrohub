@@ -1,6 +1,5 @@
 #include "dsu_server.h"
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "sock_compat.h"
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -206,8 +205,8 @@ struct DsuServer::Impl {
         while (run) {
             fd_set fs; FD_ZERO(&fs); FD_SET(s, &fs);
             timeval tv{0, 2000};
-            if (select(0, &fs, nullptr, nullptr, &tv) > 0) {
-                sockaddr_in from; int fl = sizeof from;
+            if (select((int)s + 1, &fs, nullptr, nullptr, &tv) > 0) {
+                sockaddr_in from; plat::socklen fl = sizeof from;
                 int n = recvfrom(s, (char*)buf, sizeof buf, 0, (sockaddr*)&from, &fl);
                 if (n > 0) handle(buf, (size_t)n, from);
             }
@@ -221,8 +220,7 @@ DsuServer::~DsuServer() { stop(); delete d_; }
 
 bool DsuServer::start(uint16_t port, bool loopback_only) {
     if (d_->run) return true;
-    WSADATA w;
-    if (WSAStartup(MAKEWORD(2, 2), &w) != 0) return false;
+    if (!plat::sock_init()) return false;
     d_->wsa = true;
     d_->s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (d_->s == INVALID_SOCKET) return false;
@@ -231,10 +229,10 @@ bool DsuServer::start(uint16_t port, bool loopback_only) {
     a.sin_port = htons(port);
     a.sin_addr.s_addr = htonl(loopback_only ? INADDR_LOOPBACK : INADDR_ANY);
     if (bind(d_->s, (sockaddr*)&a, sizeof a) != 0) { closesocket(d_->s); d_->s = INVALID_SOCKET; return false; }
-    int al = sizeof a;
+    plat::socklen al = sizeof a;
     getsockname(d_->s, (sockaddr*)&a, &al);
     d_->port = ntohs(a.sin_port);
-    d_->server_id = (uint32_t)GetTickCount() ^ 0x5EED5EEDu;
+    d_->server_id = (uint32_t)plat::tick_ms() ^ 0x5EED5EEDu;
     d_->run = true;
     d_->th = std::thread([this] { d_->loop(); });
     return true;

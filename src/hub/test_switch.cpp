@@ -1,6 +1,6 @@
 // Console test for Nintendo Switch via Lichii (src/hub/lichii.cpp): qt-config.ini merge (defaults, per-launch, controls), profiles.dat,
 // keys / firmware import and discovery, save <-> vault mapping and launch arguments. Fake dirs in temp; no network, no emulator.
-#include <windows.h>
+#include "../common/plat/plat.h"
 #include "controls.h"
 #include "emulators.h"
 #include "library.h"
@@ -307,8 +307,13 @@ static void test_needs_keys() {
     CHECK(!lichii_needs_keys("C:\\g\\exefs\\main") && !lichii_needs_keys("C:\\g\\homebrew.nro") && !lichii_needs_keys("C:\\g\\HOMEBREW.NRO"));
     for (const char* e : {"a.nsp", "a.NSZ", "a.xci", "a.xcz"}) CHECK(lichii_needs_keys(std::string("C:\\g\\") + e));
     CHECK(!lichii_needs_keys("C:\\g\\Zelda [0400486024DEC000].nup") && !lichii_needs_keys("C:\\g\\A.NUP"));   // unencrypted package: no keys
+#if RH_WIN
     CHECK(lichii_args("C:\\My Games\\a b.nsp", true) == "-f -u 0 -g \"C:\\My Games\\a b.nsp\"");
     CHECK(lichii_args("C:\\g\\a.nsp", false) == "-u 0 -g \"C:\\g\\a.nsp\"");
+#else
+    CHECK(lichii_args("/My Games/a b.nsp", true) == "-f -u 0 -g '/My Games/a b.nsp'");   // POSIX single-quoting on macOS
+    CHECK(lichii_args("/g/a.nsp", false) == "-u 0 -g '/g/a.nsp'");
+#endif
 }
 
 static const char* kKeys = "; keys\nmaster_key_00 = 00112233\nheader_key = 8745f1\naes_kek_generation_source = aa\n";
@@ -708,7 +713,7 @@ int main(int argc, char** argv) {
         std::printf(bad ? "hub_switch_test --download: %d FAILED\n" : "hub_switch_test --download: all passed\n", bad);
         return bad ? 1 : 0;
     }
-    fs::path d = fs::temp_directory_path() / ("hub_switch_test_" + std::to_string((unsigned long long)GetCurrentProcessId()));
+    fs::path d = fs::temp_directory_path() / ("hub_switch_test_" + std::to_string((unsigned long long)plat::current_pid()));
     fs::create_directories(d);
     setvbuf(stdout, nullptr, _IONBF, 0);
     test_ini();

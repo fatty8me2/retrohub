@@ -1,6 +1,8 @@
 #include "hub_log.h"
 #include "hub_log_rotate.h"
 
+#if defined(_WIN32)
+
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -281,3 +283,267 @@ void flush_from_crash() {
 }
 
 }  // namespace hublog
+#else
+
+#include <atomic>
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
+#include <chrono>
+#include <ctime>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/sysctl.h>
+#include <sys/time.h>
+
+/* macOS: same behaviour as the Windows implementation above (buffered lines, worker thread, rotation, ring for the crash
+ * handler), on POSIX file descriptors and std::thread. */
+namespace hublog {
+namespace {
+
+constexpr int kRing = 64;
+constexpr size_t kRingLine = 240;
+constexpr size_t kPendingCap = 256 * 1024;
+
+std::mutex g_mu;        // guards g_pending and the ring writes
+std::mutex g_io_mu;     // guards the file handle / size / rotation
+std::string g_pending;
+size_t g_dropped = 0;
+int g_fd = -1;
+unsigned long long g_size = 0;
+std::string g_dir;
+Options g_opt;
+std::string g_profile;
+bool g_ready = false;
+std::mutex g_wake_mu;
+std::condition_variable g_wake_cv;
+bool g_wake_flag = false;
+std::thread g_thread;
+std::atomic<bool> g_stop{false};
+unsigned long long g_t0 = 0;
+char g_ring[kRing][kRingLine];
+std::atomic<unsigned> g_ring_n{0};
+char g_sys[1536] = "RetroHub (log not started)\n";
+
+unsigned long long tick() { return (unsigned long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+
+void wake() {
+    { std::lock_guard<std::mutex> l(g_wake_mu); g_wake_flag = true; }
+    g_wake_cv.notify_all();
+}
+
+bool open_file_locked() {   // g_io_mu held
+    if (g_fd >= 0) return true;
+    std::error_code ec;
+    std::filesystem::create_directories(g_dir, ec);
+    g_fd = ::open(file_name(g_dir, 0).c_str(), O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644);
+    if (g_fd < 0) return false;
+    struct stat st;
+    g_size = (::fstat(g_fd, &st) == 0) ? (unsigned long long)st.st_size : 0;
+    return true;
+}
+
+void write_all(int fd, const char* p, size_t n, unsigned long long* size) {
+    while (n > 0) {
+        ssize_t w = ::write(fd, p, n);
+        if (w <= 0) break;
+        if (size) *size += (unsigned long long)w;
+        p += w; n -= (size_t)w;
+    }
+}
+
+void write_raw_locked(const char* p, size_t n) {   // g_io_mu held; never throws
+    if (!n) return;
+    if (!open_file_locked()) return;
+    if (needs_rotation(g_size, n, g_opt.max_bytes)) {
+        ::close(g_fd);
+        g_fd = -1;
+        rotate(g_dir, g_opt.keep);
+        if (!open_file_locked()) return;
+        static const char note[] = "--- log rotated; previous lines are in hub.1.log ---\n";
+        write_all(g_fd, note, sizeof note - 1, &g_size);
+    }
+    write_all(g_fd, p, n, &g_size);
+}
+
+void drain() {   // pending -> disk
+    std::string data;
+    {
+        std::lock_guard<std::mutex> l(g_mu);
+        data.swap(g_pending);
+        if (g_dropped) { data += "--- " + std::to_string(g_dropped) + " log lines dropped (disk too slow) ---\n"; g_dropped = 0; }
+    }
+    if (data.empty()) return;
+    std::lock_guard<std::mutex> l(g_io_mu);
+    write_raw_locked(data.data(), data.size());
+}
+
+void worker() {
+    while (!g_stop.load()) {
+        {
+            std::unique_lock<std::mutex> l(g_wake_mu);
+            g_wake_cv.wait_for(l, std::chrono::milliseconds(750), [] { return g_wake_flag || g_stop.load(); });
+            g_wake_flag = false;
+        }
+        try { drain(); } catch (...) {}
+    }
+}
+
+std::string sysctl_str(const char* name) {
+    char b[256];
+    size_t n = sizeof b;
+    if (sysctlbyname(name, b, &n, nullptr, 0) != 0 || n == 0) return std::string();
+    b[sizeof b - 1] = 0;
+    return b;
+}
+
+std::string build_header(const std::string& version) {
+    unsigned long long mem = 0;
+    size_t msz = sizeof mem;
+    sysctlbyname("hw.memsize", &mem, &msz, nullptr, 0);
+    int cores = 0;
+    size_t csz = sizeof cores;
+    sysctlbyname("hw.ncpu", &cores, &csz, nullptr, 0);
+    std::string os = sysctl_str("kern.osproductversion");
+    std::string build = sysctl_str("kern.osversion");
+    std::string cpu = sysctl_str("machdep.cpu.brand_string");
+    const char* loc = std::getenv("LANG");
+    char b[640];
+    std::snprintf(b, sizeof b, "RetroHub %s\nmacOS %s (%s)\nCPU: %s\nCPU cores: %d\nRAM: %llu MB\nGPU: unknown\nLocale: %s\n", version.c_str(),
+                  os.empty() ? "?" : os.c_str(), build.c_str(), cpu.empty() ? "unknown" : cpu.c_str(), cores, mem >> 20, loc && *loc ? loc : "unknown");
+    return b;
+}
+
+void stamp(char* out, size_t cap) {
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    std::tm t;
+    std::time_t sec = tv.tv_sec;
+    localtime_r(&sec, &t);
+    std::snprintf(out, cap, "%04d-%02d-%02d %02d:%02d:%02d.%03d", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, (int)(tv.tv_usec / 1000));
+}
+
+void vlog(Level lv, const char* fmt, va_list ap) {
+    char buf[1024];
+    int n = std::vsnprintf(buf, sizeof buf, fmt ? fmt : "", ap);
+    if (n < 0) n = 0;
+    if ((size_t)n >= sizeof buf) n = (int)sizeof buf - 1;
+    buf[n] = 0;
+    write(lv, std::string(buf, (size_t)n));
+}
+
+}  // namespace
+
+void init(const std::string& logs_dir_utf8, const std::string& version, const Options& opt) {
+    try {
+        if (g_ready) return;
+        g_opt = opt;
+        g_dir = logs_dir_utf8;
+        if (!g_dir.empty() && g_dir.back() != '/') g_dir += '/';
+        g_profile = opt.profile_dir;
+        if (g_profile.empty()) {
+            const char* h = std::getenv("HOME");
+            if (h) g_profile = h;
+        }
+        g_t0 = tick();
+        g_stop = false;
+        std::string head = build_header(version);
+        std::snprintf(g_sys, sizeof g_sys, "%s", scrub(head, g_profile).c_str());
+        g_ready = true;
+        if (opt.header) {
+            char ts[48];
+            stamp(ts, sizeof ts);
+            std::string h = std::string("\n===== RetroHub session started ") + ts + " =====\n" + scrub(head, g_profile);
+            std::lock_guard<std::mutex> l(g_io_mu);
+            write_raw_locked(h.data(), h.size());
+        }
+        if (opt.worker) g_thread = std::thread(worker);
+    } catch (...) {}
+}
+
+void flush() {
+    try { if (g_ready) drain(); } catch (...) {}
+}
+
+void shutdown() {
+    try {
+        if (!g_ready) return;
+        info("shutdown (%llu ms since start)", since_start_ms());
+        if (g_thread.joinable()) {
+            g_stop = true;
+            wake();
+            g_thread.join();
+        }
+        g_ready = false;   // no new lines from here on
+        drain();
+        std::lock_guard<std::mutex> l(g_io_mu);
+        if (g_fd >= 0) { ::close(g_fd); g_fd = -1; }
+    } catch (...) {}
+}
+
+void write(Level lv, const std::string& msg) {
+    try {
+        if (!g_ready) return;
+        char ts[48];
+        stamp(ts, sizeof ts);
+        std::string m = scrub(msg, g_profile);
+        for (char& c : m) if (c == '\n' || c == '\r') c = ' ';
+        const char* tag = lv == Level::Error ? "ERROR" : lv == Level::Warn ? "WARN " : "INFO ";
+        std::string line = std::string(ts) + " " + tag + " " + m + "\n";
+        {
+            std::lock_guard<std::mutex> l(g_mu);
+            if (g_pending.size() + line.size() <= kPendingCap) g_pending += line;
+            else ++g_dropped;
+            unsigned n = g_ring_n.load(std::memory_order_relaxed);
+            char* slot = g_ring[n % kRing];
+            size_t len = line.size() - 1 < kRingLine - 1 ? line.size() - 1 : kRingLine - 1;
+            std::memcpy(slot, line.data(), len);
+            slot[len] = 0;
+            g_ring_n.store(n + 1, std::memory_order_release);
+        }
+        if (lv == Level::Error && g_opt.worker) wake();
+    } catch (...) {}
+}
+
+void info(const char* fmt, ...) { va_list ap; va_start(ap, fmt); vlog(Level::Info, fmt, ap); va_end(ap); }
+void warn(const char* fmt, ...) { va_list ap; va_start(ap, fmt); vlog(Level::Warn, fmt, ap); va_end(ap); }
+void error(const char* fmt, ...) { va_list ap; va_start(ap, fmt); vlog(Level::Error, fmt, ap); va_end(ap); }
+
+unsigned long long since_start_ms() { return g_t0 ? tick() - g_t0 : 0; }
+const char* system_info() { return g_sys; }
+
+size_t recent_lines(char* out, size_t cap, int max_lines) {
+    if (!out || cap == 0) return 0;
+    out[0] = 0;
+    unsigned n = g_ring_n.load(std::memory_order_acquire);
+    unsigned have = n < (unsigned)kRing ? n : (unsigned)kRing;
+    if (max_lines > 0 && have > (unsigned)max_lines) have = (unsigned)max_lines;
+    size_t pos = 0;
+    for (unsigned i = n - have; i < n; ++i) {
+        const char* s = g_ring[i % kRing];
+        size_t len = 0;
+        while (len < kRingLine && s[len]) ++len;
+        if (pos + len + 2 > cap) break;
+        std::memcpy(out + pos, s, len);
+        pos += len;
+        out[pos++] = '\n';
+    }
+    out[pos] = 0;
+    return pos;
+}
+
+void flush_from_crash() {
+    if (!g_ready) return;
+    if (!g_mu.try_lock()) return;
+    if (!g_io_mu.try_lock()) { g_mu.unlock(); return; }
+    if (g_fd >= 0 && !g_pending.empty()) write_all(g_fd, g_pending.data(), g_pending.size(), nullptr);   // write(2) is async-signal-safe
+    g_io_mu.unlock();
+    g_mu.unlock();
+}
+
+}  // namespace hublog
+#endif  // _WIN32

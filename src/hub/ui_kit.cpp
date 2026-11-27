@@ -3,7 +3,12 @@
 #include "imgui_internal.h"   // FindRenderedTextEnd
 
 #include <SDL.h>
+#include "plat/plat.h"
+#if RH_WIN
 #include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
 
 #include <algorithm>
 #include <cfloat>
@@ -70,10 +75,20 @@ float anim(float& v, float target, float rate) {
 
 void setup_fonts(float scale) {
     ImGuiIO& io = ImGui::GetIO();
+#if RH_WIN
     const char* reg = "C:\\Windows\\Fonts\\segoeui.ttf";
     const char* bold = "C:\\Windows\\Fonts\\segoeuib.ttf";
     bool have_reg = GetFileAttributesA(reg) != INVALID_FILE_ATTRIBUTES;
     bool have_bold = GetFileAttributesA(bold) != INVALID_FILE_ATTRIBUTES;
+#else
+    /* macOS: Tahoma (the closest humanist face to Segoe UI that ships with macOS), then Arial; plain TrueType files, which ImGui's loader reads. */
+    auto exists = [](const char* f) { struct stat st; return ::stat(f, &st) == 0; };
+    const char* reg = "/System/Library/Fonts/Supplemental/Tahoma.ttf";
+    const char* bold = "/System/Library/Fonts/Supplemental/Tahoma Bold.ttf";
+    if (!exists(reg)) { reg = "/System/Library/Fonts/Supplemental/Arial.ttf"; bold = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"; }
+    bool have_reg = exists(reg);
+    bool have_bold = exists(bold);
+#endif
     const bool large = A.st.large_text || (g_headless && std::getenv("HUB_LARGE_TEXT") != nullptr);   // "Larger small text"
     auto load = [&](bool b, float px) -> ImFont* {
         const char* p = b ? (have_bold ? bold : reg) : reg;

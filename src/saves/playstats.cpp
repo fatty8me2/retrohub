@@ -2,10 +2,14 @@
 
 #include "savestore.h"
 
+#include "plat/plat.h"
+
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -63,9 +67,16 @@ Stats compute_stats(const std::vector<GameTotal>& totals, const std::vector<Sess
 
 namespace {
 std::string device_tag() {
+#if RH_WIN
     char b[MAX_COMPUTERNAME_LENGTH + 2];
     DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
     std::string s = GetComputerNameA(b, &n) ? std::string(b, n) : std::string("pc");
+#else
+    char b[256] = {};
+    std::string s = gethostname(b, sizeof b - 1) == 0 && b[0] ? std::string(b) : std::string("pc");
+    size_t dot = s.find('.');
+    if (dot != 0 && dot != std::string::npos) s.resize(dot);
+#endif
     for (auto& c : s) if (!isalnum((unsigned char)c) && c != '-') c = '_';
     return s;
 }
@@ -81,6 +92,7 @@ void read_playlog_dir(const fs::path& pl, const std::string& sys, const std::str
     for (fs::directory_iterator fi(pl, e3), fe; !e3 && fi != fe; fi.increment(e3)) {
         std::error_code e4;
         if (!fi->is_regular_file(e4)) continue;
+#if RH_WIN
         std::wstring ext = fi->path().extension().wstring();   // only "<pc>.log": a sync tool's temp or backup copy would count twice
         for (auto& c : ext) c = (wchar_t)towlower(c);
         if (ext != L".log") continue;
@@ -91,6 +103,13 @@ void read_playlog_dir(const fs::path& pl, const std::string& sys, const std::str
             device.resize((size_t)n);
             WideCharToMultiByte(CP_UTF8, 0, stem.data(), (int)stem.size(), &device[0], n, nullptr, nullptr);
         }
+#else
+        std::string ext = fi->path().extension().string();   // paths are UTF-8 bytes here
+        for (auto& c : ext) c = (char)tolower((unsigned char)c);
+        if (ext != ".log") continue;
+        std::ifstream in(fi->path(), std::ios::binary);
+        const std::string device = fi->path().stem().string();   // the file name without ".log"
+#endif
         std::string line;
         while (std::getline(in, line)) {
             Session s;

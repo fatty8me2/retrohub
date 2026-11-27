@@ -1,6 +1,6 @@
 // QA-only console harness (NOT an add_test): runs the real Hookshot build pipeline end to end on a game file.
 // Usage: hub_hookshot_e2e <game file> [language] [hookshot|longshot]. data_dir() is <exe dir>\userdata, so run it from an isolated copy.
-#include <windows.h>
+#include "../common/plat/plat.h"
 #include "games.h"
 #include "hookshot.h"
 #include "hookshot_build.h"

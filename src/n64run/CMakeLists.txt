@@ -30,11 +30,21 @@ add_executable(n64run
     lockstep.cpp
     osd_gl.cpp
     headless.cpp)
-target_link_libraries(n64run PRIVATE n64run_match n64run_match_result n64run_lockstep_core n64run_save_sync hubnet hubcommon hubcontrols_sdl hubclip m64p_api SDL2::SDL2 opengl32)
+target_link_libraries(n64run PRIVATE n64run_match n64run_match_result n64run_lockstep_core n64run_save_sync hubnet hubcommon hubcontrols_sdl hubclip m64p_api SDL2::SDL2)
+if(WIN32)
+    target_link_libraries(n64run PRIVATE opengl32)
+else()
+    target_link_libraries(n64run PRIVATE "-framework OpenGL")   # macOS: deprecated but present (GL 4.1 core); osd_gl.cpp / frontend.cpp define GL_SILENCE_DEPRECATION
+endif()
 # Console subsystem on purpose (logs to the console too); the hub launches it hidden/with a console as needed.
 set_target_properties(n64run PROPERTIES WIN32_EXECUTABLE OFF)
 # The input plugin entry points are __declspec(dllexport) from the exe; keep them even with /OPT:REF.
-target_link_options(n64run PRIVATE /OPT:NOREF)
+if(MSVC)
+    target_link_options(n64run PRIVATE /OPT:NOREF)
+else()
+    # macOS: the core dlsym()s PluginStartup / GetKeys / ... on the executable's own handle (dlopen(NULL)), so export them.
+    set_target_properties(n64run PROPERTIES ENABLE_EXPORTS ON)
+endif()
 
 # SDL2.dll next to the exe (shared by the exe and the mupen64plus plugins).
 add_custom_command(TARGET n64run POST_BUILD
@@ -50,7 +60,9 @@ add_executable(n64run_mempak_test test_mempak.cpp)
 target_link_libraries(n64run_mempak_test PRIVATE n64run_save_sync)
 
 # Branding: same icon + version resources as RetroHub.exe (see src/hub/CMakeLists.txt for the generated header).
-target_sources(n64run PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub/n64run.rc)
+if(WIN32)
+    target_sources(n64run PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hub/n64run.rc)
+endif()
 add_dependencies(n64run hubversion)   # generates version_gen/hub_version_rc.h (src/hub)
 target_include_directories(n64run PRIVATE ${CMAKE_BINARY_DIR}/version_gen ${CMAKE_CURRENT_SOURCE_DIR}/../hub)
 

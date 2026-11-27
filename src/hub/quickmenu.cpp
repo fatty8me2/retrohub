@@ -1,4 +1,13 @@
 #include "app.h"
+#if RH_WIN
+#define HUB_BS "\\"
+#else
+#define HUB_BS "/"
+#endif
+#if !RH_WIN
+#include <strings.h>
+#define _stricmp strcasecmp   // file-local: the clip-extension checks
+#endif
 #include "page_cache.h"
 #include "dolphin_speed.h"
 #include "hub_log.h"
@@ -7,9 +16,14 @@
 #include "tex_cache_logic.h"
 
 #include <SDL.h>
+#if RH_WIN
 #include <shellapi.h>
+#else
+#include "plat/plat_proc.h"
+#endif
 
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <ctime>
 #include <fstream>
@@ -102,7 +116,7 @@ std::string time_text(long long t) {
     if (t <= 0) return "";
     std::time_t tt = (std::time_t)t;
     std::tm tm{};
-    localtime_s(&tm, &tt);
+    plat::local_tm(tt, &tm);
     char b[48];
     std::strftime(b, sizeof b, "%b %d, %H:%M", &tm);
     return b;
@@ -138,13 +152,13 @@ std::vector<std::string> g_ch_fake_sel;
 char g_ch_buf[48] = {0};
 long long g_pending = 0;                       // seq waiting for an ack (0 = none)
 std::string g_pending_what;                    // "Saved slot 3" ...
-static ULONGLONG g_open_ms = 0, g_activity_ms = 0;
+static unsigned long long g_open_ms = 0, g_activity_ms = 0;
 /* Clock for everything the menu's input handling measures in time (key-repeat delay/rate, open cooldown, B grace, overwrite confirm).
  * Normal runs: the wall clock. Headless e2e (qm_e2e.cpp): a virtual clock the test advances a fixed step per frame, so a loaded PC
  * (slow frames) cannot change how many repeats / which cooldowns a scenario sees. */
-static ULONGLONG g_e2e_clock_ms = 0;
+static unsigned long long g_e2e_clock_ms = 0;
 static bool g_e2e_clock_on = false;
-ULONGLONG qmnow() { return g_e2e_clock_on ? g_e2e_clock_ms : GetTickCount64(); }
+unsigned long long qmnow() { return g_e2e_clock_on ? g_e2e_clock_ms : plat::tick_ms(); }
 
 /* The menu's own controls (qm_nav.h): read straight from the pads every frame, independent of the OS focus and of ImGui's nav.
  * g_in gates buttons held at open (View+Y itself, A/B held in the game) until released; g_nav keeps the selected row by id. */
@@ -167,6 +181,12 @@ std::vector<unsigned long> game_pid_list() {
     if (const unsigned long g = gc_pid()) return {g};
     return running_game_pids();
 }
+#if !RH_WIN
+/* TODO(macOS lane 7): another process's window handle (EnumWindows) has no macOS equivalent here; focus goes through plat::proc::activate_pid. */
+void* window_of_pid(unsigned long) { return nullptr; }
+void* qm_foreground_window() { return nullptr; }
+#else
+void* qm_foreground_window() { return GetForegroundWindow(); }
 HWND window_of_pid(DWORD pid) {   // largest visible, captioned top-level window of one process
     struct Pick { DWORD pid; HWND best; long long area; } pk{pid, nullptr, 0};
     EnumWindows([](HWND h, LPARAM lp) -> BOOL {
@@ -182,6 +202,7 @@ HWND window_of_pid(DWORD pid) {   // largest visible, captioned top-level window
     }, (LPARAM)&pk);
     return pk.best;
 }
+#endif
 /* Back to the game after the menu (every close path). GameCube NetPlay: raise its Dolphin; the hub is the foreground process
  * here (the player just used the menu), so a plain SetForegroundWindow is allowed. Everything else: launch.cpp's focus_game. */
 void qm_focus_game() {
@@ -189,10 +210,14 @@ void qm_focus_game() {
     if (!g) { focus_game(); return; }
     if (g_headless) return;
     hub_menu_topmost(false);
+#if RH_WIN
     HWND h = window_of_pid((DWORD)g);
     if (!h) return;
     if (IsIconic(h)) ShowWindow(h, SW_RESTORE);   // popup-guard: ok (raises the GAME after the player's own View+Y menu)
     SetForegroundWindow(h);   // popup-guard: ok (raises the GAME after the player's own View+Y menu)
+#else
+    plat::proc::activate_pid((int)g);   // popup-guard: ok (raises the GAME after the player's own menu)
+#endif
 }
 /* Leave (menu "Quit", Back+Start held): ask Dolphin to close like the player closing it; gc_tick then sees it gone and runs gc_stop_all
  * (forwarder, UI driver, room state). If Dolphin ignores the close for 20 s gc_tick ends it (GCO.close_deadline). */
@@ -202,7 +227,7 @@ void gc_leave(const char* why) {
     qm_log(std::string("gc netplay: leaving (") + why + ")");
     if (GCO.close_deadline) return;   // already closing
     close_pid_windows(g);
-    GCO.close_deadline = GetTickCount64() + 20000;
+    GCO.close_deadline = plat::tick_ms() + 20000;
     set_notice("Leaving the game...", 6.0);
 }
 
@@ -212,6 +237,11 @@ std::atomic<bool> g_dol_paused{false};        // Dolphin is paused by us (toggle
 void dolphin_send_acts(std::vector<hubqm::DolphinAct> acts) {
     if (acts.empty()) return;
     if (g_headless || autotest_active()) { qm_log("dolphin: " + std::to_string(acts.size()) + " menu hotkey chord(s) not injected (headless / QA)"); return; }
+#if !RH_WIN
+    /* TODO(macOS lane 7): Dolphin's pause / state hotkeys are sent with SendInput scancodes; macOS would need CGEvent + the Accessibility permission. */
+    qm_log("dolphin: menu hotkey chord(s) not supported on macOS yet");
+    return;
+#else
     std::vector<unsigned long> pids = game_pid_list();
     std::thread([pids, acts]() {
         std::lock_guard<std::mutex> synth_lock(hubinput::synth_input_mutex());   // one burst of synthetic keys at a time (synth_input_lock.h)
@@ -235,6 +265,7 @@ void dolphin_send_acts(std::vector<hubqm::DolphinAct> acts) {
             Sleep(150);
         }
     }).detach();
+#endif
 }
 static const char* g_close_why = "other";
 bool g_pending_close = true;                   // close the menu and return to the game when the ack arrives
@@ -285,7 +316,7 @@ bool send_feature(runctl::Command cm, const std::string& done_text, bool resume_
 void nav_ring(ImVec2 p0, ImVec2 p1) {
     {   // a long menu scrolls: bring the pad-selected row into view once per selection change (a mouse wheel is not fought)
         static std::string last_sel;
-        static ULONGLONG last_open = 0;
+        static unsigned long long last_open = 0;
         if (last_open != g_open_ms) { last_open = g_open_ms; last_sel.clear(); }
         if (last_sel != g_nav.sel) { last_sel = g_nav.sel; ImGui::ScrollToRect(ImGui::GetCurrentWindow(), ImRect(p0, p1 + ImVec2(0, sp(1.f)) ), ImGuiScrollFlags_KeepVisibleEdgeY); }
     }
@@ -392,7 +423,7 @@ int g_vol = 100, g_launch_vol = 100;     // slider and the volume the game was l
 bool g_mute = false;
 bool g_ext_dirty = false, g_shot_online = false, g_shot_ext = false;   // g_shot_*: HUB_SHOT_QM_ONLINE / HUB_SHOT_QM_EXT stand-ins
 std::string g_sess_key;
-ULONGLONG g_sess_tick = 0;
+unsigned long long g_sess_tick = 0;
 double g_ext_next = 0, g_ext_shot_at = 0;
 int g_ext_sessions = -1;                 // audio sessions found at the last attempt (-1 = none tried yet)
 std::string g_ext_shot_path;
@@ -400,7 +431,7 @@ std::string g_ext_shot_path;
 /* Fire and forget: the menu stays open and responsive; the runner acts at its next poll. control.json holds ONE command and a second
  * write before the runner read the first replaces it, so everything goes through a queue that writes the next command when the previous
  * one is acked (or 0.7 s passed). Repeats of the same setting (a held Volume step) are coalesced into one. */
-struct Queued { runctl::Command c; int tag = 0; ULONGLONG first_try = 0; };
+struct Queued { runctl::Command c; int tag = 0; unsigned long long first_try = 0; };
 std::deque<Queued> g_cmdq;
 hubqm::CmdPacer g_pacer;
 long long g_ho_seq = 0;            // seq of the queued hand-off command (0 = none yet)
@@ -408,7 +439,7 @@ bool g_ho_wait = false;            // a hand-off is waiting for its ack
 double g_ho_at = 0;
 std::string g_ho_name;
 std::string g_cd_name;             // pass countdown on the game's OSD
-ULONGLONG g_cd_t0 = 0;
+unsigned long long g_cd_t0 = 0;
 int g_cd_shown = 0;
 hubqm::EmoteLimiter g_emote_lim;
 double g_emote_note_at = -100;
@@ -438,9 +469,9 @@ void enqueue_cmd(runctl::Command c, int tag) {
 /* Every frame: write the head of the queue when the runner is done with the previous command. */
 void cmdq_pump() {
     if (!A.proc || A.run.ctl_path.empty()) { g_cmdq.clear(); return; }
-    const ULONGLONG now = GetTickCount64();
+    const unsigned long long now = plat::tick_ms();
     if (g_pacer.sent_seq > g_pacer.acked_seq) {
-        static ULONGLONG last_read = 0;
+        static unsigned long long last_read = 0;
         if (now - last_read >= 80) {
             last_read = now;
             std::string txt;
@@ -510,7 +541,7 @@ std::atomic<int> g_burst_state{0};   // 0 idle, 1 running, 2 finished (result in
 std::atomic<int> g_burst_done{-1};
 std::vector<hubqm::DolphinKey> g_burst_plan;
 int g_burst_target = hubqm::kSpeedNormal, g_retry_n = 0;
-ULONGLONG g_retry_at = 0;
+unsigned long long g_retry_at = 0;
 std::atomic<bool> g_close_req{false};
 bool g_burst_dsu = false;    // the running burst went through the DSU pad
 bool g_dsu_dead = false;     // this session: Dolphin's DSU client never connected -> keyboard path (needs the menu closed)
@@ -520,7 +551,7 @@ bool use_dsu() { return dolphin_speed_running() && !g_dsu_dead; }   // emergency
 void dolphin_apply_pending(const hub::GameEntry* e) {
     if (!is_dolphin(e) || qm_online() || g_shot_fake || g_burst_state.load() != 0 || (qm_is_open() && !use_dsu())) return;   // the DSU pad needs no focus: applies live, menu open or not
     if (!hubqm::dolphin_needs_apply(g_dolphin, g_speed_idx)) { g_retry_n = 0; return; }
-    if (GetTickCount64() < g_retry_at) return;
+    if (plat::tick_ms() < g_retry_at) return;
     g_burst_plan = hubqm::dolphin_plan_for(g_dolphin, g_speed_idx);
     g_burst_target = g_speed_idx;
     std::vector<int> vks;
@@ -550,7 +581,7 @@ void dolphin_burst_poll() {
         g_retry_at = ~0ull;
         push_toast("Could not change Dolphin's speed. Hold View + LB for 1 s to reset it to 1x.", COL_WARN, 8.0);
         qm_log("dolphin speed: giving up after " + std::to_string(g_retry_n) + " retries");
-    } else g_retry_at = GetTickCount64() + (ULONGLONG)hubqm::dolphin_retry_delay_ms(g_retry_n++);
+    } else g_retry_at = plat::tick_ms() + (unsigned long long)hubqm::dolphin_retry_delay_ms(g_retry_n++);
 }
 
 void ext_apply(const hub::GameEntry* e) {
@@ -615,7 +646,7 @@ bool g_pad_loaded = false;
 std::string g_pad_note;
 bool g_perf_shot = false;            // HUB_SHOT_QM stand-in value of the stats overlay row
 int g_perf_sent = 2;                 // automatic "overlay on" sends left at session start (0, 1 pending; 2 = done)
-ULONGLONG g_perf_t0 = 0;
+unsigned long long g_perf_t0 = 0;
 
 bool runner_supports_overlay(const hub::GameEntry* e) { return e && runner_has_ctl(*e) && e->system != hub::System::N64; }
 
@@ -766,7 +797,7 @@ void chat_page() {
 
 /* ---- Plan 4 P5: emote wheel ---- */
 void emote_send(const hubqm::Emote& em) {
-    if (!g_emote_lim.allow((long long)GetTickCount64())) { g_emote_note_at = ImGui::GetTime(); return; }
+    if (!g_emote_lim.allow((long long)plat::tick_ms())) { g_emote_note_at = ImGui::GetTime(); return; }
     if (!g_shot_fake) {
         A.lobby.send_msg(hubqm::emote_json(em.code));
         send_osd(hubqm::chat_osd_text("You", em.label));
@@ -865,15 +896,15 @@ void handoff_tick() {
             g_ho_wait = false;
             qm_log(std::string("handoff ack ok=") + (a.ok ? "1" : "0") + " msg=" + a.msg);
             if (a.ok) {
-                g_cd_name = g_ho_name; g_cd_t0 = GetTickCount64(); g_cd_shown = 0;
+                g_cd_name = g_ho_name; g_cd_t0 = plat::tick_ms(); g_cd_shown = 0;
                 if (g_qm_showing.load()) { g_close_req_why = "controller passed"; g_close_req = true; }
             } else push_toast(hubqm::handoff_fail_text(a.msg), COL_WARN, 6.0);
         } else if (ImGui::GetTime() - g_ho_at > 8.0) { g_ho_wait = false; push_toast("The game did not answer.", COL_WARN, 5.0); }
     }
     if (!g_cd_name.empty()) {
         if (!A.proc) { g_cd_name.clear(); return; }
-        const ULONGLONG el = GetTickCount64() - g_cd_t0;
-        const int n = (int)std::min<ULONGLONG>(3, el / 1000 + 1);
+        const unsigned long long el = plat::tick_ms() - g_cd_t0;
+        const int n = (int)std::min<unsigned long long>(3, el / 1000 + 1);
         if (n > g_cd_shown) { g_cd_shown = n; send_osd(hubqm::countdown_text(g_cd_name, n)); }
         if (el >= 3000) g_cd_name.clear();
     }
@@ -890,7 +921,7 @@ void qm_textures_begin_frame() { g_tex.begin_frame(); g_shot_budget.begin_frame(
 static std::string run_dir_for(const std::string& key) {
     std::string k = key;
     for (auto& c : k) if (!isalnum((unsigned char)c) && c != '-' && c != '_') c = '_';
-    return trim_sep(hub::data_dir()) + "\\run\\" + k;
+    return trim_sep(hub::data_dir()) + "" HUB_BS "run" HUB_BS "" + k;
 }
 
 /* Built-in runners that understand --control. */
@@ -907,10 +938,10 @@ void qm_prepare(RunInfo& ri, const hub::GameEntry& e) {
     std::string dir = run_dir_for(e.key);
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::u8path(dir), ec);
-    ri.ctl_path = dir + "\\control.json";
+    ri.ctl_path = dir + "" HUB_BS "control.json";
     std::filesystem::remove(std::filesystem::u8path(runctl::ack_path_for(ri.ctl_path)), ec);
     runctl::write_text_atomic(ri.ctl_path, "{\"seq\":0}");
-    ri.shot_dir = trim_sep(hub::saves::game_dir(sys_short(e), e.key)) + "\\shots";
+    ri.shot_dir = trim_sep(hub::saves::game_dir(sys_short(e), e.key)) + "" HUB_BS "shots";
 }
 
 std::string qm_args(const RunInfo& ri, const hub::GameEntry& e, bool n64_state_dir) {
@@ -925,8 +956,23 @@ void qm_log(const std::string& line) {
     std::lock_guard<std::mutex> lk(mu);
     /* hub.log copy: skip the lines that name an arbitrary foreground window (its title could be anything) */
     if (line.find("fg=") == std::string::npos && line.compare(0, 13, "foreground ->") != 0) hublog::info("quickmenu: %s", line.c_str());
-    static std::string dir = hub::data_dir() + "logs\\";
+    static std::string dir = hub::data_dir() + "logs" HUB_BS "";
     static std::string path = dir + "quickmenu.log";
+#if !RH_WIN
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::u8path(dir), ec);
+        const auto sz = std::filesystem::file_size(std::filesystem::u8path(path), ec);
+        if (!ec && sz > 500000) std::filesystem::rename(std::filesystem::u8path(path), std::filesystem::u8path(path + ".1"), ec);
+        const unsigned long long ms = (unsigned long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::time_t tt = (std::time_t)(ms / 1000); std::tm ltm{}; plat::local_tm(tt, &ltm);
+        char ts[48];
+        std::snprintf(ts, sizeof ts, "%04d-%02d-%02d %02d:%02d:%02d.%03d ", ltm.tm_year + 1900, ltm.tm_mon + 1, ltm.tm_mday, ltm.tm_hour, ltm.tm_min, ltm.tm_sec, (int)(ms % 1000));
+        std::ofstream f(std::filesystem::u8path(path), std::ios::app | std::ios::binary);
+        f << ts << line << "\n";
+        return;
+    }
+#else
     const std::wstring wdir = durable::utf8_to_wide(dir), wpath = durable::utf8_to_wide(path);
     CreateDirectoryW(wdir.c_str(), nullptr);
     WIN32_FILE_ATTRIBUTE_DATA fad{};
@@ -937,6 +983,7 @@ void qm_log(const std::string& line) {
     std::snprintf(ts, sizeof ts, "%04d-%02d-%02d %02d:%02d:%02d.%03d ", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
     std::ofstream f(std::filesystem::u8path(path), std::ios::app | std::ios::binary);
     f << ts << line << "\n";
+#endif
 }
 
 void qm_dolphin_reset() {
@@ -955,7 +1002,7 @@ void qm_chat_incoming(bool dm, const std::string& uid, const std::string& who, c
     if (dm) { g_dm_uid = uid; g_dm_name = who; }
     if (!A.proc || !ctl_ready() || !hubqm::chat_osd_wanted(A.st.game_chat, dm)) return;
     std::string t = hubqm::chat_osd_text(dm ? who + " (DM)" : who, text);
-    if (t.empty() || !g_chat_lim.allow((long long)GetTickCount64())) return;
+    if (t.empty() || !g_chat_lim.allow((long long)plat::tick_ms())) return;
     send_osd(t);
 }
 bool qm_is_open() { return g_qm_showing.load(); }   // thread-safe; set at the request, refreshed every draw
@@ -967,8 +1014,8 @@ void qm_open_live() {
     if (g_qm_showing.load()) { qm_log("open request ignored: menu already open"); return; }   // View+Y never re-opens / toggles an open menu
     g_retry_n = 0; g_retry_at = 0;   // a Dolphin speed change that gave up is tried again once the menu closes
     prefs_load();
-    g_activity_ms = GetTickCount64();
-    qm_log("open request (hub fg=" + std::string(hub_is_foreground() ? "yes" : "no") + " fg=" + qm_describe_window(GetForegroundWindow()) + ")");
+    g_activity_ms = plat::tick_ms();
+    qm_log("open request (hub fg=" + std::string(hub_is_foreground() ? "yes" : "no") + " fg=" + qm_describe_window(qm_foreground_window()) + ")");
     const std::string run_key = gcp ? GCO.entry.key : A.run.key;
     const hub::GameEntry* e = g_e2e ? nullptr : cur_entry(run_key);
     g_sys = e ? sys_short(*e) : gcp ? std::string("gc") : A.run.system_short;
@@ -989,7 +1036,7 @@ static void qm_session_tick(const hub::GameEntry* e) {
     const unsigned long gcp = gc_pid();
     const std::string& run_key = gcp ? GCO.entry.key : A.run.key;
     if ((!A.proc && !gcp) || run_key.empty()) { g_sess_key.clear(); return; }
-    const ULONGLONG run_tick = gcp ? (ULONGLONG)gcp : A.run.start_tick;   // a new NetPlay Dolphin = a new session
+    const unsigned long long run_tick = gcp ? (unsigned long long)gcp : A.run.start_tick;   // a new NetPlay Dolphin = a new session
     if (g_sess_key != run_key || g_sess_tick != run_tick) {
         g_sess_key = run_key; g_sess_tick = run_tick;
         g_dol_queue.clear(); g_dol_paused = false;
@@ -1003,12 +1050,12 @@ static void qm_session_tick(const hub::GameEntry* e) {
         g_ext_sessions = -1;
         g_ext_dirty = true;
         g_dm_uid.clear(); g_dm_name.clear(); g_chat_buf[0] = 0; g_chat_to_dm = false;
-        g_perf_sent = 0; g_perf_t0 = GetTickCount64();
+        g_perf_sent = 0; g_perf_t0 = plat::tick_ms();
         g_hide.reset(); g_ovw.cancel(); g_pending_cmd = runctl::Cmd::None;
         g_cmdq.clear(); g_pacer = hubqm::CmdPacer(); g_pause_manual = false; g_pause_sent = false; g_ho_wait = false; g_ho_seq = 0; g_cd_name.clear();
     }
     if (g_perf_sent < 2 && e && A.st.perf_overlay && ctl_ready() && runner_supports_overlay(e)) {   // the runner ignores commands written before it started polling: send at +4 s and again at +12 s
-        const ULONGLONG dt = GetTickCount64() - g_perf_t0;
+        const unsigned long long dt = plat::tick_ms() - g_perf_t0;
         if (dt >= (g_perf_sent == 0 ? 4000u : 12000u)) { runctl::Command c; c.cmd = runctl::Cmd::Overlay; c.value = 1; send_quiet(c); ++g_perf_sent; }
     }
     if (e && !is_native(*e) && !runner_has_ctl(*e)) {
@@ -1031,7 +1078,7 @@ static void gc_pad_watch() {
         if (has(SDL_CONTROLLER_BUTTON_BACK) && has(SDL_CONTROLLER_BUTTON_Y)) open_down = true;
         if (has(SDL_CONTROLLER_BUTTON_BACK) && has(SDL_CONTROLLER_BUTTON_START)) leave_down = true;
     }
-    const long long now = (long long)GetTickCount64();
+    const long long now = (long long)plat::tick_ms();
     if (gate.update(open_down, qm_is_open(), now)) { qm_log("gc netplay pad combo View+Y: open"); qm_open_live(); }
     if (leave.update(leave_down, now)) gc_leave("Back + Start held");
 }
@@ -1068,9 +1115,9 @@ void qm_tick() {
     }
     hub::saves::set_backup_screenshots(A.st.backup_shots);
     if (A.proc && !g_shot_fake) {   // evidence: every foreground change near a menu event
-        static HWND last_fg = nullptr;
-        HWND fg = GetForegroundWindow();
-        const ULONGLONG tn = GetTickCount64();
+        static void* last_fg = nullptr;
+        void* fg = qm_foreground_window();
+        const unsigned long long tn = plat::tick_ms();
         if (fg != last_fg) {
             if (g_qm_showing.load() || tn - g_activity_ms < 30000) qm_log("foreground -> " + qm_describe_window(fg) + (g_qm_showing.load() ? " (menu open)" : ""));
             last_fg = fg;
@@ -1172,7 +1219,7 @@ void draw_quick_menu() {
     }
     if (was_open && !open) {
         if (!g_shot_fake) qm_log(std::string("menu closed (") + g_close_why + ")");
-        g_activity_ms = GetTickCount64();
+        g_activity_ms = plat::tick_ms();
         g_qm_showing = false;
         g_sub_open = false;
         hub_menu_topmost(false);
@@ -1325,7 +1372,7 @@ void challenge_page() {
 
 static void qm_body() {
     if (!g_shot_fake && !qm_game_live()) { g_close_why = "game ended"; ImGui::CloseCurrentPopup(); return; }
-    if (!g_shot_fake && !g_e2e && g_focus_retry.should_retry(hub_is_foreground(), (long long)GetTickCount64())) {   // bounded: something else (fullscreen Dolphin) took the foreground
+    if (!g_shot_fake && !g_e2e && g_focus_retry.should_retry(hub_is_foreground(), (long long)plat::tick_ms())) {   // bounded: something else (fullscreen Dolphin) took the foreground
         qm_log("hub is not foreground while the menu is open; re-focusing");
         focus_hub();
     }
@@ -1475,8 +1522,8 @@ static void qm_body() {
         if (menu_button("Screenshot", true, ui::Icon::Search)) {
             if (g_shot_fake) { push_toast("Screenshot saved", COL_GOOD, 3.0); }
             else if (e) {
-                std::string out = trim_sep(hub::saves::game_dir(sys_short(*e), e->key)) + "\\shots\\" + runctl::shot_name(std::time(nullptr));
-                if (extmedia::capture_start(gc_pid() ? (void*)window_of_pid((DWORD)gc_pid()) : running_game_hwnd(), out)) { ImGui::CloseCurrentPopup(); qm_focus_game(); }
+                std::string out = trim_sep(hub::saves::game_dir(sys_short(*e), e->key)) + "" HUB_BS "shots" HUB_BS "" + runctl::shot_name(std::time(nullptr));
+                if (extmedia::capture_start(gc_pid() ? (void*)window_of_pid((unsigned long)gc_pid()) : running_game_hwnd(), out)) { ImGui::CloseCurrentPopup(); qm_focus_game(); }
                 else push_toast("Could not find the game window.", COL_WARN, 4.0);
             }
         }
@@ -1541,7 +1588,7 @@ int shots_count(const hub::GameEntry& e) {
     const int* n = s_n.get(e.key, 2.0, [&] {
         int c = 0;
         std::error_code ec;
-        for (auto& it : std::filesystem::directory_iterator(std::filesystem::u8path(trim_sep(hub::saves::game_dir_path(sys_short(e), e.key)) + "\\shots"), ec))
+        for (auto& it : std::filesystem::directory_iterator(std::filesystem::u8path(trim_sep(hub::saves::game_dir_path(sys_short(e), e.key)) + "" HUB_BS "shots"), ec))
             if (it.is_regular_file(ec) && is_image(it.path().filename().u8string())) ++c;
         return c;
     });
@@ -1550,7 +1597,7 @@ int shots_count(const hub::GameEntry& e) {
 
 void shots_gallery(const hub::GameEntry& e) {
     if (is_native(e)) return;
-    std::string dir = trim_sep(hub::saves::game_dir_path(sys_short(e), e.key)) + "\\shots";
+    std::string dir = trim_sep(hub::saves::game_dir_path(sys_short(e), e.key)) + "" HUB_BS "shots";
     static std::string s_key; static double s_at = -10; static std::vector<std::string> s_files;
     static unsigned s_gen = 0;
     static std::string s_confirm;
@@ -1570,12 +1617,18 @@ void shots_gallery(const hub::GameEntry& e) {
     if (s_files.empty()) return;   // the tab is hidden when there are none
     if (g_headless && std::getenv("HUB_SHOT_VIEWER")) {   // screenshot aid: open the full-size viewer once
         static bool once = false;
-        if (!once) { once = true; std::vector<std::string> all; for (auto& f : s_files) all.push_back(dir + "\\" + f);
+        if (!once) { once = true; std::vector<std::string> all; for (auto& f : s_files) all.push_back(dir + "" HUB_BS "" + f);
             shot_viewer_open(e, all, 1, [](const std::string& p, int* w, int* h) -> SDL_Texture* { Tex* t = tex_for(p); if (!t) return nullptr; *w = t->w; *h = t->h; return t->t; }); }
     }
     if (ImGui::SmallButton("Open folder")) {
         shot_trace("shots-folder", dir);
-        if (!g_headless) ShellExecuteW(nullptr, L"open", std::filesystem::u8path(dir).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);   // screenshot runs never open a window
+        if (!g_headless) {
+#if RH_WIN
+            ShellExecuteW(nullptr, L"open", std::filesystem::u8path(dir).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+            plat::proc::open_path(dir);
+#endif
+        }   // screenshot runs never open a window
     }
     /* a grid that wraps to the width of the page's Screenshots tab (the page body scrolls it; the D-pad moves in 2D) */
     const float gap = sp(1.25f), avail = std::max(1.f, ImGui::GetContentRegionAvail().x);
@@ -1584,7 +1637,7 @@ void shots_gallery(const hub::GameEntry& e) {
     const float tw = std::min(tw0 * 1.3f, (avail - gap * (float)(cols - 1)) / (float)cols), th = tw / 1.6f;   // pictures grow a little to fill the row
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, sp(1.f)));
     for (size_t i = 0; i < s_files.size() && i < 60; ++i) {
-        std::string path = dir + "\\" + s_files[i];
+        std::string path = dir + "" HUB_BS "" + s_files[i];
         ImGui::PushID((int)i);
         if (i % (size_t)cols) ImGui::SameLine(0, gap);
         ImGui::BeginGroup();
@@ -1623,7 +1676,7 @@ void shots_gallery(const hub::GameEntry& e) {
         ImGui::EndGroup();
         if (open_it) {   // full-size in-app viewer (shot_viewer.cpp); "Open in viewer" lives inside it
             std::vector<std::string> all;
-            for (auto& f : s_files) all.push_back(dir + "\\" + f);
+            for (auto& f : s_files) all.push_back(dir + "" HUB_BS "" + f);
             shot_viewer_open(e, all, (int)i, [](const std::string& p, int* w, int* h) -> SDL_Texture* {
                 Tex* t = tex_for(p); if (!t) return nullptr; *w = t->w; *h = t->h; return t->t; });
         }
@@ -1639,7 +1692,7 @@ void qm_seed_gallery(const hub::GameEntry& e) {
     static bool done = false;
     if (done || !g_headless || !std::getenv("HUB_SHOT_GALLERY")) return;
     done = true;
-    std::string dir = trim_sep(hub::saves::game_dir(sys_short(e), e.key)) + "\\shots";
+    std::string dir = trim_sep(hub::saves::game_dir(sys_short(e), e.key)) + "" HUB_BS "shots";
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::u8path(dir), ec);
     for (int i = 0; i < 6; ++i) {
@@ -1649,7 +1702,7 @@ void qm_seed_gallery(const hub::GameEntry& e) {
         SDL_Rect r{30 + i * 30, 70, 70, 80};
         SDL_FillRect(s, &r, SDL_MapRGB(s->format, 250, 210, 70));
         char nm[64];
-        std::snprintf(nm, sizeof nm, "\\2026102%d-12%02d00.bmp", i % 5, i);
+        std::snprintf(nm, sizeof nm, "" HUB_BS "2026102%d-12%02d00.bmp", i % 5, i);
         SDL_SaveBMP(s, (dir + nm).c_str());
         SDL_FreeSurface(s);
     }

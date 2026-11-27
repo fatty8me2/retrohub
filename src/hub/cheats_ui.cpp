@@ -7,7 +7,9 @@
 #include "glyph_logic.h"
 #include "ui_scroll.h"
 
+#if RH_WIN
 #include <xinput.h>
+#endif
 
 #include "cheat_store.h"
 #include "cheats.h"
@@ -46,7 +48,12 @@ cheats::Target target_of(const hub::GameEntry& e);
 
 std::string vault() {
     if (g_headless) {   // screenshots/tests: never touch the player's vault
+        #if RH_WIN
         std::string d = env_var(L"TEMP");
+#else
+        std::string d = env_var(L"TMPDIR");
+        if (d.empty()) d = "/tmp";
+#endif
         if (d.empty()) d = ".";
         return with_slash(d) + "hub_cheats_shot";
     }
@@ -65,13 +72,13 @@ std::string safe_name(std::string s);
 /* The game's vault folder and battery folder (headless runs use a temp folder instead of the real vault). */
 std::string gdir_of(const hub::GameEntry& e) {
     if (!g_headless) return hub::saves::game_dir(sys_short(e), e.key);
-    std::string d = with_slash(vault()) + "games\\" + safe_name(sys_short(e) + "_" + e.key) + "\\";
+    std::string d = with_slash(vault()) + "games" + plat::kSep + safe_name(sys_short(e) + "_" + e.key) + plat::kSep;
     make_dirs(d);
     return d;
 }
 std::string battery_of(const hub::GameEntry& e) {
     if (!g_headless) return hub::saves::battery_dir(sys_short(e), e.key);
-    std::string d = gdir_of(e) + "battery\\";
+    std::string d = gdir_of(e) + "battery" + plat::kSep;
     make_dirs(d);
     return d;
 }
@@ -89,7 +96,7 @@ std::string run_file(const std::string& key) {
 std::string stamp_now() {
     std::time_t t = std::time(nullptr);
     std::tm tm{};
-    localtime_s(&tm, &t);
+    plat::local_tm(t, &tm);
     char b[40];
     std::strftime(b, sizeof b, "%Y%m%d-%H%M%S", &tm);
     return b;
@@ -118,7 +125,7 @@ int gc_disc_revision(const hub::GameEntry& e) {
     long off = ext == ".iso" || ext == ".gcm" ? 7 : ext == ".rvz" || ext == ".wia" ? 0x58 + 7 : ext == "ciso" ? 0x8000 + 7 : -1;
     if (off < 0) return -1;
     FILE* f = nullptr;
-    if (fopen_s(&f, p.c_str(), "rb") != 0 || !f) return -1;
+    if (!(f = plat::fopen_path(std::filesystem::u8path(p), "rb"))) return -1;
     unsigned char b = 0;
     int r = -1;
     if (std::fseek(f, off, SEEK_SET) == 0 && std::fread(&b, 1, 1, f) == 1) r = b;
@@ -551,7 +558,7 @@ void draw_cheats_modal() {
             if (mode != "empty") {
                 { size_t k = 0; for (auto& d : db_items(e)) { if (d.featured && k++ < 2) g_store.set_on(e.key, d.cheat.id, true, 1); } }
                 g_store.set_backup(e.key, "20260101-120000", 1);
-                make_dirs(gdir_of(e) + "cheat_backups\\20260101-120000");
+                make_dirs(gdir_of(e) + "cheat_backups" + plat::kSep + "20260101-120000");
             }
             persist();
             cheats_open(e);

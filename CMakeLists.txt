@@ -4,7 +4,26 @@ project(RetroHub LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-    message(FATAL_ERROR "RetroHub is x64-only")
+    message(FATAL_ERROR "RetroHub is 64-bit only")
+endif()
+if (APPLE)
+    # macOS port: Apple Silicon only (docs/MACOS.md).
+    set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "" FORCE)
+    enable_language(OBJC OBJCXX)   # OBJC too: SDL2's .m files would otherwise be built as Objective-C++
+    set(CMAKE_Swift_COMPILER_TARGET arm64-apple-macos14.0)   # CMake does not pass the deployment target to swiftc itself
+    enable_language(Swift)   # CryptoKit AES-GCM shim (src/common/plat/plat_crypto_gcm_mac.swift)
+elseif (NOT WIN32)
+    message(FATAL_ERROR "RetroHub builds on Windows (x64) and macOS (arm64) only")
+endif()
+
+# Windows system libraries named in target_link_libraries across the tree. Off Windows they are empty targets, so the
+# module CMakeLists keep linking them unconditionally; the macOS replacements are linked where the code needs them.
+if (NOT WIN32)
+    foreach(_winlib advapi32 bcrypt crypt32 d3d11 dxgi gdi32 mf mfplat mfreadwrite mfuuid mmdevapi ole32 oleaut32 opengl32
+                    propsys setupapi shell32 strmiids user32 uuid windowsapp winhttp winmm wmcodecdspuuid ws2_32 xinput)
+        add_library(${_winlib} INTERFACE)
+    endforeach()
 endif()
 
 file(STRINGS "${CMAKE_SOURCE_DIR}/VERSION" HUB_VERSION LIMIT_COUNT 1)
@@ -13,6 +32,9 @@ string(STRIP "${HUB_VERSION}" HUB_VERSION)
 if (MSVC)
     add_compile_options(/W3 /permissive- /utf-8 /MP)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
+    # MSVC 14.52+ turns C++/WinRT's <experimental/coroutine> (C++17, used by toast_win / ext_media / capture) into an error.
+    # Silencing keeps the current build; moving those files to C++20 <coroutine> is the lasting fix.
+    add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
 endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
@@ -53,6 +75,50 @@ FetchContent_Populate(m64p_core)
 add_library(m64p_api INTERFACE)
 target_include_directories(m64p_api INTERFACE ${m64p_core_SOURCE_DIR}/src/api)
 
+# macOS: build libmupen64plus.dylib from the fetched 2.6.0 source (docs/MACOS.md, "N64 on macOS"). Same file list as
+# projects/unix/Makefile with OS=OSX, CPU=ARM64: NO_ASM (the 2.6.0 Makefile disables assembly on Apple Silicon, so there is no
+# dynarec: R4300Emulator=2 falls back to the cached interpreter), no on-screen display (M64P_OSD needs OGLFT + FreeType; RetroHub draws
+# its own OSD), no netplay. Needs libpng for screenshots (brew install libpng); without it the target is skipped.
+# The plugins (video / audio / rsp) are NOT built here: see the doc.
+if(APPLE)
+    find_package(PNG QUIET)
+    find_package(ZLIB QUIET)
+    if(PNG_FOUND AND ZLIB_FOUND)
+        set(_m "${m64p_core_SOURCE_DIR}/src")
+        set(_m64p_srcs
+            api/callbacks.c api/common.c api/config.c api/debugger.c api/frontend.c api/vidext.c
+            backends/api/video_capture_backend.c backends/plugins_compat/audio_plugin_compat.c backends/plugins_compat/input_plugin_compat.c
+            backends/clock_ctime_plus_delta.c backends/dummy_video_capture.c backends/file_storage.c
+            device/cart/cart.c device/cart/af_rtc.c device/cart/cart_rom.c device/cart/eeprom.c device/cart/flashram.c device/cart/is_viewer.c device/cart/sram.c
+            device/controllers/game_controller.c device/controllers/vru_controller.c device/controllers/paks/biopak.c device/controllers/paks/mempak.c
+            device/controllers/paks/rumblepak.c device/controllers/paks/transferpak.c
+            device/dd/dd_controller.c device/dd/disk.c device/device.c device/gb/gb_cart.c device/gb/mbc3_rtc.c device/gb/m64282fp.c
+            device/memory/memory.c device/pif/bootrom_hle.c device/pif/cic.c device/pif/n64_cic_nus_6105.c device/pif/pif.c
+            device/r4300/cached_interp.c device/r4300/cp0.c device/r4300/cp1.c device/r4300/cp2.c device/r4300/idec.c device/r4300/interrupt.c
+            device/r4300/pure_interp.c device/r4300/r4300_core.c device/r4300/tlb.c
+            device/rcp/ai/ai_controller.c device/rcp/mi/mi_controller.c device/rcp/pi/pi_controller.c device/rcp/rdp/fb.c device/rcp/rdp/rdp_core.c
+            device/rcp/ri/ri_controller.c device/rcp/rsp/rsp_core.c device/rcp/si/si_controller.c device/rcp/vi/vi_controller.c device/rdram/rdram.c
+            main/main.c main/util.c main/cheat.c main/eventloop.c main/rom.c main/savestates.c main/screenshot.c main/sdl_key_converter.c main/workqueue.c
+            plugin/plugin.c plugin/dummy_video.c plugin/dummy_audio.c plugin/dummy_input.c plugin/dummy_rsp.c
+            osal/dynamiclib_unix.c osal/files_macos.c)
+        list(TRANSFORM _m64p_srcs PREPEND "${_m}/")
+        set(_sub "${m64p_core_SOURCE_DIR}/subprojects")
+        add_library(mupen64plus_core SHARED ${_m64p_srcs} ${_sub}/md5/md5.c ${_sub}/minizip/ioapi.c ${_sub}/minizip/zip.c ${_sub}/minizip/unzip.c)
+        set_target_properties(mupen64plus_core PROPERTIES OUTPUT_NAME mupen64plus PREFIX "lib" SUFFIX ".dylib"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/emu" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/emu"
+            C_VISIBILITY_PRESET hidden POSITION_INDEPENDENT_CODE ON BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "@loader_path/..")
+        target_compile_definitions(mupen64plus_core PRIVATE NO_ASM M64P_PARALLEL NOCRYPT NOUNCRYPT)
+        target_compile_options(mupen64plus_core PRIVATE -fno-strict-aliasing -w)
+        target_include_directories(mupen64plus_core PRIVATE ${_m} ${_m}/asm_defines ${_sub}/md5 ${_sub}/xxhash ${_sub}/minizip ${PNG_INCLUDE_DIRS})
+        target_link_libraries(mupen64plus_core PRIVATE SDL2::SDL2 ZLIB::ZLIB ${PNG_LIBRARIES} "-framework CoreFoundation" "-framework OpenGL")
+        # the core reads mupen64plus.ini / mupencheat.txt from the data path RetroHub gives it (= the emu dir, same as the Windows layout)
+        add_custom_command(TARGET mupen64plus_core POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${m64p_core_SOURCE_DIR}/data ${CMAKE_BINARY_DIR}/bin/emu)
+    else()
+        message(STATUS "libmupen64plus.dylib target skipped: libpng / zlib not found (brew install libpng)")
+    endif()
+endif()
+
 include(src/beetle_psx/fetch.cmake)   # pinned Beetle PSX tree + generated PS1 serial database (before hubcommon)
 # libchdr (BSD-3-Clause, github.com/rtissera/libchdr) pinned to commit 47d7941: reads .chd disc images (PS1/PS2) in src/common/disc_id.cpp.
 # It bundles lzma, zstd and miniz; its miniz symbols are renamed (third_party/chdr_miniz_rename.h, force-included) so they cannot
@@ -70,6 +136,10 @@ if(MSVC)
     endforeach()
     target_compile_options(chdr-lzma PRIVATE /W0)
     target_compile_options(zstd PRIVATE /W0)
+else()
+    foreach(t chdr-static miniz)   # same symbol renaming with clang (-include), or binaries linking hubminiz too get duplicate symbols
+        target_compile_options(${t} PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/src/common/third_party/chdr_miniz_rename.h)
+    endforeach()
 endif()
 
 add_subdirectory(src/common)
@@ -93,6 +163,11 @@ enable_testing()
 # Nothing is baked into the command lines, so set the env var when running ctest; never configure a URL here.
 
 add_test(NAME json_test COMMAND json_test)
+add_test(NAME plat_crypto_test COMMAND plat_crypto_test)   # plat_crypto: MD5/SHA-1/SHA-256/SHA-512, HMAC, random (known vectors)
+if(APPLE)
+    add_test(NAME plat_http_test COMMAND plat_http_test)   # plat_http: NSURLSession HTTP + WebSocket against a loopback server
+    add_test(NAME plat_proc_test COMMAND plat_proc_test)   # plat_proc: posix_spawn args/cwd/env/exit codes, kill_tree, libproc lookups
+endif()
 add_test(NAME runner_ctl_test COMMAND runner_ctl_test)   # hub<->runner control file, ack, slot/shot paths
 add_test(NAME cheevos_test COMMAND cheevos_test)   # RetroAchievements: config/cache, hardcore rules, mocked login + rc_client session (no network, no RA account)
 add_test(NAME osd_test COMMAND osd_test)   # OSD toast queue + font renderer
@@ -111,17 +186,29 @@ add_test(NAME hublibrary_test COMMAND hublibrary_test)
 add_test(NAME hubkanto_test COMMAND hubkanto_test)                       # Kanto Together: package, install, rom pick, output parsing
 add_test(NAME hubkantopad_test COMMAND hubkantopad_test)               # Kanto Together mGBA gamepad config writer
 add_test(NAME nes_snes_test COMMAND nes_snes_test)                 # NES/SNES headers, scan, cheats, profiles, settings
-add_test(NAME runner_speed_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/speed_headless.ps1)   # retrorun --headless --realtime: quick-menu speed steps 0.25x..Max, 1x restore, rapid changes, input off (skips without retrorun)
-set_tests_properties(runner_speed_headless PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)   # wall-clock fps ratios: serial; exits 77 (skipped: machine too busy) when the 1x windows never steady
-add_test(NAME nes_snes_smoke COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/nes_snes_synctest.ps1)   # Nestopia + Snes9x headless run, .srm write, rollback SyncTest (skips without the cores)
-add_test(NAME gb_gba_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/gb_gba_synctest.ps1)   # Gambatte/SameBoy/mGBA headless run, .srm write, rollback SyncTest on generated homebrew ROMs (skips without the cores)
-set_tests_properties(gb_gba_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME runner_speed_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/speed_headless.ps1)   # retrorun --headless --realtime: quick-menu speed steps 0.25x..Max, 1x restore, rapid changes, input off (skips without retrorun)
+endif()
+if(WIN32)
+  set_tests_properties(runner_speed_headless PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)   # wall-clock fps ratios: serial; exits 77 (skipped: machine too busy) when the 1x windows never steady
+endif()
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME nes_snes_smoke COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/nes_snes_synctest.ps1)   # Nestopia + Snes9x headless run, .srm write, rollback SyncTest (skips without the cores)
+endif()
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME gb_gba_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/gb_gba_synctest.ps1)   # Gambatte/SameBoy/mGBA headless run, .srm write, rollback SyncTest on generated homebrew ROMs (skips without the cores)
+endif()
+if(WIN32)
+  set_tests_properties(gb_gba_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
+endif()
 add_test(NAME findgames_test COMMAND findgames_test)                   # Find my games: collapse/rank + scratch-tree scan
 add_test(NAME hub_friend_games_test COMMAND hub_friend_games_test)   # greyed-out friend games: identity, ghosts, badge text, publish hash/debounce
 add_test(NAME hub_gamepack_test COMMAND hub_gamepack_test)           # GamePack: Drive listing HTML parse, entity decode, safe names (no network)
 add_test(NAME hub_discover_test COMMAND hub_discover_test ${CMAKE_SOURCE_DIR}/data/recommended.json ${CMAKE_SOURCE_DIR}/data/gameinfo.tsv)   # Discover: recommended.json schema (13 consoles, fields, no dupes, no URLs) + library/pack status matching
+if(WIN32)   # PowerShell script: bash port pending on macOS
 add_test(NAME pack_install_e2e COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/pack_install_e2e.ps1)   # pack install -> scan -> ghost dropped -> unpack, fake Drive on loopback
 set_tests_properties(pack_install_e2e PROPERTIES SKIP_RETURN_CODE 77)   # fw2-ci: the script exits 77 when qa_gamepack.exe or python is missing
+endif()
 add_test(NAME hub_boot_art_test COMMAND hub_boot_art_test)   # boot-animation art: every System has console + media art
 add_test(NAME hub_theme_test COMMAND hub_theme_test)   # every theme preset defines every palette slot and meets text contrast
 add_test(NAME hub_picker_test COMMAND hub_picker_test)   # room game picker: search, chips, sections, virtual layout
@@ -131,8 +218,12 @@ add_test(NAME hub_launch_text_test COMMAND hub_launch_text_test)   # double-laun
 add_test(NAME ps1_test COMMAND ps1_test)                                 # PlayStation: serials, catalog, synthetic discs, BIOS discovery (scratch dirs)
 add_test(NAME cheats_db_test COMMAND cheats_db_test)
 add_test(NAME psarchive_test COMMAND psarchive_test)                       # PS1/PS2 disc archives: identify by name/DB, truncated, extract+confirm (scratch dirs)
-add_test(NAME archives_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/archives_headless.ps1)   # GBA .zip, NES/SNES/N64 .7z, PS1 cue/bin .zip unpacked + retrorun --headless
-set_tests_properties(archives_headless PROPERTIES SKIP_RETURN_CODE 77)
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME archives_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/archives_headless.ps1)   # GBA .zip, NES/SNES/N64 .7z, PS1 cue/bin .zip unpacked + retrorun --headless
+endif()
+if(WIN32)
+  set_tests_properties(archives_headless PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 add_test(NAME verify_test COMMAND verify_test ${CMAKE_SOURCE_DIR}/data/known_dumps.bin)   # L3: known-dump list parse, z64/iNES/SNES normalization, hash cache, runner
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
@@ -147,8 +238,12 @@ add_test(NAME hubgamesettings_test COMMAND hubgamesettings_test)
 add_test(NAME hubdolphincheats_test COMMAND hubdolphincheats_test)   # GameCube cheats: gecko/ar_gc + Dolphin GameSettings ini writer
 add_test(NAME hubcheatstore_test COMMAND hubcheatstore_test)   # cheat choices: persistence/merge/custom codes/online rules/save backup
 add_test(NAME hubcontrols_test COMMAND hubcontrols_test)             # controller profiles: defaults == old hardcoded maps
-add_test(NAME live_controls_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/live_controls.ps1 -Root ${CMAKE_SOURCE_DIR})   # reload_controls: a rewritten profile changes the mapped mask of a running headless retrorun
-set_tests_properties(live_controls_headless PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME live_controls_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/live_controls.ps1 -Root ${CMAKE_SOURCE_DIR})   # reload_controls: a rewritten profile changes the mapped mask of a running headless retrorun
+endif()
+if(WIN32)
+  set_tests_properties(live_controls_headless PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+endif()
 add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
 add_test(NAME retrorun_fx_test COMMAND retrorun_fx_test)
 add_test(NAME retrorun_dslink_test COMMAND retrorun_dslink_test)
@@ -157,8 +252,12 @@ add_test(NAME retrorun_rollback_test COMMAND retrorun_rollback_test)
 add_test(NAME retrorun_port_plan_test COMMAND retrorun_port_plan_test)   # per-system port devices, 4-pad adapter rules, offline player count
 add_test(NAME retrorun_slot2_test COMMAND retrorun_slot2_test)   # Wave 3 X3: DS Slot-2 refusal rules, subsystem pick, save copy-back, backup pruning
 add_test(NAME hub_palpark_test COMMAND hub_palpark_test)   # Wave 3 X3: Pal Park rows, choice order, save matching, args, stored choice
-add_test(NAME palpark_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/palpark_headless.ps1 -Root ${CMAKE_SOURCE_DIR})   # retrorun --slot2-* flags parsed offline, refused with --net / --ds-link
-set_tests_properties(palpark_headless PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME palpark_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/palpark_headless.ps1 -Root ${CMAKE_SOURCE_DIR})   # retrorun --slot2-* flags parsed offline, refused with --net / --ds-link
+endif()
+if(WIN32)
+  set_tests_properties(palpark_headless PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+endif()
 add_test(NAME retrorun_rewind_test COMMAND retrorun_rewind_test)   # rewind ring size/limits, rewind->replay hashes, run-ahead == normal shifted (fake core)
 add_test(NAME retrorun_savewrite_test COMMAND retrorun_savewrite_test)   # save writes: one attempt in game, flushed + retried at exit while the old save is held
 add_test(NAME clip_test COMMAND clip_test)   # frame ring caps + MP4 encode and decode round trip (Media Foundation, no window)
@@ -166,10 +265,18 @@ add_test(NAME retrorun_rollback_stall_test COMMAND retrorun_rollback_stall_test)
 add_test(NAME retrorun_dropin_test COMMAND retrorun_dropin_test)   # drop-in: admit frame, joiner takeover, 2-4 peers, old peer refusal, crashed joiner
 add_test(NAME retrorun_joinid_test COMMAND retrorun_joinid_test)   # join fingerprint game id: zip vs unpacked, NES/SNES/N64 headers, disc sheets + serials
 add_test(NAME retrorun_resync_test COMMAND retrorun_resync_test)   # desync recovery: host state transfer, 2-4 peers, loss, give-up after 3
-add_test(NAME ps1_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_synctest.ps1)   # Beetle PSX rollback SyncTest on homebrew discs (skips without the core / python)
-set_tests_properties(ps1_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "RETROHUB_QA=1")
-add_test(NAME ps1_discs COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_discs.ps1)   # 2-disc homebrew .m3u: libretro disk-control swap + rollback SyncTest with swap events
-set_tests_properties(ps1_discs PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME ps1_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_synctest.ps1)   # Beetle PSX rollback SyncTest on homebrew discs (skips without the core / python)
+endif()
+if(WIN32)
+  set_tests_properties(ps1_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "RETROHUB_QA=1")
+endif()
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME ps1_discs COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_discs.ps1)   # 2-disc homebrew .m3u: libretro disk-control swap + rollback SyncTest with swap events
+endif()
+if(WIN32)
+  set_tests_properties(ps1_discs PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
+endif()
 add_test(NAME hubhistory_test COMMAND hubhistory_test)
 add_test(NAME hubsaves_test COMMAND hubsaves_test)
 add_test(NAME hubsaves_cloud_test COMMAND hubsaves_cloud_test)   # e2e part runs only with RETROHUB_TEST_SAVES_URL (qa\saves_cloud.ps1)
@@ -223,7 +330,9 @@ add_test(NAME real_boot_test COMMAND real_boot_test)                       # rea
 add_test(NAME hub_art_test COMMAND hub_art_test)                       # offline: no --live
 add_test(NAME hub_gameinfo_test COMMAND hub_gameinfo_test)   # game info: offline metadata, Wikidata matching on recorded fixtures, cache
 add_test(NAME hub_updater_test COMMAND hub_updater_test --offline)     # unit checks only
-add_test(NAME hub_apply_test COMMAND hub_apply_test $<TARGET_FILE:RetroHub>)   # scratch dirs only, never relaunches
+if(WIN32)   # Win32 update applier only (see src/hub/CMakeLists.txt)
+  add_test(NAME hub_apply_test COMMAND hub_apply_test $<TARGET_FILE:RetroHub>)   # scratch dirs only, never relaunches
+endif()
 add_test(NAME hub_shell_test COMMAND hub_shell_test)
 add_test(NAME hub_changelog_test COMMAND hub_changelog_test ${CMAKE_SOURCE_DIR}/data/changelog.json)   # patch notes parser + show-once rule
 add_test(NAME hub_welcome_test COMMAND hub_welcome_test)   # Welcome back card: versions since, collapse/cap, labels, keyword->page, show/defer rules
@@ -241,7 +350,9 @@ add_test(NAME hub_pad_name_test COMMAND hub_pad_name_test)         # Controllers
 add_test(NAME hubchallenge_test COMMAND hubchallenge_test)   # Plan 4 p4-social: challenge cards, leaderboard, rules, attach helpers (pure)
 add_test(NAME hub_tpak_test COMMAND hub_tpak_test)             # Plan 4 W3 X1: Transfer Pak matching, save file, backups, args
 add_test(NAME hub_hack_test COMMAND hub_hack_test)             # Plan 4: ROM hack keys, base finder, hack.json
+if(WIN32)
 add_test(NAME rh_helper_test COMMAND rh_helper_test $<TARGET_FILE:rh-helper> ${CMAKE_SOURCE_DIR}/data/helpers)   # rh-helper: script allowlist, path rejection, command-line split, exit codes
+endif()
 add_test(NAME hub_popup_guard_test COMMAND hub_popup_guard_test)   # never pop up over a game: guard logic + lint of every raise/show/MessageBox/synthetic-input site in src/hub and src/common
 add_test(NAME hub_display_test COMMAND hub_display_test)            # window placement (monitor gone / off screen / maximized), UI scale, reduce-motion default
 add_test(NAME hub_font_size_test COMMAND hub_font_size_test)            # "Larger small text" font pixel sizes

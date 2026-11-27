@@ -1,4 +1,5 @@
 #include "friends.h"
+#include "plat/plat.h"
 #include "winutil.h"
 #include "liveness_logic.h"
 #include "log.h"
@@ -61,7 +62,7 @@ static bool is_b32(const std::string& s, size_t len)
 
 static std::string with_sep(std::string d)
 {
-    if (!d.empty() && d.back() != '\\' && d.back() != '/') d += '\\';
+    if (!d.empty() && d.back() != '\\' && d.back() != '/') d += plat::kSep;
     return d;
 }
 
@@ -216,13 +217,13 @@ static std::string identity_json(const Identity& id)
 static void identity_save(const Identity& id, const std::string& data_dir, const std::string& vault_dir)
 {
     write_file(with_sep(data_dir) + "identity.json", identity_json(id));
-    if (!vault_dir.empty()) write_file(with_sep(vault_dir) + "_identity\\identity.json", identity_json(id));
+    if (!vault_dir.empty()) write_file(with_sep(vault_dir) + "_identity" + std::string(1, plat::kSep) + "identity.json", identity_json(id));
 }
 
 Identity identity_load_or_create(const std::string& data_dir, const std::string& vault_dir)
 {
     std::string lp = with_sep(data_dir) + "identity.json";
-    std::string vp = vault_dir.empty() ? "" : with_sep(vault_dir) + "_identity\\identity.json";
+    std::string vp = vault_dir.empty() ? "" : with_sep(vault_dir) + "_identity" + std::string(1, plat::kSep) + "identity.json";
     Identity id, v;
     if (identity_read(lp, &id)) {
         if (!vp.empty() && !identity_read(vp, &v)) write_file(vp, identity_json(id));   // mirror (never clobber a valid one)
@@ -247,7 +248,7 @@ std::string identity_backup_path()
     if (env_set("RETROHUB_QA") || env_set("RETROHUB_AUTOTEST") || env_set("RETROHUB_TEST_SERVER") || env_set("RETROHUB_TEST")) return "";
     const std::string la_s = winutil::getenv_utf8("LOCALAPPDATA"); const char* la = la_s.empty() ? nullptr : la_s.c_str();
     if (!la || !*la) return "";
-    return with_sep(la) + "RetroHub\\identity-backup.json";
+    return with_sep(la) + "RetroHub" + std::string(1, plat::kSep) + "identity-backup.json";
 }
 
 bool identity_backup_allowed(const std::string& server, const std::string& name)
@@ -285,7 +286,7 @@ bool identity_backup_adopt_if_fresh(const std::string& data_dir, const std::stri
     const std::string lp = with_sep(data_dir) + "identity.json";
     Identity t;
     if (fs::exists(upath(lp))) return false;                                          // this install has its own account (even a damaged file): never replaced
-    if (!vault_dir.empty() && identity_read(with_sep(vault_dir) + "_identity\\identity.json", &t)) return false;   // the sync folder's account wins
+    if (!vault_dir.empty() && identity_read(with_sep(vault_dir) + "_identity" + std::string(1, plat::kSep) + "identity.json", &t)) return false;   // the sync folder's account wins
     if (!identity_read(bp, &t)) return false;                                         // missing or corrupt: ignored
     if (!write_file(lp, identity_json(t))) return false;
     net_log("Friends: adopted identity from the per-user backup");
@@ -297,14 +298,14 @@ bool identity_exists(const std::string& data_dir, const std::string& vault_dir)
 {
     Identity id;
     if (identity_read(with_sep(data_dir) + "identity.json", &id)) return true;
-    return !vault_dir.empty() && identity_read(with_sep(vault_dir) + "_identity\\identity.json", &id);
+    return !vault_dir.empty() && identity_read(with_sep(vault_dir) + "_identity" + std::string(1, plat::kSep) + "identity.json", &id);
 }
 
 static std::string backup_stamp()
 {
     time_t t = time(nullptr);
     struct tm tmv;
-    localtime_s(&tmv, &t);
+    plat::local_tm(t, &tmv);
     char b[32];
     strftime(b, sizeof b, "%Y%m%d-%H%M%S", &tmv);
     return b;
@@ -314,7 +315,7 @@ bool identity_adopt_vault_if_older(const std::string& data_dir, const std::strin
 {
     if (vault_dir.empty()) return false;
     std::string lp = with_sep(data_dir) + "identity.json";
-    std::string vp = with_sep(vault_dir) + "_identity\\identity.json";
+    std::string vp = with_sep(vault_dir) + "_identity" + std::string(1, plat::kSep) + "identity.json";
     Identity cur, v;
     if (!identity_read(vp, &v)) return false;
     bool have_cur = identity_read(lp, &cur);
@@ -473,7 +474,7 @@ std::set<std::string> read_retired_ids(const std::string& data_dir)
     std::istringstream in(text);
     std::string line;
     while (std::getline(in, line)) {
-        while (!line.empty() && (line.back() == '' || line.back() == ' ')) line.pop_back();
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
         if (!line.empty()) out.insert(line);
     }
     return out;
@@ -556,7 +557,7 @@ bool parse_playtime_reply(const std::string& text, std::map<std::string, std::ve
 }
 
 struct FriendsClient::Impl {
-    std::string data_dir = ".\\userdata\\", vault_dir;
+    std::string data_dir = std::string(".") + plat::kSep + "userdata" + plat::kSep, vault_dir;
     std::string server, name = "Player";
     Identity id;
     WsClient ws;
@@ -784,7 +785,7 @@ struct FriendsClient::Impl {
     }
 
     /* ---- conversations */
-    std::string conv_path(const std::string& uid) const { return with_sep(data_dir) + "friends\\" + uid + ".json"; }
+    std::string conv_path(const std::string& uid) const { return with_sep(data_dir) + "friends" + std::string(1, plat::kSep) + uid + ".json"; }
     Conv& conv(const std::string& uid)
     {
         Conv& c = convs[uid];
@@ -1014,7 +1015,7 @@ struct FriendsClient::Impl {
         std::istringstream in(text);
         std::string line;
         while (std::getline(in, line)) {
-            while (!line.empty() && line.back() == '') line.pop_back();
+            while (!line.empty() && line.back() == '\r') line.pop_back();
             size_t t = line.find('\t');
             if (t != std::string::npos && t > 0) bnames[line.substr(0, t)] = line.substr(t + 1);
         }
@@ -1035,7 +1036,7 @@ struct FriendsClient::Impl {
         std::istringstream in(text);
         std::string line;
         while (std::getline(in, line)) {
-            while (!line.empty() && (line.back() == '' || line.back() == ' ')) line.pop_back();
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
             if (!line.empty()) out.insert(line);
         }
         return out;
@@ -1509,7 +1510,7 @@ bool FriendsClient::start(const std::string& server, const std::string& name)
     {
         d.backup_ok = identity_backup_allowed(server, d.name);
         bool had_identity = fs::exists(upath(with_sep(d.data_dir) + "identity.json")) ||
-                            (!d.vault_dir.empty() && fs::exists(upath(with_sep(d.vault_dir) + "_identity\\identity.json")));
+                            (!d.vault_dir.empty() && fs::exists(upath(with_sep(d.vault_dir) + "_identity" + std::string(1, plat::kSep) + "identity.json")));
         if (!had_identity && d.backup_ok && identity_backup_adopt_if_fresh(d.data_dir, d.vault_dir, nullptr)) had_identity = true;
         d.id = identity_load_or_create(d.data_dir, d.vault_dir);
         if (!had_identity) write_file(d.fresh_marker(), "1");

@@ -1,5 +1,6 @@
 #include "nx_runner.h"
 #include "winutil.h"
+#include "plat/plat.h"
 
 #include <algorithm>
 #include <cctype>
@@ -18,11 +19,21 @@ namespace hubemu {
 
 static fs::path P(const std::string& s) { return fs::u8path(s); }
 static std::string S(const fs::path& p) { auto u = p.u8string(); return std::string(u.begin(), u.end()); }
+#if RH_WIN
 static std::string join(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
     char c = a.back();
     return (c == '\\' || c == '/') ? a + b : a + "\\" + b;
 }
+#else
+/* macOS: relative parts in this file are written with '\\' (Windows layout); every join turns them into '/'. */
+static std::string join(const std::string& a, const std::string& b0) {
+    std::string b = b0;
+    for (char& c : b) if (c == '\\') c = '/';
+    if (a.empty()) return b;
+    return a.back() == '/' ? a + b : a + "/" + b;
+}
+#endif
 static bool dir_ok(const std::string& p) { std::error_code ec; return !p.empty() && fs::is_directory(P(p), ec); }
 static std::string lower(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
 
@@ -251,15 +262,21 @@ std::string shader_seed_run(const std::vector<ShaderSeedItem>& plan, const std::
 /* ------------------------------------------------------------------ saves */
 
 std::string default_save_backup_root() {
+#if !RH_WIN
+    const std::string home_s = winutil::getenv_utf8("HOME");
+    if (home_s.empty()) return "";
+    return join(home_s, "Library/Application Support/RetroHub/save-backups");   // the macOS counterpart of %LOCALAPPDATA%\RetroHub
+#else
     const std::string la_s = winutil::getenv_utf8("LOCALAPPDATA"); const char* la = la_s.empty() ? nullptr : la_s.c_str();
     if (!la || !*la) return "";
     return join(join(la, "RetroHub"), "save-backups");
+#endif
 }
 
 static std::string stamp(const char* fmt) {
     std::time_t t = std::time(nullptr);
     std::tm tm{};
-    localtime_s(&tm, &t);
+    plat::local_tm(t, &tm);
     char b[48];
     std::strftime(b, sizeof b, fmt, &tm);
     return b;
@@ -395,7 +412,7 @@ NxSaveSyncReport nx_sync_saves_before_launch(const NxSaveSync& in) {
         }
         // 2. the vault -> the launching emulator
         if (hub::tree_has_files(it.vtree)) {
-            hub::TreeSyncReport r = hub::sync_tree_newest(it.vtree, it.ktree, join(conflicts + "\\emulator", it.vrel), tag, &kman, it.prefix);
+            hub::TreeSyncReport r = hub::sync_tree_newest(it.vtree, it.ktree, join(conflicts + plat::kSep + "emulator", it.vrel), tag, &kman, it.prefix);
             rep.copied += r.copied;
             if (!r.ok) { rep.ok = false; rep.error = r.error; hub::manifest_save(kman_path, kman); hub::manifest_save(oman_path, oman); return rep; }
         }

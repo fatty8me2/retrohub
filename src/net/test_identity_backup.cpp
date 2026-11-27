@@ -1,5 +1,6 @@
 /* hubidbackup_test: the per-Windows-user identity backup (offline; every path is a temp dir via RETROHUB_IDENTITY_BACKUP). */
 #include "friends.h"
+#include "plat/plat.h"
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -10,8 +11,12 @@ namespace fs = std::filesystem;
 static int g_fail = 0;
 #define CHECK(c) do { if (c) printf("  ok   %s\n", #c); else { g_fail++; printf("  FAIL %s\n", #c); } } while (0)
 
+#ifdef _WIN32
 static void setenv_(const char* k, const char* v) { _putenv_s(k, v ? v : ""); }
-static const char SEP = '\\';
+#else
+static void setenv_(const char* k, const char* v) { if (v && *v) setenv(k, v, 1); else unsetenv(k); }   // "" removes it, like _putenv_s
+#endif
+static const char SEP = plat::kSep;
 static std::string ident(const std::string& dir) { return dir + SEP + "identity.json"; }
 static void write_ident(const fs::path& p, const Identity& i)
 {

@@ -1,9 +1,12 @@
 #include "pcsx2.h"
 
+#include "plat/plat.h"
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -22,10 +25,20 @@ namespace fs = std::filesystem;
 static fs::path P(const std::string& s) { return fs::u8path(s); }
 static std::string S(const fs::path& p) { auto u = p.u8string(); return std::string(u.begin(), u.end()); }
 static std::string lower(std::string s) { for (char& c : s) if (c >= 'A' && c <= 'Z') c = char(c + 32); return s; }
+#if RH_WIN
 static std::string join(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
     return (a.back() == '\\' || a.back() == '/') ? a + b : a + "\\" + b;
 }
+#else
+/* macOS: relative parts in this file are written with '\\' (Windows layout); every join turns them into '/'. */
+static std::string join(const std::string& a, const std::string& b0) {
+    std::string b = b0;
+    for (char& c : b) if (c == '\\') c = '/';
+    if (a.empty()) return b;
+    return a.back() == '/' ? a + b : a + "/" + b;
+}
+#endif
 static std::string read_text(const std::string& p) {
     std::ifstream f(P(p), std::ios::binary);
     return f ? std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()) : std::string();
@@ -148,7 +161,11 @@ Bios pcsx2_find_bios(const std::vector<std::string>& dirs) {
 std::vector<std::string> pcsx2_bios_search_dirs(const std::string& chosen, const std::vector<std::string>& rom_folders) {
     std::vector<std::string> v;
     if (!chosen.empty()) v.push_back(chosen);
+#if RH_WIN
     const std::string up_s = winutil::getenv_utf8("USERPROFILE"); const char* up = up_s.empty() ? nullptr : up_s.c_str();
+#else
+    const std::string up_s = winutil::getenv_utf8("HOME"); const char* up = up_s.empty() ? nullptr : up_s.c_str();
+#endif
     if (up) { v.push_back(join(up, "Desktop\\Everything\\BIOS")); v.push_back(join(up, "Desktop\\Everything\\GamesBios")); }
     for (const auto& f : rom_folders) {
         v.push_back(f);
@@ -352,11 +369,18 @@ std::string pcsx2_ini_launch(const std::string& in, const Bios& bios, const std:
 
 std::string pcsx2_card_rel(const std::string& key) { return "RetroHub/" + pcsx2_safe_key(key) + "/Mcd001.ps2"; }
 
+/* Where PCSX2's data folder (inis\\, memcards\\, ...) is. Windows: <install>, made portable by portable.ini (emulators.cpp writes it; the vault sync root is the same
+ * folder). macOS: the same folder <install> BESIDE the .app (never inside the signed bundle), handed to PCSX2 with `-datapath <install>` (hubemu::mac_launch_extra).
+ * Verified from the PCSX2 2.8.2 macOS binary's strings: it prints "-datapath <path>: Specify the directory to be used for all application data" and
+ * "-portable: ... store data in local PCSX2 path" (not used: that path is the program folder inside the bundle), and its non-portable default is
+ * "Library/Application Support/PCSX2". The portable.ini written beside the .app is harmless and unused on macOS. */
+static std::string pcsx2_data_dir(const std::string& install_dir) { return install_dir; }
+
 std::string prepare_pcsx2(const std::string& install_dir, const Ps2Pads& pads, const hubctl::Profile& prof, const Bios& bios,
                           const std::string& key, const hub::gs::Values& v, bool buzz) {
     if (!fs::exists(P(join(install_dir, "portable.ini")))) write_text(join(install_dir, "portable.ini"), "");   // never touches the user's own PCSX2
-    std::string ini = join(install_dir, "inis\\PCSX2.ini");
-    std::string marker = join(install_dir, "inis\\retrohub-defaults.txt");
+    std::string ini = join(pcsx2_data_dir(install_dir), "inis\\PCSX2.ini");
+    std::string marker = join(pcsx2_data_dir(install_dir), "inis\\retrohub-defaults.txt");
     std::string want = hubctl::hash_hex(hubctl::mapping_hash(prof));
     for (int i = 0; i < pads.count; ++i) want += ";" + std::to_string(pads.sdl[i]);
     want += pads.multitap ? ";tap" : "";

@@ -234,6 +234,7 @@ Bitmap render(Mode mode, float scale) {
     return bm;
 }
 #else
+/* TODO(macOS lane 6): native popup. The card is drawn with GDI text on Windows; macOS returns an empty bitmap until a CoreText renderer exists. */
 Bitmap render(Mode, float) { return Bitmap(); }
 #endif
 

@@ -1,15 +1,30 @@
 /* durable_write: commit_replace / write_file_durable. Temp dirs only. */
 #include "durable_write.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include <cstdio>
 #include <string>
 #include <thread>
 
+#ifndef _WIN32
+#include <filesystem>
+#include <fstream>
+#include <chrono>
+#include <iterator>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "plat/plat.h"
+#include "winutil.h"
+#endif
+
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++g_fail; } } while (0)
 
+#ifdef _WIN32
 static std::wstring lpx(const std::wstring& p) { return p.size() >= 240 ? L"\\\\?\\" + p : p; }
 
 static bool put(const std::wstring& p, const std::string& d) {
@@ -222,3 +237,144 @@ int main() {
     std::printf(g_fail ? "durable_write_test: %d FAILED\n" : "durable_write_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }
+#else  // macOS: same contracts on POSIX (atomic rename, fsync, UTF-8 paths, no legacy ANSI location)
+
+namespace fs = std::filesystem;
+
+static std::string plat_join(const std::string& a, const std::string& b) { return plat::join(a, b); }
+static std::wstring W(const std::string& u8) { return durable::utf8_to_wide(u8); }
+static bool put(const std::string& p, const std::string& d) {
+    std::ofstream f(fs::path(p), std::ios::binary | std::ios::trunc);
+    f.write(d.data(), (std::streamsize)d.size());
+    return (bool)f;
+}
+static bool get(const std::string& p, std::string* out) {
+    std::ifstream f(fs::path(p), std::ios::binary);
+    if (!f) return false;
+    out->assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+static bool exists(const std::string& p) { std::error_code ec; return fs::exists(fs::path(p), ec); }
+
+static void roundtrip(const std::string& dir) {
+    const std::string dst = plat_join(dir, "save.dat"), tmp = dst + ".hubtmp";
+    std::string got;
+    CHECK(durable::write_file_durable(W(dst), std::string("first")));
+    CHECK(get(dst, &got) && got == "first");
+    CHECK(!exists(tmp));
+    std::string bin("a\0b\r\n\xff", 6);
+    CHECK(durable::write_file_durable(W(dst), bin));
+    CHECK(get(dst, &got) && got == bin);
+    CHECK(put(tmp, "third"));
+    CHECK(durable::commit_replace(W(tmp), W(dst)));
+    CHECK(get(dst, &got) && got == "third");
+    CHECK(!exists(tmp));
+    CHECK(durable::write_file_durable(W(dst), std::string()));
+    CHECK(get(dst, &got) && got.empty());
+    CHECK(durable::write_file_durable(W(dst), std::string("keep")));
+    CHECK(!durable::commit_replace(W(plat_join(dir, "nope.hubtmp")), W(dst)));
+    CHECK(get(dst, &got) && got == "keep");
+    CHECK(durable::commit_replace_utf8(tmp, dst) == false);   // tmp does not exist any more
+    CHECK(put(tmp, "via utf8"));
+    CHECK(durable::commit_replace_utf8(tmp, dst) && get(dst, &got) && got == "via utf8");
+    CHECK(put(tmp, "via ansi"));
+    CHECK(durable::commit_replace_ansi(tmp, dst) && get(dst, &got) && got == "via ansi");
+    /* read-only destination file: rename replaces the directory entry, as the Windows build does */
+    chmod(dst.c_str(), 0444);
+    CHECK(durable::write_file_durable(W(dst), std::string("over-ro")));
+    CHECK(get(dst, &got) && got == "over-ro");
+}
+
+int main() {
+    const std::string root = (fs::temp_directory_path() / ("durable_test_" + std::to_string(plat::current_pid()))).string();
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+
+    roundtrip(root);
+
+    const std::string uni = plat_join(root, "sp\xC3\xA4" "ce \xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E \xF0\x9F\x8E\xAE");
+    CHECK(fs::create_directories(fs::u8path(uni), ec));
+    roundtrip(uni);
+
+    std::string lng = root;
+    for (int i = 0; i < 4; ++i) {
+        lng = plat_join(lng, std::string(70, 'd'));
+        CHECK(fs::create_directories(fs::path(lng), ec) || fs::exists(fs::path(lng)));
+    }
+    CHECK(lng.size() + 12 > 260);
+    roundtrip(lng);
+
+    /* wide <-> UTF-8 helpers: no ANSI code page, so the legacy path is the same path */
+    {
+        const std::string u = "caf\xC3\xA9 \xE6\x97\xA5";
+        CHECK(durable::utf8_to_wide(u) == L"café 日");
+        CHECK(durable::legacy_ansi_to_wide(u) == durable::utf8_to_wide(u));
+    }
+
+    /* read_file_utf8_migrating: Primary / NotFound / Unreadable, never Legacy */
+    {
+        const std::string p = plat_join(root, "mig.dat");
+        std::string bytes;
+        CHECK(durable::read_file_utf8_migrating(p, &bytes) == durable::ReadResult::NotFound && bytes.empty());
+        CHECK(durable::write_file_atomic_utf8(p, "hello"));
+        CHECK(!exists(p + ".tmp"));
+        CHECK(durable::read_file_utf8_migrating(p, &bytes) == durable::ReadResult::Primary && bytes == "hello");
+        CHECK(durable::write_file_atomic_utf8(p, "again") && get(p, &bytes) && bytes == "again");
+        if (geteuid() != 0) {   // root reads anything
+            chmod(p.c_str(), 0000);
+            CHECK(durable::read_file_utf8_migrating(p, &bytes) == durable::ReadResult::Unreadable && bytes.empty());
+            CHECK(!durable::write_file_atomic_utf8(p, "must not land"));   // the unreadable real file is never replaced
+            chmod(p.c_str(), 0644);
+            CHECK(get(p, &bytes) && bytes == "again");
+            CHECK(durable::read_file_utf8_migrating(p, &bytes) == durable::ReadResult::Primary);   // readable again: guard lifted
+            CHECK(durable::write_file_atomic_utf8(p, "now ok") && get(p, &bytes) && bytes == "now ok");
+        }
+    }
+
+    /* the committed file keeps the temp's modification time (rename moves the inode) */
+    {
+        const std::string dst = plat_join(root, "mt.dat"), tmp = dst + ".hubtmp";
+        CHECK(put(dst, "old"));
+        CHECK(put(tmp, "stamped"));
+        const auto past = fs::file_time_type::clock::now() - std::chrono::hours(24 * 400);
+        fs::last_write_time(fs::path(tmp), past, ec);
+        const auto want = fs::last_write_time(fs::path(tmp), ec);
+        CHECK(durable::commit_replace(W(tmp), W(dst)));
+        CHECK(fs::last_write_time(fs::path(dst), ec) == want);
+    }
+
+    /* read-only temp (as fs::copy_file leaves it): committed, final file stays read-only */
+    {
+        const std::string dst = plat_join(root, "ro.dat"), tmp = dst + ".hubtmp";
+        CHECK(put(dst, "old"));
+        CHECK(put(tmp, "from read-only source"));
+        chmod(tmp.c_str(), 0444);
+        CHECK(durable::commit_replace(W(tmp), W(dst)));
+        std::string got;
+        CHECK(get(dst, &got) && got == "from read-only source");
+        struct stat st;
+        CHECK(stat(dst.c_str(), &st) == 0 && !(st.st_mode & S_IWUSR));
+        CHECK(!exists(tmp));
+        chmod(dst.c_str(), 0644);
+    }
+
+    /* a relative path */
+    {
+        const fs::path cwd = fs::current_path();
+        fs::current_path(fs::path(root));
+        CHECK(put("rel.dat", "old"));
+        CHECK(durable::write_file_durable(L"rel.dat", std::string("relative")));
+        std::string got;
+        CHECK(get(plat_join(root, "rel.dat"), &got) && got == "relative");
+        CHECK(put("rel.dat.tmp", "second"));
+        CHECK(durable::commit_replace(L"rel.dat.tmp", L"rel.dat"));
+        CHECK(get(plat_join(root, "rel.dat"), &got) && got == "second");
+        fs::current_path(cwd);
+    }
+
+    fs::remove_all(root, ec);
+    std::printf(g_fail ? "durable_write_test: %d FAILED\n" : "durable_write_test: all passed\n", g_fail);
+    return g_fail ? 1 : 0;
+}
+#endif

@@ -8,22 +8,33 @@
 #include "psp.h"
 #include "lichii.h"
 
+#include "plat/plat.h"
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <bcrypt.h>
 #include <winhttp.h>
+#else
+#include "plat/plat_crypto.h"
+#include "plat/plat_http.h"
+#include "plat/plat_proc.h"
+#include <strings.h>
+#include <sys/statvfs.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#if RH_WIN
 #include <tlhelp32.h>
 #include <cwctype>
 #include <xinput.h>
 #include <setupapi.h>
 #include <initguid.h>
+#endif
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -55,6 +66,14 @@ static std::string S(const fs::path& p) {
 }
 static std::wstring W(const std::string& s) { return P(s).wstring(); }
 static std::string U(const std::wstring& w) { return S(fs::path(w)); }
+#if !RH_WIN
+/* macOS: no Win32 types here. Small file-local stand-ins keep the shared download / install code below identical on both platforms. */
+using DWORD = uint32_t;
+static int _stricmp(const char* a, const char* b) { return strcasecmp(a, b); }
+static void Sleep(unsigned ms) { plat::sleep_ms(ms); }
+/* A case-insensitive compare of two paths / names (Windows: _wcsicmp on the wide text; macOS: the file system is case-insensitive by default too). */
+static int path_icmp(const std::string& a, const std::string& b) { return strcasecmp(a.c_str(), b.c_str()); }
+#endif
 
 static bool file_exists(const std::string& p) {
     std::error_code ec;
@@ -78,6 +97,7 @@ static void remove_tree(const std::string& p) {
     std::error_code ec;
     fs::remove_all(P(p), ec);
 }
+#if RH_WIN
 static std::string env(const wchar_t* n) {
     wchar_t b[2048];
     DWORD len = GetEnvironmentVariableW(n, b, 2048);
@@ -87,6 +107,31 @@ static std::string join(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
     char c = a.back();
     return (c == '\\' || c == '/') ? a + b : a + "\\" + b;
+}
+#else
+static std::string env(const wchar_t* n) {   // (the names are plain ASCII)
+    std::string name;
+    for (const wchar_t* c = n; *c; ++c) name += (char)*c;
+    return winutil::getenv_utf8(name.c_str());
+}
+/* macOS: the relative parts in this file are written with '\\' (Windows layout); every join turns them into '/'. */
+static std::string join(const std::string& a, const std::string& b0) {
+    std::string b = b0;
+    for (char& c : b) if (c == '\\') c = '/';
+    if (a.empty()) return b;
+    return a.back() == '/' ? a + b : a + "/" + b;
+}
+#endif
+
+/* PSP save root = <memstick>/PSP. Windows: <install>\\memstick\\PSP (PPSSPP is portable). macOS: <install>/config/ppsspp/PSP, the folder PPSSPP is pointed at with
+ * XDG_CONFIG_HOME=<install>/config (see ppsspp_system_dir in ppsspp.cpp and mac_launch_extra; unverified there). Kept here too because not every target that compiles
+ * emulators.cpp links ppsspp.cpp. */
+static std::string psp_memstick_root(const std::string& install_dir) {
+#if RH_WIN
+    return join(install_dir, "memstick\\PSP");
+#else
+    return join(install_dir, "config/ppsspp/PSP");
+#endif
 }
 
 const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : k == Kind::Lrps2 ? "PS2 online core" : k == Kind::Ppsspp ? "PPSSPP" : k == Kind::Lichii ? "Lichii" : k == Kind::Fritchii ? "Fritchii" : "Dolphin"; }
@@ -149,8 +194,50 @@ static const uint64_t kSize = 66372119ull;
 static const char* const kSha256 = "3b359e27ef2eed69a1ce620e65d051f4c533613fb688ec2ea1692035108f6523";
 }   // namespace fritchii_pin
 
+#if !RH_WIN
+/* ======================================================================================================================================================
+ * macOS PIN TABLE (lane 7). The Windows pins below are Windows builds and are never used on macOS. Each row: version, host, path, exact size, SHA-256 of the
+ * archive (checked before anything is unpacked) and `exe` = the path of the executable INSIDE the archive relative to the install folder
+ * (<data>/emulators/<name>/), "<App>.app/Contents/MacOS/<binary>" (find_file_below matches that relative path, so a bundle at the archive root or one folder down
+ * works). Archive kinds the installer unpacks: .zip (miniz), .tar.xz (/usr/bin/tar) and .dmg (hdiutil attach + ditto of the top-level .app, see dmg_extract_to).
+ * Every file below was downloaded once, hashed and listed (never run) on 2026-11-27, and its executable's name checked against the archive listing.
+ * Only the LRPS2 core (.dylib) and Fritchii (build from source) are still placeholders: they need a mirrored / self-built asset.
+ * ====================================================================================================================================================== */
+static const Release& release_mac(Kind k) {
+    static const char* const kNone = "0000000000000000000000000000000000000000000000000000000000000000";
+    /* Azahar 2126.2 (GPL-3.0), github.com/azahar-emu/azahar, azahar-macos-arm64 zip (Azahar.app one folder down, plus a scripting/ folder); arm64 only. The SHA-256 is GitHub's published asset digest. */
+    static const Release az = {"2126.2", L"github.com", L"/azahar-emu/azahar/releases/download/2126.2/azahar-macos-arm64-2126.2.zip",
+                               99740365ull, "c24dec2bd5111b7d79513d686c5aece6612cdbf9737b2e6ea99cfc426f1d4aef", L"azahar-macos-arm64-2126.2/Azahar.app/Contents/MacOS/azahar", "GPL-3.0"};
+    /* Cemu 2.6 (MPL-2.0), github.com/cemu-project/Cemu, cemu-2.6-macos-12-x64.dmg: an x86_64 build only (it needs Rosetta 2 on Apple Silicon, see cemu_rosetta_ok) and unsigned.
+     * GitHub lists no digest for it, so the SHA-256 was computed from the official v2.6 asset (trust on first use, like the Windows pin). The .app also holds an update.sh
+     * (Cemu's own updater script) that RetroHub never runs. */
+    static const Release ce = {"2.6", L"github.com", L"/cemu-project/Cemu/releases/download/v2.6/cemu-2.6-macos-12-x64.dmg",
+                               36588188ull, "698c4b298f94983e4d6c30e9687ba8ff05094dd3930837c5104cddc0b0a49e4e", L"Cemu.app/Contents/MacOS/Cemu", "MPL-2.0"};
+    /* Dolphin 2509 (GPL-2.0+), the official universal (arm64 + x86_64) dmg from dl.dolphin-emu.org, notarized; the SHA-256 was computed from that file (no digest is published). */
+    static const Release dol = {"2509", L"dl.dolphin-emu.org", L"/releases/2509/dolphin-2509-universal.dmg",
+                                43276379ull, "14b7bd96ead242db4020acd991aae84ee83c3df65de9b09f2e79c8d531bf9780", L"Dolphin.app/Contents/MacOS/Dolphin", "GPL-2.0+"};
+    /* PCSX2 v2.8.2 (GPL-3.0+), github.com/PCSX2/pcsx2, pcsx2-v2.8.2-macos-Qt.tar.xz (the bundle is PCSX2-v2.8.2.app, at the archive root); the SHA-256 is GitHub's published asset digest. */
+    static const Release ps = {"2.8.2", L"github.com", L"/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-v2.8.2-macos-Qt.tar.xz",
+                               24377200ull, "3ed9eb40a33eae67134142c24255a079be444f0616ca29575a04a37981f7d426", L"PCSX2-v2.8.2.app/Contents/MacOS/PCSX2", "GPL-3.0+"};
+    static const Release lr = {"", L"", L"", 0, kNone, L"pcsx2_libretro.dylib", "GPL-3.0"};
+    /* PPSSPP v1.20.4 (GPL-2.0+), the official macOS dmg from ppsspp.org (universal, notarized); ppsspp.org publishes no digest, so the SHA-256 was computed from that file (trust on first use). */
+    static const Release pp = {"1.20.4", L"www.ppsspp.org", L"/files/1_20_4/PPSSPP_macOS.dmg",
+                               37090805ull, "bad86fc544a2c2fc5795d6a5832a8925d6db43e5789fe507f742305aaa357e17", L"PPSSPPSDL.app/Contents/MacOS/PPSSPPSDL", "GPL-2.0+"};
+    /* Lichii build 177 (GPL-3.0), github.com/zortos293/Lichii tag build-177 (the same build as the Windows pin), lichii-macos-arm64.zip: lichii.app (lower case) at the archive root with
+     * eden-cli and nx2_switches.txt beside the executable inside the bundle; arm64 only, NOT notarized. The SHA-256 is GitHub's published asset digest. */
+    static const Release li = {"build 177", L"github.com", L"/zortos293/Lichii/releases/download/build-177/lichii-macos-arm64.zip",
+                               80007273ull, "6504170d1530ebe42fe150724f44af20579f24f8336b87379155e1b7c19b775b", L"lichii.app/Contents/MacOS/lichii", "GPL-3.0"};
+    static const Release fr = {"", L"", L"", 0, kNone, L"Fritchii.app/Contents/MacOS/fritchii", "GPL-3.0"};   // TODO: Fritchii has no macOS build yet (built from source)
+    return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : k == Kind::Ppsspp ? pp : k == Kind::Lichii ? li : k == Kind::Fritchii ? fr : dol;
+}
+#endif
+
 const Release& release(Kind k) {
     if (g_test_hooks && g_test_hooks->release && g_test_hooks->kind == k) return *g_test_hooks->release;
+#if !RH_WIN
+    return release_mac(k);
+}
+#else
     static const Release az = {
         "2126.2", L"github.com", L"/azahar-emu/azahar/releases/download/2126.2/azahar-windows-msvc-2126.2.zip",
         43941048ull, "4412eac8d13123c8840f11890fc26e5b0e4c76d16aa28a608941377b948a9db0", L"azahar.exe", "GPL-3.0"};
@@ -205,6 +292,7 @@ const Release& release(Kind k) {
     static const Release fr = {fritchii_pin::kVersion, L"github.com", fritchii_pin::kPath, fritchii_pin::kSize, fritchii_pin::kSha256, L"lichii.exe", "GPL-3.0"};
     return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : k == Kind::Ppsspp ? pp : k == Kind::Lichii ? li : k == Kind::Fritchii ? fr : dol;
 }
+#endif
 
 bool release_is_placeholder(Kind k) {
     const Release& r = release(k);
@@ -225,6 +313,7 @@ static std::string lower(std::string s) {
     return s;
 }
 
+#if RH_WIN
 /* Folders named like "Cemu", "Cemu_2.6" below `base` (two levels) that hold Cemu.exe. */
 static std::string cemu_in(const std::string& base, int depth) {
     std::error_code ec;
@@ -241,6 +330,7 @@ static std::string cemu_in(const std::string& base, int depth) {
     }
     return "";
 }
+#endif
 
 /* ---- upgrade support ---- */
 
@@ -305,6 +395,22 @@ Install find(Kind k, const std::string& configured, const std::string& game_path
         }
         bool only_managed = !env(L"RETROHUB_NO_EXISTING_EMU").empty();   // test/diagnostic: ignore any Cemu outside RetroHub's data dir
         if (only_managed) in.exe.clear();
+#if !RH_WIN
+        if (in.exe.empty() && !game_path.empty() && !only_managed) {   // an install next to / above the game file (Cemu's own "game" folder)
+            const std::string rel = "Cemu.app/Contents/MacOS/Cemu";
+            fs::path d = P(game_path).parent_path();
+            for (int i = 0; i < 4 && !d.empty(); ++i, d = d.parent_path()) {
+                if (file_exists(join(S(d), rel))) { in.exe = join(S(d), rel); in.how = "existing install near the game"; break; }
+                if (d == d.root_path()) break;
+            }
+        }
+        if (in.exe.empty() && !only_managed) {   // macOS: an installed Cemu.app (never modified)
+            const std::string rel = "Cemu.app/Contents/MacOS/Cemu";
+            for (const std::string& b : {std::string("/Applications"), join(env(L"HOME"), "Applications")}) {
+                if (file_exists(join(b, rel))) { in.exe = join(b, rel); in.how = "existing install (found automatically)"; break; }
+            }
+        }
+#else
         if (in.exe.empty() && !game_path.empty() && !only_managed) {   // an install next to / above the game file (Cemu's own "game" folder)
             fs::path d = P(game_path).parent_path();
             for (int i = 0; i < 4 && !d.empty(); ++i, d = d.parent_path()) {
@@ -321,6 +427,7 @@ Install find(Kind k, const std::string& configured, const std::string& game_path
                 if (!r.empty()) { in.exe = r; in.how = "existing install (found automatically)"; break; }
             }
         }
+#endif
         if (!in.exe.empty()) {
             in.dir = S(P(in.exe).parent_path());
             in.managed = false;
@@ -346,6 +453,24 @@ Install find(Kind k, const std::string& configured, const std::string& game_path
 /* download + install                                                  */
 /* ------------------------------------------------------------------ */
 
+#if !RH_WIN
+/* macOS: the same hashes through plat_crypto (CommonCrypto). */
+static std::string hash_file_mac(const std::string& path, plat::HashAlg alg) {
+    std::ifstream f(P(path), std::ios::binary);
+    if (!f) return "";
+    plat::Hasher h(alg);
+    if (!h.ok()) return "";
+    std::vector<char> buf(1 << 20);
+    while (f) {
+        f.read(buf.data(), (std::streamsize)buf.size());
+        const std::streamsize n = f.gcount();
+        if (n > 0) h.update(buf.data(), (size_t)n);
+    }
+    return plat::hex(h.finish());
+}
+std::string sha256_file(const std::string& path) { return hash_file_mac(path, plat::HashAlg::Sha256); }
+std::string md5_file(const std::string& path) { return hash_file_mac(path, plat::HashAlg::Md5); }
+#else
 /* Hashes a file with a BCrypt algorithm (SHA-256 or MD5). Returns lowercase hex, "" on error. */
 static std::string bcrypt_file(const std::string& path, LPCWSTR alg_id, int digest_len) {
     std::ifstream f(P(path), std::ios::binary);
@@ -376,6 +501,7 @@ static std::string bcrypt_file(const std::string& path, LPCWSTR alg_id, int dige
 
 std::string sha256_file(const std::string& path) { return bcrypt_file(path, BCRYPT_SHA256_ALGORITHM, 32); }
 std::string md5_file(const std::string& path) { return bcrypt_file(path, BCRYPT_MD5_ALGORITHM, 16); }
+#endif
 
 struct Progress {
     std::atomic<uint64_t>* got;
@@ -391,7 +517,9 @@ static std::mutex& g_log_mu = *new std::mutex;
 static std::string& g_log_path = *new std::string;
 static void set_log_path(const std::string& p) { std::lock_guard<std::mutex> lk(g_log_mu); g_log_path = p; }
 static void emu_log(const std::string& line) {
+#if RH_WIN
     OutputDebugStringA(("RetroHub emulator install: " + line + "\n").c_str());
+#endif
     std::lock_guard<std::mutex> lk(g_log_mu);
     if (g_log_path.empty()) return;
     std::error_code ec;
@@ -401,7 +529,11 @@ static void emu_log(const std::string& line) {
     char stamp[32] = "";
     std::time_t t = std::time(nullptr);
     std::tm tmv{};
+#if RH_WIN
     if (localtime_s(&tmv, &t) == 0) std::strftime(stamp, sizeof stamp, "%Y-%m-%d %H:%M:%S ", &tmv);
+#else
+    if (plat::local_tm(t, &tmv)) std::strftime(stamp, sizeof stamp, "%Y-%m-%d %H:%M:%S ", &tmv);
+#endif
     f << stamp << line << "\n";
 }
 
@@ -417,7 +549,11 @@ static std::string disk_problem_plain(DWORD e) {
     }
 }
 static std::string disk_fail_text(DWORD e, const char* doing) {
+#if RH_WIN
     emu_log(std::string(doing) + " failed with Windows error " + std::to_string((unsigned long)e));
+#else
+    emu_log(std::string(doing) + " failed with system error " + std::to_string((unsigned long)e));
+#endif
     const std::string plain = disk_problem_plain(e);
     return plain.empty() ? std::string("could not save the download (the disk reported a problem)") : "could not save the download: " + plain;
 }
@@ -444,6 +580,7 @@ struct Transport {
     virtual bool read(void* buf, DWORD cap, DWORD* n) = 0;                       // false = the connection broke
 };
 
+#if RH_WIN
 struct WinHttpTransport : Transport {
     std::wstring host, path;
     HINTERNET ses = nullptr, con = nullptr, req = nullptr;
@@ -493,6 +630,73 @@ struct WinHttpTransport : Transport {
         return false;
     }
 };
+#else
+/* macOS: plat::http streams a response body to a callback, so one GET is written to a segment file beside the download (progress, pause and cancel are
+ * handled in that callback) and read() then serves the segment to download_core, which runs the same resume / verify logic as on Windows. A connection
+ * that breaks mid-body still yields the bytes that arrived (read() reports the drop at the end, like the test transport). */
+struct MacTransport : Transport {
+    std::string host, path, seg;
+    std::atomic<uint64_t>* got = nullptr;
+    const std::atomic<bool>* cancel = nullptr;
+    const std::atomic<bool>* pause = nullptr;
+    std::ifstream in;
+    bool drop = false;
+    MacTransport(const std::string& h, const std::string& p, const std::string& segfile, std::atomic<uint64_t>* g, const std::atomic<bool>* c, const std::atomic<bool>* pa)
+        : host(h), path(p), seg(segfile), got(g), cancel(c), pause(pa) {}
+    ~MacTransport() { in.close(); std::error_code ec; fs::remove(P(seg), ec); }
+    bool request(uint64_t offset, NetReply* r, std::string* err) override {
+        in.close();
+        std::error_code ec;
+        fs::remove(P(seg), ec);
+        drop = false;
+        plat::http::Request rq;
+        rq.url = "https://" + host + path;
+        rq.headers.push_back({"User-Agent", "RetroHub"});
+        if (offset) rq.headers.push_back({"Range", "bytes=" + std::to_string((unsigned long long)offset) + "-"});
+        FILE* sf = plat::fopen_path(P(seg), "wb");
+        if (!sf) { *err = disk_fail_text((DWORD)errno, "opening the download file"); return false; }
+        uint64_t seg_bytes = 0;
+        int werr = 0;
+        rq.on_data = [&](const char* d, size_t n) {
+            while (pause && pause->load() && !(cancel && cancel->load())) plat::sleep_ms(250);
+            if (cancel && cancel->load()) return false;
+            if (std::fwrite(d, 1, n, sf) != n) { werr = errno ? errno : ENOSPC; return false; }
+            seg_bytes += n;
+            if (got) *got = offset + seg_bytes;
+            return true;
+        };
+        plat::http::Response resp;
+        const bool ok = plat::http::perform(rq, &resp);
+        const bool flushed = std::fflush(sf) == 0;
+        std::fclose(sf);
+        if (werr || (ok && !flushed)) { *err = disk_fail_text((DWORD)(werr ? werr : ENOSPC), "writing the download"); return false; }
+        if (!ok && (resp.status != 200 && resp.status != 206)) {
+            emu_log("request to " + host + " failed: " + resp.error);
+            *err = resp.error == "cancelled" ? "cancelled" : resp.error == "timeout" ? "the connection to " + host + " timed out" : "could not reach " + host;
+            return false;
+        }
+        r->status = resp.status;
+        r->content_length = resp.content_length;
+        auto cr = resp.headers.find("content-range");
+        if (resp.status == 206 && cr != resp.headers.end()) {
+            unsigned long long a = 0, b = 0, t = 0;
+            const int n = std::sscanf(cr->second.c_str(), "bytes %llu-%llu/%llu", &a, &b, &t);
+            if (n >= 2) { r->has_range = true; r->range_start = a; r->range_total = n == 3 ? t : 0; }
+        }
+        drop = !ok;   // a response arrived but the body broke off
+        in.open(P(seg), std::ios::binary);
+        return true;
+    }
+    bool read(void* buf, DWORD cap, DWORD* n) override {
+        *n = 0;
+        if (!in.is_open()) return false;
+        in.read(static_cast<char*>(buf), (std::streamsize)cap);
+        *n = (DWORD)in.gcount();
+        if (*n > 0) return true;
+        return !drop;
+    }
+};
+#endif
 
 struct TestTransport : Transport {
     const Release& rel;
@@ -574,6 +778,7 @@ static bool download_core(Transport& tp, const std::string& out_file, uint64_t e
         } else if (r.status != 200) { *err = "server answered " + std::to_string(r.status); return false; }
 
         if (pr.total) *pr.total = expected ? expected : r.content_length;
+#if RH_WIN
         HANDLE f = append ? CreateFileW(W(out_file).c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)
                           : CreateFileW(W(out_file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (f == INVALID_HANDLE_VALUE) { *err = disk_fail_text(GetLastError(), "opening the download file"); return false; }
@@ -581,6 +786,10 @@ static bool download_core(Transport& tp, const std::string& out_file, uint64_t e
             LARGE_INTEGER z{};
             if (!SetFilePointerEx(f, z, nullptr, FILE_END)) { const DWORD e = GetLastError(); CloseHandle(f); *err = disk_fail_text(e, "seeking in the download file"); return false; }
         }
+#else
+        FILE* f = plat::fopen_path(P(out_file), append ? "ab" : "wb");
+        if (!f) { *err = disk_fail_text((DWORD)errno, "opening the download file"); return false; }
+#endif
         uint64_t pos = append ? have : 0;
         if (pr.got) *pr.got = pos;
         std::vector<char> buf(64 * 1024);
@@ -594,14 +803,27 @@ static bool download_core(Transport& tp, const std::string& out_file, uint64_t e
             DWORD e = 0, w = 0;
             if (g_test_hooks && g_test_hooks->write_fault) e = (DWORD)g_test_hooks->write_fault(pos);
             if (!e) {
+#if RH_WIN
                 if (!WriteFile(f, buf.data(), n, &w, nullptr)) e = GetLastError();
                 else if (w != n) e = ERROR_DISK_FULL;
+#else
+                w = (DWORD)std::fwrite(buf.data(), 1, n, f);
+                if (w != n) e = errno ? (DWORD)errno : ERROR_DISK_FULL;
+#endif
             }
+#if RH_WIN
             if (e) { CloseHandle(f); *err = disk_fail_text(e, "writing the download"); return false; }
+#else
+            if (e) { std::fclose(f); *err = disk_fail_text(e, "writing the download"); return false; }
+#endif
             pos += n;
             if (pr.got) *pr.got = pos;
         }
+#if RH_WIN
         CloseHandle(f);
+#else
+        std::fclose(f);
+#endif
         if (stopped) { *err = "cancelled"; return false; }
         have = pos;
         if (!dropped && (!expected || have >= expected)) return true;
@@ -612,10 +834,17 @@ static bool download_core(Transport& tp, const std::string& out_file, uint64_t e
     }
 }
 
+#if RH_WIN
 static bool http_download(const std::wstring& host, const std::wstring& path, const std::string& out_file, uint64_t expected, Progress pr, std::string* err) {
     WinHttpTransport tp(host, path);
     return download_core(tp, out_file, expected, pr, true, err);
 }
+#else
+static bool http_download(const std::wstring& host, const std::wstring& path, const std::string& out_file, uint64_t expected, Progress pr, std::string* err) {
+    MacTransport tp(U(host), U(path), out_file + ".seg", pr.got, pr.cancel, pr.pause);
+    return download_core(tp, out_file, expected, pr, true, err);
+}
+#endif
 
 bool http_get_file(const std::string& host, const std::string& path, const std::string& out_file, std::atomic<uint64_t>* got,
                    std::atomic<uint64_t>* total, const std::atomic<bool>* cancel, const std::atomic<bool>* pause, std::string* err) {
@@ -624,12 +853,20 @@ bool http_get_file(const std::string& host, const std::string& path, const std::
 
 /* Directory (searched to `depth` levels) that contains a file called `name`. */
 static bool find_file_below(const std::string& dir, const std::wstring& name, int depth, std::string* found_dir) {
+#if !RH_WIN
+    /* macOS: `name` may be a relative path inside a bundle ("Dolphin.app/Contents/MacOS/Dolphin"): the folder that holds that path is the answer. */
+    if (file_exists(join(dir, U(name)))) { *found_dir = dir; return true; }
+#endif
     std::error_code ec;
     std::vector<fs::path> subs;
     for (fs::directory_iterator it(P(dir), ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code e2;
         if (it->is_directory(e2)) subs.push_back(it->path());
+#if RH_WIN
         else if (_wcsicmp(it->path().filename().c_str(), name.c_str()) == 0) { *found_dir = dir; return true; }
+#else
+        else if (strcasecmp(S(it->path().filename()).c_str(), U(name).c_str()) == 0) { *found_dir = dir; return true; }
+#endif
     }
     if (depth <= 0) return false;
     for (auto& s : subs)
@@ -656,7 +893,11 @@ static bool safe_zip_name(const std::string& n) {
 static bool unzip_to(const std::string& archive, const std::string& dest, std::string* err) {
     mz_zip_archive za;
     std::memset(&za, 0, sizeof za);
+#if RH_WIN
     FILE* zf = _wfopen(W(archive).c_str(), L"rb");
+#else
+    FILE* zf = plat::fopen_path(P(archive), "rb");
+#endif
     if (!zf) { *err = "cannot open the download"; return false; }
     if (!mz_zip_reader_init_cfile(&za, zf, 0, 0)) { std::fclose(zf); *err = "the download is not a valid zip"; return false; }
     bool ok = true;
@@ -670,12 +911,42 @@ static bool unzip_to(const std::string& archive, const std::string& dest, std::s
         std::error_code ec;
         if (st.m_is_directory || name.back() == '/' || name.back() == '\\') { fs::create_directories(target, ec); continue; }
         fs::create_directories(target.parent_path(), ec);
+#if !RH_WIN
+        {   /* macOS app bundles: symbolic links (Frameworks/...) become real links, as long as they stay inside the staging folder; the executable bit is kept */
+            const unsigned mode = (((st.m_version_made_by >> 8) == 3) ? (unsigned)(st.m_external_attr >> 16) : 0u);
+            if ((mode & 0170000) == 0120000) {
+                size_t sz = 0;
+                void* data = mz_zip_reader_extract_to_heap(&za, i, &sz, 0);
+                if (!data) { ok = false; *err = "cannot extract " + name; break; }
+                const std::string link_to((const char*)data, sz);
+                mz_free(data);
+                const fs::path resolved = (target.parent_path() / fs::u8path(link_to)).lexically_normal();
+                const fs::path root = P(dest).lexically_normal();
+                auto rs = S(resolved), rt = S(root);
+                if (link_to.empty() || link_to[0] == '/' || rs.compare(0, rt.size(), rt) != 0) { ok = false; *err = "unsafe link in the zip: " + name; break; }
+                fs::remove(target, ec);
+                fs::create_symlink(fs::u8path(link_to), target, ec);
+                if (ec) { ok = false; *err = "cannot extract " + name; break; }
+                continue;
+            }
+        }
+#endif
+#if RH_WIN
         FILE* out = _wfopen(target.wstring().c_str(), L"wb");
+#else
+        FILE* out = plat::fopen_path(target, "wb");
+#endif
         if (!out) { ok = false; *err = "cannot write " + name; break; }
         bool r = mz_zip_reader_extract_to_cfile(&za, i, out, 0) != 0;
         bool flushed = std::fflush(out) == 0;
         std::fclose(out);
         if (!r || !flushed) { ok = false; *err = "cannot extract " + name; }
+#if !RH_WIN
+        else {
+            const unsigned mode = (((st.m_version_made_by >> 8) == 3) ? (unsigned)(st.m_external_attr >> 16) : 0u);
+            if (mode & 0100) fs::permissions(target, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
+        }
+#endif
     }
     mz_zip_reader_end(&za);
     std::fclose(zf);
@@ -699,6 +970,7 @@ static std::string last_line_of(const std::string& text) {
     return best;
 }
 
+#if RH_WIN
 static bool run_tar(const std::wstring& args, const std::string& stdout_file, const std::string& stderr_file, std::string* err) {
     wchar_t sysdir[MAX_PATH];
     UINT sl = GetSystemDirectoryW(sysdir, MAX_PATH);
@@ -763,6 +1035,220 @@ static bool untar_to(const std::string& archive, const std::string& dest, const 
     if (m != n) { *err = "the download listing is inconsistent"; return false; }
     return run_tar(L"-xf \"" + W(archive) + L"\" -C \"" + W(dest) + L"\"", "", err_tmp, err);
 }
+#else
+/* macOS: /usr/bin/tar (bsdtar, reads .7z too), same checks as the Windows path: every entry name safe, only plain files / folders / (inside the staging
+ * folder only) relative links in the type listing. */
+static bool run_tar(const std::vector<std::string>& args, const std::string& stdout_file, const std::string& stderr_file, std::string* err) {
+    plat::proc::SpawnOptions o;
+    o.exe = "/usr/bin/tar";
+    o.args = args;
+    o.stdout_path = stdout_file.empty() ? "/dev/null" : stdout_file;
+    o.stderr_path = stderr_file.empty() ? "/dev/null" : stderr_file;
+    o.own_group = true;
+    plat::proc::Child c;
+    std::string why;
+    if (!plat::proc::spawn(o, &c, &why)) { *err = "tar could not start: " + why; return false; }
+    int code = 1;
+    if (!plat::proc::wait(c, 10 * 60 * 1000, &code)) { plat::proc::kill_tree(c); code = 1; }
+    if (code != 0) {
+        const std::string w = stderr_file.empty() ? std::string() : last_line_of(read_text(stderr_file));
+        emu_log("tar exit " + std::to_string(code) + (w.empty() ? "" : ": " + w));
+        *err = "unpacking failed (tar exit " + std::to_string(code) + (w.empty() ? "" : ": " + w) + ")";
+        return false;
+    }
+    return true;
+}
+
+/* A symbolic link entry of an app bundle ("Frameworks/X.framework/Current -> A") is fine when its target is relative and never climbs out of the archive's top
+ * folder: `entry` is the link's own path from the name listing, `target` what `tar -tv` printed after " -> ". */
+static bool tar_link_stays_inside(const std::string& entry, const std::string& target) {
+    if (target.empty() || target[0] == '/' || target[0] == '\\' || target.find(':') != std::string::npos) return false;
+    int depth = 0;   // folders between the archive root and the link's own folder
+    {
+        std::string e = entry;
+        while (e.size() >= 2 && e[0] == '.' && e[1] == '/') e.erase(0, 2);
+        while (!e.empty() && e.back() == '/') e.pop_back();
+        for (size_t i = 0; i < e.size(); ++i) if (e[i] == '/') ++depth;
+    }
+    size_t p = 0;
+    while (p <= target.size()) {
+        const size_t q = target.find('/', p);
+        const std::string part = target.substr(p, q == std::string::npos ? std::string::npos : q - p);
+        if (part == "..") { if (--depth < 0) return false; }
+        else if (!part.empty() && part != ".") ++depth;
+        if (q == std::string::npos) break;
+        p = q + 1;
+    }
+    return true;
+}
+
+static bool untar_to(const std::string& archive, const std::string& dest, const std::string& list_tmp, std::string* err) {
+    const std::string err_tmp = list_tmp + ".err";
+    struct Cleanup { std::string f, g; ~Cleanup() { std::error_code ec; fs::remove(P(f), ec); fs::remove(P(g), ec); } } cleanup{list_tmp, err_tmp};
+    std::error_code ec0;
+    fs::remove(P(list_tmp), ec0);   // (the spawn appends)
+    if (!run_tar({"-tf", archive}, list_tmp, err_tmp, err)) return false;
+    std::istringstream ls(read_text(list_tmp));
+    std::string line;
+    std::vector<std::string> names;
+    while (std::getline(ls, line)) {
+        while (!line.empty() && (line.back() == 13 || line.back() == 10)) line.pop_back();
+        if (line.empty()) continue;
+        if (!safe_zip_name(line)) { *err = "unsafe path in the download: " + line; return false; }
+        names.push_back(line);
+    }
+    if (names.empty()) { *err = "the download is empty"; return false; }
+    fs::remove(P(list_tmp), ec0);
+    if (!run_tar({"-tvf", archive}, list_tmp, err_tmp, err)) return false;
+    std::istringstream vs(read_text(list_tmp));
+    size_t m = 0;
+    while (std::getline(vs, line)) {
+        while (!line.empty() && (line.back() == 13 || line.back() == 10)) line.pop_back();
+        if (line.empty()) continue;
+        if (line.find(" link to ") != std::string::npos) { *err = "the download contains a hard link entry: " + line.substr(0, 80); return false; }   // (a hard link can point anywhere)
+        if (line[0] == 'l') {   // a symbolic link: only a relative one that stays inside the staging folder
+            const size_t arrow = line.rfind(" -> ");
+            if (arrow == std::string::npos || m >= names.size() || !tar_link_stays_inside(names[m], line.substr(arrow + 4))) { *err = "the download contains a link that leaves its folder: " + line.substr(0, 80); return false; }
+        } else if (line[0] != '-' && line[0] != 'd') { *err = "the download contains an entry that is not a file, folder or link: " + line.substr(0, 80); return false; }
+        ++m;
+    }
+    if (m != names.size()) { *err = "the download listing is inconsistent"; return false; }
+    return run_tar({"-xf", archive, "-C", dest}, "", err_tmp, err);   // (bsdtar's -x refuses to write through a link out of -C)
+}
+#endif
+
+#if !RH_WIN
+/* ---- macOS: .dmg archives, the quarantine flag, Rosetta ---- */
+static bool ends_with_ci(const std::string& s, const char* suf) {
+    const size_t n = std::strlen(suf);
+    return s.size() >= n && strcasecmp(s.c_str() + s.size() - n, suf) == 0;
+}
+
+/* Runs a system tool by its absolute path (never the search path), output to a file, never shell-parsed. */
+static bool run_tool(const char* exe, const std::vector<std::string>& args, const std::string& stderr_file, int timeout_ms, int* code_out) {
+    plat::proc::SpawnOptions o;
+    o.exe = exe;
+    o.args = args;
+    o.stdout_path = "/dev/null";
+    o.stderr_path = stderr_file.empty() ? "/dev/null" : stderr_file;
+    o.own_group = true;
+    plat::proc::Child c;
+    std::string why;
+    int code = 127;
+    if (!plat::proc::spawn(o, &c, &why)) { emu_log(std::string(exe) + " could not start: " + why); if (code_out) *code_out = code; return false; }
+    if (!plat::proc::wait(c, timeout_ms, &code)) { plat::proc::kill_tree(c); code = 124; }
+    if (code_out) *code_out = code;
+    return code == 0;
+}
+
+/* A .dmg: `hdiutil attach` mounts it read-only on a fresh mount point of ours (-nobrowse -noautoopen: Finder never shows or opens it), every top-level *.app is copied
+ * into `dest` with /usr/bin/ditto (keeps the code signature, symbolic links and extended attributes), and the volume is detached again on every path out (a second try
+ * with -force). Nothing on the image is ever run. */
+static bool dmg_extract_to(const std::string& archive, const std::string& dest, const std::string& work_dir, std::string* err) {
+    static std::atomic<unsigned> seq{0};
+    const std::string mnt = join(work_dir, "mnt-" + std::to_string((unsigned long long)plat::tick_ms()) + "-" + std::to_string(seq++));
+    const std::string err_tmp = join(work_dir, "hdiutil-err.txt");
+    std::error_code ec;
+    fs::remove(P(err_tmp), ec);
+    make_dirs(mnt);
+    struct Mount {
+        std::string mnt, err_tmp;
+        bool attached = false;
+        ~Mount() {
+            if (attached) {
+                int code = 0;
+                if (!run_tool("/usr/bin/hdiutil", {"detach", "-quiet", mnt}, "", 120000, &code)) {
+                    plat::sleep_ms(1000);
+                    run_tool("/usr/bin/hdiutil", {"detach", "-quiet", "-force", mnt}, "", 120000, &code);
+                }
+            }
+            std::error_code e;
+            fs::remove(P(mnt), e);   // (rmdir only: never a recursive delete near a mounted volume)
+            fs::remove(P(err_tmp), e);
+        }
+    } mount{mnt, err_tmp};
+    int code = 0;
+    if (!run_tool("/usr/bin/hdiutil", {"attach", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mnt, archive}, err_tmp, 10 * 60 * 1000, &code)) {
+        mount.attached = (code == 124);   // a timed-out attach may still have mounted
+        const std::string w = last_line_of(read_text(err_tmp));
+        emu_log("hdiutil attach exit " + std::to_string(code) + (w.empty() ? "" : ": " + w));
+        *err = "could not open the disk image (hdiutil exit " + std::to_string(code) + (w.empty() ? "" : ": " + w) + ")";
+        return false;
+    }
+    mount.attached = true;
+    int apps = 0;
+    for (fs::directory_iterator it(P(mnt), ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string n = S(it->path().filename());
+        std::error_code e2;
+        if (!ends_with_ci(n, ".app") || it->is_symlink(e2) || !it->is_directory(e2)) continue;
+        if (!safe_zip_name(n) || n.find('/') != std::string::npos) { *err = "unsafe name in the disk image: " + n; return false; }
+        if (!run_tool("/usr/bin/ditto", {join(mnt, n), join(dest, n)}, err_tmp, 10 * 60 * 1000, &code)) {
+            const std::string w = last_line_of(read_text(err_tmp));
+            emu_log("ditto exit " + std::to_string(code) + (w.empty() ? "" : ": " + w));
+            *err = "could not copy " + n + " out of the disk image (ditto exit " + std::to_string(code) + (w.empty() ? "" : ": " + w) + ")";
+            return false;
+        }
+        ++apps;
+    }
+    if (apps == 0) { *err = "the disk image holds no application"; return false; }
+    return true;
+}
+
+/* The archive kind decides the unpacker: .dmg (macOS only), .7z / .tar.xz / .tar.gz (bsdtar) or .zip (miniz). */
+static bool unpack_archive(const std::string& archive, const std::string& stage, const std::string& root, std::string* err) {
+    if (ends_with_ci(archive, ".dmg")) return dmg_extract_to(archive, stage, join(root, "_downloads"), err);
+    if (ends_with_ci(archive, ".7z") || ends_with_ci(archive, ".tar.xz") || ends_with_ci(archive, ".tar.gz")) return untar_to(archive, stage, join(root, "_downloads\\list.txt"), err);
+    return unzip_to(archive, stage, err);
+}
+
+/* A downloaded .app may carry the quarantine flag (a browser download; the NSURLSession download RetroHub uses does not set it). Removed from every top-level bundle
+ * of the install, so Gatekeeper does not block the first start of a bundle RetroHub verified against its pinned hash. Best effort: a failure is only logged. */
+static void clear_quarantine(const std::string& dir) {
+    std::error_code ec;
+    for (fs::directory_iterator it(P(dir), ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string n = S(it->path().filename());
+        std::error_code e2;
+        if (!ends_with_ci(n, ".app") || it->is_symlink(e2) || !it->is_directory(e2)) continue;
+        int code = 0;
+        if (!run_tool("/usr/bin/xattr", {"-dr", "com.apple.quarantine", S(it->path())}, "", 120000, &code)) emu_log("xattr exit " + std::to_string(code) + " on " + n);
+    }
+}
+#endif
+
+/* Cemu's macOS build is x86_64 only: on an Apple Silicon Mac it runs under Rosetta 2, which macOS does not install by default. RetroHub never installs it for the
+ * player: this only tells whether it is there (the runtime file, or `arch -x86_64 /usr/bin/true` succeeding). On Windows and on an Intel Mac it is always fine. */
+MacLaunchExtra mac_launch_extra(Kind k, const std::string& install_dir) {
+    MacLaunchExtra x;
+#if !RH_WIN
+    switch (k) {
+    case Kind::Dolphin: x.env.push_back({"DOLPHIN_EMU_USERPATH", join(install_dir, "User")}); break;
+    case Kind::Pcsx2: x.args = {"-datapath", install_dir}; break;
+    case Kind::Ppsspp: x.env.push_back({"XDG_CONFIG_HOME", join(install_dir, "config")}); break;   // unverified, see ppsspp_system_dir
+    case Kind::Azahar: case Kind::Lichii: case Kind::Fritchii: x.cwd = install_dir; break;
+    default: break;
+    }
+#else
+    (void)k; (void)install_dir;
+#endif
+    return x;
+}
+
+bool rosetta_present() {
+#if RH_WIN || !defined(__arm64__)
+    return true;
+#else
+    if (g_test_hooks && g_test_hooks->rosetta >= 0) return g_test_hooks->rosetta != 0;
+    std::error_code ec;
+    if (fs::exists(P("/Library/Apple/usr/share/rosetta/rosetta"), ec)) return true;
+    int code = 1;
+    return run_tool("/usr/bin/arch", {"-x86_64", "/usr/bin/true"}, "", 30000, &code);
+#endif
+}
+bool cemu_rosetta_ok(std::string* msg) {
+    if (rosetta_present()) return true;
+    if (msg) *msg = "Cemu on this Mac needs Rosetta 2 (the Wii U emulator is built for Intel Macs). Install it once with:  softwareupdate --install-rosetta  (in Terminal), then try again";
+    return false;
+}
 
 static bool running_from(const std::string& exe);   // (below)
 static bool exe_is_running(const std::string& exe) {
@@ -785,7 +1271,13 @@ static bool write_journal(const std::string& dir, const std::string& text) {
         f.flush();
         if (!f) return false;
     }
+#if RH_WIN
     return MoveFileExW(P(tmp).c_str(), P(join(dir, kJournal)).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    std::error_code ec;
+    fs::rename(P(tmp), P(join(dir, kJournal)), ec);   // (POSIX rename replaces atomically)
+    return !ec;
+#endif
 }
 
 static std::vector<fs::path> children(const std::string& dir) {
@@ -953,7 +1445,13 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
         *err = std::string("an earlier ") + name(k) + " update could not be finished yet. Close " + name(k) + " if it is open, then try again";
         return false;
     }
+#if RH_WIN
     if (release_is_placeholder(k)) { *err = std::string(name(k)) + " is not published yet (its download has not been set up)"; return false; }
+#else
+    /* TODO(macOS lane 7): a macOS pin for every kind (release_mac). Until then nothing is downloaded: never a Windows build. */
+    if (release_is_placeholder(k)) { *err = std::string(name(k)) + " is not available on macOS yet"; return false; }
+    if (k == Kind::Cemu && !(g_test_hooks && g_test_hooks->release && g_test_hooks->kind == k && g_test_hooks->rosetta < 0) && !cemu_rosetta_ok(err)) return false;   // nothing is downloaded for a Cemu that could not start
+#endif
     const bool complete = file_exists(exe) && file_exists(join(dir, "retrohub-install.txt"));   // (marker is written last)
     if (complete && (!upgradable(k) || (installed_sha(dir) == rel.sha256 && update_leftovers(k, dir).empty()))) return true;
     const bool upgrading = complete;   // an older pin: the old build stays installed and working until the new one is whole
@@ -988,8 +1486,14 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
         const std::string dl_dir = S(P(archive).parent_path());
         if (g_test_hooks && g_test_hooks->free_space) known = g_test_hooks->free_space(dl_dir, &avail);
         else {
+#if RH_WIN
             ULARGE_INTEGER fb{};
             if (GetDiskFreeSpaceExW(W(dl_dir).c_str(), &fb, nullptr, nullptr)) { avail = fb.QuadPart; known = true; }
+#else
+            std::error_code fe;
+            const fs::space_info si = fs::space(P(dl_dir), fe);
+            if (!fe) { avail = (uint64_t)si.available; known = true; }
+#endif
         }
         if (known && avail < need) {
             ok = false;
@@ -1021,8 +1525,12 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     }
     if (ok) {
         setp(2);
+#if RH_WIN
         ok = (archive.size() > 3 && archive.compare(archive.size() - 3, 3, ".7z") == 0) ? untar_to(archive, stage, join(root, "_downloads\\list.txt"), err)
                                                                                          : unzip_to(archive, stage, err);
+#else
+        ok = unpack_archive(archive, stage, root, err);
+#endif
     }
     if (ok) {
         setp(3);
@@ -1046,13 +1554,20 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     }
     const bool swapped = ok && upgrading;   // from here a failure must put the old build back
     if (ok && k == Kind::Pcsx2) ok = write_text(join(dir, "portable.ini"), "");   // portable mode: all data beside the exe, a user's own PCSX2 is never touched
-    if (ok && k == Kind::Ppsspp) { std::error_code ec2; fs::remove(P(join(dir, "installed.txt")), ec2); make_dirs(join(dir, "memstick")); }   // no installed.txt = portable: PPSSPP keeps everything in <dir>\memstick
+#if RH_WIN
+    if (ok && k == Kind::Ppsspp) { std::error_code ec2; fs::remove(P(join(dir, "installed.txt")), ec2); make_dirs(join(dir, "memstick")); }
+#endif   // no installed.txt = portable: PPSSPP keeps everything in <dir>\memstick
     if (ok && is_nx(k)) {   // (Lichii and Fritchii) a `user` folder beside lichii.exe = portable (a player's own %APPDATA%\eden is never touched); the bundled VC++ installer is not needed to play. The delete below is kept for older zips (~116 MB of .pdb files, vc_redist); current zips contain none of them, so it is a no-op. a build 130 nxformat.dll is gone too: an upgrade moves every old program file aside, and build 177 links nxformat statically
         make_dirs(join(dir, "user"));
         std::error_code ec2;
         for (const char* f : {"lichii.pdb", "eden-cli.pdb", "vc_redist.x64.exe", "lichii-updater.exe"}) fs::remove(P(join(dir, f)), ec2);   // lichii-updater.exe (build 125+) is Lichii's own self-updater: RetroHub is the only updater
     }
-    if (ok && k == Kind::Dolphin) ok = write_text(join(dir, "portable.txt"), "");   // Dolphin keeps its User folder beside the exe
+#if !RH_WIN
+    if (ok) clear_quarantine(dir);   // (macOS) no com.apple.quarantine on the installed bundles
+#endif
+#if RH_WIN
+    if (ok && k == Kind::Dolphin) ok = write_text(join(dir, "portable.txt"), "");
+#endif   // Dolphin keeps its User folder beside the exe
     if (ok) ok = write_text(join(dir, "retrohub-install.txt"), std::string(name(k)) + " " + rel.version + "\nsha256 " + rel.sha256 + "\n");   // the marker is last
     if (!ok) {
         if (swapped) { if (!restore_old(dir, keep, true)) *err += " (the old files could not all be put back; RetroHub will retry at the next start)"; }
@@ -1075,8 +1590,14 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
 
 /* ---- one conservative leftover pass (see emulators.h) ---- */
 static bool is_reparse_point(const fs::path& p) {
+#if RH_WIN
     const DWORD a = GetFileAttributesW(p.c_str());
     return a == INVALID_FILE_ATTRIBUTES || (a & FILE_ATTRIBUTE_REPARSE_POINT) != 0;   // (unreadable counts as "do not touch")
+#else
+    std::error_code ec;
+    const fs::file_status st = fs::symlink_status(p, ec);   // a symbolic link is the macOS counterpart
+    return ec || st.type() == fs::file_type::not_found || fs::is_symlink(st);
+#endif
 }
 /* true when `d` and everything below it is plain files and folders: no reparse point anywhere and no folder or file called `user`. Never descends into a link. */
 static bool plain_tree(const fs::path& d, int depth = 0) {
@@ -1101,9 +1622,15 @@ static bool cleanup_root_ok(const std::string& root) {
     if (root.size() < 12) return false;
     const fs::path p = P(root).lexically_normal();
     if (!p.is_absolute() || p == p.root_path() || p.filename().empty()) return false;
+#if RH_WIN
     auto same = [](const fs::path& a, const fs::path& b) { return _wcsicmp(a.lexically_normal().wstring().c_str(), b.lexically_normal().wstring().c_str()) == 0; };
     if (!g_cleanup_test_root.empty() && same(p, P(g_cleanup_test_root))) return true;
     return _wcsicmp(p.filename().wstring().c_str(), L"emulators") == 0 && same(p, P(managed_root()));
+#else
+    auto same = [](const fs::path& a, const fs::path& b) { return path_icmp(S(a.lexically_normal()), S(b.lexically_normal())) == 0; };
+    if (!g_cleanup_test_root.empty() && same(p, P(g_cleanup_test_root))) return true;
+    return path_icmp(S(p.filename()), "emulators") == 0 && same(p, P(managed_root()));
+#endif
 }
 
 static std::atomic<bool> g_cleanup_cancel{false};
@@ -1573,6 +2100,10 @@ void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile&
     write_cemu_profiles(join(portable, "controllerProfiles"), prof, pads, false);
 }
 
+/* Cemu user folder. Windows: <exe dir>\\portable, or a settings.xml beside the exe, else <appdata>\\Cemu. macOS: the Cemu 2.6 x86_64 binary has the "portable" and
+ * "mlc" / "-m,--mlc" names but no "Application Support" string (it uses wxStandardPaths, so the player's own folder is believed to be ~/Library/Application Support/Cemu);
+ * where a portable folder must sit relative to Cemu.app is UNVERIFIED, so RetroHub's own managed folder <install>/portable (beside the .app, never inside it) may be
+ * ignored by Cemu and its settings then land in the player's own folder. */
 std::string cemu_user_data_dir(const std::string& exe_dir, const std::string& appdata) {
     std::string ed = exe_dir;
     while (!ed.empty() && (ed.back() == '\\' || ed.back() == '/')) ed.pop_back();
@@ -1612,6 +2143,7 @@ void prepare_cemu_managed(const std::string& install_dir) { prepare_cemu_managed
 /* Dolphin (GameCube)                                                  */
 /* ------------------------------------------------------------------ */
 
+#if RH_WIN
 DEFINE_GUID(kGuidUsbDevice, 0xA5DCBF10, 0x6530, 0x11D2, 0x90, 0x1F, 0x00, 0xC0, 0x4F, 0xB9, 0x51, 0xED);   // GUID_DEVINTERFACE_USB_DEVICE
 
 /* The Nintendo GameCube adapter (WUP-028, USB 057E:0337) counts only when its driver is WinUSB/libusbK: Dolphin cannot
@@ -1647,6 +2179,11 @@ DolphinPads detect_dolphin_pads() {
     p.adapter = gc_adapter_usable();
     return p;
 }
+#else
+/* macOS has no XInput and no WinUSB driver check: nothing is reported (the SDL pads of dolphin_pads_with / the port order decide the devices). */
+// TODO(macOS lane 7): GameCube adapter detection (IOKit, USB 057E:0337) and Dolphin's macOS pad device names (SDL/n/<name>, Quartz keyboard).
+DolphinPads detect_dolphin_pads() { return DolphinPads(); }
+#endif
 
 std::string dolphin_ini_defaults(const std::string& in) {
     std::string t = in;
@@ -1917,7 +2454,9 @@ static std::string dolphin_sel(const DolphinPads& p) {
 void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads, const hubctl::Profile& prof) {
     std::string cfg = join(install_dir, "User\\Config");
     make_dirs(cfg);
+#if RH_WIN
     if (!file_exists(join(install_dir, "portable.txt"))) write_text(join(install_dir, "portable.txt"), "");
+#endif   // (macOS: portable.txt would have to sit inside the signed .app; Dolphin is pointed at <install>/User by DOLPHIN_EMU_USERPATH instead, see mac_launch_extra)
     /* Written once (marker), so settings changed later in Dolphin's own dialogs or by hand are kept: Dolphin.ini defaults,
      * GFX.ini defaults and the pad mappings. The pad mappings are rewritten when the RetroHub profile changed. */
     std::string ini = join(cfg, "Dolphin.ini"), gfx = join(cfg, "GFX.ini"), pad = join(cfg, "GCPadNew.ini");
@@ -1948,6 +2487,7 @@ void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads) { 
 
 /* True when a process whose image is exactly this file is running (is_running matches the bare file name, so an unrelated
  * Dolphin.exe elsewhere would wrongly keep an old download alive and make the cleanup depend on what else runs). */
+#if RH_WIN
 static bool running_from(const std::string& exe) {
     std::wstring want = P(exe).wstring();
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -1967,6 +2507,17 @@ static bool running_from(const std::string& exe) {
     CloseHandle(snap);
     return found;
 }
+#else
+static bool running_from(const std::string& exe) {
+    /* every process with this executable's file name whose image path is exactly this file (a process whose path cannot be read counts as running) */
+    const std::string want = S(P(exe).lexically_normal());
+    for (int pid : plat::proc::pids_by_exe_name(S(P(exe).filename()))) {
+        const std::string img = plat::proc::pid_exe_path(pid);
+        if (img.empty() || path_icmp(S(P(img).lexically_normal()), want) == 0) return true;
+    }
+    return false;
+}
+#endif
 /* Older RetroHub builds ran a Dolphin downloaded to <exe>\dolphin with its user folder at <data>\dolphin-user, and kept the
  * memory card straight in the vault (<vault>\gc\<game>\battery\GCI): that location is the one the new sync still reads, so
  * saves need no move. This only tidies up: save states move to the new User folder, the old user folder is renamed (never
@@ -2264,11 +2815,19 @@ bool cemu_gp_state_parse(const std::string& text, CemuOwnState* st) {
 }
 
 static std::string stamp_now() {
+#if RH_WIN
     SYSTEMTIME s;
     GetLocalTime(&s);
     char b[32];
     std::snprintf(b, sizeof b, "%04d%02d%02d-%02d%02d%02d", s.wYear, s.wMonth, s.wDay, s.wHour, s.wMinute, s.wSecond);
     return b;
+#else
+    std::tm tm{};
+    plat::local_tm(std::time(nullptr), &tm);
+    char b[32];
+    std::snprintf(b, sizeof b, "%04d%02d%02d-%02d%02d%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+    return b;
+#endif
 }
 static std::string unused_name(const std::string& base, const std::string& ext) {
     std::string p = base + ext;
@@ -2374,6 +2933,12 @@ std::string cemu_profile_summary(const std::string& exe_dir, const std::string& 
     return o.empty() ? "" : o + (u.empty() ? " (Cemu's default game profile)" : " (your game profile)");
 }
 
+#if !RH_WIN
+/* The values are the Windows virtual-key codes / XInput button bits (the documented contract of these two functions); the macOS key-code mapping is the caller's
+ * (plat::proc::send_key takes kVK_* codes). TODO(macOS lane 7): the toggle-pad-screen hotkey of Cemu's macOS build. */
+static const int VK_CONTROL = 0x11, VK_TAB = 0x09;
+static const unsigned XINPUT_GAMEPAD_BACK = 0x0020, XINPUT_GAMEPAD_RIGHT_SHOULDER = 0x0200;
+#endif
 std::vector<int> cemu_toggle_gamepad_keys() { return {VK_CONTROL, VK_TAB}; }
 bool cemu_toggle_combo(unsigned b) { return (b & XINPUT_GAMEPAD_BACK) && (b & XINPUT_GAMEPAD_RIGHT_SHOULDER); }
 
@@ -2402,6 +2967,7 @@ std::string cemu_args(const std::string& game, bool fullscreen) {
 /* saves                                                               */
 /* ------------------------------------------------------------------ */
 
+#if RH_WIN
 bool is_running(const std::string& exe) {
     std::wstring want = P(exe).filename().wstring();
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -2414,6 +2980,11 @@ bool is_running(const std::string& exe) {
     CloseHandle(snap);
     return found;
 }
+#else
+bool is_running(const std::string& exe) {
+    return !plat::proc::pids_by_exe_name(S(P(exe).filename())).empty();
+}
+#endif
 
 uint64_t title_id_from_key(const std::string& key) {
     size_t c = key.find(':');
@@ -2431,7 +3002,11 @@ uint64_t title_id_from_key(const std::string& key) {
 static std::string stamp_tag() {
     std::time_t t = std::time(nullptr);
     std::tm tm{};
+#if RH_WIN
     localtime_s(&tm, &t);
+#else
+    plat::local_tm(t, &tm);
+#endif
     char b[48];
     std::strftime(b, sizeof b, "local.%Y%m%d-%H%M%S", &tm);
     return b;
@@ -2477,14 +3052,26 @@ void sync_vault_to_emulator(SaveSession& s) {
      * snapshot that RetroHub never prunes (%LOCALAPPDATA%\RetroHub\save-backups\<game>\<stamp>-before-<emulator>-launch). No snapshot, no overwrite. */
     std::string snap_dir;
     if (s.own_install) {
+#if RH_WIN
         const std::string la_s = winutil::getenv_utf8("LOCALAPPDATA"); const char* la = la_s.empty() ? nullptr : la_s.c_str();   // the same place nx_runner's default_save_backup_root() uses (not linked into every test that builds this file)
         const std::string root = la && *la ? join(join(la, "RetroHub"), "save-backups") : std::string();
+#else
+        /* macOS counterpart of %LOCALAPPDATA%: ~/Library/Application Support (RETROHUB_LOCALAPPDATA overrides it: console tests), then RetroHub/save-backups. */
+        std::string la_s = winutil::getenv_utf8("RETROHUB_LOCALAPPDATA");
+        if (la_s.empty() && !winutil::getenv_utf8("HOME").empty()) la_s = join(winutil::getenv_utf8("HOME"), "Library/Application Support");
+        const char* la = la_s.empty() ? nullptr : la_s.c_str();
+        const std::string root = la ? join(join(la, "RetroHub"), "save-backups") : std::string();
+#endif
         std::string label = S(P(s.battery).parent_path().filename());
         for (char& c : label) if (!(std::isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.')) c = '_';   // same folder naming as nx_runner's safe_name
         if (!root.empty() && !label.empty()) {
             std::time_t t = std::time(nullptr);
             std::tm tm{};
+#if RH_WIN
             localtime_s(&tm, &t);
+#else
+            plat::local_tm(t, &tm);
+#endif
             char b[48];
             std::strftime(b, sizeof b, "%Y%m%d-%H%M%S", &tm);
             const std::string base = join(join(root, label), std::string(b) + "-before-" + (s.snapshot_emu.empty() ? "emulator" : s.snapshot_emu) + "-launch");
@@ -2547,7 +3134,23 @@ NxSaveMap nx_save_map(const std::string& install_dir, uint64_t tid, const std::s
     return m;
 }
 
+#if !RH_WIN
+/* macOS: a path that is not valid UTF-8 is refused (Windows gets this from the wide-path conversion, which throws). */
+static bool valid_utf8(const std::string& t) {
+    for (size_t i = 0; i < t.size();) {
+        const unsigned char c = (unsigned char)t[i];
+        const size_t n = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 0;
+        if (!n || i + n > t.size()) return false;
+        for (size_t k = 1; k < n; ++k) if (((unsigned char)t[i + k] & 0xC0) != 0x80) return false;
+        i += n;
+    }
+    return true;
+}
+#endif
 bool vault_battery_ok(const std::string& battery_in) {
+#if !RH_WIN
+    if (!valid_utf8(battery_in)) return false;
+#endif
     std::string b = battery_in;
     while (!b.empty() && (b.back() == '\\' || b.back() == '/')) b.pop_back();
     if (b.empty()) return false;
@@ -2585,7 +3188,11 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
             d.user_data = join(inst.dir, "portable");
             d.mlc = join(d.user_data, "mlc01");
         } else {
+#if RH_WIN
             d = hub::cemu_dirs_for(inst.dir, env(L"APPDATA"), probe());
+#else
+            d = hub::cemu_dirs_for(inst.dir, join(env(L"HOME"), "Library/Application Support"), probe());   // (Cemu keeps its data in ~/Library/Application Support/Cemu)
+#endif
         }
         s.emu_root = d.mlc;
         s.own_install = !inst.managed;   // the user's own install: newest save wins, but their copy is snapshotted before it is replaced
@@ -2609,7 +3216,7 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
         if (inst.dir.empty()) return s;
         s.psp_disc_id = hub::psp::disc_id_from_key(e.key);
         if (s.psp_disc_id.empty()) return s;   // homebrew without a DISC_ID: its save folders cannot be told apart
-        s.emu_root = join(inst.dir, "memstick\\PSP");   // <install>/memstick/PSP/SAVEDATA/<ID>... <-> <vault>/psp/<key>/battery/SAVEDATA/<ID>...
+        s.emu_root = psp_memstick_root(inst.dir);   // <install>/memstick/PSP/SAVEDATA/<ID>... <-> <vault>/psp/<key>/battery/SAVEDATA/<ID>...
         std::vector<std::string> seen;
         for (const std::string& base : {join(s.emu_root, "SAVEDATA"), join(battery, "SAVEDATA")})
             for (const auto& f : hub::subdirs_modified_since(base, 0))

@@ -3,13 +3,19 @@
 
 #include "winutil.h"
 #include "net_probe.h"
+#include "plat/plat.h"
+#if RH_WIN
 #include <windows.h>
+#endif
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#if RH_WIN
 #include <shellapi.h>
+#endif
 
 #include <algorithm>
 #include <bitset>
+#include <chrono>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -118,10 +124,32 @@ struct Args {
     int selftest_rewind_frames = 0, selftest_rewind_back = 0, selftest_runahead_frames = 0;   // QA: --rewind-selftest N,K / --runahead-selftest N (headless)
 };
 
+#if RH_WIN
 static std::string narrow(const wchar_t* w) { return winutil::to_utf8(w); }
+#endif
+
+/* High-resolution tick counter for Pace::Timer (QueryPerformanceCounter on Windows, the monotonic clock in ns on macOS). */
+static int64_t qpc_frequency() {
+#if RH_WIN
+    LARGE_INTEGER fq;
+    QueryPerformanceFrequency(&fq);
+    return fq.QuadPart;
+#else
+    return 1000000000;
+#endif
+}
+static int64_t qpc_now() {
+#if RH_WIN
+    LARGE_INTEGER n;
+    QueryPerformanceCounter(&n);
+    return n.QuadPart;
+#else
+    return (int64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
+}
 
 static void usage() {
-    fputs("usage: retrorun --core <x_libretro.dll> --rom <file> --save-dir <dir> --state-dir <dir>\n"
+    fputs("usage: retrorun --core <x_libretro.dll|.dylib> --rom <file> --save-dir <dir> --state-dir <dir>\n"
           "  [--system gba|gb|gbc|nds|ps1|nes|snes] [--multitap|--no-multitap] [--system-dir DIR] [--scale 3] [--filter nearest|linear] [--integer-scale 0|1] [--fx off|crt|lcd|dmg|sharp] [--bezel 0|1] [--fullscreen] [--resume] [--title TEXT]\n"
           "  [--opt key=value]... [--ini FILE] [--log FILE]\n"
           "  [--headless [--frames N] [--screenshot out.png|out.bmp]] [--stylus U,V] [--selftest] [--fuzz-input] [--sync-hash auto|state|output] [--rewind auto|on|off] [--runahead off|1|2|auto] [--rollback] [--handoff] [--rb-pred N] [--synctest N] [--pace vsync|audio|timer] [--list-options]\n"
@@ -661,7 +689,7 @@ class Frontend {
     std::string rtc_path() const { return srm_path.substr(0, srm_path.size() - 4) + ".rtc"; }
     std::vector<uint8_t> rtc_saved;
     void save_srm(bool force, bool at_exit = false);   // at_exit: the session's last write (flushed, retried: save_write.h)
-    std::string state_path(const std::string& name) const { return a.state_dir + "\\" + name + ".state"; }
+    std::string state_path(const std::string& name) const { return a.state_dir + plat::kSep + name + ".state"; }
     bool save_state(const std::string& name);
     bool load_state(const std::string& name);
     bool plan_matches(const std::string& state_file);   // port plan (4-pad adapter on/off) stored next to the state vs this run's
@@ -690,9 +718,15 @@ class Frontend {
     bool net_fail(const std::string& why)
     {
         net_rc = 12;
+#if RH_WIN
         if (const wchar_t* f = _wgetenv(L"RETRORUN_REASON_FILE")) {   // wide: the data dir may hold non-ASCII characters
             if (f[0]) if (FILE* fp = _wfopen(f, L"wb")) { fwrite(why.data(), 1, why.size(), fp); fclose(fp); }
         }
+#else
+        if (const char* f = std::getenv("RETRORUN_REASON_FILE")) {
+            if (f[0]) if (FILE* fp = std::fopen(f, "wb")) { fwrite(why.data(), 1, why.size(), fp); fclose(fp); }
+        }
+#endif
         return false;
     }
     /* Exit code when the session dies: 8 when a partner (usually the host) left on purpose or the host is gone, 4 for a plain connection loss. */
@@ -880,13 +914,13 @@ bool Frontend::setup_paths() {
     fs::create_directories(fs::u8path(a.save_dir), ec);
     fs::create_directories(fs::u8path(a.state_dir), ec);
     if (a.system_dir.empty()) {
-        a.system_dir = narrow((fs::path(winutil::exe_path_w()).parent_path() / L"system").wstring().c_str());
+        a.system_dir = (fs::u8path(winutil::exe_path()).parent_path() / "system").u8string();
     }
     fs::create_directories(fs::u8path(a.system_dir), ec);
     core.system_dir = a.system_dir;
     core.save_dir = a.save_dir;
-    userdata_dir = narrow((fs::path(winutil::exe_path_w()).parent_path() / L"userdata").wstring().c_str());
-    core.content_dir = narrow(fs::u8path(a.rom).parent_path().wstring().c_str());
+    userdata_dir = (fs::u8path(winutil::exe_path()).parent_path() / "userdata").u8string();
+    core.content_dir = fs::u8path(a.rom).parent_path().u8string();
     core.system_tag = a.system;
     is_ds = lower(a.system) == "nds";
     is_ps1 = lower(a.system) == "ps1";
@@ -925,7 +959,7 @@ bool Frontend::setup_paths() {
     if (lower(a.system) == "nes" && (!a.net.empty() || a.synctest)) core.overrides["nestopia_ram_power_state"] = "0x00";   // random power-on RAM would differ per PC
     if ((!a.net.empty() || a.synctest) && !a.link && !is_ds) core.overrides["sameboy_rtc"] = "accurate";   // cycle-based clock: wall time would desync lockstep
     rom_stem = a.save_stem.empty() ? fs::u8path(a.rom).stem().u8string() : a.save_stem;
-    srm_path = a.save_dir + "\\" + rom_stem + ".srm";
+    srm_path = a.save_dir + plat::kSep + rom_stem + ".srm";
     // The save folder is per game (same key on every PC), but the ROM file name is not: the same game
     // copied under another file name (e.g. "Other Name (USA).gba" on PC B) would look for its own .srm and
     // miss the synced save. If there is no <stem>.srm and exactly one .srm here, that is this game's save.
@@ -972,8 +1006,8 @@ bool Frontend::setup_paths() {
 
     // Option overrides: ini next to the parent of the save dir, then in the save dir, then --ini, then --opt.
     fs::path sd = fs::u8path(a.save_dir);
-    if (sd.has_parent_path()) load_ini(narrow((sd.parent_path() / L"retrorun.ini").wstring().c_str()), a.system, &core.overrides);
-    load_ini(narrow((sd / L"retrorun.ini").wstring().c_str()), a.system, &core.overrides);
+    if (sd.has_parent_path()) load_ini((sd.parent_path() / "retrorun.ini").u8string(), a.system, &core.overrides);
+    load_ini((sd / "retrorun.ini").u8string(), a.system, &core.overrides);
     if (!a.ini.empty()) load_ini(a.ini, a.system, &core.overrides);
     for (auto& o : a.opts) {
         size_t eq = o.find('=');
@@ -1579,7 +1613,11 @@ void Frontend::pump_events(bool idle) {
         else if (lockstep) lockstep->finish();
         finish();
         rumble_apply(false);   // ExitProcess skips closing the pads, which is what would stop a motor the core left running
+#if RH_WIN
         ExitProcess(0);
+#else
+        _exit(0);
+#endif
     }
 }
 
@@ -1668,12 +1706,12 @@ bool Frontend::slot2_prepare() {
     const std::string fname = vault.filename().u8string();
     /* The hub passes --slot2-backup-dir (under its data folder, so backups are not synced with the vault). Without it (a hand-made command line)
      * they stay next to the save, as before: a backup is never skipped. */
-    fs::path bdir = a.slot2_backup_dir.empty() ? vault.parent_path() / L"palpark_backup" : fs::u8path(a.slot2_backup_dir);
+    fs::path bdir = a.slot2_backup_dir.empty() ? vault.parent_path() / "palpark_backup" : fs::u8path(a.slot2_backup_dir);
     fs::create_directories(bdir, ec);
     char stamp[32];
     time_t now = time(nullptr);
     tm lt{};
-    localtime_s(&lt, &now);
+    plat::local_tm(now, &lt);
     strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &lt);
     std::vector<std::string> have;
     for (auto& de : fs::directory_iterator(bdir, ec)) { std::string n = de.path().filename().u8string(); if (slot2::is_backup_of(n, fname)) have.push_back(n); }
@@ -1688,7 +1726,7 @@ bool Frontend::slot2_prepare() {
     ec.clear();
     for (auto& de : fs::directory_iterator(bdir, ec)) { std::string n = de.path().filename().u8string(); if (n != bname && slot2::is_backup_of(n, fname)) names.push_back(n); }   // the backup just made is never pruned (a clock that went back sorts it oldest)
     for (auto& n : slot2::backups_to_prune(names, 2)) { fs::remove(bdir / fs::u8path(n), ec); rlog("slot2: old backup removed: %s", n.c_str()); }
-    fs::path wdir = fs::u8path(core.save_dir) / L"palpark" / std::to_wstring(GetCurrentProcessId());
+    fs::path wdir = fs::u8path(core.save_dir) / "palpark" / std::to_string(plat::current_pid());
     fs::create_directories(wdir, ec);
     fs::path work = wdir / vault.filename();
     if (!write_atomic(work.u8string(), slot2_orig_.data(), slot2_orig_.size())) { rlog("slot2: cannot make the scratch copy: the cartridge goes in without a save"); slot2_orig_.clear(); return true; }
@@ -1705,7 +1743,7 @@ void Frontend::slot2_commit() {
         std::vector<uint8_t> now_vault;
         read_file(slot2_vault_, &now_vault);
         if (!slot2_orig_.empty() && now_vault != slot2_orig_) {   // the vault file changed while we played (another PC synced it, or the GBA game ran): never overwrite it
-            const std::string side = slot2_vault_ + ".palpark-" + std::to_string(GetTickCount64()) + ".sav";
+            const std::string side = slot2_vault_ + ".palpark-" + std::to_string(plat::now_ms()) + ".sav";
             write_atomic(side, w.data(), w.size());
             rlog("slot2: the GBA save changed during the run, so the vault file was NOT replaced; the new Pal Park save is kept as %s", side.c_str());
         } else if (write_atomic(slot2_vault_, w.data(), w.size())) rlog("slot2: GBA save written back: %s (%zu bytes)", slot2_vault_.c_str(), w.size());
@@ -1788,13 +1826,13 @@ bool Frontend::save_state(const std::string& name) {
     if (!write_atomic(state_path(name), buf.data(), n)) { set_status("Save state failed (disk)"); return false; }
     { const std::string ps = retrorun::plan_signature(pplan) + "\n"; write_atomic(plan_file_for(state_path(name)), ps.data(), ps.size()); }
     {   // thumbnail + sidecar next to the state (runner_ctl.h contract)
-        write_frame_image_scaled(a.state_dir + "\\" + name + ".png", core.frame(), runctl::kThumbWidth);
+        write_frame_image_scaled(a.state_dir + plat::kSep + name + ".png", core.frame(), runctl::kThumbWidth);
         runctl::Sidecar sc;
         sc.game_key = a.game_key;
         sc.time = (long long)std::time(nullptr);
         sc.playtime = (long long)(SDL_GetTicks64() / 1000);
         sc.disc = is_ps1 ? (int)core.disc_index() : 0;
-        runctl::write_text_atomic(a.state_dir + "\\" + name + ".json", runctl::make_sidecar(sc));
+        runctl::write_text_atomic(a.state_dir + plat::kSep + name + ".json", runctl::make_sidecar(sc));
     }
     set_status("Saved state " + name);
     return true;
@@ -1802,7 +1840,7 @@ bool Frontend::save_state(const std::string& name) {
 
 bool Frontend::take_screenshot(std::string* where) {
     if (a.shot_dir.empty()) { set_status("Screenshots are not available here"); return false; }
-    std::string p = a.shot_dir + "\\" + runctl::shot_name(std::time(nullptr));
+    std::string p = a.shot_dir + plat::kSep + runctl::shot_name(std::time(nullptr));
     if (!write_frame_image(p, core.frame())) { set_status("Screenshot failed"); return false; }
     if (where) *where = p;
     set_status("Screenshot saved");
@@ -2096,16 +2134,16 @@ uint32_t fold32(uint64_t h) { return (uint32_t)(h ^ (h >> 32)); }
 
 /* Disc identity without reading 4 GB: size + 64 KiB blocks from 64 evenly spaced places (the first and the last included). */
 uint64_t disc_fingerprint(const std::string& path) {
-    FILE* f = _wfopen(fs::u8path(path).wstring().c_str(), L"rb");
+    FILE* f = plat::fopen_path(fs::u8path(path), "rb");
     if (!f) return 0;
-    _fseeki64(f, 0, SEEK_END);
-    long long size = _ftelli64(f);
+    plat::fseek64(f, 0, SEEK_END);
+    long long size = plat::ftell64(f);
     uint64_t h = fnv_mix(0xCBF29CE484222325ull, &size, sizeof size);
     std::vector<uint8_t> buf(65536);
     const int n = 64;
     for (int i = 0; i < n; i++) {
         long long off = size > (long long)buf.size() ? (size - (long long)buf.size()) / (n - 1) * i : 0;
-        _fseeki64(f, off, SEEK_SET);
+        plat::fseek64(f, off, SEEK_SET);
         size_t got = fread(buf.data(), 1, buf.size(), f);
         h = fnv_mix(h, buf.data(), got);
         if (size <= (long long)buf.size()) break;
@@ -2189,7 +2227,7 @@ bool Frontend::ps2_config_check() {
         if (now - t0 > 40000) { rlog("net: FAIL: not every PC reported its PS2 setup within 40 s"); net_rc = 4; return false; }
         pump_events(false);
         if (quit) return false;
-        Sleep(5);
+        plat::sleep_ms(5);
     }
 }
 
@@ -2215,7 +2253,7 @@ bool Frontend::ps2_card_presync() {
     while (!ps.ready()) {
         ps.update();
         if (ps.failed() || quit || hubnet::now_ms() - t0 > 60000) { rlog("net: card session failed: %s", ps.status().c_str()); net_rc = 4; ps.stop(); return false; }
-        Sleep(5);
+        plat::sleep_ms(5);
     }
     const std::string card = ps2_card_file(a.system_dir);
     std::error_code ec;
@@ -2261,7 +2299,7 @@ bool Frontend::ps2_card_presync() {
     fs::remove(fs::u8path(ps2_card_file(a.system_dir).substr(0, ps2_card_file(a.system_dir).size() - 7) + "2.ps2"), ec);   // slot 2 always starts blank
     ps.say_bye();
     uint32_t t1 = hubnet::now_ms();
-    while (hubnet::now_ms() - t1 < 300) { ps.update(); Sleep(5); }
+    while (hubnet::now_ms() - t1 < 300) { ps.update(); plat::sleep_ms(5); }
     ps.stop();
     return true;
 }
@@ -2345,7 +2383,7 @@ bool Frontend::ps1_config_check() {
         if (now - t0 > 40000) { rlog("net: FAIL: not every PC reported its PlayStation setup within 40 s"); return false; }
         pump_events(false);
         if (quit) return false;
-        Sleep(5);
+        plat::sleep_ms(5);
     }
 }
 
@@ -2520,7 +2558,7 @@ int Frontend::dj_attempt(int slot_try, bool first) {
         uint32_t now = hubnet::now_ms();
         if (now - t0 > 60000) { rlog("net: timed out waiting for the host (%s)", session.status().c_str()); net_rc = 11; return 2; }
         if (now - last > 2000) { last = now; rlog("net: %s", session.status().c_str()); }
-        Sleep(5);
+        plat::sleep_ms(5);
     }
     rlog("net: session ready as slot %d", session.my_slot());
     if (first) rb_warmup();
@@ -2651,7 +2689,7 @@ int Frontend::dj_attempt(int slot_try, bool first) {
                 dj_state_ = 2;
                 dj_catchup_ = true;
                 std::vector<uint8_t> dn = {spectate::kPktJoin, (uint8_t)a.slot, 9};
-                for (int i = 0; i < 6; i++) { session.send(0, dn.data(), (int)dn.size()); session.update(); Sleep(5); }
+                for (int i = 0; i < 6; i++) { session.send(0, dn.data(), (int)dn.size()); session.update(); plat::sleep_ms(5); }
                 set_status("You joined the game");
                 return 0;
             }
@@ -2659,7 +2697,7 @@ int Frontend::dj_attempt(int slot_try, bool first) {
             /* the host's window (carried in the Admit) minus 5 s of margin, counted from when the Admit arrived */
             if (rbe->join_admitted() && now - rbe->join_admit_at() > rbe->join_window_ms() - 5000) { rlog("dropin: could not catch up within the host's window"); fail_rc = 11; break; }
         }
-        Sleep(1);
+        plat::sleep_ms(1);
     }
     session.stop();
     rbe.reset();
@@ -2706,7 +2744,7 @@ bool Frontend::setup_net() {
         uint32_t now = hubnet::now_ms();
         if (now - t0 > 60000) { rlog("net: timed out waiting for peers (%s)", session.status().c_str()); return net_fail("Timed out waiting for the other players (" + session.status() + ")."); }
         if (now - last > 2000) { last = now; rlog("net: %s", session.status().c_str()); }
-        Sleep(5);
+        plat::sleep_ms(5);
     }
     rlog("net: session ready");
     if (a.spectate) {
@@ -2935,7 +2973,7 @@ bool Frontend::ls_spectator_live_join() {
             if (jc.download_stuck(now, dl_progress)) { rlog("spectate: the live state stopped arriving"); return false; }
         }
         if (session.failed() || now - last_rx > 15000) { rlog("net: connection lost while joining as a spectator"); return false; }
-        Sleep(1);
+        plat::sleep_ms(1);
     }
 }
 
@@ -3018,7 +3056,7 @@ bool Frontend::setup_link() {
         uint32_t now = hubnet::now_ms();
         if (now - t0 > 60000) { rlog("link: timed out waiting for peers (%s)", session.status().c_str()); return false; }
         if (now - last > 2000) { last = now; rlog("link: %s", session.status().c_str()); }
-        Sleep(5);
+        plat::sleep_ms(5);
     }
     rlog("link: session ready (%s)", session.status().c_str());
     link_active = true;
@@ -3052,14 +3090,13 @@ void Frontend::do_pacing() {
             }
             break;
         case Pace::Timer: {
-            LARGE_INTEGER now;
-            QueryPerformanceCounter(&now);
+            int64_t now = qpc_now();
             int64_t period = (int64_t)((double)qpc_freq / (fps * speed));
-            if (next_deadline == 0 || now.QuadPart - next_deadline > qpc_freq / 10) next_deadline = now.QuadPart;
+            if (next_deadline == 0 || now - next_deadline > qpc_freq / 10) next_deadline = now;
             next_deadline += period;
             while (!quit) {
-                QueryPerformanceCounter(&now);
-                int64_t left = next_deadline - now.QuadPart;
+                now = qpc_now();
+                int64_t left = next_deadline - now;
                 if (left <= 0) break;
                 if (left > qpc_freq / 500) SDL_Delay(1);
             }
@@ -3451,7 +3488,7 @@ void Frontend::spec_host_finish() {
         while (session.recv(&from, &m)) if (!m.empty() && m[0] == spectate::kPktAck) spec_host_->on_ack(from, m.data(), m.size(), hubnet::now_ms());
         spec_host_service();
         if (spec_host_->all_acked(session.spectator_mask()) && hubnet::now_ms() - t0 > 300) break;
-        Sleep(5);
+        plat::sleep_ms(5);
     }
     rlog("spectate: served %u frames; spectator hashes ok %u, different %u", spec_host_->total(), spec_host_->hashes_ok(), spec_host_->hashes_bad());
 }
@@ -3549,14 +3586,14 @@ int Frontend::run_rb_spectator() {
         if (jc.acks_allowed()) cli.service(now, a.slot, [this](int slot, const uint8_t* d, int n) { session.send(slot, d, n); });
         if (!jc.playing()) {
             if (session.failed() || (!session.ended() && now - last_rx_chk > 15000)) { rlog("net: connection lost, leaving"); rc = lost_code(); break; }
-            Sleep(1);
+            plat::sleep_ms(1);
             continue;
         }
         if (!cli.ready(f)) {
             if (cli.finished(f)) { rlog("spectate: the match ended"); if (a.frames < 0) rc = 8; break; }
             if (session.ended() && hubnet::now_ms() - last_rx_chk > 1500) { rlog("spectate: the host ended the session"); if (a.frames < 0) rc = 8; break; }
             if (!session.ended() && (session.failed() || hubnet::now_ms() - last_rx_chk > 10000)) { rlog("net: connection lost, leaving"); rc = lost_code(); break; }
-            Sleep(1);
+            plat::sleep_ms(1);
             continue;
         }
         last_rx_chk = hubnet::now_ms();
@@ -3771,9 +3808,7 @@ int Frontend::run(const Args& args) {
     Uint32 init = SDL_INIT_TIMER | SDL_INIT_EVENTS;
     if (!a.headless) init |= SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER;
     if (SDL_Init(init) != 0) { rlog("SDL_Init failed: %s", SDL_GetError()); return 1; }
-    LARGE_INTEGER fq;
-    QueryPerformanceFrequency(&fq);
-    qpc_freq = fq.QuadPart;
+    qpc_freq = qpc_frequency();
 
     core.on_rumble = [this](unsigned port, bool strong, uint16_t str) {   // libretro rumble -> the pad of that local port
         if (a.headless) return;
@@ -3908,7 +3943,12 @@ int Frontend::run(const Args& args) {
     if (!a.net.empty() && !a.link && !a.synctest) {   /* Gambatte keeps a cartridge clock on wall time: two PCs would drift apart. Normally the hub picks SameBoy; this catches an older host. */
         std::string gln = lower(core.info().library_name ? core.info().library_name : "");
         uint8_t ctype = 0;
-        if (gln.find("gambatte") != std::string::npos && gbcart::read_cart_type(fs::u8path(a.rom).wstring(), &ctype) && gbcart::gb_cart_has_clock(ctype)) {
+#if RH_WIN
+        const bool gb_ct = gbcart::read_cart_type(fs::u8path(a.rom).wstring(), &ctype);
+#else
+        const bool gb_ct = gbcart::read_cart_type(a.rom, &ctype);
+#endif
+        if (gln.find("gambatte") != std::string::npos && gb_ct && gbcart::gb_cart_has_clock(ctype)) {
             rlog("net: refused: Gambatte with a real-time clock cartridge (type 0x%02x)", (unsigned)ctype);
             net_fail("This game keeps its own clock, and the room's Game Boy core (Gambatte) can't keep it in step between PCs. The host can switch to SameBoy in Settings, or update RetroHub, and start the game again.");
             return net_rc;
@@ -4035,8 +4075,8 @@ int Frontend::run(const Args& args) {
                 if (rbe->connection_lost()) { rlog("net: connection lost, leaving"); rc = lost_code(); break; }
                 if (rbe->desync()) { rc = 5; break; }
                 if (a.frames < 0 && rbe->all_remote_left()) { rlog("net: every partner left, game ended"); rc = 8; break; }
-                if (st == rb::Engine::Status::Stalled) { Sleep(1); next_deadline = 0; continue; }
-                if (st == rb::Engine::Status::SyncWait) { Sleep((DWORD)(1000.0 / (fps > 1 ? fps : 60.0))); next_deadline = 0; continue; }   // re-anchor: otherwise pacing "catches up" the frame we just waited and time sync does nothing
+                if (st == rb::Engine::Status::Stalled) { plat::sleep_ms(1); next_deadline = 0; continue; }
+                if (st == rb::Engine::Status::SyncWait) { plat::sleep_ms((unsigned)(1000.0 / (fps > 1 ? fps : 60.0))); next_deadline = 0; continue; }   // re-anchor: otherwise pacing "catches up" the frame we just waited and time sync does nothing
                 cheats_poll();
                 disc_poll();
                 ctl_poll();
@@ -4079,7 +4119,7 @@ int Frontend::run(const Args& args) {
             rlog("done: %llu frames in %.2f s (%.1f fps)", (unsigned long long)frame_no, secs, secs > 0 ? frame_no / secs : 0.0);
             if (is_ps2) rlog("ps2 pad reads with buttons down: port0 %llu port1 %llu port2 %llu port3 %llu", ps2_port_hits[0], ps2_port_hits[1], ps2_port_hits[2], ps2_port_hits[3]);
             uint32_t t0 = hubnet::now_ms();
-            while (hubnet::now_ms() - t0 < 400) { session.update(); Sleep(5); }
+            while (hubnet::now_ms() - t0 < 400) { session.update(); plat::sleep_ms(5); }
         }
     } else {
         if (a.ds_link) {
@@ -4187,13 +4227,13 @@ int Frontend::run(const Args& args) {
             for (int i = 0; i < 4; i++) {
                 session.say_bye();
                 uint32_t t0 = hubnet::now_ms();
-                while (hubnet::now_ms() - t0 < 80) { session.update(); Sleep(5); }
+                while (hubnet::now_ms() - t0 < 80) { session.update(); plat::sleep_ms(5); }
             }
         }
         // Let the last input packets reach slower peers.
         if (online) {
             uint32_t t0 = hubnet::now_ms();
-            while (hubnet::now_ms() - t0 < 400) { session.update(); Sleep(5); }
+            while (hubnet::now_ms() - t0 < 400) { session.update(); plat::sleep_ms(5); }
             if (lockstep->desync_detected()) { rlog("RESULT: DESYNC detected"); rc = rc ? rc : 5; }
             if (rc == 0 && a.frames < 0 && lockstep->peer_left() && !lockstep->desync_detected()) { rlog("net: a partner left, game ended"); rc = 8; }
         }
@@ -4252,7 +4292,13 @@ done:
             else
                 rlog("screenshot: FAILED to write %s", a.screenshot.c_str());
         }
-        if (is_ps2 && rc != 0 && frame_no == 0) { std::fflush(nullptr); TerminateProcess(GetCurrentProcess(), (UINT)rc); }   // LRPS2 hangs when saving/unloading a VM that never ran a frame (failed setup check)
+        if (is_ps2 && rc != 0 && frame_no == 0) { std::fflush(nullptr);
+#if RH_WIN
+            TerminateProcess(GetCurrentProcess(), (UINT)rc);
+#else
+            _exit(rc);
+#endif
+        }   // LRPS2 hangs when saving/unloading a VM that never ran a frame (failed setup check)
         finish();
     }
     if (tex) SDL_DestroyTexture(tex);
@@ -4271,6 +4317,17 @@ done:
     return rc;
 }
 
+#if !RH_WIN
+int main(int argc, char** argv) {
+    std::vector<std::string> v;
+    for (int i = 1; i < argc; i++) if (hubprobe::is_flag(argv[i])) return hubprobe::run();   // firewall prompt probe (setup wizard)
+    for (int i = 1; i < argc; i++) v.push_back(argv[i]);
+    Args args;
+    if (!parse_args(v, &args)) return 2;
+    Frontend fe;
+    return fe.run(args);
+}
+#else
 int main() {
     int argc = 0;
     LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -4283,3 +4340,4 @@ int main() {
     Frontend fe;
     return fe.run(args);
 }
+#endif

@@ -71,7 +71,7 @@ void discord_tick() {
         std::string probe = hubdiscord::activity_json(o, p, 0, "0");
         if (probe == D.last_key) return;
         D.last_key = probe;
-        json = probe.empty() ? "" : hubdiscord::activity_json(o, p, (int)GetCurrentProcessId(), std::to_string(++D.nonce));
+        json = probe.empty() ? "" : hubdiscord::activity_json(o, p, (int)plat::current_pid(), std::to_string(++D.nonce));
     } else {
         if (D.last_key.empty()) return;   // never enabled this run: stay completely idle
         D.last_key.clear();

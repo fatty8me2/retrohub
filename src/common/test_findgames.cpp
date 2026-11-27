@@ -1,5 +1,6 @@
 // Console unit test for findgames.cpp (ranking / collapsing + a bounded scan of a scratch tree). Exit code 0 = all passed.
 #include "findgames.h"
+#include "test_platform_paths.h"
 
 #include <atomic>
 #include <chrono>
@@ -16,7 +17,7 @@ namespace fs = std::filesystem;
 static int g_fail = 0;
 #define CHECK(cond) do { if (!(cond)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); ++g_fail; } } while (0)
 
-static DirCount dc(const char* path, int sys, int n, int arch = 0) {
+static DirCount dc(const std::string& path, int sys, int n, int arch = 0) {
     DirCount d;
     d.path = path;
     if (sys >= 0) d.c.n[sys] = n;
@@ -46,44 +47,44 @@ int main() {
     }
     CHECK(classify_ext(".z64") == N64 && classify_ext(".rvz") == GC && classify_ext(".gbc") == GBC && classify_ext(".wua") == WIIU);
     CHECK(classify_ext(".zip") == kArchive && classify_ext(".7z") == kArchive && classify_ext(".txt") == kNone && classify_ext("") == kNone);
-    CHECK(norm_path("C:/Users/A/") == "c:\\users\\a" && skip_dir_name("Windows") && skip_dir_name("$RECYCLE.BIN") && !skip_dir_name("Roms"));
+    CHECK(norm_path(wp("C:/Users/A/")) == wp("c:\\users\\a") && skip_dir_name("Windows") && skip_dir_name("$RECYCLE.BIN") && !skip_dir_name("Roms"));
 
-    const std::vector<Root> roots = {{"C:\\U\\Desktop", false}, {"C:\\U\\Documents", false}, {"C:\\U\\Documents\\RetroHub Games", true}, {"D:\\Games", true}};
+    const std::vector<Root> roots = {{wp("C:\\U\\Desktop"), false}, {wp("C:\\U\\Documents"), false}, {wp("C:\\U\\Documents\\RetroHub Games"), true}, {wp("D:\\Games"), true}};
 
     /* siblings collapse into their parent; the parent narrows to the deepest common folder */
     {
-        auto r = collapse_folders({dc("C:\\U\\Desktop\\Emu\\Roms\\N64", N64, 5), dc("C:\\U\\Desktop\\Emu\\Roms\\GBA", GBA, 3), dc("C:\\U\\Desktop\\Emu\\Roms", GB, 1)}, roots);
-        CHECK(r.size() == 1 && r[0].path == "C:\\U\\Desktop\\Emu\\Roms" && r[0].c.games() == 9 && r[0].c.n[N64] == 5 && r[0].ticked);
+        auto r = collapse_folders({dc(wp("C:\\U\\Desktop\\Emu\\Roms\\N64"), N64, 5), dc(wp("C:\\U\\Desktop\\Emu\\Roms\\GBA"), GBA, 3), dc(wp("C:\\U\\Desktop\\Emu\\Roms"), GB, 1)}, roots);
+        CHECK(r.size() == 1 && r[0].path == wp("C:\\U\\Desktop\\Emu\\Roms") && r[0].c.games() == 9 && r[0].c.n[N64] == 5 && r[0].ticked);
     }
     /* a single leaf stays as deep as its files; two groups rank by game count */
     {
-        auto r = collapse_folders({dc("C:\\U\\Desktop\\A\\B\\C", N64, 2), dc("C:\\U\\Documents\\Big", NDS, 40)}, roots);
-        CHECK(r.size() == 2 && r[0].path == "C:\\U\\Documents\\Big" && r[1].path == "C:\\U\\Desktop\\A\\B\\C");
+        auto r = collapse_folders({dc(wp("C:\\U\\Desktop\\A\\B\\C"), N64, 2), dc(wp("C:\\U\\Documents\\Big"), NDS, 40)}, roots);
+        CHECK(r.size() == 2 && r[0].path == wp("C:\\U\\Documents\\Big") && r[1].path == wp("C:\\U\\Desktop\\A\\B\\C"));
     }
     /* stray files straight in Desktop never make a row; few zips are noise, three or more are a library */
     {
-        auto r = collapse_folders({dc("C:\\U\\Desktop", GBA, 9), dc("C:\\U\\Desktop\\Z1", -1, 0, 2), dc("C:\\U\\Desktop\\Z2", -1, 0, 3)}, roots);
-        CHECK(r.size() == 1 && r[0].path == "C:\\U\\Desktop\\Z2" && r[0].c.archives == 3 && r[0].c.games() == 0);
+        auto r = collapse_folders({dc(wp("C:\\U\\Desktop"), GBA, 9), dc(wp("C:\\U\\Desktop\\Z1"), -1, 0, 2), dc(wp("C:\\U\\Desktop\\Z2"), -1, 0, 3)}, roots);
+        CHECK(r.size() == 1 && r[0].path == wp("C:\\U\\Desktop\\Z2") && r[0].c.archives == 3 && r[0].c.games() == 0);
     }
     /* library roots are rows themselves (never narrowed) and win over the generic root they sit in; case/slash-insensitive */
     {
-        auto r = collapse_folders({dc("c:/u/documents/retrohub games/N64", N64, 2), dc("C:\\U\\Documents\\RetroHub Games\\GBA\\Hacks", GBA, 1), dc("D:\\Games\\X", GC, 4)}, roots);
-        CHECK(r.size() == 2 && r[0].path == "D:\\Games" && r[0].c.games() == 4);
-        CHECK(r[1].path == "C:\\U\\Documents\\RetroHub Games" && r[1].c.games() == 3);
+        auto r = collapse_folders({dc(wp("c:/u/documents/retrohub games/N64"), N64, 2), dc(wp("C:\\U\\Documents\\RetroHub Games\\GBA\\Hacks"), GBA, 1), dc(wp("D:\\Games\\X"), GC, 4)}, roots);
+        CHECK(r.size() == 2 && r[0].path == wp("D:\\Games") && r[0].c.games() == 4);
+        CHECK(r[1].path == wp("C:\\U\\Documents\\RetroHub Games") && r[1].c.games() == 3);
     }
     /* a folder under no root still becomes a row; empty dirs are ignored */
     {
-        auto r = collapse_folders({dc("E:\\Stuff\\Carts", GBC, 1), dc("E:\\Stuff\\Empty", -1, 0)}, roots);
-        CHECK(r.size() == 1 && r[0].path == "E:\\Stuff\\Carts");
+        auto r = collapse_folders({dc(wp("E:\\Stuff\\Carts"), GBC, 1), dc(wp("E:\\Stuff\\Empty"), -1, 0)}, roots);
+        CHECK(r.size() == 1 && r[0].path == wp("E:\\Stuff\\Carts"));
     }
     /* emulator config parsers */
     {
-        auto d = parse_dolphin_ini_paths("[General]\r\nISOPaths = 2\r\nISOPath0 = D:\\GC Games\r\nISOPath1=E:/Wii\r\nISOPath2 = relative\r\n");
-        CHECK(d.size() == 2 && d[0] == "D:\\GC Games" && d[1] == "E:\\Wii");
-        auto c = parse_cemu_xml_paths("<content><GamePaths><Entry>F:\\WiiU</Entry><Entry>F:\\WiiU</Entry></GamePaths><Other><Entry>X:\\no</Entry></Other></content>");
-        CHECK(c.size() == 1 && c[0] == "F:\\WiiU");
-        auto q = parse_qt_gamedirs("[UI]\nPaths\\gamedirs\\size=1\nPaths\\gamedirs\\1\\path=G:/3DS\nPaths\\gamedirs\\1\\deep=false\n");
-        CHECK(q.size() == 1 && q[0] == "G:\\3DS");
+        auto d = parse_dolphin_ini_paths("[General]\r\nISOPaths = 2\r\nISOPath0 = " + wp("D:\\GC Games") + "\r\nISOPath1=" + wp("E:/Wii") + "\r\nISOPath2 = relative\r\n");
+        CHECK(d.size() == 2 && d[0] == wp("D:\\GC Games") && d[1] == wp("E:\\Wii"));
+        auto c = parse_cemu_xml_paths("<content><GamePaths><Entry>" + wp("F:\\WiiU") + "</Entry><Entry>" + wp("F:\\WiiU") + "</Entry></GamePaths><Other><Entry>" + wp("X:\\no") + "</Entry></Other></content>");
+        CHECK(c.size() == 1 && c[0] == wp("F:\\WiiU"));
+        auto q = parse_qt_gamedirs("[UI]\nPaths\\gamedirs\\size=1\nPaths\\gamedirs\\1\\path=" + wp("G:/3DS") + "\nPaths\\gamedirs\\1\\deep=false\n");
+        CHECK(q.size() == 1 && q[0] == wp("G:\\3DS"));
     }
 
     /* the real walk on a scratch tree: depth cap, skipped system folders, junction loop, cancel */
@@ -100,8 +101,12 @@ int main() {
         touch(base / "Downloads" / "node_modules" / "m.gba");
         touch(base / "Documents" / "a" / "b" / "c" / "d" / "e" / "too_deep.gba");
         touch(base / "Games" / "wiiu" / "game.wua");
+#if RH_WIN
         std::string cmd = "mklink /J \"" + (base / "Desktop" / "Emu" / "loop").string() + "\" \"" + (base / "Desktop").string() + "\" >nul 2>&1";
         std::system(cmd.c_str());
+#else
+        fs::create_directory_symlink(base / "Desktop", base / "Desktop" / "Emu" / "loop", ec);   // a link loop, like the junction on Windows
+#endif
         std::vector<Root> rs = {{(base / "Desktop").string(), false}, {(base / "Downloads").string(), false}, {(base / "Documents").string(), false},
                                 {(base / "Games").string(), true}};
         Control ctl;

@@ -5,6 +5,11 @@
  * <data_dir>\tpak_backups, outside the vault so they are not synced), and when the run ends the GB game gets the same bookkeeping as a GB play:
  * meta.json touched, history snapshot, cloud push queued. */
 #include "app.h"
+#if RH_WIN
+#define HUB_BS "\\"
+#else
+#define HUB_BS "/"
+#endif
 #include "wave3_hooks.h"
 #include "transferpak_logic.h"
 #include "savestore.h"
@@ -77,7 +82,7 @@ std::vector<std::string> list_names(const std::string& dir) {
 
 std::string vault_save_path(const hub::GameEntry& gb) {
     std::string dir = no_slash(hub::saves::battery_dir(sys_short(gb), gb.key));
-    return dir + "\\" + tp::save_file_name(gb.path, gb.save_stem, list_names(dir));
+    return dir + "" HUB_BS "" + tp::save_file_name(gb.path, gb.save_stem, list_names(dir));
 }
 
 bool same_bytes(const fs::path& a, const fs::path& b) {
@@ -93,7 +98,7 @@ bool backup_save(const hub::GameEntry& gb, const std::string& save) {
     if (!fs::exists(fs::u8path(save), ec)) return true;   // nothing to lose yet
     std::string folder = gb.key;   // keys look like "gb:abcd-1234": ':' is not allowed in a Windows folder name
     for (char& c : folder) if (!(std::isalnum((unsigned char)c) || c == '.' || c == '-' || c == '_')) c = '_';
-    fs::path dir = fs::u8path(hub::data_dir() + "tpak_backups\\" + folder);
+    fs::path dir = fs::u8path(hub::data_dir() + "tpak_backups" HUB_BS "" + folder);
     fs::create_directories(dir, ec);
     if (!fs::is_directory(dir, ec)) return false;
     std::string name = fs::u8path(save).filename().u8string();
@@ -101,7 +106,7 @@ bool backup_save(const hub::GameEntry& gb, const std::string& save) {
     for (auto& n : list_names(dir.u8string())) if (n.rfind(name + ".", 0) == 0) have.push_back(n);
     std::sort(have.begin(), have.end());
     if (!have.empty() && same_bytes(fs::u8path(save), dir / fs::u8path(have.back()))) return true;
-    char stamp[32]; std::time_t t = std::time(nullptr); std::tm lt{}; localtime_s(&lt, &t);
+    char stamp[32]; std::time_t t = std::time(nullptr); std::tm lt{}; plat::local_tm(t, &lt);
     std::strftime(stamp, sizeof stamp, "%Y%m%d%H%M%S", &lt);
     std::string bn = tp::backup_name(name, stamp);
     for (int i = 1; fs::exists(dir / fs::u8path(bn), ec) && i < 100; ++i) bn = tp::backup_name(name, std::string(stamp) + "-" + std::to_string(i));   // same second: never overwrite a backup

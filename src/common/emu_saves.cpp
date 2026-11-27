@@ -1,12 +1,16 @@
 #include "emu_saves.h"
 #include "durable_write.h"
+#include "plat/plat.h"
 
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#endif
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -37,7 +41,7 @@ std::string hex8(uint32_t v) {
 }
 
 std::string with_sep(std::string d) {
-    if (!d.empty() && d.back() != '\\' && d.back() != '/') d.push_back('\\');
+    if (!d.empty() && d.back() != '\\' && d.back() != '/') d.push_back(plat::kSep);   // '\\' on Windows
     return d;
 }
 
@@ -68,7 +72,11 @@ bool copy_keep_time(const fs::path& from, const fs::path& to, std::error_code& e
     if (!ec) fs::last_write_time(tmp, t, ec);
     ec.clear();
     if (!durable::commit_replace(tmp.wstring(), to.wstring(), durable::kRetryLongMs)) {   // flush, then one atomic replace of an existing file
+#if RH_WIN
         ec = std::error_code((int)GetLastError(), std::system_category());
+#else
+        ec = std::error_code(errno, std::system_category());
+#endif
         std::error_code e2; fs::remove(tmp, e2);
         return false;
     }

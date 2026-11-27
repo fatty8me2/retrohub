@@ -12,12 +12,15 @@
 #include "../common/library.h"
 #include "../common/winutil.h"
 
+#include "../common/plat/plat.h"
+#if RH_WIN
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mftransform.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -98,6 +101,8 @@ bool ready(std::string* why, const std::string& dir_in, Flavor f) {
     const FlavorInfo& fi = info(f);
     const fs::path d = P(dir_in.empty() ? game_dir(f) : dir_in);
     auto miss = [&](const std::string& what) { if (why) *why = what; return false; };
+    // TODO(macOS lane 7): the native port is built for Windows (hookshot.exe, hookshot_vk.dll, SDL2.dll); nothing builds it on macOS yet
+    // (hookshot_build.cpp returns "not supported"), so this honestly answers "not built yet" there. The checks stay the same on every platform.
     std::error_code ec;
     const fs::path exe = d / P(fi.exe_rel), bin = exe.parent_path();
     if (!fs::is_regular_file(exe, ec)) return miss("not built yet");
@@ -127,6 +132,9 @@ bool use_for(const hub::GameEntry& e, const Values& v) {
     return d.choice == Choice::Native && d.flavor == Flavor::Hookshot;
 }
 
+#if !RH_WIN
+static bool av1_probe() { return false; }   // TODO(macOS lane 7): Media Foundation is Windows-only; the native port itself is not supported on macOS yet
+#else
 static bool av1_probe() {
     const HRESULT hs = MFStartup(MF_VERSION, MFSTARTUP_LITE);
     if (FAILED(hs)) return false;
@@ -142,6 +150,7 @@ static bool av1_probe() {
     MFShutdown();
     return found;
 }
+#endif
 
 bool av1_decoder_present(bool force_recheck) {
     static std::mutex mu;
@@ -164,8 +173,13 @@ hubemu::SaveSession begin_save_session(const hub::GameEntry& e, const std::strin
     }
     /* vault layout: system dir / game dir / battery -> _conflicts/<system>/<game>/battery; manifest .sync/emu-<system>-<game>-hookshot.json */
     const fs::path game = P(battery).parent_path(), sysdir = game.parent_path(), vault = sysdir.parent_path();
+#if RH_WIN
     s.backup_dir = S(vault / L"_conflicts" / sysdir.filename() / game.filename() / L"battery");
     s.manifest_path = S(vault / L".sync" / (L"emu-" + sysdir.filename().wstring() + L"-" + game.filename().wstring() + winutil::to_wide(info(f).manifest_suffix) + L".json"));
+#else
+    s.backup_dir = S(vault / "_conflicts" / sysdir.filename() / game.filename() / "battery");
+    s.manifest_path = S(vault / ".sync" / ("emu-" + S(sysdir.filename()) + "-" + S(game.filename()) + info(f).manifest_suffix + ".json"));
+#endif
     s.emu_root = user_dir(f);
     s.rels = {kSaveRel};
     char tb[24];

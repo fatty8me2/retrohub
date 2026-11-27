@@ -10,18 +10,27 @@
 
 #include "durable_write.h"
 
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <unistd.h>
+#endif
+#include "plat/plat.h"
 
 namespace u8file {
 
 /* fopen by UTF-8 path (mode is ASCII, e.g. "rb"). nullptr on failure. */
 inline FILE* fopen_utf8(const std::string& path, const char* mode) {
+#if !RH_WIN
+    return std::fopen(path.c_str(), mode);   // macOS: paths are UTF-8 already
+#else
     std::wstring wm;
     for (const char* m = mode; *m; ++m) wm += (wchar_t)(unsigned char)*m;
     return _wfopen(durable::utf8_to_wide(path).c_str(), wm.c_str());
+#endif
 }
 
 /* Whole file, binary. false when it cannot be opened. */
@@ -38,10 +47,18 @@ inline bool slurp(const std::string& path, std::string* out) {
 
 /* Stream opens by UTF-8 path. */
 inline std::ifstream open_in(const std::string& path, std::ios::openmode m = std::ios::in) {
+#if RH_WIN
     return std::ifstream(durable::utf8_to_wide(path), m);
+#else
+    return std::ifstream(path, m);
+#endif
 }
 inline std::ofstream open_out(const std::string& path, std::ios::openmode m = std::ios::out) {
+#if RH_WIN
     return std::ofstream(durable::utf8_to_wide(path), m);
+#else
+    return std::ofstream(path, m);
+#endif
 }
 
 /* ---- account_code.txt: the saved account code (how a player gets back into their cloud saves). ----
@@ -65,8 +82,12 @@ inline bool write_account_code(const std::string& path, const std::string& code)
 /* The saved code belonged to the previous account. A plain delete when the path reads the same in the ANSI code page (identical to the
  * old std::remove); otherwise an empty file at the correct path, so the read does not fall back to a stale legacy file. */
 inline void clear_account_code(const std::string& path) {
+#if RH_WIN
     if (durable::legacy_ansi_to_wide(path) == durable::utf8_to_wide(path)) DeleteFileW(durable::utf8_to_wide(path).c_str());
     else durable::write_file_atomic_utf8(path, std::string());
+#else
+    unlink(path.c_str());   // no legacy location on macOS
+#endif
 }
 
 }  // namespace u8file

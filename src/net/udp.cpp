@@ -7,25 +7,10 @@
 #include <cstring>
 #include <random>
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <mstcpip.h>
-
-#ifndef SIO_UDP_CONNRESET
-#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
-#endif
+#include "plat/plat_sock.h"
 
 namespace hubnet {
 namespace detail {
-
-static bool wsa_start()
-{
-    static bool ok = [] {
-        WSADATA d;
-        return WSAStartup(MAKEWORD(2, 2), &d) == 0;
-    }();
-    return ok;
-}
 
 std::string Addr::str() const
 {
@@ -36,7 +21,7 @@ std::string Addr::str() const
 
 bool parse_addr(const std::string& text, Addr* out)
 {
-    wsa_start();
+    plat::sock_init();
     size_t colon = text.rfind(':');
     if (colon == std::string::npos || colon == 0 || colon + 1 >= text.size()) return false;
     std::string host = text.substr(0, colon);
@@ -59,35 +44,32 @@ bool parse_addr(const std::string& text, Addr* out)
 
 /* ---- UdpSocket ---- */
 
-UdpSocket::UdpSocket() : sock_((uintptr_t)INVALID_SOCKET) {}
+UdpSocket::UdpSocket() : sock_((uintptr_t)plat::kBadSocket) {}
 UdpSocket::~UdpSocket() { close(); }
 
-bool UdpSocket::is_open() const { return sock_ != (uintptr_t)INVALID_SOCKET; }
+bool UdpSocket::is_open() const { return sock_ != (uintptr_t)plat::kBadSocket; }
 
 bool UdpSocket::open()
 {
     close();
-    if (!wsa_start()) return false;
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (s == INVALID_SOCKET) return false;
-    u_long nb = 1;
-    ioctlsocket(s, FIONBIO, &nb);
-    BOOL no = FALSE;
-    DWORD ret = 0;
-    WSAIoctl(s, SIO_UDP_CONNRESET, &no, sizeof(no), nullptr, 0, &ret, nullptr, nullptr);
+    if (!plat::sock_init()) return false;
+    plat::socket_t s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == plat::kBadSocket) return false;
+    plat::sock_set_nonblocking(s, true);
+    plat::udp_ignore_connreset(s);
     int buf = 1 << 20;
-    setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char*)&buf, sizeof(buf));
-    setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char*)&buf, sizeof(buf));
+    plat::sock_setopt(s, SOL_SOCKET, SO_RCVBUF, buf);
+    plat::sock_setopt(s, SOL_SOCKET, SO_SNDBUF, buf);
     sockaddr_in sa = {};
     sa.sin_family = AF_INET;
     /* HUBNET_LOOPBACK=1 (QA only): bind 127.0.0.1 so headless test peers never open a firewall prompt. */
     sa.sin_addr.s_addr = htonl(loopback_mode() ? INADDR_LOOPBACK : INADDR_ANY);
     sa.sin_port = 0;
     if (bind(s, (sockaddr*)&sa, sizeof(sa)) != 0) {
-        closesocket(s);
+        plat::sock_close(s);
         return false;
     }
-    int len = sizeof(sa);
+    plat::socklen len = sizeof(sa);
     getsockname(s, (sockaddr*)&sa, &len);
     port_ = ntohs(sa.sin_port);
     sock_ = (uintptr_t)s;
@@ -96,8 +78,8 @@ bool UdpSocket::open()
 
 void UdpSocket::close()
 {
-    if (is_open()) closesocket((SOCKET)sock_);
-    sock_ = (uintptr_t)INVALID_SOCKET;
+    if (is_open()) plat::sock_close((plat::socket_t)sock_);
+    sock_ = (uintptr_t)plat::kBadSocket;
     port_ = 0;
 }
 
@@ -108,15 +90,15 @@ bool UdpSocket::send_to(const Addr& to, const void* data, int len)
     sa.sin_family = AF_INET;
     sa.sin_addr.s_addr = htonl(to.ip);
     sa.sin_port = htons(to.port);
-    return sendto((SOCKET)sock_, (const char*)data, len, 0, (sockaddr*)&sa, sizeof(sa)) == len;
+    return sendto((plat::socket_t)sock_, (const char*)data, len, 0, (sockaddr*)&sa, sizeof(sa)) == len;
 }
 
 int UdpSocket::recv_from(Addr* from, void* buf, int cap)
 {
     if (!is_open()) return 0;
     sockaddr_in sa;
-    int sl = sizeof(sa);
-    int n = recvfrom((SOCKET)sock_, (char*)buf, cap, 0, (sockaddr*)&sa, &sl);
+    plat::socklen sl = sizeof(sa);
+    int n = recvfrom((plat::socket_t)sock_, (char*)buf, cap, 0, (sockaddr*)&sa, &sl);
     if (n <= 0) return 0;
     from->ip = ntohl(sa.sin_addr.s_addr);
     from->port = ntohs(sa.sin_port);
@@ -128,8 +110,8 @@ std::string UdpSocket::local_endpoint() const
     if (!is_open()) return "-";
     if (loopback_mode()) return "127.0.0.1:" + std::to_string(port_);
     /* Connecting a throwaway UDP socket sends nothing but makes the OS pick the outbound interface. */
-    SOCKET probe = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (probe == INVALID_SOCKET) return "-";
+    plat::socket_t probe = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (probe == plat::kBadSocket) return "-";
     std::string out = "-";
     sockaddr_in remote = {};
     remote.sin_family = AF_INET;
@@ -137,7 +119,7 @@ std::string UdpSocket::local_endpoint() const
     inet_pton(AF_INET, "8.8.8.8", &remote.sin_addr);
     if (connect(probe, (sockaddr*)&remote, sizeof(remote)) == 0) {
         sockaddr_in name = {};
-        int nl = sizeof(name);
+        plat::socklen nl = sizeof(name);
         if (getsockname(probe, (sockaddr*)&name, &nl) == 0 && name.sin_addr.s_addr != 0) {
             Addr a;
             a.ip = ntohl(name.sin_addr.s_addr);
@@ -145,7 +127,7 @@ std::string UdpSocket::local_endpoint() const
             out = a.str();
         }
     }
-    closesocket(probe);
+    plat::sock_close(probe);
     return out;
 }
 

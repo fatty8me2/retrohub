@@ -1,18 +1,25 @@
 #include "winutil.h"
 #include "netplay_3ds_run.h"
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "plat/plat_sock.h"
+#if RH_WIN
 #include <windows.h>
+#endif
 
 #include <atomic>
 #include <cstdlib>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <thread>
 
+#if RH_WIN
 #include <mmsystem.h>
 #pragma comment(lib, "winmm.lib")
+#else
+#include "plat/plat_proc.h"
+#include "plat/plat_wake.h"
+#endif
 
 #include "session.h"
 
@@ -21,13 +28,26 @@ namespace hubnp3ds {
 /* GameCube: a guest may still be unpacking/hashing a disc or starting Dolphin; Dolphin NetPlay holds a long game, so be patient. */
 static const uint32_t kGcReadyMs = 90000, kGcSilenceMs = 30000;
 
+#if RH_WIN
 static std::wstring W(const std::string& s) { return winutil::to_wide(s); }
+#else
+using SOCKET = plat::socket_t;
+static const SOCKET INVALID_SOCKET = plat::kBadSocket;
+static inline int closesocket(SOCKET s) { return plat::sock_close(s); }
+#endif
 
 std::string room_exe_for(const std::string& azahar_exe) {
+#if !RH_WIN
+    // TODO(macOS lane 7): Azahar ships as a .app; azahar-room is expected beside the azahar executable (Contents/MacOS).
+    std::error_code ec;
+    std::filesystem::path r = std::filesystem::path(azahar_exe).parent_path() / "azahar-room";
+    return std::filesystem::exists(r, ec) ? r.string() : "";
+#else
     size_t p = azahar_exe.find_last_of("\\/");
     if (p == std::string::npos) return "";
     std::string r = azahar_exe.substr(0, p + 1) + "azahar-room.exe";
     return GetFileAttributesW(W(r).c_str()) != INVALID_FILE_ATTRIBUTES ? r : "";
+#endif
 }
 
 struct Runner::Impl {
@@ -35,7 +55,11 @@ struct Runner::Impl {
     Plan plan;
     std::string status = "idle";
     hubnet::Session sess;
+#if RH_WIN
     HANDLE job = nullptr, proc = nullptr, stdin_w = nullptr;
+#else
+    plat::proc::Child room;   // azahar-room (own process group)
+#endif
     std::map<int, SOCKET> host_sock;   // guest slot -> socket talking to azahar-room
     SOCKET guest_sock = INVALID_SOCKET;
     sockaddr_in guest_client{};
@@ -57,14 +81,13 @@ struct Runner::Impl {
     static SOCKET udp(int port, int* bound) {
         SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (s == INVALID_SOCKET) return s;
-        u_long nb = 1;
-        ioctlsocket(s, FIONBIO, &nb);
+        plat::sock_set_nonblocking(s, true);
         sockaddr_in a{};
         a.sin_family = AF_INET;
         a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        a.sin_port = htons((u_short)port);
+        a.sin_port = htons((uint16_t)port);
         if (bind(s, (sockaddr*)&a, sizeof a) != 0) { closesocket(s); return INVALID_SOCKET; }
-        int len = sizeof a;
+        plat::socklen len = sizeof a;
         getsockname(s, (sockaddr*)&a, &len);
         if (bound) *bound = ntohs(a.sin_port);
         return s;
@@ -73,7 +96,7 @@ struct Runner::Impl {
         sockaddr_in a{};
         a.sin_family = AF_INET;
         a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        a.sin_port = htons((u_short)plan.port);
+        a.sin_port = htons((uint16_t)plan.port);
         return a;
     }
     void send_out(int to_slot, const char* d, int n) {
@@ -83,10 +106,30 @@ struct Runner::Impl {
     /* One event wakes the thread for anything to forward: Dolphin's local sockets and the Session's UDP socket (WSAEventSelect FD_READ)
      * and queued relay frames (Session::set_wake_event). Waking on data does not depend on the timer resolution (a 1 ms select/Sleep
      * timeout becomes ~16 ms when Windows does not grant 1 ms timers, measured: 30 ms loopback round trip). */
+#if RH_WIN
     WSAEVENT wake = WSA_INVALID_EVENT;
     void watch(SOCKET s) { if (wake != WSA_INVALID_EVENT && s != INVALID_SOCKET) WSAEventSelect(s, wake, FD_READ); }
+#else
+    /* macOS: a plat::Waker (signalled by Session for relay frames) plus poll() on the local sockets and the Session's UDP socket,
+     * so any data wakes the loop at once; the 5 ms timeout only paces keepalives / timeouts, as on Windows. */
+    plat::Waker* wake = nullptr;
+    void watch(SOCKET) {}
+#endif
     void step();
     void forward_loop() {
+#if !RH_WIN
+        while (!quit.load()) {
+            { std::lock_guard<std::recursive_mutex> g(mu); step(); }
+            std::vector<int> fds;
+            { std::lock_guard<std::recursive_mutex> g(mu);
+              if (guest_sock != INVALID_SOCKET) fds.push_back((int)guest_sock);
+              for (auto& kv : host_sock) fds.push_back((int)kv.second);
+              if (sess.udp_socket() >= 0) fds.push_back((int)sess.udp_socket()); }
+            plat::wait_readable(*wake, fds, 5);
+        }
+        return;
+#endif
+#if RH_WIN
         timeBeginPeriod(1);
         while (!quit.load()) {
             WSAResetEvent(wake);   // before draining: anything arriving after this sets it again
@@ -94,14 +137,22 @@ struct Runner::Impl {
             WaitForSingleObject(wake, 5);   // data wakes it at once; the timeout only paces keepalives / timeouts
         }
         timeEndPeriod(1);
+#endif
     }
     void start_thread() {
+#if RH_WIN
         wake = WSACreateEvent();
         if (wake == WSA_INVALID_EVENT) return;   // no event: stay on the UI-loop pump rather than spin
         threaded = true;
         watch(guest_sock);
         for (auto& kv : host_sock) watch(kv.second);
         sess.set_wake_event(wake);
+#else
+        wake = new plat::Waker();
+        if (!wake->ok()) { delete wake; wake = nullptr; return; }
+        threaded = true;
+        sess.set_wake_event(wake);
+#endif
         th = std::thread([this] { forward_loop(); });
     }
     void pump() {
@@ -117,7 +168,7 @@ struct Runner::Impl {
         } else if (guest_sock != INVALID_SOCKET) {
             for (;;) {
                 sockaddr_in from{};
-                int fl = sizeof from;
+                plat::socklen fl = sizeof from;
                 int n = recvfrom(guest_sock, buf, sizeof buf, 0, (sockaddr*)&from, &fl);
                 if (n <= 0) break;
                 guest_client = from;
@@ -153,8 +204,12 @@ Runner::~Runner() { stop(); }
 
 static bool wsa_init(Runner*, bool* flag) {
     if (*flag) return true;
+#if RH_WIN
     WSADATA w;
     *flag = WSAStartup(MAKEWORD(2, 2), &w) == 0;
+#else
+    *flag = plat::sock_init();
+#endif
     return *flag;
 }
 
@@ -166,6 +221,7 @@ bool Runner::start_host(const std::string& server, const std::string& code, int 
     if (!wsa_init(this, &m.wsa)) { if (err) *err = "winsock unavailable"; return false; }
     m.host = true;
     m.plan = plan;
+#if RH_WIN
     /* kill-on-close job so the room never outlives RetroHub; a held stdin pipe keeps the room from seeing EOF */
     m.job = CreateJobObjectW(nullptr, nullptr);
     if (m.job) {
@@ -201,6 +257,24 @@ bool Runner::start_host(const std::string& server, const std::string& code, int 
     CloseHandle(pi.hThread);
     m.proc = pi.hProcess;
     m.stdin_w = w;
+#else
+    {
+        /* own process group: stop() kill_tree()s it. TODO(macOS lane 6a/7): plat::proc::spawn gives the child no held stdin pipe;
+         * if azahar-room exits on stdin EOF there, add a stdin option to SpawnOptions. */
+        plat::proc::SpawnOptions o;
+        o.exe = room_exe;
+        o.args = {"--port", std::to_string(plan.port), "--room-name", "RetroHub", "--max_members", std::to_string(kMaxMembers),
+                  "--preferred-app", "RetroHub", "--preferred-app-id", "0"};   // same switches as room_args()
+        if (!plan.password.empty()) { o.args.push_back("--password"); o.args.push_back(plan.password); }
+        o.args.push_back("--log-file");
+        o.args.push_back(plat::join(work_dir, "azahar-room.log"));
+        o.cwd = work_dir;
+        o.stdout_path = o.stderr_path = plat::join(work_dir, "azahar-room.out");
+        o.activate = false;
+        std::string se;
+        if (!plat::proc::spawn(o, &m.room, &se)) { if (err) *err = "could not start azahar-room: " + se; return false; }
+    }
+#endif
     hubnet::SessionConfig c;
     c.server = server;
     c.room = m.room_id(code, launch_no);
@@ -271,7 +345,11 @@ void Runner::Impl::step() {
     m.sess.update();
     m.pump();
     if (m.sess.failed()) { m.failed = true; m.status = "Connection failed: " + m.sess.status(); return; }
+#if RH_WIN
     if (m.host && m.proc && WaitForSingleObject(m.proc, 0) == WAIT_OBJECT_0) { m.failed = true; m.status = "The room server exited (port in use?)"; return; }
+#else
+    if (m.host && m.room.valid() && !plat::proc::running(m.room)) { m.failed = true; m.status = "The room server exited (port in use?)"; return; }
+#endif
     if (!m.sess.ready()) {
         uint32_t lim = m.tag == "gc" ? kGcReadyMs + 10000 : 25000;   // the session fails first (with the reason); this is the backstop
         m.status = hubnet::now_ms() - m.t0 > lim ? "Timed out connecting to the other players" : "Connecting: " + m.sess.status();
@@ -281,18 +359,30 @@ void Runner::Impl::step() {
 
 void Runner::stop() {
     Impl& m = *impl_;
+#if RH_WIN
     if (m.th.joinable()) { m.quit = true; SetEvent(m.wake); m.th.join(); }   // wakes the loop at once
+#else
+    if (m.th.joinable()) { m.quit = true; if (m.wake) m.wake->signal(); m.th.join(); }
+#endif
     m.threaded = false;
     m.quit = false;
     m.sess.stop();   // joins the WS thread first: it may still SetEvent the wake handle
+#if RH_WIN
     if (m.wake != WSA_INVALID_EVENT) { m.sess.set_wake_event(nullptr); WSACloseEvent(m.wake); m.wake = WSA_INVALID_EVENT; }
+#else
+    if (m.wake) { m.sess.set_wake_event(nullptr); delete m.wake; m.wake = nullptr; }
+#endif
     for (auto& kv : m.host_sock) closesocket(kv.second);
     m.host_sock.clear();
     if (m.guest_sock != INVALID_SOCKET) closesocket(m.guest_sock);
     m.guest_sock = INVALID_SOCKET;
+#if RH_WIN
     if (m.stdin_w) { CloseHandle(m.stdin_w); m.stdin_w = nullptr; }
     if (m.proc) { TerminateProcess(m.proc, 0); CloseHandle(m.proc); m.proc = nullptr; }
     if (m.job) { CloseHandle(m.job); m.job = nullptr; }
+#else
+    if (m.room.valid()) { plat::proc::kill_tree(m.room); m.room = plat::proc::Child{}; }
+#endif
     m.active = m.failed = m.have_client = false;
     m.out = m.in = 0;
     m.status = "idle";

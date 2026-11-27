@@ -3,7 +3,10 @@
 //   Controllers, XInput slot / SDL uuid), Azahar (player 1's guid + port), PPSSPP (device 20 + XInput slot).
 // Every scenario renders the files from fake PadDesc lists (no SDL, no emulator) and asserts: each player maps to a distinct, correct device,
 // the full button set is bound, and nothing is bound twice. Offline, no windows.
+#include "plat/plat.h"
+#if RH_WIN
 #include <windows.h>
+#endif
 
 #include <cstdio>
 #include <filesystem>
@@ -162,7 +165,7 @@ static void test_ps2() {
     }
     // Gauntlet: Dark Legacy is a 4-player multitap game: 2, 3 and 4 pads through the real prepare_pcsx2 path
     for (int np = 2; np <= 4; ++np) {
-        fs::path d = fs::temp_directory_path() / ("hub_ext_pads_ps2_" + std::to_string(GetCurrentProcessId()) + "_" + std::to_string(np));
+        fs::path d = fs::temp_directory_path() / ("hub_ext_pads_ps2_" + std::to_string(plat::current_pid()) + "_" + std::to_string(np));
         std::error_code ec;
         fs::remove_all(d, ec);
         fs::create_directories(d);
@@ -249,7 +252,7 @@ static void test_gc() {
     }
     // the pad file is rewritten when the assignment changes
     {
-        fs::path d = fs::temp_directory_path() / ("hub_ext_pads_gc_" + std::to_string(GetCurrentProcessId()));
+        fs::path d = fs::temp_directory_path() / ("hub_ext_pads_gc_" + std::to_string(plat::current_pid()));
         std::error_code ec;
         fs::remove_all(d, ec);
         fs::create_directories(d);
@@ -296,7 +299,7 @@ static void check_cemu(const char* what, const Pads& sdl, const std::vector<int>
     const Pads port = by_port(sdl, order);
     const CemuPads cp = cemu_pads_with_sdl(port, sdl);
     const hubctl::Profile prof = hubctl::default_profile("wiiu");
-    fs::path d = fs::temp_directory_path() / ("hub_ext_pads_cemu_" + std::to_string(GetCurrentProcessId()));
+    fs::path d = fs::temp_directory_path() / ("hub_ext_pads_cemu_" + std::to_string(plat::current_pid()));
     std::error_code ec;
     fs::remove_all(d, ec);
     prepare_cemu_managed(d.string(), prof, cp);
@@ -370,7 +373,7 @@ static void test_cemu() {
         const hubctl::Profile prof = hubctl::default_profile("wiiu");
         CemuPads cp = cemu_pads_with_sdl(by_port(mix, {1, 0}), mix);
         cp.p1_pro = true;
-        fs::path d = fs::temp_directory_path() / ("hub_ext_pads_cemu_pro_" + std::to_string(GetCurrentProcessId()));
+        fs::path d = fs::temp_directory_path() / ("hub_ext_pads_cemu_pro_" + std::to_string(plat::current_pid()));
         std::error_code ec;
         fs::remove_all(d, ec);
         prepare_cemu_managed(d.string(), prof, cp);

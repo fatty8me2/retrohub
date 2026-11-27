@@ -1,3 +1,4 @@
+#include "plat/plat.h"
 #include "cheat_store.h"
 #include "game_settings.h"
 
@@ -99,8 +100,8 @@ void Store::set_backup(const std::string& game, const std::string& name, int64_t
 
 std::string Store::file_path(const std::string& vault_dir) {
     std::string d = vault_dir;
-    if (!d.empty() && d.back() != '\\' && d.back() != '/') d += '\\';
-    return d + "_settings\\cheats.json";
+    if (!d.empty() && d.back() != '\\' && d.back() != '/') d += plat::kSep;
+    return d + "_settings" + plat::kSep + "cheats.json";   // '\\' on Windows, as before
 }
 
 std::string Store::to_json() const {

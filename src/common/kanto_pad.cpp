@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <set>
 
+#include "plat/plat.h"
 #include "winutil.h"
 
 namespace kanto {
@@ -131,11 +132,15 @@ bool has_pad_section(const std::string& ini) {
 bool prepare_pad(const std::string& install_dir, const hubctl::Profile& retro) {
     namespace fs = std::filesystem;
     std::string d = install_dir;
-    if (!d.empty() && d.back() != '\\' && d.back() != '/') d += '\\';
-    d += "runtime\\mgba\\";
+    if (!d.empty() && d.back() != '\\' && d.back() != '/') d += plat::kSep;
+    d += std::string("runtime") + plat::kSep + "mgba" + plat::kSep;   // kSep is '\\' on Windows: same bytes as before
     std::string cfg = d + "config.ini", marker = d + "retrohub-pad.txt";
     std::error_code ec;
+#if RH_WIN
     fs::create_directories(fs::path(winutil::to_wide(d)), ec);
+#else
+    fs::create_directories(fs::u8path(d), ec);
+#endif
     const std::string want = hubctl::hash_hex(hubctl::mapping_hash(retro));
     std::string ini, mk;
     winutil::read_file(cfg, &ini);

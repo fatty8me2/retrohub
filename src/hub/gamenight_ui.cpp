@@ -6,7 +6,11 @@
 #include <filesystem>
 
 #include "app.h"
+#if !RH_WIN
+#include "plat/plat_proc.h"
+#else
 #include <shellapi.h>
+#endif
 #include "friends_ui.h"
 #include "gamenight_logic.h"
 #include "gamenight_sched.h"
@@ -48,7 +52,7 @@ void persist() { save(path(), GN.plans); }
 std::string local_label(long long start_ms) {
     std::time_t t = (std::time_t)(start_ms / 1000);
     std::tm tmv{};
-    localtime_s(&tmv, &t);
+    plat::local_tm(t, &tmv);
     char b[48];
     std::strftime(b, sizeof b, "%a %I:%M %p", &tmv);
     return b[4] == '0' ? std::string(b, 4) + (b + 5) : std::string(b);   // "Fri 08:00 PM" -> "Fri 8:00 PM"
@@ -93,9 +97,9 @@ void toast_sync(bool force, bool for_exit = false) {
 void export_ics(const Night& n) {
     const std::string dir = ics_dir(hub::data_dir());   // <user data>\calendar (see ics_dir about the old misspelt folder)
     make_dirs(dir);
-    const std::string file = dir + "\\" + ics_file_name(n);
+    const std::string file = dir + plat::kSep + ics_file_name(n);
     const std::string body = make_ics(n, wall_ms());
-    FILE* f = _wfopen(std::filesystem::u8path(file).c_str(), L"wb");
+    FILE* f = plat::fopen_path(std::filesystem::u8path(file), "wb");
     const bool ok = f && std::fwrite(body.data(), 1, body.size(), f) == body.size();
     if (f) std::fclose(f);
     if (!ok) { GN.ics_path.clear(); GN.ics_ok = false; GN.ics_msg = "Could not write the calendar file to " + dir + "."; return; }
@@ -107,10 +111,15 @@ void export_ics(const Night& n) {
 void shell_ics(bool show) {
     if (GN.ics_path.empty()) return;
     if (g_headless) { GN.ics_ok = true; GN.ics_msg = "Not opened: headless run. File: " + GN.ics_path; return; }
+#if RH_WIN
     const std::wstring w = std::filesystem::u8path(GN.ics_path).wstring();
     HINSTANCE r = show ? ShellExecuteW(nullptr, L"open", L"explorer.exe", (L"/select,\"" + w + L"\"").c_str(), nullptr, SW_SHOWNORMAL)
                        : ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    if ((INT_PTR)r <= 32) {
+    const bool failed = (INT_PTR)r <= 32;
+#else
+    const bool failed = !(show ? plat::proc::reveal_in_finder(GN.ics_path) : plat::proc::open_path(GN.ics_path));
+#endif
+    if (failed) {
         GN.ics_ok = false;
         GN.ics_msg = show ? "Windows could not open the folder. The file is at " + GN.ics_path
                           : "Windows could not open the file (no calendar app is set up for .ics files?). It is saved at " + GN.ics_path;
@@ -216,7 +225,7 @@ static void plan_open(const std::string& uid) {
     GN.game_ix = 0;
     for (size_t i = 0; i < gs.size(); ++i) if (room_id(*gs[i]) == A.st.last_game) GN.game_ix = (int)i;
     std::time_t t = std::time(nullptr) + 3600;
-    std::tm tmv{}; localtime_s(&tmv, &t);
+    std::tm tmv{}; plat::local_tm(t, &tmv);
     GN.day = 0; GN.hour = tmv.tm_hour; GN.min5 = (tmv.tm_min / 5);
 }
 
@@ -269,7 +278,7 @@ void gn_plan_popup() {
     ImGui::SetNextItemWidth(sp(14.f));
     int mm = GN.min5 * 5;
     if (ImGui::SliderInt("Minute", &mm, 0, 55, "%d", ImGuiSliderFlags_AlwaysClamp)) GN.min5 = mm / 5;
-    std::tm tmv{}; localtime_s(&tmv, &base);
+    std::tm tmv{}; plat::local_tm(base, &tmv);
     tmv.tm_mday += GN.day; tmv.tm_hour = GN.hour; tmv.tm_min = GN.min5 * 5; tmv.tm_sec = 0; tmv.tm_isdst = -1;
     long long start = (long long)std::mktime(&tmv) * 1000;
     ImGui::TextDisabled("Starts %s", local_label(start).c_str());

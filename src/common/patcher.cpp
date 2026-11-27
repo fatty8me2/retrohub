@@ -4,13 +4,23 @@
 #include "patcher_internal.h"
 
 #include "winutil.h"
+#include "plat/plat.h"
 
+#if RH_WIN
 #include <windows.h>
+#endif
 
 #include <cstdio>
 #include <cwctype>
 #include <new>
 #include <stdexcept>
+
+#if RH_MAC
+#include <cerrno>
+#include <filesystem>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace hub::patch {
 
@@ -670,6 +680,7 @@ constexpr const char* kMsgCreateOut = "The patched game couldn't be created.";
 constexpr const char* kMsgSameFile = "The patched game can't be saved over the original game or the patch.";
 constexpr const char* kMsgReplace = "The patched game couldn't replace the old file. Close the game and try again.";
 
+#if RH_WIN
 /* UTF-8 path to a wide path Windows accepts, with the \\?\ prefix for long absolute paths. */
 std::wstring wide_path(const std::string& utf8) {
     std::wstring w = winutil::to_wide(utf8);
@@ -752,6 +763,76 @@ bool set_end(HANDLE h, uint64_t size) {
     li.QuadPart = (LONGLONG)size;
     return SetFilePointerEx(h, li, nullptr, FILE_BEGIN) && SetEndOfFile(h);
 }
+#else
+// macOS: the same file layer on FILE* handles (docs/MACOS.md). HANDLE here is a FILE*, so the
+// FileSource / FileSink caches below compile unchanged on both platforms.
+using HANDLE = FILE*;
+constexpr int FILE_FLAG_SEQUENTIAL_SCAN = 0;
+
+/* macOS paths are byte strings; nothing to convert. */
+std::string wide_path(const std::string& utf8) { return utf8; }
+
+struct Handle {
+    HANDLE h = nullptr;
+    Handle() = default;
+    explicit Handle(HANDLE x) : h(x) {}
+    Handle(Handle&& o) noexcept : h(o.h) { o.h = nullptr; }
+    Handle& operator=(Handle&& o) noexcept {
+        if (this != &o) { close(); h = o.h; o.h = nullptr; }
+        return *this;
+    }
+    Handle(const Handle&) = delete;
+    Handle& operator=(const Handle&) = delete;
+    ~Handle() { close(); }
+    void close() {
+        if (h) { std::fclose(h); h = nullptr; }
+    }
+    bool ok() const { return h != nullptr; }
+};
+
+Handle open_read(const std::string& path, int = 0) {
+    return Handle(plat::fopen_path(std::filesystem::path(path), "rb"));
+}
+
+bool file_size(HANDLE h, uint64_t* out) {
+    if (!h || plat::fseek64(h, 0, SEEK_END) != 0) return false;
+    const int64_t sz = plat::ftell64(h);
+    if (sz < 0) return false;
+    *out = (uint64_t)sz;
+    return plat::fseek64(h, 0, SEEK_SET) == 0;
+}
+
+/* Positioned read / write (the offset comes from the seek). */
+bool pread(HANDLE h, uint64_t off, void* dst, size_t n) {
+    uint8_t* d = static_cast<uint8_t*>(dst);
+    if (plat::fseek64(h, (int64_t)off, SEEK_SET) != 0) return false;
+    while (n) {
+        const size_t got = std::fread(d, 1, n, h);
+        if (got == 0) return false;
+        d += got; off += got; n -= got;
+    }
+    return true;
+}
+
+bool pwrite(HANDLE h, uint64_t off, const void* src, size_t n, bool* disk_full) {
+    const uint8_t* s = static_cast<const uint8_t*>(src);
+    if (plat::fseek64(h, (int64_t)off, SEEK_SET) != 0) return false;
+    while (n) {
+        const size_t put = std::fwrite(s, 1, n, h);
+        if (put == 0) {
+            if (disk_full && errno == ENOSPC) *disk_full = true;
+            return false;
+        }
+        s += put; off += put; n -= put;
+    }
+    return std::fflush(h) == 0;
+}
+
+bool set_end(HANDLE h, uint64_t size) {
+    if (std::fflush(h) != 0) return false;
+    return plat::fseek64(h, (int64_t)size, SEEK_SET) == 0 && ftruncate(fileno(h), (off_t)size) == 0;
+}
+#endif
 
 /* A file read on demand: small reads go through an 8 x 256 KB block cache, big ones straight to the caller's buffer. */
 class FileSource : public Source {
@@ -872,6 +953,7 @@ private:
 };
 
 /* Does `path` name the same file as the open handle? (false when it does not exist) */
+#if RH_WIN
 bool is_same_file(HANDLE open, const std::wstring& path) {
     Handle other(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                              OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr));
@@ -891,13 +973,54 @@ bool make_dirs(const std::wstring& dir) {
 }
 
 std::string win_error(const char* what) { return std::string(what) + ": Windows error " + std::to_string(GetLastError()); }
+#else
+bool is_same_file(HANDLE open, const std::string& path) {
+    struct stat a, b;
+    if (!open || fstat(fileno(open), &a) != 0) return false;
+    if (stat(path.c_str(), &b) != 0) return false;
+    return a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+}
+
+bool make_dirs(const std::string& dir) {
+    if (dir.empty()) return true;
+    std::error_code ec;
+    if (std::filesystem::is_directory(std::filesystem::path(dir), ec)) return true;
+    std::filesystem::create_directories(std::filesystem::path(dir), ec);
+    return !ec && std::filesystem::is_directory(std::filesystem::path(dir), ec);
+}
+
+std::string win_error(const char* what) { return std::string(what) + ": system error " + std::to_string(errno); }
+
+/* Open the .tmp output for read/write, created fresh. */
+Handle open_write_new(const std::string& path) {
+    return Handle(plat::fopen_path(std::filesystem::path(path), "w+b"));
+}
+
+bool flush_file(HANDLE h) { return std::fflush(h) == 0 && fsync(fileno(h)) == 0; }
+
+/* Rename over the target. Same retry shape as the Windows loop (a killed Finder hold), plain rename otherwise. */
+bool move_over(const std::string& from, const std::string& to) {
+    std::error_code ec;
+    std::filesystem::rename(std::filesystem::path(from), std::filesystem::path(to), ec);
+    return !ec;
+}
+
+void delete_quiet(const std::string& path) {
+    std::error_code ec;
+    std::filesystem::remove(std::filesystem::path(path), ec);
+}
+#endif
 
 }  // namespace
 
 Result apply_file(const std::string& source_path, const std::string& patch_path, const std::string& out_path,
                   uint64_t max_out, const std::function<bool(double)>& progress) {
     Result r;
+#if RH_WIN
     const std::wstring wout = wide_path(out_path), wtmp = wout + L".tmp";
+#else
+    const std::string wout = wide_path(out_path), wtmp = wout + ".tmp";
+#endif
     bool tmp_made = false, committed = false;
     Handle pf, gf, of;
     try {
@@ -910,9 +1033,15 @@ Result apply_file(const std::string& source_path, const std::string& patch_path,
         if (!file_size(gf.h, &gsz)) fail(Error::Io, kMsgReadGame, win_error("size of game"));
         if (is_same_file(gf.h, wout) || is_same_file(pf.h, wout)) fail(Error::Io, kMsgSameFile);
 
+#if RH_WIN
         const size_t cut = wout.find_last_of(L'\\');
         if (cut != std::wstring::npos && cut > 0 && !make_dirs(wout.substr(0, cut))) fail(Error::Io, kMsgCreateOut, win_error("create folder"));
         of = Handle(CreateFileW(wtmp.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
+#else
+        const size_t cut = wout.find_last_of('/');
+        if (cut != std::string::npos && cut > 0 && !make_dirs(wout.substr(0, cut))) fail(Error::Io, kMsgCreateOut, win_error("create folder"));
+        of = open_write_new(wtmp);
+#endif
         if (!of.ok()) fail(Error::Io, kMsgCreateOut, win_error("create output"));
         tmp_made = true;
 
@@ -927,8 +1056,13 @@ Result apply_file(const std::string& source_path, const std::string& patch_path,
         run_patch(j);
 
         if (!sink.flush()) fail(Error::Io, sink.io_message(), win_error("write"));
+#if RH_WIN
         if (!FlushFileBuffers(of.h)) fail(Error::Io, kMsgWrite, win_error("flush"));
+#else
+        if (!flush_file(of.h)) fail(Error::Io, kMsgWrite, win_error("flush"));
+#endif
         of.close(); pf.close(); gf.close();
+#if RH_WIN
         /* A virus scanner may still hold the new file for a moment: retry a few times for a second at most. */
         bool moved = false;
         for (int attempt = 0; attempt < 10 && !moved; ++attempt) {
@@ -938,13 +1072,20 @@ Result apply_file(const std::string& source_path, const std::string& patch_path,
             if (err != ERROR_ACCESS_DENIED && err != ERROR_SHARING_VIOLATION && err != ERROR_LOCK_VIOLATION) break;
             Sleep(100);
         }
+#else
+        const bool moved = move_over(wtmp, wout);
+#endif
         if (!moved) fail(Error::Io, kMsgReplace, win_error("rename"));
         committed = true;
     } catch (...) {
         r = result_from_current_exception();
     }
     of.close(); pf.close(); gf.close();
+#if RH_WIN
     if (tmp_made && !committed) DeleteFileW(wtmp.c_str());
+#else
+    if (tmp_made && !committed) delete_quiet(wtmp);
+#endif
     if (committed && progress) {
         try { progress(1.0); } catch (...) {}
     }

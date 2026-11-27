@@ -1,5 +1,6 @@
 // Console unit test for hubcommon (games.cpp). Exit code 0 = all passed.
 #include "games.h"
+#include "plat/plat.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -194,9 +195,9 @@ static void test_rom_files(const fs::path& dir) {
 
 static void test_paths() {
     std::string exe = exe_dir();
-    CHECK(!exe.empty() && exe.back() == '\\');
+    CHECK(!exe.empty() && exe.back() == plat::kSep);
     std::string data = data_dir();
-    CHECK(data == exe + "userdata\\");
+    CHECK(data == exe + "userdata" + plat::kSep);
     CHECK(fs::is_directory(fs::u8path(data)));
 }
 

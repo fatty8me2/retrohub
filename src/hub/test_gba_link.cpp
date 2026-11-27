@@ -3,6 +3,7 @@
 #include "gba_link_logic.h"
 
 #include <cstdio>
+#include "plat/plat.h"
 #include <filesystem>
 #include <string>
 
@@ -85,8 +86,13 @@ int main() {
     CHECK(hubui::ini_get(rd(ini_path), "Core", "SIDevice1") == "6");
 
     /* names: retrorun's vault file and Dolphin's save file */
+#if RH_WIN
     CHECK(vault_file("C:\\v\\gba\\k\\battery\\", "D:\\r\\Pokemon Ruby.gba", "") == "C:\\v\\gba\\k\\battery\\Pokemon Ruby.srm");
     CHECK(vault_file("C:\\v\\battery", "C:\\cache\\rom.gba", "Inner Name") == "C:\\v\\battery\\Inner Name.srm");   // zipped ROM: the save stem
+#else
+    CHECK(vault_file("/v/gba/k/battery/", "/r/Pokemon Ruby.gba", "") == "/v/gba/k/battery/Pokemon Ruby.srm");
+    CHECK(vault_file("/v/battery", "/cache/rom.gba", "Inner Name") == "/v/battery/Inner Name.srm");   // zipped ROM: the save stem
+#endif
     {   // retrorun's lone-.srm rule: a renamed ROM keeps using the one save that is there
         const std::vector<std::string> none, one = {"Old Name.srm", "meta.json"}, two = {"Old Name.srm", "Other.srm"}, exact = {"Other.srm", "pokemon ruby.SRM"};
         CHECK(vault_file_name("D:\\r\\Pokemon Ruby.gba", "", none) == "Pokemon Ruby.srm");
@@ -97,9 +103,9 @@ int main() {
         fs::path bd = fs::temp_directory_path() / "gbalink_vault_test";
         fs::remove_all(bd); fs::create_directories(bd);
         const std::string bs = bd.u8string();
-        CHECK(vault_file(bs, "D:\\r\\New Name.gba", "") == bs + "\\New Name.srm");
+        CHECK(vault_file(bs, "D:\\r\\New Name.gba", "") == bs + plat::kSep + "New Name.srm");
         wr(bd / "Old Name.srm", "x");
-        CHECK(vault_file(bs + "\\", "D:\\r\\New Name.gba", "") == bs + "\\Old Name.srm");
+        CHECK(vault_file(bs + "\\", "D:\\r\\New Name.gba", "") == bs + plat::kSep + "Old Name.srm");
         fs::remove_all(bd);
     }
     {   // retrorun's lone-.srm rule: a renamed ROM keeps using the one save that is there
@@ -112,9 +118,9 @@ int main() {
         fs::path bd = fs::temp_directory_path() / "gbalink_vault_test";
         fs::remove_all(bd); fs::create_directories(bd);
         const std::string bs = bd.u8string();
-        CHECK(vault_file(bs, "D:\\r\\New Name.gba", "") == bs + "\\New Name.srm");
+        CHECK(vault_file(bs, "D:\\r\\New Name.gba", "") == bs + plat::kSep + "New Name.srm");
         wr(bd / "Old Name.srm", "x");
-        CHECK(vault_file(bs + "\\", "D:\\r\\New Name.gba", "") == bs + "\\Old Name.srm");
+        CHECK(vault_file(bs + "\\", "D:\\r\\New Name.gba", "") == bs + plat::kSep + "Old Name.srm");
         fs::remove_all(bd);
     }
     {   // retrorun's lone-.srm rule: a renamed ROM keeps using the one save that is there
@@ -127,13 +133,18 @@ int main() {
         fs::path bd = fs::temp_directory_path() / "gbalink_vault_test";
         fs::remove_all(bd); fs::create_directories(bd);
         const std::string bs = bd.u8string();
-        CHECK(vault_file(bs, "D:\\r\\New Name.gba", "") == bs + "\\New Name.srm");
+        CHECK(vault_file(bs, "D:\\r\\New Name.gba", "") == bs + plat::kSep + "New Name.srm");
         wr(bd / "Old Name.srm", "x");
-        CHECK(vault_file(bs + "\\", "D:\\r\\New Name.gba", "") == bs + "\\Old Name.srm");
+        CHECK(vault_file(bs + "\\", "D:\\r\\New Name.gba", "") == bs + plat::kSep + "Old Name.srm");
         fs::remove_all(bd);
     }
+#if RH_WIN
     CHECK(dolphin_save_file("C:\\s\\", "D:\\r\\Pokemon Ruby.gba", 1) == "C:\\s\\Pokemon Ruby-2.sav");
     CHECK(dolphin_save_file("C:/s", "D:/r/Fusion.v2.gba", 3) == "C:/s\\Fusion.v2-4.sav");
+#else
+    CHECK(dolphin_save_file("/s/", "/r/Pokemon Ruby.gba", 1) == "/s/Pokemon Ruby-2.sav");
+    CHECK(dolphin_save_file("/s", "/r/Fusion.v2.gba", 3) == "/s/Fusion.v2-4.sav");
+#endif
 
     /* save round trip */
     Staged s;

@@ -11,6 +11,7 @@
 /* Scans the vault (one meta.json read per game): disk I/O, so it runs on a worker, never the UI thread. */
 static std::vector<VaultRow> scan_vault(const std::string& vault_dir) {
     std::vector<VaultRow> rows;
+#if RH_WIN
     std::string root = with_slash(vault_dir);
     WIN32_FIND_DATAW sf;
     HANDLE hs = FindFirstFileW(W(root + "*").c_str(), &sf);
@@ -35,6 +36,27 @@ static std::vector<VaultRow> scan_vault(const std::string& vault_dir) {
         } while (FindNextFileW(hs, &sf));
         FindClose(hs);
     }
+#else
+    std::string root = with_slash(vault_dir);
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    for (fs::directory_iterator si(fs::u8path(root), ec), se; !ec && si != se; si.increment(ec)) {
+        std::string sys = si->path().filename().u8string();
+        std::error_code e2;
+        if (!si->is_directory(e2) || sys.empty() || sys[0] == '.' || sys[0] == '_') continue;
+        for (fs::directory_iterator gi(si->path(), e2), ge; !e2 && gi != ge; gi.increment(e2)) {
+            if (g_io_shutdown) break;
+            std::string g = gi->path().filename().u8string();
+            std::error_code e3;
+            if (!gi->is_directory(e3) || g == "." || g == "..") continue;
+            VaultRow r;
+            if (hubui::parse_vault_meta(read_text_file(root + sys + "/" + g + "/meta.json"), &r.m)) {
+                if (r.m.system.empty()) r.m.system = sys;
+                rows.push_back(r);
+            }
+        }
+    }
+#endif
     std::sort(rows.begin(), rows.end(), [](const VaultRow& a, const VaultRow& b) { return a.m.updated > b.m.updated; });
     return rows;
 }
@@ -150,7 +172,7 @@ after_sync:
     if (button("Export all saves...", ImVec2(0, 0), false, !busy)) {
         time_t t = time(nullptr);
         tm lt{};
-        localtime_s(&lt, &t);
+        plat::local_tm(t, &lt);
         wchar_t nm[64];
         std::wcsftime(nm, 64, L"RetroHub-saves-%Y%m%d.zip", &lt);
         std::string p = pick_save_path(A.hwnd, nm, L"Zip archive", L"*.zip", L"zip");

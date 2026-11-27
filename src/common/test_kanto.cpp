@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "plat/plat.h"
 #include "kanto.h"
 #include "miniz.h"
 #include "winutil.h"
@@ -213,7 +214,15 @@ int main() {
     CHECK(!kanto::is_kanto_runtime_exe("C:\\Program Files\\mGBA\\mGBA.exe") && !kanto::is_kanto_runtime_exe("C:\\Program Files\\nodejs\\node.exe"));
     CHECK(kanto::is_non_ascii("C:\\Users\\J\xc3\xb6rg") && !kanto::is_non_ascii("C:\\Users\\Jorg"));
     CHECK(kanto::launcher_cmdline(lo).find("--verbose") != std::string::npos);
-    CHECK(kanto::is_under_temp(fs::temp_directory_path().string() + "\\x\\y") && !kanto::is_under_temp("C:\\Windows\\System32"));
+#if RH_WIN   // the launcher (kanto.h's Windows section) is Windows-only for now
+    {   // is_under_temp expands 8.3 short names (RUNNER~1) only for paths that exist, so the probe path must exist (CI TEMP is a short path)
+        std::error_code tec;
+        fs::path probe = fs::temp_directory_path() / "kanto_tmp_probe" / "x" / "y";
+        fs::create_directories(probe, tec);
+        CHECK(kanto::is_under_temp(probe.string()) && !kanto::is_under_temp("C:\\Windows\\System32"));
+        fs::remove_all(fs::temp_directory_path() / "kanto_tmp_probe", tec);
+    }
+#endif
 
     /* package identity: patch.json build id, zip == folder, newest build wins, folder wins ties */
     {

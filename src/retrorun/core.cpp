@@ -15,7 +15,7 @@ static FILE* g_logfile = nullptr;
 
 void rlog_set_file(const std::string& path) {
     if (g_logfile) { fclose(g_logfile); g_logfile = nullptr; }
-    if (!path.empty()) g_logfile = _wfopen(fs::u8path(path).c_str(), L"a");
+    if (!path.empty()) g_logfile = plat::fopen_path(fs::u8path(path), "a");
 }
 
 static void rlog_v(const char* fmt, va_list ap) {
@@ -26,8 +26,10 @@ static void rlog_v(const char* fmt, va_list ap) {
     fprintf(stdout, "[retrorun] %s\n", buf);
     fflush(stdout);
     if (g_logfile) { fprintf(g_logfile, "%s\n", buf); fflush(g_logfile); }
+#if RH_WIN
     OutputDebugStringA(buf);
     OutputDebugStringA("\n");
+#endif
 }
 
 void rlog(const char* fmt, ...) {
@@ -68,17 +70,22 @@ static int16_t RETRO_CALLCONV t_input(unsigned p, unsigned d, unsigned i, unsign
 Core::Core() { g_core = this; }
 Core::~Core() { unload(); if (g_core == this) g_core = nullptr; }
 
-template <class T> static bool sym(HMODULE h, const char* name, T* out) {
-    *out = reinterpret_cast<T>(GetProcAddress(h, name));
+template <class T> static bool sym(plat::LibHandle h, const char* name, T* out) {
+    *out = reinterpret_cast<T>(plat::lib_sym(h, name));
     return *out != nullptr;
 }
 
 bool Core::load_core(const std::string& dll_path, std::string* err) {
     core_path_ = dll_path;
+#if RH_WIN
     std::wstring w = fs::u8path(dll_path).wstring();
     // Let the core find its sibling DLLs.
     dll_ = LoadLibraryExW(w.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!dll_) { *err = "LoadLibrary failed for " + dll_path + " (error " + std::to_string(GetLastError()) + ")"; return false; }
+#else
+    dll_ = plat::lib_open(dll_path);
+    if (!dll_) { const char* de = dlerror(); *err = "dlopen failed for " + dll_path + (de ? std::string(" (") + de + ")" : std::string()); return false; }
+#endif
     bool ok = true;
 #define S(n, f) ok &= sym(dll_, n, &f)
     S("retro_set_environment", fn_set_env_);
@@ -186,7 +193,7 @@ void* Core::memory(unsigned id, size_t* size) {
 void Core::unload() {
     if (loaded_) { fn_unload_game_(); loaded_ = false; }
     if (inited_) { fn_deinit_(); inited_ = false; }
-    if (dll_) { FreeLibrary(dll_); dll_ = nullptr; }
+    if (dll_) { plat::lib_close(dll_); dll_ = nullptr; }
 }
 
 void* Core::save_ram(size_t* size) {

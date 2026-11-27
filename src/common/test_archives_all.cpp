@@ -1,7 +1,11 @@
 /* Archives of every kind: cartridge ROMs (N64 GB GBC GBA NES SNES DS), PS1 cue+bin sets and a Wii U title inside .zip / .7z.
  * Same game plain vs archived must get the SAME key; rescans must not re-identify; changed archives re-unpack; the rom-cache
  * API (bytes / clear / trim / touch). Synthetic data in %TEMP%\archives_all_test, 7z written by Windows' bsdtar. */
+#include "plat/plat.h"
+#include "test_platform_paths.h"
+#if RH_WIN
 #include <windows.h>
+#endif
 
 #include <chrono>
 #include <cstdint>
@@ -188,10 +192,14 @@ static bool make_7z(const fs::path& out, const Members& m, const fs::path& stage
     for (const auto& e : m) write_file(stage / e.first, e.second);
     fs::create_directories(out.parent_path());
     fs::remove(out, ec);
+#if RH_WIN
     std::wstring cmd = L"\"\"" + std::wstring(_wgetenv(L"SystemRoot")) + L"\\System32\\tar.exe\" --format 7zip -cf \"" + out.wstring() + L"\" -C \"" + stage.wstring() + L"\"";
     for (const auto& e : m) cmd += L" \"" + fs::path(e.first).wstring() + L"\"";
     cmd += L"\"";
     _wsystem(cmd.c_str());
+#else
+    { std::vector<std::string> names; for (const auto& e : m) names.push_back(e.first); tar7z(out, stage, names); }
+#endif
     fs::remove_all(stage, ec);
     return fs::exists(out) && is_7z_file(out.string());
 }
@@ -211,7 +219,7 @@ struct Cart {
 };
 
 int main() {
-    fs::path root = fs::temp_directory_path() / (L"archives_all_test_" + std::to_wstring(GetCurrentProcessId()));
+    fs::path root = fs::temp_directory_path() / ("archives_all_test_" + std::to_string(plat::current_pid()));
     std::error_code ec;
     fs::remove_all(root, ec);
     library_set_data_dir((root / "data").u8string());

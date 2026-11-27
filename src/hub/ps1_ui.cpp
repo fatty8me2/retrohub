@@ -1,4 +1,8 @@
 #include "app.h"
+#if !RH_WIN
+#include <strings.h>
+#define _stricmp strcasecmp   // macOS: POSIX name for the case-insensitive compare
+#endif
 #include "winutil.h"
 
 #include "ps1.h"
@@ -29,7 +33,7 @@ struct Ps2Ask {
     std::string warning;
 } ASK2;
 
-std::string staging_dir() { return hub::data_dir() + "system\\ps1"; }
+std::string staging_dir() { return hub::data_dir() + "system" + plat::kSep + "ps1"; }
 
 std::vector<hub::ps1::BiosFound> find_all() {
     const std::string home_s = winutil::getenv_utf8("USERPROFILE"); const char* home = home_s.empty() ? nullptr : home_s.c_str();
@@ -116,7 +120,7 @@ bool ps1_swap_disc(const std::string& key) {
     if (!ps1_swap_available(key)) return false;
     static unsigned n = 0;
     std::ofstream f(std::filesystem::u8path(swap_file(key)), std::ios::binary | std::ios::trunc);
-    f << ++n << " " << GetTickCount64();   // any change of mtime/size counts
+    f << ++n << " " << plat::tick_ms();   // any change of mtime/size counts
     return (bool)f;
 }
 
@@ -369,10 +373,10 @@ bool ps2_online_args(const hub::GameEntry& e, const std::string& net, const std:
     if (core.empty()) { *err = "The PlayStation 2 online core is not downloaded yet - wait for the room's status line to clear."; return false; }
     hubemu::Bios bios = ps2_bios_now();
     if (bios.file.empty()) { *err = hubemu::pcsx2_bios_missing_text(); return false; }
-    std::string sysdir = tmp_dir + "\\sys";
+    std::string sysdir = tmp_dir + plat::kSep + "sys";
     std::string bios_dir = sysdir + "\\" + hubps2::staged_bios_dir_rel();
     make_dirs(bios_dir);
-    make_dirs(sysdir + "\\pcsx2\\memcards");
+    make_dirs(sysdir + plat::kSep + "pcsx2" + plat::kSep + "memcards");
     std::error_code ec;
     std::filesystem::copy_file(std::filesystem::u8path(bios.dir + "\\" + bios.file), std::filesystem::u8path(bios_dir + "\\" + bios.file), std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) { *err = "Could not stage the PlayStation 2 BIOS: " + ec.message(); return false; }

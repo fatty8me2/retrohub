@@ -92,6 +92,7 @@ int main() {
     CHECK(send_command(ctl, Cmd::SaveState, 2) == 1);   // pre-existing at start-up: handled
     Poller p(ctl);
     CHECK(p.last_seq() == 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));   // Poller keys on mtime+size; same-length commands rewritten inside one coarse NTFS timestamp tick look unchanged
     CHECK(!p.poll(1000, &c));
     CHECK(send_command(ctl, Cmd::LoadState, 4) == 2);
     CHECK(!p.poll(1100, &c));   // inside the poll interval

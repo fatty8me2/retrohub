@@ -6,11 +6,24 @@
 #include "games.h"
 #include "library.h"
 
+#include "plat/plat.h"
+#include "plat/plat_crypto.h"
+
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <bcrypt.h>
+#else
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <cerrno>
+#include <cwctype>
+#include <filesystem>
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -23,6 +36,7 @@
 
 #include "miniz.h"
 
+#if RH_WIN
 #ifndef FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
 #define FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS 0x00400000
 #endif
@@ -35,30 +49,47 @@
 #ifndef IO_REPARSE_TAG_SYMLINK
 #define IO_REPARSE_TAG_SYMLINK (0xA000000CL)
 #endif
+#endif  // RH_WIN
 
 namespace hub::saves {
 namespace {
 
 typedef std::wstring ws;
 typedef std::string str;
+#if RH_WIN
+typedef DWORD ecode_t;                 // Win32 error code
+constexpr wchar_t kSepW = L'\\';
+#else
+typedef unsigned long ecode_t;         // errno
+constexpr wchar_t kSepW = L'/';
+#endif
 
 /* ---------------------------------------------------------------- strings */
 
 ws W(const std::string& s) { return winutil::to_wide(s); }
 str U(const std::wstring& s) { return winutil::to_utf8(s); }
 ws lower(ws w) {
+#if RH_WIN
     if (!w.empty()) CharLowerBuffW(&w[0], (DWORD)w.size());
+#else
+    for (auto& c : w) c = (wchar_t)towlower((wint_t)c);
+#endif
     return w;
 }
 
 /* "dir" without trailing separators, backslash style. */
 ws norm_dir(const str& utf8) {
     ws w = W(utf8);
+#if RH_WIN
     for (auto& c : w) if (c == L'/') c = L'\\';
     while (w.size() > 3 && w.back() == L'\\') w.pop_back();
+#else
+    while (w.size() > 1 && w.back() == L'/') w.pop_back();
+#endif
     return w;
 }
 
+#if RH_WIN
 /* Extended-length absolute path (\\?\C:\... or \\?\UNC\srv\share\...). */
 ws lp(const ws& p0) {
     ws p = p0;
@@ -95,6 +126,26 @@ bool mkdirs_for_file(const ws& file) {
     if (pos == ws::npos) return true;
     return mkdirs(p.substr(0, pos));
 }
+#else
+/* macOS: paths are '/' separated and used as UTF-8; no long-path prefix. */
+ws lp(const ws& p) { return p; }
+str nat(const ws& p) { return U(p); }
+
+bool path_exists(const ws& p) { struct stat st; return ::stat(nat(p).c_str(), &st) == 0; }
+bool is_dir(const ws& p) { struct stat st; return ::stat(nat(p).c_str(), &st) == 0 && S_ISDIR(st.st_mode); }
+
+bool mkdirs(const ws& dir) {
+    if (is_dir(dir)) return true;
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(nat(dir)), ec);
+    return is_dir(dir);
+}
+bool mkdirs_for_file(const ws& file) {
+    size_t pos = file.find_last_of(L'/');
+    if (pos == ws::npos || pos == 0) return true;
+    return mkdirs(file.substr(0, pos));
+}
+#endif
 
 /* ------------------------------------------------------------ misc helpers */
 
@@ -110,10 +161,16 @@ ws sanitize_component(const str& in) {
 }
 
 str device_name_utf8() {
+#if RH_WIN
     wchar_t buf[MAX_COMPUTERNAME_LENGTH + 2];
     DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
     if (GetComputerNameW(buf, &n)) return U(ws(buf, n));
     return "unknown";
+#else
+    char b[256] = {};
+    if (gethostname(b, sizeof b - 1) == 0 && b[0]) { str h = b; size_t dot = h.find('.'); return dot == 0 || dot == str::npos ? h : h.substr(0, dot); }
+    return "unknown";
+#endif
 }
 ws device_file_tag() {
     ws d = sanitize_component(device_name_utf8());
@@ -121,10 +178,16 @@ ws device_file_tag() {
 }
 
 ws timestamp_tag() {
+    wchar_t b[40];
+#if RH_WIN
     SYSTEMTIME st;
     GetLocalTime(&st);
-    wchar_t b[40];
     swprintf(b, 40, L"%04d%02d%02d-%02d%02d%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+#else
+    std::tm tm = {};
+    plat::local_tm(std::time(nullptr), &tm);
+    swprintf(b, 40, L"%04d%02d%02d-%02d%02d%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+#endif
     return b;
 }
 
@@ -135,6 +198,7 @@ int64_t now_unix() { return (int64_t)time(nullptr); }
 
 /* ------------------------------------------------------------------- SHA-256 */
 
+#if RH_WIN
 BCRYPT_ALG_HANDLE sha_alg() {
     static BCRYPT_ALG_HANDLE h = [] {
         BCRYPT_ALG_HANDLE a = nullptr;
@@ -165,6 +229,22 @@ public:
 private:
     BCRYPT_HASH_HANDLE h_ = nullptr;
 };
+#else
+class Sha256 {   // plat::Hasher (CommonCrypto): same digest bytes as BCrypt
+public:
+    Sha256() : h_(plat::HashAlg::Sha256) {}
+    bool update(const void* d, size_t n) { if (!h_.ok()) return false; h_.update(d, n); return true; }
+    bool finish(str* hex) {
+        if (!h_.ok()) return false;
+        std::string raw = h_.finish();
+        if (raw.size() != 32) return false;
+        *hex = plat::hex(raw);
+        return true;
+    }
+private:
+    plat::Hasher h_;
+};
+#endif
 
 str sha_bytes(const void* d, size_t n) {
     Sha256 s; str hex;
@@ -173,6 +253,7 @@ str sha_bytes(const void* d, size_t n) {
     return hex;
 }
 
+#if RH_WIN
 HANDLE open_read(const ws& p) {
     return CreateFileW(lp(p).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                        nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
@@ -259,9 +340,95 @@ bool copy_atomic(const ws& src, const ws& dst, uint64_t ft) {
     return false;
 }
 
+void del_file(const ws& p) { DeleteFileW(lp(p).c_str()); }
+#else
+bool hash_file(const ws& p, str* hex) {
+    FILE* f = std::fopen(nat(p).c_str(), "rb");
+    if (!f) return false;
+    Sha256 s;
+    std::vector<uint8_t> buf(256 * 1024);
+    bool ok = true;
+    for (;;) {
+        size_t got = std::fread(buf.data(), 1, buf.size(), f);
+        if (got) s.update(buf.data(), got);
+        if (got < buf.size()) { ok = !std::ferror(f); break; }
+    }
+    std::fclose(f);
+    return ok && s.finish(hex);
+}
+
+bool read_file(const ws& p, std::vector<uint8_t>* out) {
+    FILE* f = std::fopen(nat(p).c_str(), "rb");
+    if (!f) return false;
+    out->clear();
+    std::vector<uint8_t> buf(256 * 1024);
+    bool ok = true;
+    for (;;) {
+        size_t got = std::fread(buf.data(), 1, buf.size(), f);
+        if (got) out->insert(out->end(), buf.begin(), buf.begin() + got);
+        if (got < buf.size()) { ok = !std::ferror(f); break; }
+    }
+    std::fclose(f);
+    return ok;
+}
+
+/* FILETIME (100 ns since 1601, what manifests and the vault speak on every platform) <-> POSIX time. */
+bool set_mtime(const ws& p, uint64_t ft) {
+    struct timespec ts[2];
+    ts[0].tv_sec = 0; ts[0].tv_nsec = UTIME_OMIT;
+    if (ft < kEpochDiff) { ts[1].tv_sec = 0; ts[1].tv_nsec = 0; }
+    else { uint64_t d = ft - kEpochDiff; ts[1].tv_sec = (time_t)(d / 10000000ULL); ts[1].tv_nsec = (long)((d % 10000000ULL) * 100); }
+    return utimensat(AT_FDCWD, nat(p).c_str(), ts, 0) == 0;
+}
+uint64_t ft_from_stat(const struct stat& st) {
+    return (uint64_t)st.st_mtimespec.tv_sec * 10000000ULL + (uint64_t)st.st_mtimespec.tv_nsec / 100 + kEpochDiff;
+}
+
+void del_file(const ws& p) { ::unlink(nat(p).c_str()); }
+
+bool commit_tmp(const ws& tmp, const ws& dst) {
+    if (durable::commit_replace(tmp, dst, durable::kRetryShortMs)) return true;
+    del_file(tmp);
+    return false;
+}
+
+bool write_atomic(const ws& dst, const void* data, size_t n, uint64_t ft /*0 = now*/) {
+    if (!mkdirs_for_file(dst)) return false;
+    ws tmp = dst + L".hubtmp";
+    FILE* f = std::fopen(nat(tmp).c_str(), "wb");
+    if (!f) return false;
+    bool ok = n == 0 || std::fwrite(data, 1, n, f) == n;
+    if (std::fclose(f) != 0) ok = false;
+    if (!ok) { del_file(tmp); return false; }
+    if (ft) set_mtime(tmp, ft);
+    return commit_tmp(tmp, dst);   // commit_replace flushes the temp file to disk before the rename
+}
+
+bool copy_atomic(const ws& src, const ws& dst, uint64_t ft) {
+    if (!mkdirs_for_file(dst)) return false;
+    ws tmp = dst + L".hubtmp";
+    std::error_code ec;
+    std::filesystem::copy_file(std::filesystem::path(nat(src)), std::filesystem::path(nat(tmp)), std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) return false;
+    ::chmod(nat(tmp).c_str(), 0644);   // allow replacing read-only sources
+    set_mtime(tmp, ft);
+    if (durable::commit_replace(tmp, dst, durable::kRetryLongMs)) return true;
+    del_file(tmp);
+    return false;
+}
+#endif
+
+FILE* fopen_ws(const ws& p, bool write) {
+#if RH_WIN
+    return _wfopen(lp(p).c_str(), write ? L"wb" : L"rb");
+#else
+    return std::fopen(U(p).c_str(), write ? "wb" : "rb");
+#endif
+}
+
 /* ---------------------------------------------------------------- scanning */
 
-struct FE { ws rel; uint64_t size = 0, mtime = 0; DWORD attrs = 0; };
+struct FE { ws rel; uint64_t size = 0, mtime = 0; uint32_t attrs = 0; };   // mtime: FILETIME units on every platform
 typedef std::map<ws, FE> FMap;  // key = lowercase rel
 
 int comp_count(const ws& rel) { return (int)std::count(rel.begin(), rel.end(), L'/') + 1; }
@@ -288,7 +455,11 @@ bool is_identity_rel(const ws& rel) {   // rel uses '/' separators: the cloud's 
 
 EnumErrorHook g_enum_hook = nullptr;   // test seam, null (inert) unless a test sets it
 
-str hook_dir(const ws& dir) { str s = U(dir); for (auto& c : s) if (c == '/') c = '\\'; return s; }
+str hook_dir(const ws& dir) { str s = U(dir);
+#if RH_WIN
+    for (auto& c : s) if (c == '/') c = '\\';
+#endif
+    return s; }
 
 /* Cloud-client / OS litter that must never travel into a vault battery folder (emulators read those folders): matched on the file
  * name only, case-insensitively, on both sides of a sync. Deliberately NOT here: *.tmp, *.partial and names ending in "~". Games
@@ -301,6 +472,12 @@ bool is_junk_name(const ws& name0) {
            n == L".dropbox" || starts(L".dropbox.") || n == L".sync" || starts(L".syncthing.") ||
            ends(L".crdownload") || ends(L".!sync");
 }
+
+#if RH_WIN
+constexpr const char* kOsName = "Windows";
+#else
+constexpr const char* kOsName = "The system";
+#endif
 
 /* Lists root/rel into `out`. Returns false (with *err set) when the listing is incomplete for any reason other than the folder being
  * gone or empty: an incomplete scan would make files that exist look absent, so callers must not act on it. */
@@ -320,28 +497,29 @@ bool known_system_dir(const ws& lower_name, const Excluded* ex) {
  * (foreign) top-level folder that folder is excluded with a log line. */
 bool walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str>& log, str* err = nullptr, bool junk = false, Excluded* ex = nullptr, const char* side = "") {
     ws dir = rel.empty() ? root : root + L"/" + rel;
-    auto bad = [&](DWORD code) {
+    auto bad = [&](ecode_t code) {
         str code_s = std::to_string((unsigned long)code);
         if (ex && !rel.empty()) {
             ws top = lower(comp_at(rel, 0));
             if (top != L"_conflicts" && top != L"_account") {
                 if (!known_system_dir(top, ex)) {
                     ex->folders[top] = U(comp_at(rel, 0));
-                    log.push_back("skip folder " + U(comp_at(rel, 0)) + ": could not be read in the " + side + " (Windows error " + code_s + "); left out of this sync");
+                    log.push_back("skip folder " + U(comp_at(rel, 0)) + ": could not be read in the " + side + " (" + kOsName + " error " + code_s + "); left out of this sync");
                     return true;
                 }
                 if (comp_count(rel) >= 2) {
                     ws prefix = top + L"/" + lower(comp_at(rel, 1));
                     str name = U(comp_at(rel, 0) + L"/" + comp_at(rel, 1));
                     ex->games[prefix] = name;
-                    log.push_back("skip game " + name + ": its folder could not be read in the " + side + " (Windows error " + code_s + "); not synced this time");
+                    log.push_back("skip game " + name + ": its folder could not be read in the " + side + " (" + kOsName + " error " + code_s + "); not synced this time");
                     return true;
                 }
             }
         }
-        if (err) *err = "Windows could not read the folder " + U(dir) + " (error " + code_s + ")";
+        if (err) *err = str(kOsName) + " could not read the folder " + U(dir) + " (error " + code_s + ")";
         return false;
     };
+#if RH_WIN
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileExW((lp(dir) + L"\\*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr,
                                 FIND_FIRST_EX_LARGE_FETCH);
@@ -387,6 +565,48 @@ bool walk(const ws& root, const ws& rel, bool states, FMap& out, std::vector<str
     if (last != ERROR_NO_MORE_FILES && last != ERROR_FILE_NOT_FOUND && last != ERROR_PATH_NOT_FOUND) return bad(last);
     if (g_enum_hook) g_enum_hook(hook_dir(dir), -1);   // directory finished (the return value is ignored)
     return true;
+#else
+    DIR* h = opendir(nat(dir).c_str());
+    ecode_t first_err = h ? 0 : (ecode_t)errno;
+    if (g_enum_hook) if (ecode_t inj = (ecode_t)g_enum_hook(hook_dir(dir), 0)) { if (h) closedir(h); return bad(inj); }
+    if (!h) {
+        if (first_err == ENOENT || first_err == ENOTDIR) return true;   // gone or empty: normal
+        return bad(first_err);
+    }
+    int seen = 0;
+    while (struct dirent* de = readdir(h)) {
+        if (seen && g_enum_hook) if (ecode_t inj = (ecode_t)g_enum_hook(hook_dir(dir), seen)) { closedir(h); return bad(inj); }
+        seen++;
+        ws name = W(de->d_name);
+        if (name == L"." || name == L"..") continue;
+        ws crel = rel.empty() ? name : rel + L"/" + name;
+        struct stat st;
+        if (::lstat(nat(dir + L"/" + name).c_str(), &st) != 0) continue;   // vanished since readdir
+        if (S_ISLNK(st.st_mode)) {
+            log.push_back("skip link " + U(crel));
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            if (rel.empty() && lower(name) == L".sync") continue;
+            if ((rel.empty() && lower(name) == L"_identity") || (lower(rel) == L"_conflicts" && lower(name) == L"_identity")) continue;   // the account secret never travels (F6)
+            if (!states && is_states_path(crel)) continue;
+            if (!walk(root, crel, states, out, log, err, junk, ex, side)) { closedir(h); return false; }
+        } else if (S_ISREG(st.st_mode)) {
+            if (name.size() > 7 && name.compare(name.size() - 7, 7, L".hubtmp") == 0) continue;
+            if (junk && is_junk_name(name)) continue;
+            if (!states && is_states_path(crel)) continue;
+            FE e;
+            e.rel = crel;
+            e.size = (uint64_t)st.st_size;
+            e.mtime = ft_from_stat(st);
+            e.attrs = 0;
+            out[lower(crel)] = e;
+        }
+    }
+    closedir(h);
+    if (g_enum_hook) g_enum_hook(hook_dir(dir), -1);   // directory finished (the return value is ignored)
+    return true;
+#endif
 }
 
 /* --------------------------------------------------------- JSON (shared reader, src/common/json.h) */
@@ -407,7 +627,7 @@ ws manifest_path(const ws& vault, const ws& sync_root) {
     for (char c : r) name += (isalnum((unsigned char)c) || c == '.' || c == '-') ? c : '_';
     if (name.size() > 60) name = name.substr(name.size() - 60);
     str h = sha_bytes(r.data(), r.size()).substr(0, 8);
-    return vault + L"\\.sync\\" + W(name) + L"-" + W(h) + L".json";
+    return vault + kSepW + L".sync" + kSepW + W(name) + L"-" + W(h) + L".json";
 }
 
 void load_manifest(const ws& path, Manifest& m) {
@@ -469,9 +689,15 @@ ws conflict_rel(const ws& rel, const std::vector<ws>& roots) {
 
 bool same_or_nested(const ws& a, const ws& b) {
     auto full = [](const ws& p) {
+#if RH_WIN
         ws f = lower(lp(p));
-        while (!f.empty() && f.back() == L'\\') f.pop_back();
-        return f + L"\\";
+#else
+        std::error_code ec;   // mac: resolve symlinks / relative parts so "nested" is judged on real locations
+        ws f = lower(W(std::filesystem::weakly_canonical(std::filesystem::path(nat(p)), ec).string()));
+        if (ec) f = lower(p);
+#endif
+        while (!f.empty() && f.back() == kSepW) f.pop_back();
+        return f + kSepW;
     };
     ws fa = full(a), fb = full(b);
     return fa.rfind(fb, 0) == 0 || fb.rfind(fa, 0) == 0;
@@ -491,7 +717,7 @@ std::string vault_dir() {
         if (!g_vault.empty()) return g_vault;
     }
     ws d = norm_dir(hub::data_dir());
-    str s = U(d) + "\\saves\\";
+    str s = U(d) + plat::kSep + "saves" + plat::kSep;
     std::lock_guard<std::mutex> lk(g_mu);
     if (g_vault.empty()) g_vault = s;
     return g_vault;
@@ -500,28 +726,28 @@ std::string vault_dir() {
 void set_vault_dir(const std::string& dir) {
     std::lock_guard<std::mutex> lk(g_mu);
     if (dir.empty()) { g_vault.clear(); return; }
-    g_vault = U(norm_dir(dir)) + "\\";
+    g_vault = U(norm_dir(dir)) + plat::kSep;
 }
 
 std::string game_dir(const std::string& system_short, const std::string& game_key) {
-    ws d = vault_w() + L"\\" + sanitize_component(system_short) + L"\\" + sanitize_component(game_key);
+    ws d = vault_w() + kSepW + sanitize_component(system_short) + kSepW + sanitize_component(game_key);
     mkdirs(d);
-    return U(d) + "\\";
+    return U(d) + plat::kSep;
 }
 std::string game_dir_path(const std::string& system_short, const std::string& game_key) {
-    return U(vault_w() + L"\\" + sanitize_component(system_short) + L"\\" + sanitize_component(game_key)) + "\\";
+    return U(vault_w() + kSepW + sanitize_component(system_short) + kSepW + sanitize_component(game_key)) + plat::kSep;
 }
-std::string battery_dir_path(const std::string& system_short, const std::string& game_key) { return game_dir_path(system_short, game_key) + "battery\\"; }
-std::string states_dir_path(const std::string& system_short, const std::string& game_key) { return game_dir_path(system_short, game_key) + "states\\"; }
+std::string battery_dir_path(const std::string& system_short, const std::string& game_key) { return game_dir_path(system_short, game_key) + "battery" + plat::kSep; }
+std::string states_dir_path(const std::string& system_short, const std::string& game_key) { return game_dir_path(system_short, game_key) + "states" + plat::kSep; }
 std::string battery_dir(const std::string& system_short, const std::string& game_key) {
     ws d = W(game_dir(system_short, game_key)) + L"battery";
     mkdirs(d);
-    return U(d) + "\\";
+    return U(d) + plat::kSep;
 }
 std::string states_dir(const std::string& system_short, const std::string& game_key) {
     ws d = W(game_dir(system_short, game_key)) + L"states";
     mkdirs(d);
-    return U(d) + "\\";
+    return U(d) + plat::kSep;
 }
 
 void touch_game(const std::string& system_short, const std::string& game_key, const std::string& title) {
@@ -594,14 +820,19 @@ SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
         };
         auto skip = [&](const FE& e, const char* why) {
             rep.log.push_back("skip " + lrel(e) + ": " + why +
+#if RH_WIN
                               ((e.attrs & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_RECALL_ON_OPEN))
                                    ? " (cloud placeholder not downloaded)" : ""));
+#else
+                              std::string());
+#endif
         };
 
         /* Never replace an existing destination in the "only one side has it" branches: the scan said the file is absent there, but if
          * it exists after all (it appeared since the scan, or the scan missed it) it is compared like any two-sided file below. */
         FE extra;   // the destination file when the scan missed it
         auto probe = [&](const ws& base, const FE& want, FE* out) -> int {   // 0 absent, 1 present (filled), 2 cannot tell / not a file
+#if RH_WIN
             WIN32_FILE_ATTRIBUTE_DATA ad;
             if (!GetFileAttributesExW(lp(base + L"/" + want.rel).c_str(), GetFileExInfoStandard, &ad)) {
                 DWORD e = GetLastError();
@@ -613,6 +844,16 @@ SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
             out->mtime = ((uint64_t)ad.ftLastWriteTime.dwHighDateTime << 32) | ad.ftLastWriteTime.dwLowDateTime;
             out->attrs = ad.dwFileAttributes;
             return 1;
+#else
+            struct stat st;
+            if (::stat(nat(base + L"/" + want.rel).c_str(), &st) != 0) return (errno == ENOENT || errno == ENOTDIR) ? 0 : 2;
+            if (S_ISDIR(st.st_mode)) return 2;
+            out->rel = want.rel;
+            out->size = (uint64_t)st.st_size;
+            out->mtime = ft_from_stat(st);
+            out->attrs = 0;
+            return 1;
+#endif
         };
         const FE* pl = il != L.end() ? &il->second : nullptr;
         const FE* pr = ir != R.end() ? &ir->second : nullptr;
@@ -675,7 +916,7 @@ SyncReport sync_folder(const std::string& sync_root_utf8, bool include_states) {
             if (!vcopy || !copy_atomic(lbase + L"/" + lose.rel, root + L"/" + cr, lm)) {
                 /* conflict_rel() picked a name free on both sides, so a vault copy that exists now is exactly the one THIS attempt made:
                  * remove it, or every retry would pile up another timestamped copy. Nothing older is ever touched. */
-                if (vcopy) DeleteFileW(lp(vault + L"/" + cr).c_str());
+                if (vcopy) del_file(vault + L"/" + cr);
                 skip(el, "could not preserve the overwritten copy; left untouched");
                 continue;
             }
@@ -719,11 +960,11 @@ bool export_zip(const std::string& zip_path, bool include_states, std::string* e
     ws dst = W(zip_path);
     if (!mkdirs_for_file(dst)) return fail("cannot create folder for " + zip_path);
     ws tmp = dst + L".hubtmp";
-    FILE* f = _wfopen(lp(tmp).c_str(), L"wb");
+    FILE* f = fopen_ws(tmp, true);
     if (!f) return fail("cannot create " + zip_path);
 
     mz_zip_archive z; memset(&z, 0, sizeof z);
-    if (!mz_zip_writer_init_cfile(&z, f, 0)) { fclose(f); DeleteFileW(lp(tmp).c_str()); return fail("zip init failed"); }
+    if (!mz_zip_writer_init_cfile(&z, f, 0)) { fclose(f); del_file(tmp); return fail("zip init failed"); }
     bool ok = true;
     std::vector<uint8_t> buf;
     int skipped = 0;
@@ -741,7 +982,7 @@ bool export_zip(const std::string& zip_path, bool include_states, std::string* e
     mz_zip_writer_end(&z);
     if (ok) ok = fflush(f) == 0;
     fclose(f);
-    if (!ok) { DeleteFileW(lp(tmp).c_str()); return fail("writing zip failed"); }
+    if (!ok) { del_file(tmp); return fail("writing zip failed"); }
     if (!commit_tmp(tmp, dst)) return fail("cannot write " + zip_path);
     str warn;
     if (skipped) warn = std::to_string(skipped) + " file(s) could not be read and were left out.";
@@ -779,7 +1020,7 @@ SyncReport import_zip(const std::string& zip_path) {
     ws vault = vault_w();
     if (!mkdirs(vault)) return fail("cannot create vault folder");
 
-    FILE* f = _wfopen(lp(W(zip_path)).c_str(), L"rb");
+    FILE* f = fopen_ws(W(zip_path), false);
     if (!f) return fail("cannot open " + zip_path);
     mz_zip_archive z; memset(&z, 0, sizeof z);
     if (!mz_zip_reader_init_cfile(&z, f, 0, 0)) { fclose(f); return fail("not a valid zip file: " + zip_path); }
@@ -808,12 +1049,19 @@ SyncReport import_zip(const std::string& zip_path) {
             else rep.log.push_back("skip " + U(rel) + ": write failed");
         } else {
             str lh;
+            uint64_t lft = 0;
+#if RH_WIN
             WIN32_FILE_ATTRIBUTE_DATA ad;
             bool have = GetFileAttributesExW(lp(target).c_str(), GetFileExInfoStandard, &ad) && hash_file(target, &lh);
+            if (have) lft = ((uint64_t)ad.ftLastWriteTime.dwHighDateTime << 32) | ad.ftLastWriteTime.dwLowDateTime;
+#else
+            struct stat lst;
+            bool have = ::stat(nat(target).c_str(), &lst) == 0 && hash_file(target, &lh);
+            if (have) lft = ft_from_stat(lst);
+#endif
             if (!have) {
                 rep.log.push_back("skip " + U(rel) + ": cannot read existing file");
             } else if (lh != zh) {
-                uint64_t lft = ((uint64_t)ad.ftLastWriteTime.dwHighDateTime << 32) | ad.ftLastWriteTime.dwLowDateTime;
                 bool zip_wins = zft > lft + 20000000ULL;  // zip dates have 2 s resolution
                 if (is_meta(rel)) {
                     if (zip_wins && write_atomic(target, bytes, sz, zft)) rep.pulled++;

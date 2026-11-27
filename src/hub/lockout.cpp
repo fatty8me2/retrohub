@@ -29,7 +29,7 @@ bool g_inv_busy = false;
 double g_inv_sent = 0.0, g_inv_last = 0.0;
 std::string g_inv_link;                       // a retrohub://invite/ code waiting for the lock screen to be ready
 double g_inv_link_at = 0.0;
-double now_s() { return (double)GetTickCount64() / 1000.0; }
+double now_s() { return (double)plat::tick_ms() / 1000.0; }
 void inv_set(int kind, const std::string& m) { g_inv_kind = kind; g_inv_msg = m; }
 void inv_submit() {
     if (g_inv_busy) return;
@@ -49,7 +49,7 @@ const char* kind_name(hublock::Lock l) { return l == hublock::Lock::Pending ? "p
 
 void lockout_init(bool had_account, const std::string& uid) {
     g_enabled = !g_headless;   // autotest only skips the "Setting up" lock (fresh QA data dirs); a pending / banned verdict always locks
-    g_t0 = (double)GetTickCount64() / 1000.0;
+    g_t0 = (double)plat::tick_ms() / 1000.0;
     hublock::Cache c;
     std::string text;
     if (winutil::read_file(cache_path(), &text)) c = hublock::cache_parse(text);
@@ -92,7 +92,7 @@ bool app_locked() { return lockout_kind() != hublock::Lock::None; }
 bool launch_blocked(const char* what) {
     if (!app_locked()) return false;
     static double last = 0;
-    const double now = (double)GetTickCount64() / 1000.0;
+    const double now = (double)plat::tick_ms() / 1000.0;
     if (now - last > 5.0) { last = now; std::fprintf(stderr, "RetroHub: %s refused: the account is locked (%s)\n", what ? what : "launch", kind_name(lockout_kind())); }
     return true;
 }
@@ -144,7 +144,7 @@ void draw_lock_screen() {
         }
         last_frame = ImGui::GetFrameCount();
     }
-    const bool trying = g_forced ? g_forced_trying : ((double)GetTickCount64() / 1000.0 - g_t0 < 8.0) && !FR.cli.connected();
+    const bool trying = g_forced ? g_forced_trying : ((double)plat::tick_ms() / 1000.0 - g_t0 < 8.0) && !FR.cli.connected();
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));

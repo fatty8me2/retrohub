@@ -1,3 +1,6 @@
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#endif
 #include "console_names.h"
 #include "app.h"
 #include "wave3_hooks.h"
@@ -441,15 +444,25 @@ bool entry_online(const hub::GameEntry& e) {
 /* "Recently added": when the game file appeared on disk (creation time, else last write); cached per path. */
 static unsigned long long stat_added(const std::string& path) {
     unsigned long long v = 0;
+#if !RH_WIN
+    struct stat st{};
+    if (::stat(path.c_str(), &st) == 0) {   // birth time when it is older than the last write, else the last write
+        long long c = (long long)st.st_birthtimespec.tv_sec, w = (long long)st.st_mtimespec.tv_sec;
+        long long t = c > 0 && c < w ? c : w;
+        if (t > 0) v = (unsigned long long)t;
+    }
+    return v;
+#else
     WIN32_FILE_ATTRIBUTE_DATA d{};
     if (GetFileAttributesExW(W(path).c_str(), GetFileExInfoStandard, &d)) {
         ULARGE_INTEGER c, w;
         c.LowPart = d.ftCreationTime.dwLowDateTime; c.HighPart = d.ftCreationTime.dwHighDateTime;
         w.LowPart = d.ftLastWriteTime.dwLowDateTime; w.HighPart = d.ftLastWriteTime.dwHighDateTime;
-        ULONGLONG t = c.QuadPart && c.QuadPart < w.QuadPart ? c.QuadPart : w.QuadPart;
+        unsigned long long t = c.QuadPart && c.QuadPart < w.QuadPart ? c.QuadPart : w.QuadPart;
         if (t > 116444736000000000ull) v = (t - 116444736000000000ull) / 10000000ull;
     }
     return v;
+#endif
 }
 
 /* The stat can be slow (network drives), so it never runs on the UI thread: an unknown path reports 0 and is

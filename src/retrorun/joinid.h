@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "plat/plat.h"
 #include "disc_id.h"
 #include "joinfp.h"
 #include "library.h"
@@ -34,14 +35,14 @@ inline std::string lower_ext(const std::string& path) {
     return e;
 }
 
-inline FILE* open_rb(const std::string& path) { return _wfopen(fs::u8path(path).wstring().c_str(), L"rb"); }
+inline FILE* open_rb(const std::string& path) { return plat::fopen_path(fs::u8path(path), "rb"); }
 
 inline bool read_all(const std::string& path, uint64_t cap, std::vector<uint8_t>* out) {
     FILE* f = open_rb(path);
     if (!f) return false;
-    _fseeki64(f, 0, SEEK_END);
-    long long n = _ftelli64(f);
-    _fseeki64(f, 0, SEEK_SET);
+    plat::fseek64(f, 0, SEEK_END);
+    long long n = plat::ftell64(f);
+    plat::fseek64(f, 0, SEEK_SET);
     bool ok = n > 0 && (uint64_t)n <= cap;
     if (ok) { out->resize((size_t)n); ok = fread(out->data(), 1, (size_t)n, f) == (size_t)n; }
     fclose(f);
@@ -108,14 +109,14 @@ inline bool chd_digest(const uint8_t* h, size_t n, uint64_t* out) {
 inline uint64_t sampled_hash(const std::string& path) {
     FILE* f = open_rb(path);
     if (!f) return 0;
-    _fseeki64(f, 0, SEEK_END);
-    long long size = _ftelli64(f);
+    plat::fseek64(f, 0, SEEK_END);
+    long long size = plat::ftell64(f);
     if (size <= 0) { fclose(f); return 0; }
     uint64_t h = joinfp::fnv(0xCBF29CE484222325ull, &size, sizeof size);
     std::vector<uint8_t> buf(65536);
     for (int i = 0; i < 64; i++) {
         long long off = size > (long long)buf.size() ? (size - (long long)buf.size()) / 63 * i : 0;
-        _fseeki64(f, off, SEEK_SET);
+        plat::fseek64(f, off, SEEK_SET);
         size_t got = fread(buf.data(), 1, buf.size(), f);
         h = joinfp::fnv(h, buf.data(), got);
         if (size <= (long long)buf.size()) break;

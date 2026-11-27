@@ -1,6 +1,7 @@
 // Console test: online launch guard (busy/debounce), host's view of a guest's np_fail, player-facing launch wording, UTF-8 file helpers.
 #include "launch_text.h"
 #include "launch_files.h"
+#include "plat/plat.h"
 
 #include <cstdio>
 #include <cstring>
@@ -140,7 +141,8 @@ static void files() {
     fs::create_directories(base, ec);
     CHECK(fs::exists(base));
     const std::string dir = base.u8string();
-    const std::string probe = dir + "\\rplay_probe.json", pid = dir + "\\rplay_cemu.pid";
+    const std::string SEP(1, plat::kSep);   // (a Windows path is "\\"-separated, a macOS one "/")
+    const std::string probe = dir + SEP + "rplay_probe.json", pid = dir + SEP + "rplay_cemu.pid";
     CHECK(read_file_utf8(probe).empty());                 // missing file: empty, no crash
     CHECK(write_file_utf8(pid, "12345"));
     CHECK(fs::exists(fs::u8path(pid)));
@@ -151,19 +153,19 @@ static void files() {
     CHECK(file_size_utf8(pid) == 0);
     remove_file_utf8(pid);                                // removing a missing file is harmless
     // the host's battery saves into the throwaway netplay folder: both UTF-8 (a vault under C:\Users\José was never found before)
-    const std::string bat = dir + "\\battery", tmp = dir + "\\netplay";
+    const std::string bat = dir + SEP + "battery", tmp = dir + SEP + "netplay";
     CHECK(!copy_dir_files_utf8(bat, tmp));                // no save folder: false, nothing copied
     fs::create_directories(fs::u8path(bat), ec);
     fs::create_directories(fs::u8path(tmp), ec);
-    fs::create_directories(fs::u8path(bat + "\\sub"), ec);   // sub-folders are not copied
-    CHECK(write_file_utf8(bat + "\\Pok\xC3\xA9mon Red.srm", "SAVE"));
-    CHECK(write_file_utf8(bat + "\\game.rtc", "RTC"));
-    CHECK(write_file_utf8(tmp + "\\game.rtc", "OLD"));
+    fs::create_directories(fs::u8path(bat + SEP + "sub"), ec);   // sub-folders are not copied
+    CHECK(write_file_utf8(bat + SEP + "Pok\xC3\xA9mon Red.srm", "SAVE"));
+    CHECK(write_file_utf8(bat + SEP + "game.rtc", "RTC"));
+    CHECK(write_file_utf8(tmp + SEP + "game.rtc", "OLD"));
     CHECK(copy_dir_files_utf8(bat, tmp));
-    CHECK(read_file_utf8(tmp + "\\Pok\xC3\xA9mon Red.srm") == "SAVE");
-    CHECK(read_file_utf8(tmp + "\\game.rtc") == "RTC");   // replaced
-    CHECK(!fs::exists(fs::u8path(tmp + "\\sub")));
-    CHECK(copy_dir_files_utf8(tmp, tmp + "\\missing") == true);   // a destination that does not exist: no crash (files are skipped)
+    CHECK(read_file_utf8(tmp + SEP + "Pok\xC3\xA9mon Red.srm") == "SAVE");
+    CHECK(read_file_utf8(tmp + SEP + "game.rtc") == "RTC");   // replaced
+    CHECK(!fs::exists(fs::u8path(tmp + SEP + "sub")));
+    CHECK(copy_dir_files_utf8(tmp, tmp + SEP + "missing") == true);   // a destination that does not exist: no crash (files are skipped)
     fs::remove_all(base, ec);
 }
 

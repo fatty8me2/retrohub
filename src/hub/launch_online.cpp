@@ -7,6 +7,41 @@
 #include "hub_log.h"
 #include <filesystem>
 
+/* Platform spellings used by the room launches below (the Windows strings are exactly the ones this file always had). */
+#if RH_WIN
+#define LO_SEP "\\"
+#define LO_EXE(n) n ".exe"
+#define LO_M64P "mupen64plus.dll"
+#define LO_PATH(s) std::filesystem::path(W(s))
+#else
+#include "proc_spawn.h"
+#define LO_SEP "/"
+#define LO_EXE(n) n
+#define LO_M64P "libmupen64plus.dylib"
+#define LO_PATH(s) std::filesystem::u8path(s)
+#endif
+
+/* Is the process `pid` (one of our helper / emulator pids) still running? */
+static bool lo_pid_alive(unsigned long pid) {
+#if RH_WIN
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
+    if (!h) return false;
+    bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+    CloseHandle(h);
+    return alive;
+#else
+    return pid != 0 && plat::proc::pid_alive((int)pid);
+#endif
+}
+/* Hard-kill one process (not its tree). */
+static void lo_pid_kill(unsigned long pid) {
+#if RH_WIN
+    if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, (DWORD)pid)) { TerminateProcess(h, 0); CloseHandle(h); }
+#else
+    if (pid) plat::proc::kill_pid((int)pid, true);
+#endif
+}
+
 GcOnline GCO;
 /* GCO.fp_th (the disc fingerprint worker) was only ever joined when another disc was hashed, so the last one was still joinable when GCO was
  * destroyed at exit, and destroying a joinable std::thread calls std::terminate: RetroHub aborted on quit after a GameCube game had been
@@ -26,7 +61,7 @@ static void host_abort(const std::string& why) {
     if (room_connected() && !g_fake_room) A.lobby.send_msg("{\"kind\":\"np_abort\",\"reason\":\"" + json::escape(why) + "\"}");
 }
 /* Double-launch guard (room_launch_busy): tick of the host's last launch press, and the game's title for "Starting X...". */
-static ULONGLONG g_launch_pressed_at = 0;
+static unsigned long long g_launch_pressed_at = 0;
 static std::string g_launch_title;
 /* `m` is what THIS player reads; `wire` (default: m, with the older wording for the texts that changed) is what other RetroHubs receive,
  * so an older RetroHub in the same room keeps reading what it always did. */
@@ -56,7 +91,7 @@ bool room_launch_busy() {
     st.gc_guest_wait = GCO.guest_wait;
     st.gc_forwarder = GCO.fw.active();
     rplay_busy_states(&st.rp_pending, &st.rp_stream, &st.rp_probe);
-    return hublaunch::launch_busy(st, GetTickCount64(), g_launch_pressed_at);
+    return hublaunch::launch_busy(st, plat::tick_ms(), g_launch_pressed_at);
 }
 /* Text for the STARTING phase only: not while a GameCube / remote play session is simply running (those flags stay true for the whole game). */
 std::string room_launch_busy_text() {
@@ -68,7 +103,7 @@ std::string room_launch_busy_text() {
     st.gc_process_alive = gc_process_alive();
     st.game_running = A.proc != nullptr;
     rplay_busy_states(&st.rp_pending, &st.rp_stream, &st.rp_probe);
-    return hublaunch::starting_text_active(st, GetTickCount64(), g_launch_pressed_at) ? hublaunch::starting_text(g_launch_title) : std::string();
+    return hublaunch::starting_text_active(st, plat::tick_ms(), g_launch_pressed_at) ? hublaunch::starting_text(g_launch_title) : std::string();
 }
 
 bool gc_fingerprint_ready(const std::string& path) {
@@ -93,18 +128,14 @@ static unsigned long long g_gc_driver_t0 = 0;   // when the Dolphin UIA driver w
 
 bool gc_process_alive() {
     if (!GCO.run.dolphin_pid) return false;
-    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, GCO.run.dolphin_pid);
-    if (!h) return false;
-    bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
-    CloseHandle(h);
-    return alive;
+    return lo_pid_alive(GCO.run.dolphin_pid);
 }
 
 void gc_kill(const char* why) {
     online_log(std::string("gc_kill: ") + why);
-    for (DWORD pid : {GCO.run.driver_pid, GCO.run.dolphin_pid}) {
+    for (unsigned long pid : {GCO.run.driver_pid, GCO.run.dolphin_pid}) {
         if (!pid) continue;
-        if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, pid)) { TerminateProcess(h, 0); CloseHandle(h); }
+        lo_pid_kill(pid);
     }
 }
 
@@ -120,7 +151,7 @@ void online_host_left(const std::string& gone) {
         /* Do not close a running game on the lobby's word alone: a network blip on the host's side looks the same. Start a grace
          * timer; gc_tick tells the player and only closes if Dolphin's own NetPlay link is dead too. */
         GCO.left_name = who;
-        GCO.host_gone_at = GetTickCount64();
+        GCO.host_gone_at = plat::tick_ms();
         GCO.host_gone_told = false;
         online_log("host left: " + who + " (guest Dolphin running, grace timer started, not closing)");
         return;
@@ -187,6 +218,11 @@ bool gc_host_spec(const hub::GameEntry& e, int players, gcnp::Spec* out) {
 
 bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     if (launch_blocked("gc_begin")) return false;
+#if !RH_WIN
+    /* TODO(macOS lane 7): GameCube online drives Dolphin's NetPlay dialog through a Windows UI Automation helper; no macOS equivalent yet. */
+    launch_note(host, "GameCube online isn't available on macOS yet.");
+    return false;
+#endif
     autotest_log(std::string("gc_begin request ") + (host ? "host" : "guest") + " slot " + std::to_string(slot));
     if (GCO.active && gc_process_alive()) { launch_note(host, "A GameCube online session is already running."); return false; }
     hubemu::Install inst = hubemu::find(hubemu::Kind::Dolphin, "", "");
@@ -198,7 +234,7 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     if (g_headless) { launch_note(host, "Headless test run: launch skipped."); return false; }
     hubemu::dolphin_migrate_old(hub::data_dir(), hub::exe_dir(), inst.dir);
     { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }   // managed config: no update check, no analytics, no panic alerts
-    std::string user = inst.dir + "\\User", ini = user + "\\Config\\Dolphin.ini";
+    std::string user = inst.dir + "" LO_SEP "User", ini = user + "" LO_SEP "Config" LO_SEP "Dolphin.ini";
     cheats_apply_dolphin(e, user, true, host, host ? nullptr : &GCO.launch_body);   // same codes on every PC (NetPlay's SyncCodes sends the host's list as well)
     gcnp::Spec sp = GCO.spec;
     sp.mode = "direct";
@@ -214,9 +250,9 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
     ip.relayed = GCO.fw.any_relayed();
     online_log("gc launch: ping " + std::to_string(ip.ping_ms) + " ms, " + (ip.relayed ? "relayed" : "direct") + ", pad buffer " + std::to_string(gcnp::pad_buffer_for_ping(ip.ping_ms, ip.relayed)) + ", " + (gcnp::dual_core_allowed(sp.game_id) ? "dual" : "single") + " core");
     std::string cur;
-    { std::ifstream f(std::filesystem::path(W(ini)), std::ios::binary); std::stringstream ss; ss << f.rdbuf(); cur = ss.str(); }
+    { std::ifstream f(LO_PATH(ini), std::ios::binary); std::stringstream ss; ss << f.rdbuf(); cur = ss.str(); }
     std::string next = gcnp::ini_patch(cur, sp, ip);
-    { std::ofstream f(std::filesystem::path(W(ini)), std::ios::binary | std::ios::trunc); f << next; }
+    { std::ofstream f(LO_PATH(ini), std::ios::binary | std::ios::trunc); f << next; }
     GCO.run = gcnp::Run();
     GCO.run.wait_go = !host;   // a guest's Dolphin boots right away and connects when the host's NetPlay server is up
     GCO.go_sent = false;
@@ -226,9 +262,9 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
      * session's changes stay is Dolphin's WriteSaveData (the host's room choice). Guests get a wiped scratch folder: Dolphin
      * replaces their card with the host's copy in its own Netplay folder, and their real card is never opened. */
     std::string card;
-    if (host) card = hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI";
+    if (host) card = hubemu::dolphin_card_root(inst.dir, e.key) + "" LO_SEP "GCI";
     else {
-        card = no_slash(hub::data_dir()) + "\\netplay\\gc\\guest-card";
+        card = no_slash(hub::data_dir()) + "" LO_SEP "netplay" LO_SEP "gc" LO_SEP "guest-card";
         remove_tree(card);
     }
     make_dirs(card);
@@ -238,16 +274,16 @@ bool gc_begin(const hub::GameEntry& e, bool host, int slot, int port) {
      * host's card there, or every guest boots with an empty card (desync; see gcnp::host_card_sync_args). */
     if (host) {
         std::string serr;
-        std::string sync = gcnp::host_card_sync_args(card, no_slash(hub::data_dir()) + "\\netplay\\gc\\host-sync", &serr);
+        std::string sync = gcnp::host_card_sync_args(card, no_slash(hub::data_dir()) + "" LO_SEP "netplay" LO_SEP "gc" LO_SEP "host-sync", &serr);
         if (sync.empty()) online_log("gc launch: host card copy for the guests failed (" + serr + "); guests start with an empty memory card");
         extra += sync;
     }
-    if (!gcnp::start(host, inst.exe, user, sp, slot, hub::data_dir() + "\\gcnp", "", extra, &GCO.run)) {
+    if (!gcnp::start(host, inst.exe, user, sp, slot, hub::data_dir() + "" LO_SEP "gcnp", "", extra, &GCO.run)) {
         launch_note(host, "Could not start Dolphin NetPlay: " + GCO.run.error);
         return false;
     }
     GCO.active = true;
-    g_gc_driver_t0 = GetTickCount64();
+    g_gc_driver_t0 = plat::tick_ms();
     GCO.host = host;
     autotest_log(std::string("gc_begin ") + (host ? "host" : "guest") + " card=" + card);
     GCO.ready_sent = false;
@@ -268,7 +304,7 @@ void gc_host_guest_failed(const std::string& why) {
 void gc_stop_all(const char* why) {
     online_log(std::string("gc_stop_all: ") + why);
     if (GCO.run.driver_pid) {   // the UI-automation driver can outlive Dolphin; never leave it behind
-        if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, GCO.run.driver_pid)) { TerminateProcess(h, 0); CloseHandle(h); }
+        lo_pid_kill(GCO.run.driver_pid);
         GCO.run.driver_pid = 0;
     }
     GCO.fw.stop();
@@ -279,11 +315,7 @@ void gc_stop_all(const char* why) {
 
 static bool gc_driver_alive() {
     if (!GCO.run.driver_pid) return false;
-    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, GCO.run.driver_pid);
-    if (!h) return false;
-    bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
-    CloseHandle(h);
-    return alive;
+    return lo_pid_alive(GCO.run.driver_pid);
 }
 
 /* Each frame: keep the forwarder alive, tell guests when the host's Dolphin is listening, check the guest's disc. */
@@ -299,7 +331,7 @@ void gc_tick() {
                 online_log("guest: forwarder lost mid-game (" + GCO.fw.status() + "); leaving Dolphin running");
                 GCO.fw.stop();
                 GCO.fw_dead = true;
-                if (!GCO.host_gone_at) GCO.host_gone_at = GetTickCount64();
+                if (!GCO.host_gone_at) GCO.host_gone_at = plat::tick_ms();
             } else {
                 gc_kill("forwarder failed before the game started");
                 gc_stop_all("forwarder failed before the game started");
@@ -307,9 +339,9 @@ void gc_tick() {
             }
         }
     }
-    if (GCO.close_deadline && GCO.active && gc_process_alive() && GetTickCount64() > GCO.close_deadline) { GCO.close_deadline = 0; gc_kill("Dolphin ignored the graceful close for 20 s"); }
+    if (GCO.close_deadline && GCO.active && gc_process_alive() && plat::tick_ms() > GCO.close_deadline) { GCO.close_deadline = 0; gc_kill("Dolphin ignored the graceful close for 20 s"); }
     if (GCO.active && !GCO.host && GCO.host_gone_at && gc_process_alive()) {
-        unsigned long long now = GetTickCount64();
+        unsigned long long now = plat::tick_ms();
         switch (hubui::host_gone_decide(true, now - GCO.host_gone_at, GCO.host_gone_told, GCO.fw_dead)) {
             case hubui::HostGoneAct::Notify:
                 GCO.host_gone_told = true;
@@ -373,7 +405,7 @@ void gc_tick() {
         }
     }
     if (GCO.run.driver_pid) {   // watchdog: a driver that died or never reported used to leave the host (and the guests) waiting for minutes
-        hubui::DriverVerdict v = hubui::driver_verdict(gc_driver_alive(), gcnp::read_status(GCO.run), GetTickCount64() - g_gc_driver_t0, GCO.host);
+        hubui::DriverVerdict v = hubui::driver_verdict(gc_driver_alive(), gcnp::read_status(GCO.run), plat::tick_ms() - g_gc_driver_t0, GCO.host);
         if (v != hubui::DriverVerdict::Ok) {
             std::string why = "GameCube online: " + hubui::driver_verdict_text(v);
             online_log("driver watchdog: " + why);
@@ -387,7 +419,7 @@ void gc_tick() {
     if (GCO.host && GCO.fw.active()) {   // the room's pad buffer, from the ping measured once everyone connected (the driver applies it before Start)
         static unsigned long long last_t = 0; static int last_b = -1; static unsigned long last_pid = 0;
         if (GCO.run.dolphin_pid != last_pid) { last_pid = GCO.run.dolphin_pid; last_b = -1; last_t = 0; }   // a new session writes its own file
-        const unsigned long long now = GetTickCount64();
+        const unsigned long long now = plat::tick_ms();
         if (now - last_t >= 1000) {
             last_t = now;
             const int ping = GCO.fw.worst_ping_ms();
@@ -449,6 +481,11 @@ void gc_guest_poll() {
 static std::string NP3_pw;   // onlineflow-M6: this launch's room password, for the Direct Connect helper
 /* 3DS: bring up the room server (host) + UDP forwarder, then poll_np3ds() starts Azahar once everyone is reachable. */
 void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, const hubui::Json* msg, const hubnp3ds::Plan* resumed) {
+#if !RH_WIN
+    /* TODO(macOS lane 7): 3DS online joins the room through Azahar's Direct Connect dialog with a Windows UI Automation helper; no macOS equivalent yet. */
+    launch_note(is_host, "3DS online isn't available on macOS yet.");
+    return;
+#endif
     if (launch_blocked("launch_online_3ds")) return;
     if (is_host && !A.proc && (NP3_pending || NP3.active())) {   // a second launch press while the first is still starting: never abort the guests' first launch
         online_log("3ds: host launch ignored, one is already starting");
@@ -462,7 +499,7 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
         n3ds_prefetch(e);
         hubnp3ds::Plan hp;
         if (!is_host && !resumed && msg && hubnp3ds::parse_plan(*msg, &hp)) {   // guest: remember the launch, start it when the unpack finishes
-            NP3_resume.arm(e.key, launch_no, hp, GetTickCount());
+            NP3_resume.arm(e.key, launch_no, hp, (uint32_t)plat::tick_ms());
             set_notice("Unpacking " + e.title + " - the online game starts by itself when it is done.", 10.0);   // guest resume path (ResumeGate)
         } else launch_note(is_host, unpack_msg(e), 10.0);
         return;
@@ -481,7 +518,7 @@ void launch_online_3ds(const hub::GameEntry& e, int launch_no, bool is_host, con
         plan.password = hubnp3ds::take_pending_host_password();   // onlineflow-M6: the one the launch message carries; members only
         // empty = a mixed-version room: no password, exactly as before
         std::string room = hubnp3ds::room_exe_for(inst.exe);
-        std::string wd = no_slash(hub::data_dir()) + "\\netplay\\3ds";
+        std::string wd = no_slash(hub::data_dir()) + "" LO_SEP "netplay" LO_SEP "3ds";
         make_dirs(wd);
         if (!NP3.start_host(server_url(), A.code, launch_no, plan, room, wd, &err)) { launch_note(is_host, "3DS online: " + err, 12.0); return; }
     } else {
@@ -506,12 +543,12 @@ static void poll_np3ds_join() {
     if (!A.proc || !NP3.active()) { NP3_join_watch = false; return; }   // Azahar closed or the room ended: nothing left to report
     bool alive = false;
     if (NP3_join_pid) {
-        if (HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, NP3_join_pid)) { alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT; CloseHandle(h); }
+        alive = lo_pid_alive(NP3_join_pid);
     }
     std::string text;
     if (!NP3_join_status.empty()) { std::ifstream f(std::filesystem::u8path(NP3_join_status), std::ios::binary); std::ostringstream o; o << f.rdbuf(); text = o.str(); }
     std::string detail;
-    hubcaps::JoinVerdict v = hubcaps::join_verdict(NP3_join_pid != 0, alive, text, GetTickCount64() - NP3_join_t0, 150000, &detail);
+    hubcaps::JoinVerdict v = hubcaps::join_verdict(NP3_join_pid != 0, alive, text, plat::tick_ms() - NP3_join_t0, 150000, &detail);
     if (v == hubcaps::JoinVerdict::Pending) return;
     NP3_join_watch = false;
     if (v == hubcaps::JoinVerdict::Joined) { autotest_log("3ds: joined the room"); return; }
@@ -528,7 +565,7 @@ void poll_np3ds() {
         else if (const hub::GameEntry* g = find_entry(NP3_resume.key())) {
             int no = 0;
             hubnp3ds::Plan p;
-            if (NP3_resume.take(!gc_needs_unpack(*g), GetTickCount(), &no, &p)) { hub::GameEntry copy = *g; launch_online_3ds(copy, no, false, nullptr, &p); }
+            if (NP3_resume.take(!gc_needs_unpack(*g), (uint32_t)plat::tick_ms(), &no, &p)) { hub::GameEntry copy = *g; launch_online_3ds(copy, no, false, nullptr, &p); }
         } else NP3_resume.cancel();
     }
     if (!NP3.active()) { NP3_join_watch = false; return; }   // room link gone (Azahar closed: launch.cpp after_exit stops NP3): nothing left to watch
@@ -553,15 +590,18 @@ void poll_np3ds() {
             NP3.stop();
         } else {
             NP3_join_status.clear();
-            make_dirs(no_slash(hub::data_dir()) + "\\netplay\\3ds");   // only the host created it before: a guest's helper could not write its status file
-            NP3_join_pid = hubnp3ds::start_join_driver(GetProcessId(A.proc), no_slash(hub::data_dir()) + "\\netplay\\3ds", hubnp3ds::nickname(A.st.name, room_my_slot()),
+            make_dirs(no_slash(hub::data_dir()) + "" LO_SEP "netplay" LO_SEP "3ds");   // only the host created it before: a guest's helper could not write its status file
+#if RH_WIN
+            NP3_join_pid = hubnp3ds::start_join_driver(GetProcessId(A.proc), no_slash(hub::data_dir()) + "" LO_SEP "netplay" LO_SEP "3ds", hubnp3ds::nickname(A.st.name, room_my_slot()),
                                                        NP3_pw, "127.0.0.1", NP3.connect_port(), L"", &NP3_join_status);
-            NP3_join_t0 = GetTickCount64();
+#endif
+            NP3_join_t0 = plat::tick_ms();
             NP3_join_watch = true;
         }
     }
     poll_np3ds_join();
 }
+#if RH_WIN
 /* ---------- Wii U remote play (docs/REMOTE_PLAY.md) ----------
  * Host: Cemu starts like an offline game (managed controls; players 2-4 are the guests' pads, fed to Cemu by the DSU server from
  * streamrun's localhost pad API), then poll_rplay() attaches `streamrun --host` to Cemu's window once it exists. Guests run
@@ -570,26 +610,26 @@ namespace {
 struct RPlay {
     bool pending = false;       // host: Cemu started, streamrun not attached yet
     HANDLE proc = nullptr;      // host: our streamrun process
-    ULONGLONG t0 = 0;
+    unsigned long long t0 = 0;
     std::string room;
     int members = 1;
     std::string pid_file;       // streamrun --await-pid-file: we write Cemu's PID here once its window exists
     std::string status_file, status_text;   // streamrun --status-file (1 Hz JSON) -> "streaming to ..." line
-    ULONGLONG status_at = 0;
+    unsigned long long status_at = 0;
     std::map<int, std::string> names;       // slot -> name of the guests being streamed to
     /* direct-connection pre-check (streamrun --probe) */
     HANDLE probe = nullptr;     // host: the probe process
     std::string probe_file;
-    ULONGLONG probe_t0 = 0;
+    unsigned long long probe_t0 = 0;
     std::map<int, std::string> probe_names;
     int probe_no = 0;
-    ULONGLONG ok_at = 0;        // last passing probe...
+    unsigned long long ok_at = 0;        // last passing probe...
     unsigned ok_sig = 0;        // ...for this room membership
     std::string block;          // why Launch is blocked after a failed probe
-    ULONGLONG block_at = 0;
+    unsigned long long block_at = 0;
     unsigned block_sig = 0;
     std::vector<HANDLE> guest_probes;                       // guest side helpers (streamrun --probe --guest)
-    std::vector<std::pair<HANDLE, ULONGLONG>> quitting;     // asked to quit cleanly: (handle, kill deadline)
+    std::vector<std::pair<HANDLE, unsigned long long>> quitting;     // asked to quit cleanly: (handle, kill deadline)
 } RP;
 
 }  // namespace
@@ -626,7 +666,7 @@ void quit_gracefully(HANDLE h, DWORD grace_ms) {   // does not take ownership of
     HANDLE d = nullptr;
     if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &d, 0, FALSE, DUPLICATE_SAME_ACCESS)) { TerminateProcess(h, 0); return; }
     bool signalled = signal_quit(GetProcessId(h));
-    RP.quitting.push_back({d, GetTickCount64() + (signalled ? grace_ms : 300)});
+    RP.quitting.push_back({d, plat::tick_ms() + (signalled ? grace_ms : 300)});
     autotest_log(std::string("rplay: asked pid ") + std::to_string(GetProcessId(h)) + " to quit" + (signalled ? "" : " (no quit event yet)"));
 }
 
@@ -673,7 +713,7 @@ std::string rplay_status_line() { return RP.proc ? RP.status_text : std::string(
 std::string rplay_block_reason() {
     if (RP.probe) return "Checking that everyone can connect directly...";
     if (RP.block.empty()) return "";
-    if (member_sig() != RP.block_sig || GetTickCount64() - RP.block_at > 25000) { RP.block.clear(); return ""; }   // new people / time passed: allow another try
+    if (member_sig() != RP.block_sig || plat::tick_ms() - RP.block_at > 25000) { RP.block.clear(); return ""; }   // new people / time passed: allow another try
     return RP.block;
 }
 
@@ -681,7 +721,7 @@ bool rplay_precheck() {
     unsigned sig = member_sig();
     if ((int)room_members().size() <= 1) return true;   // nobody to stream to yet
     if (RP.probe) { set_notice("Still checking everyone's connection...", 6.0); return false; }
-    if (RP.ok_at && RP.ok_sig == sig && GetTickCount64() - RP.ok_at < 90000) return true;
+    if (RP.ok_at && RP.ok_sig == sig && plat::tick_ms() - RP.ok_at < 90000) return true;
     std::string sr = streamrun_path();
     if (sr.empty() || !file_exists(sr)) return true;   // launch_online_wiiu reports the missing streamrun
     if (g_headless) return true;
@@ -695,7 +735,7 @@ bool rplay_precheck() {
         set_notice(hublaunch::connection_check_failed_text(), 10.0);
         return false;
     }
-    RP.probe_t0 = GetTickCount64();
+    RP.probe_t0 = plat::tick_ms();
     RP.probe_names = member_names();
     RP.block.clear();
     A.lobby.send_msg(hubrp::probe_msg(room, members));
@@ -747,7 +787,7 @@ void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host) {
         launch_external(e, r, no_slash(hub::saves::battery_dir(sys_short(e), e.key)));   // the host's Cemu + save sync work exactly like offline play: same vault path (saves-F4)
         if (!A.proc) { rplay_stop(); host_abort("the host's Cemu did not start"); return; }
         RP.pending = true;
-        RP.t0 = GetTickCount64();
+        RP.t0 = plat::tick_ms();
         set_notice("Starting " + e.title + " - remote play connects once the game window appears...", 10.0);
         return;
     }
@@ -763,7 +803,7 @@ void launch_online_wiiu(const hub::GameEntry& e, int launch_no, bool is_host) {
 }
 
 void poll_rplay() {
-    ULONGLONG nowt = GetTickCount64();
+    unsigned long long nowt = plat::tick_ms();
     for (size_t i = 0; i < RP.quitting.size();) {   // clean-quit requests: reap, or kill (own PID) when the grace period ran out
         auto& q = RP.quitting[i];
         bool done = WaitForSingleObject(q.first, 0) == WAIT_OBJECT_0;
@@ -780,20 +820,20 @@ void poll_rplay() {
         auto rtt = hubrp::parse_probe_slots(read_small(RP.probe_file));
         std::string why = hubrp::probe_block_reason(rtt, RP.probe_names);
         if (code == 0 && why.empty()) {
-            RP.ok_at = GetTickCount64();
+            RP.ok_at = plat::tick_ms();
             RP.ok_sig = member_sig();
             autotest_log("rplay: probe OK, launching");
             if (A.in_room && is_host() && !A.proc) host_launch_selected();   // re-enters; rplay_precheck now passes
         } else {
             if (why.empty()) why = hubrp::kNoDirectText;
             RP.block = why;
-            RP.block_at = GetTickCount64();
+            RP.block_at = plat::tick_ms();
             RP.block_sig = member_sig();
             set_notice(why, 20.0);
             push_toast(why, ui::BAD, 12.0, true);
             autotest_log("rplay: probe FAILED: " + why);
         }
-    } else if (RP.probe && GetTickCount64() - RP.probe_t0 > 30000) { quit_gracefully(RP.probe, 1000); }
+    } else if (RP.probe && plat::tick_ms() - RP.probe_t0 > 30000) { quit_gracefully(RP.probe, 1000); }
     if (RP.proc && WaitForSingleObject(RP.proc, 0) == WAIT_OBJECT_0) {   // streamrun --host ended
         DWORD code = 0;
         GetExitCodeProcess(RP.proc, &code);
@@ -825,7 +865,7 @@ void poll_rplay() {
     if (!RP.pending) return;
     unsigned long pid = 0;
     bool win = A.proc && game_window_pid(&pid);
-    switch (hubrp::attach_decision(A.proc != nullptr, win, GetTickCount64() - RP.t0)) {
+    switch (hubrp::attach_decision(A.proc != nullptr, win, plat::tick_ms() - RP.t0)) {
         case hubrp::Attach::Wait: return;
         case hubrp::Attach::GiveUp:
             RP.pending = false;
@@ -837,12 +877,27 @@ void poll_rplay() {
     hublaunch::write_file_utf8(RP.pid_file, std::to_string(pid));   // streamrun captures this PID's window
         autotest_log("rplay: streamrun attached to Cemu pid " + std::to_string(pid));
 }
+#else
+/* TODO(macOS lane 7): Wii U remote play needs streamrun (lane 8: screen capture / encode) and a Cemu window attach; not available on macOS yet. */
+void rplay_busy_states(bool* pending, bool* stream, bool* probe) { *pending = false; *stream = false; *probe = false; }
+bool rplay_session_alive() { return false; }
+void rplay_stop() {}
+void rplay_quit_current_guest() {}
+std::string rplay_status_line() { return std::string(); }
+std::string rplay_block_reason() { return std::string(); }
+bool rplay_precheck() { return true; }
+void rplay_probe_guest(const std::string&, int) {}
+void launch_online_wiiu(const hub::GameEntry& e, int, bool is_host) {
+    launch_note(is_host, "Wii U remote play isn't available on macOS yet.");
+}
+void poll_rplay() {}
+#endif
 
 void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is_host, const std::string& core_in, bool share_save,
                           const hubui::PortPlan* host_plan, const hubui::Json* launch_msg,
                           const hubui::MatchSpec* host_match, const std::string* launch_body) {
     if (launch_blocked("launch_online")) return;
-    if (is_host && !g_fake_room) { g_launch_pressed_at = GetTickCount64(); g_launch_title = e_in.title; }   // room_launch_busy(): debounce from this press
+    if (is_host && !g_fake_room) { g_launch_pressed_at = plat::tick_ms(); g_launch_title = e_in.title; }   // room_launch_busy(): debounce from this press
     hub::GameEntry hacked;   // ROM hack (Plan 4 H4): every PC plays its own patched copy; the content key makes them identical
     if (is_hack(e_in)) {
         std::string patched;
@@ -947,11 +1002,17 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         }
     }
     {   // retrorun exit 12 (could not connect) leaves its reason here; logic.cpp's exit_code_text shows it
-        std::string rf = no_slash(hub::data_dir()) + "\\netplay\\net_reason.txt";
-        make_dirs(no_slash(hub::data_dir()) + "\\netplay");
+        std::string rf = no_slash(hub::data_dir()) + "" LO_SEP "netplay" LO_SEP "net_reason.txt";
+        make_dirs(no_slash(hub::data_dir()) + "" LO_SEP "netplay");
+#if RH_WIN
         DeleteFileW(W(rf).c_str());
         hubui::set_net_reason_file(rf);
         SetEnvironmentVariableW(L"RETRORUN_REASON_FILE", W(rf).c_str());
+#else
+        { std::error_code ec; std::filesystem::remove(std::filesystem::u8path(rf), ec); }
+        hubui::set_net_reason_file(rf);
+        plat::set_env("RETRORUN_REASON_FILE", rf.c_str());
+#endif
     }
     std::string net = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
                       std::to_string(room_my_slot()) + " --players " + std::to_string(plan.players) + " --ports " +
@@ -987,8 +1048,8 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
                 args += " --host-save-dir " + quote(bd);
             }
         }
-        if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
-            std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
+        if (!file_exists(hub::exe_dir() + "emu" LO_SEP LO_M64P)) {
+            std::string emu = find_upward("deps" LO_SEP "emu" LO_SEP LO_M64P);
             if (!emu.empty()) args += " --emu-dir " + quote(no_slash(dir_of(emu)));
         }
         spawn_room(is_host, n64run_path(), args, hub::exe_dir(), {}, ri);
@@ -1022,7 +1083,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         std::string lnet = " --net " + quote(server_url()) + " --room " + A.code + "-" + std::to_string(launch_no) + " --slot " +
                            std::to_string(room_my_slot()) + " --players 2 --ports " + owners[0] + "," + owners[1] + ",-1,-1" + hubui::delay_arg(delay);
         std::string battery = no_slash(hub::saves::battery_dir(sys_short(e), e.key));
-        std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
+        std::string tmp = no_slash(hub::data_dir()) + "" LO_SEP "netplay" LO_SEP "" + sys_short(e);
         make_dirs(tmp);
         ri.online = false;   // the vault save is used and written back: track/sync it like an offline session
         std::string args = "--core " + quote(core) + " --rom " + quote(e.path) + " --system " + sys_short(e) + " --link --save-dir " + quote(battery) +
@@ -1033,7 +1094,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         args += hubui::retro_extra_args(e.system, gsv);
         args += cheats_launch_args(e, true, is_host, launch_body);
         args += qm_args(ri, e, false);
-        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        spawn_room(is_host, hub::exe_dir() + LO_EXE("retrorun"), args, hub::exe_dir(), {}, ri);
         return;
     }
     if (e.system == hub::System::GBA || e.system == hub::System::GB || e.system == hub::System::GBC) {
@@ -1048,7 +1109,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         std::string core = find_core(corename);
         if (core.empty()) { hublog::info("online: core '%s' not found", corename.c_str()); launch_note(is_host, hublaunch::core_missing_text(hub::system_name(e.system)), 8.0, hublaunch::core_missing_wire(corename)); return; }
         /* Netplay starts from an empty, identical save on every PC: use a throwaway dir. */
-        std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
+        std::string tmp = no_slash(hub::data_dir()) + "" LO_SEP "netplay" LO_SEP "" + sys_short(e);
         remove_tree(tmp);
         make_dirs(tmp);
         /* Save policy (docs/SAVES.md): with "use host's save" the host's vault battery files are COPIED into the throwaway dir and
@@ -1064,7 +1125,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         args += hubui::retro_extra_args(e.system, gsv);
         args += cheats_launch_args(e, true, is_host, launch_body);
         args += qm_args(ri, e, false);
-        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        spawn_room(is_host, hub::exe_dir() + LO_EXE("retrorun"), args, hub::exe_dir(), {}, ri);
         return;
     }
     if (e.system == hub::System::NDS) {
@@ -1086,7 +1147,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
                            std::to_string(launch_no) + " --slot " + std::to_string(room_my_slot()) + " --players " +
                            std::to_string(plan.players) + " --ports " + plan.ports + title_arg(e.title) + save_stem_arg(e);   // --ports: the real member slots (gaps after a leave)
         args += hubui::retro_extra_args(e.system, gsv);
-        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        spawn_room(is_host, hub::exe_dir() + LO_EXE("retrorun"), args, hub::exe_dir(), {}, ri);
         return;
     }
     if (e.system == hub::System::NES || e.system == hub::System::SNES) {
@@ -1096,7 +1157,7 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         const bool nes = e.system == hub::System::NES;
         std::string core = find_core(nes ? "nestopia" : "snes9x");
         if (core.empty()) { hublog::info("online: core '%s' not found", nes ? "nestopia" : "snes9x"); launch_note(is_host, hublaunch::core_missing_text(hub::system_name(e.system)), 8.0, hublaunch::core_missing_wire(nes ? "nestopia" : "snes9x")); return; }
-        std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
+        std::string tmp = no_slash(hub::data_dir()) + "" LO_SEP "netplay" LO_SEP "" + sys_short(e);
         remove_tree(tmp);
         make_dirs(tmp);
         if (share_save && (is_host || room_my_slot() == 0) && !hublaunch::copy_dir_files_utf8(hub::saves::battery_dir(sys_short(e), e.key), tmp))   // UTF-8 paths; information only (see GB above)
@@ -1108,13 +1169,13 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         args += hubui::retro_extra_args(e.system, gsv);
         args += cheats_launch_args(e, true, is_host, launch_body);
         args += qm_args(ri, e, false);
-        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        spawn_room(is_host, hub::exe_dir() + LO_EXE("retrorun"), args, hub::exe_dir(), {}, ri);
         return;
     }
     if (e.system == hub::System::PS1) {
         /* PlayStation (Beetle PSX): every PC runs the whole console; inputs (buttons + both analog sticks) travel through the room, the
          * host's memory card is the shared session save (docs/SAVES.md). 3-4 players use the emulated multitap (ps1_online_args). */
-        std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\" + sys_short(e);
+        std::string tmp = no_slash(hub::data_dir()) + "" LO_SEP "netplay" LO_SEP "" + sys_short(e);
         remove_tree(tmp);
         make_dirs(tmp);
         if (share_save && (is_host || room_my_slot() == 0) && !hublaunch::copy_dir_files_utf8(hub::saves::battery_dir(sys_short(e), e.key), tmp))   // UTF-8 paths; information only (see GB above)
@@ -1123,20 +1184,20 @@ void launch_online(const hub::GameEntry& e_in, int launch_no, int delay, bool is
         if (!ps1_online_args(e, net, plan.ports, tmp, share_save, gsv, &args, &err)) { launch_note(is_host, err, 12.0); return; }
         args += cheats_launch_args(e, true, is_host, launch_body);
         args += qm_args(ri, e, false);
-        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        spawn_room(is_host, hub::exe_dir() + LO_EXE("retrorun"), args, hub::exe_dir(), {}, ri);
         return;
     }
     if (e.system == hub::System::PS2) {
         /* PlayStation 2 (LRPS2 in retrorun): every PC runs the whole console; pad buttons, both sticks and L2/R2 pressure travel through the room with
          * the N64-style adaptive input delay. The host's memory card is the shared session card (docs/SAVES.md); up to four pads (3-4 players: retrorun plugs the core's multitap into console port 1). */
         if (plan.players > 4) { launch_note(is_host, "PlayStation 2 online supports up to 4 players.", 12.0); return; }
-        std::string tmp = no_slash(hub::data_dir()) + "\\netplay\\ps2";
+        std::string tmp = no_slash(hub::data_dir()) + "" LO_SEP "netplay" LO_SEP "ps2";
         remove_tree(tmp);
         make_dirs(tmp);
         std::string args, err;
         if (!ps2_online_args(e, net, tmp, share_save, is_host || room_my_slot() == 0, &args, &err)) { launch_note(is_host, err, 12.0); return; }
         args += qm_args(ri, e, false);
-        spawn_room(is_host, hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+        spawn_room(is_host, hub::exe_dir() + LO_EXE("retrorun"), args, hub::exe_dir(), {}, ri);
         return;
     }
     launch_note(is_host, hublaunch::online_unavailable_text(hub::system_name(e.system)), 8.0, hublaunch::online_unavailable_wire());

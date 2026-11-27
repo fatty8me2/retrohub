@@ -1,6 +1,11 @@
 // Emulator process / save-session lane: XML entity decoding of Cemu's mlc_path, environment save/restore around a spawn,
 // suspended-spawn helper, and the pending-session journal. Temp folders only; no emulator is ever started.
+#if defined(_WIN32)
 #include <windows.h>
+#else
+#include <unistd.h>
+#include <mach-o/dyld.h>
+#endif
 
 #include <cstdio>
 #include <cstdlib>
@@ -16,7 +21,9 @@
 
 #include "emu_saves.h"
 #include "emulators.h"
-#include "env_scope.h"
+#if defined(_WIN32)
+#include "env_scope.h"   // Windows-only header (GetEnvironmentVariableW): TODO(macOS) owner of env_scope.h
+#endif
 #include "lichii.h"
 #include "proc_spawn.h"
 #include "session_journal.h"
@@ -45,6 +52,7 @@ static void test_mlc_entities() {
     CHECK(hub::xml_decode_entities("a&amp;&amp;b") == "a&&b");
 }
 
+#if defined(_WIN32)
 static std::wstring getenv_w(const wchar_t* n, bool* present) {
     std::vector<wchar_t> b(1024);
     SetLastError(0);
@@ -117,6 +125,35 @@ static void test_spawn_suspended_in_job() {
     ok = hubproc::spawn(std::wstring(sysdir) + L"\\no-such-program-rhj.exe", L"x", sysdir, CREATE_NO_WINDOW, true, nullptr, &r3);
     CHECK(!ok && r3.error != 0 && !r3.process && !r3.job);
 }
+#else
+/* macOS: spawn through hubproc::spawn (posix_spawn into its own process group); the callback runs right after the child exists. */
+static plat::proc::SpawnOptions sh_opts(const std::string& script) {
+    plat::proc::SpawnOptions o;
+    o.exe = "/bin/sh";
+    o.args = {"-c", script};
+    return o;
+}
+
+static void test_spawn_suspended_in_job() {
+    hubproc::Spawned r;
+    bool in_cb = false;
+    int pid_cb = 0;
+    unsigned long long created_cb = 0;
+    bool ok = hubproc::spawn(sh_opts("exit 3"), [&](const hubproc::Spawned& s) { in_cb = true; pid_cb = s.pid(); created_cb = s.created; }, &r);
+    CHECK(ok && r.pid() > 0 && r.child.pgid == r.pid());   // its own process group: the job-object counterpart
+    CHECK(in_cb && pid_cb == r.pid() && created_cb != 0 && created_cb == r.created);
+    if (ok) {
+        int code = -1;
+        CHECK(plat::proc::wait(r.child, 15000, &code));
+        CHECK(code == 3);
+    }
+    hubproc::Spawned r3;   // a missing program: false, the error text is kept, no child
+    plat::proc::SpawnOptions bad;
+    bad.exe = "/nonexistent/no-such-program-rhj";
+    ok = hubproc::spawn(bad, nullptr, &r3);
+    CHECK(!ok && !r3.error_text.empty() && r3.pid() == 0);
+}
+#endif
 
 static std::string U8(const fs::path& p) { auto u = p.u8string(); return std::string(u.begin(), u.end()); }
 static std::string rd(const fs::path& p) {
@@ -137,6 +174,7 @@ static int count_files(const fs::path& root, const std::string& ext = "") {
     return n;
 }
 
+#if defined(_WIN32)
 /* a process id that is gone: a child that ran and ended */
 static void dead_process(unsigned long* pid, unsigned long long* created) {
     wchar_t sysdir[MAX_PATH];
@@ -149,15 +187,32 @@ static void dead_process(unsigned long* pid, unsigned long long* created) {
     *created = r.created;
     CloseHandle(r.process);
 }
+#else
+static void dead_process(unsigned long* pid, unsigned long long* created) {
+    hubproc::Spawned r;
+    plat::proc::SpawnOptions o;
+    o.exe = "/bin/sh";
+    o.args = {"-c", "exit 0"};
+    hubproc::spawn(o, nullptr, &r);
+    int code = 0;
+    plat::proc::wait(r.child, 15000, &code);   // reaps it: the pid is gone
+    *pid = (unsigned long)r.pid();
+    *created = r.created;
+}
+#endif
 
 struct Rig {
     fs::path d, vault, inst, battery, sd, jdir;
     hubemu::Install in;
     hub::GameEntry e;
     Rig(const char* name) {
+#if defined(_WIN32)
         wchar_t tmp[MAX_PATH];
         GetTempPathW(MAX_PATH, tmp);
         d = fs::path(tmp) / (std::string("rhj_test_") + name + "_" + std::to_string(GetCurrentProcessId()));
+#else
+        d = fs::temp_directory_path() / (std::string("rhj_test_") + name + "_" + std::to_string((unsigned long)getpid()));
+#endif
         std::error_code ec;
         fs::remove_all(d, ec);
         vault = d / "vault";
@@ -196,7 +251,11 @@ struct Rig {
         c.install = [dir](const hubjournal::Entry&, std::string* d, bool* m) { *d = dir; *m = true; return true; };
         return c;
     }
+#if defined(_WIN32)
     std::string jdir_s() const { return U8(jdir) + "\\"; }
+#else
+    std::string jdir_s() const { return U8(jdir) + "/"; }
+#endif
 };
 
 static void test_roundtrip_and_corrupt() {
@@ -267,17 +326,29 @@ static void test_recover_while_running() {
     Rig r("run");
     hubemu::SaveSession s = hubemu::begin_session(r.e, r.in, U8(r.battery), "");
     hubjournal::Entry j = r.entry(s);
+#if defined(_WIN32)
     j.pid = GetCurrentProcessId();   // a process that certainly runs
     hubproc::creation_time(GetCurrentProcess(), &j.created);
+#else
+    j.pid = (unsigned long)getpid();
+    { uint64_t c = 0; hubproc::creation_time((int)getpid(), &c); j.created = c; }
+#endif
     CHECK(hubjournal::process_running(j.pid, j.created) && !hubjournal::process_running(0, 0));
     {   // no creation time recorded: the image path decides; with nothing to compare only an old journal counts as a recycled pid
+#if defined(_WIN32)
         wchar_t mew[2048] = {};
         GetModuleFileNameW(nullptr, mew, 2048);
         const std::string me = U8(fs::path(mew));   // UTF-8, also from a folder with non-ANSI letters
+#else
+        char mew[4096] = {};
+        uint32_t mn = sizeof mew;
+        _NSGetExecutablePath(mew, &mn);
+        const std::string me = U8(fs::path(mew));
+#endif
         const long long now = (long long)time(nullptr);
         CHECK(!hubjournal::process_running(j.pid, 0, "C:\\bad\xEB\xFF" ".exe", now));   // invalid UTF-8 never throws
         CHECK(hubjournal::process_running(j.pid, 0, me, now));                          // same image: running
-        CHECK(!hubjournal::process_running(j.pid, 0, "C:\nowhere\other.exe", now));   // another image: recycled pid
+        CHECK(!hubjournal::process_running(j.pid, 0, "C:\\nowhere\\other.exe", now));   // another image: recycled pid
         CHECK(hubjournal::process_running(j.pid, 0, "", now));                          // nothing to compare, fresh journal: stay careful
         CHECK(!hubjournal::process_running(j.pid, 0, "", now - 25 * 3600));             // nothing to compare, over a day old
         CHECK(hubjournal::process_running(j.pid, 0, "", 0));                            // no start time either: running
@@ -533,8 +604,13 @@ static void test_launch_replay_lock() {
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     CHECK(!done && replays_seen == 0);   // blocked behind the launch
     hubjournal::Entry fresh = r.entry(s2);
+#if defined(_WIN32)
     fresh.pid = GetCurrentProcessId();
     hubproc::creation_time(GetCurrentProcess(), &fresh.created);
+#else
+    fresh.pid = (unsigned long)getpid();
+    { uint64_t c = 0; hubproc::creation_time((int)getpid(), &c); fresh.created = c; }
+#endif
     CHECK(hubjournal::begin(r.jdir_s(), fresh));   // journal written, spawn returned
     launch.unlock();
     th2.join();
@@ -546,6 +622,7 @@ static void test_launch_replay_lock() {
 
 static void test_image_running_and_stop() {
     Rig r("img");
+#if defined(_WIN32)
     wchar_t sysdir[MAX_PATH];
     GetSystemDirectoryW(sysdir, MAX_PATH);
     const fs::path src = fs::path(sysdir) / "cmd.exe";
@@ -568,6 +645,30 @@ static void test_image_running_and_stop() {
         CloseHandle(sp.process);
         CHECK(!hubjournal::image_running(U8(copy), U8(managed)));
     }
+#else
+    const fs::path managed = r.d / "managed-emu";
+    fs::create_directories(managed);
+    const fs::path copy = managed / "sleep";
+    std::error_code ec;
+    fs::copy_file("/bin/sleep", copy, fs::copy_options::overwrite_existing, ec);
+    CHECK(!ec);
+    hubproc::Spawned sp;
+    plat::proc::SpawnOptions so;
+    so.exe = U8(copy);
+    so.args = {"20"};
+    bool ok = hubproc::spawn(so, nullptr, &sp);
+    CHECK(ok);
+    if (ok) {
+        CHECK(hubjournal::image_running(U8(copy), ""));                                // the exact image
+        CHECK(hubjournal::image_running("", U8(managed)));                              // anything running from the managed folder
+        CHECK(!hubjournal::image_running(U8(r.d / "elsewhere" / "sleep"), ""));          // same exe NAME in another folder: unrelated
+        CHECK(!hubjournal::image_running(U8(r.d / "elsewhere" / "sleep"), U8(r.d / "elsewhere")));
+        plat::proc::kill_tree(sp.child, 500);
+        int code = 0;
+        plat::proc::wait(sp.child, 5000, &code);
+        CHECK(!hubjournal::image_running(U8(copy), U8(managed)));
+    }
+#endif
     // a replay whose emulator image runs again waits; an unrelated same-name program elsewhere does not block it
     wr(r.vsave(), "OLD", 600);
     hubemu::SaveSession s = hubemu::begin_session(r.e, r.in, U8(r.battery), "");
@@ -593,6 +694,7 @@ static void test_image_running_and_stop() {
     CHECK(rep.replayed == 1 && rd(r.vsave()) == "NEWER");
 }
 
+#if defined(_WIN32)
 static void test_spawn_observer_throws() {
     wchar_t sysdir[MAX_PATH];
     GetSystemDirectoryW(sysdir, MAX_PATH);
@@ -609,6 +711,18 @@ static void test_spawn_observer_throws() {
         if (r.job) CloseHandle(r.job);
     }
 }
+#else
+static void test_spawn_observer_throws() {
+    hubproc::Spawned r;
+    bool ok = hubproc::spawn(sh_opts("exit 5"), [](const hubproc::Spawned&) { throw std::runtime_error("observer failed"); }, &r);
+    CHECK(ok && r.pid() > 0);   // the game still starts
+    if (ok) {
+        int code = -1;
+        CHECK(plat::proc::wait(r.child, 15000, &code));
+        CHECK(code == 5);
+    }
+}
+#endif
 
 int main() {
     test_tampered_and_stale();
@@ -620,7 +734,9 @@ int main() {
     test_recover_while_running();
     test_cemu_reverts_and_spawn_failure();
     test_switch_account_folder_at_exit();
+#if defined(_WIN32)
     test_env_scope();
+#endif
     test_spawn_suspended_in_job();
     test_mlc_entities();
     std::printf("session journal / emu process tests: %d passed, %d failed\n", g_pass, g_fail);

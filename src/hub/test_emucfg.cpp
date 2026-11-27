@@ -4,7 +4,13 @@
 //  2. managed Cemu "graphic packs off" parks the player's block outside settings.xml and restores it byte for byte
 //  4. clamp_analog table, PCSX2 deadzone = larger of the two sticks, Lichii range clamp unchanged
 //  5. PPSSPP controls.ini is merged, not replaced
+#include "plat/plat.h"
+#if RH_WIN
 #include <windows.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 #include "cfg_write.h"
 #include "controls.h"
 #include "emulators.h"
@@ -73,6 +79,7 @@ static void test_durable(const fs::path& root) {
     // unchanged content is not rewritten (write time stays)
     fs::path p = root / "same.ini";
     CHECK(hubcfg::write_file(p, "[X]\na = 1\n"));
+#if RH_WIN
     FILETIME before = {}, after = {};
     auto wt = [&](FILETIME* ft) {
         HANDLE h = CreateFileW(p.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -84,8 +91,16 @@ static void test_durable(const fs::path& root) {
     CHECK(hubcfg::write_file(p, "[X]\na = 1\n"));
     wt(&after);
     CHECK(before.dwLowDateTime == after.dwLowDateTime && before.dwHighDateTime == after.dwHighDateTime);
+#else
+    std::error_code tec;
+    const auto before = fs::last_write_time(p, tec);
+    plat::sleep_ms(50);
+    CHECK(hubcfg::write_file(p, "[X]\na = 1\n"));
+    CHECK(fs::last_write_time(p, tec) == before);
+#endif
     CHECK(hubcfg::write_file(p, "[X]\na = 2\n") && slurp(p) == "[X]\na = 2\n");
     // a failed write (destination held open without sharing delete) leaves the old file and no temp file
+#if RH_WIN
     fs::path q = root / "held.ini";
     put(q, "KEEP");
     HANDLE h = CreateFileW(q.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -93,6 +108,14 @@ static void test_durable(const fs::path& root) {
     CHECK(!hubcfg::write_file(q, "NEW"));
     CloseHandle(h);
     CHECK(slurp(q) == "KEEP" && !has_tmp(root));
+#else   // macOS: a folder nobody may write into makes the commit fail the same way (a held-open file does not block a rename here)
+    fs::path q = root / "held" / "held.ini";
+    put(q, "KEEP");
+    ::chmod(q.parent_path().c_str(), 0555);
+    CHECK(!hubcfg::write_file(q, "NEW"));
+    ::chmod(q.parent_path().c_str(), 0755);
+    CHECK(slurp(q) == "KEEP" && !has_tmp(q.parent_path()));
+#endif
     // controls.json / profile files go through the same path
     hubctl::Profile pr = hubctl::default_profile("gc"), back;
     CHECK(hubctl::write_profile_file(u8(root / "prof" / "p.json"), pr));
@@ -246,7 +269,11 @@ static void test_ppsspp(const fs::path& root) {
     fs::path inst = root / "psp";
     hub::gs::Values v;
     CHECK(prepare_ppsspp(u8(inst), prof, 0, v).empty());
+#if RH_WIN
     fs::path ci = inst / "memstick" / "PSP" / "SYSTEM" / "controls.ini";
+#else   // macOS: PPSSPP is pointed at <install>/config with XDG_CONFIG_HOME (ppsspp_system_dir)
+    fs::path ci = inst / "config" / "ppsspp" / "PSP" / "SYSTEM" / "controls.ini";
+#endif
     CHECK(slurp(ci) == gen);
     put(ci, user);
     CHECK(prepare_ppsspp(u8(inst), prof, 0, v).empty());
@@ -266,6 +293,18 @@ static std::string first_file(const fs::path& dir, const std::string& prefix) {
     return "";
 }
 
+#if !RH_WIN
+static void test_readonly(const fs::path& root) {   // macOS: a read-only FILE is replaced by a rename (POSIX); a read-only FOLDER is what blocks a write
+    fs::path p = root / "ro.ini";
+    put(p, "KEEP\n");
+    ::chmod(root.c_str(), 0555);
+    CHECK(!hubcfg::write_file(p, "NEW\n"));
+    CHECK(!hubcfg::write_file(p, "KEEP\n") || slurp(p) == "KEEP\n");
+    ::chmod(root.c_str(), 0755);
+    CHECK(slurp(p) == "KEEP\n" && !has_tmp(root));
+    CHECK(hubcfg::write_file(p, "NEW\n") && slurp(p) == "NEW\n");
+}
+#else
 static void test_readonly(const fs::path& root) {
     fs::path p = root / "ro.ini";
     put(p, "KEEP\n");
@@ -277,6 +316,7 @@ static void test_readonly(const fs::path& root) {
     SetFileAttributesW(p.wstring().c_str(), FILE_ATTRIBUTE_NORMAL);
     CHECK(hubcfg::write_file(p, "NEW\n") && slurp(p) == "NEW\n");
 }
+#endif
 
 static void test_cemu_gp_more(const fs::path& root) {
     hub::gs::Values off, on;
@@ -371,7 +411,7 @@ static void test_ppsspp_more() {
 }
 
 int main() {
-    fs::path root = fs::temp_directory_path() / ("hub_emucfg_test_" + std::to_string(GetCurrentProcessId()));
+    fs::path root = fs::temp_directory_path() / ("hub_emucfg_test_" + std::to_string(plat::current_pid()));
     fs::remove_all(root);
     fs::create_directories(root);
     test_durable(root / "durable");

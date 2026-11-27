@@ -2,10 +2,7 @@
 #include "savestore.h"
 #include "library.h"
 
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
+#include "test_util.h"
 
 #include <cstdio>
 #include <cstring>
@@ -29,14 +26,7 @@ static fs::path P(const std::string& u8) { return fs::u8path(u8); }
 static void write_file(const fs::path& p, const std::string& content, int secs_ago) {
     fs::create_directories(p.parent_path());
     { std::ofstream o(p, std::ios::binary | std::ios::trunc); o << content; }
-    HANDLE h = CreateFileW(p.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    FILETIME ft; GetSystemTimeAsFileTime(&ft);
-    ULARGE_INTEGER u; u.LowPart = ft.dwLowDateTime; u.HighPart = ft.dwHighDateTime;
-    u.QuadPart -= (ULONGLONG)secs_ago * 10000000ULL;
-    ft.dwLowDateTime = u.LowPart; ft.dwHighDateTime = u.HighPart;
-    SetFileTime(h, nullptr, nullptr, &ft);
-    CloseHandle(h);
+    tu::set_mtime_ago(p, secs_ago);
 }
 static std::string read_file(const fs::path& p) {
     std::ifstream i(p, std::ios::binary);
@@ -45,12 +35,12 @@ static std::string read_file(const fs::path& p) {
 }
 /* relpath -> content, for every regular file under root (excluding .sync) */
 static std::map<std::wstring, std::string> tree(const fs::path& root0) {
-    fs::path root = fs::path(L"\\\\?\\" + fs::absolute(root0).wstring());
+    fs::path root = tu::longpath(root0);
     std::map<std::wstring, std::string> m;
     if (!fs::exists(root0)) return m;
     for (auto& e : fs::recursive_directory_iterator(root)) {
         if (!e.is_regular_file()) continue;
-        std::wstring r = e.path().wstring().substr(root.wstring().size() + 1);
+        std::wstring r = tu::wstr(e.path()).substr(tu::wstr(root).size() + 1);
         for (auto& c : r) if (c == L'\\') c = L'/';
         if (r.rfind(L".sync/", 0) == 0) continue;
         m[r] = read_file(e.path());
@@ -109,20 +99,20 @@ static bool make_zip(const std::string& path, const std::vector<std::pair<std::s
  * first file, 3 = a file appears in the folder right after it was listed. Only folders whose path contains g_hook_match. */
 static int g_hook_mode = 0;
 static std::string g_hook_match;
-static std::string g_hook_tail = "\\battery";
+static std::string g_hook_tail = tu::N("\\battery");
 static unsigned long enum_hook(const std::string& dir, int seen) {
     const std::string& tail = g_hook_tail;
     if (!g_hook_mode || dir.find(g_hook_match) == std::string::npos) return 0;
     if (dir.size() < tail.size() || dir.compare(dir.size() - tail.size(), tail.size(), tail) != 0) return 0;
-    if (g_hook_mode == 1 && seen == 0) return ERROR_ACCESS_DENIED;
-    if (g_hook_mode == 2 && seen == 3) return ERROR_SHARING_VIOLATION;   // ".", "..", first file done
+    if (g_hook_mode == 1 && seen == 0) return 5;   // ERROR_ACCESS_DENIED (a Win32 code on Windows, an opaque injected code elsewhere)
+    if (g_hook_mode == 2 && seen == 3) return 32;  // ERROR_SHARING_VIOLATION   // ".", "..", first file done
     if (g_hook_mode == 3 && seen == -1) { g_hook_mode = 0; write_file(P(dir) / "late.sav", "cloud-late", 20); }
     return 0;
 }
 
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
-    fs::path base = fs::temp_directory_path() / ("hubsaves_test_" + std::to_string(GetCurrentProcessId()));
+    fs::path base = fs::temp_directory_path() / ("hubsaves_test_" + std::to_string(tu::pid()));
     fs::remove_all(base);
     fs::path A = base / "pcA", B = base / "pcB", C = base / "pcC", cloud = base / fs::u8path("cloud ☁ sync");
     std::string cl = cloud.u8string();
@@ -132,7 +122,7 @@ int main() {
 
     printf("[1] first sync pushes (states excluded)\n");
     useA();
-    CHECK(vault_dir() == A.u8string() + "\\");
+    CHECK(vault_dir() == A.u8string() + plat::kSep);
     write_file(P(battery_dir("n64", "mp1")) / "mp1.eep", "A-save-1", 100);
     write_file(P(states_dir("n64", "mp1")) / "slot0.st", "state-A", 100);
     touch_game("n64", "mp1", "Mario Party");
@@ -251,7 +241,7 @@ int main() {
         useA();
         std::string deep(60, 'd');
         fs::path lp = P(battery_dir("n64", "mp1")) / deep / deep / deep / deep / deep / "long.sav";
-        std::wstring ext = L"\\\\?\\" + fs::absolute(lp).wstring();
+        std::wstring ext = tu::wstr(tu::longpath(lp));
         fs::create_directories(fs::path(ext).parent_path());
         { std::ofstream o(fs::path(ext), std::ios::binary); o << "long"; }
         r = sync_folder(cl, false);
@@ -261,7 +251,7 @@ int main() {
         r = sync_folder(cl, false);
         CHECK(r.ok && r.pulled == 1);
         fs::path bl = B / "n64/mp1/battery" / deep / deep / deep / deep / deep / "long.sav";
-        std::ifstream in(fs::path(L"\\\\?\\" + fs::absolute(bl).wstring()), std::ios::binary);
+        std::ifstream in(tu::longpath(bl), std::ios::binary);
         std::stringstream s; s << in.rdbuf();
         CHECK(s.str() == "long");
     }
@@ -374,8 +364,8 @@ int main() {
         fs::path N1 = base / "ndsA", N2 = base / "ndsB", ncloud = base / "ndscloud";
         set_vault_dir(N1.u8string());
         std::string bd = battery_dir("nds", key);
-        CHECK(bd == N1.u8string() + "\\nds\\nds_adae-05ca37\\battery\\");   // ':' is sanitized, same on every PC
-        CHECK(states_dir("nds", key) == N1.u8string() + "\\nds\\nds_adae-05ca37\\states\\");
+        CHECK(bd == N1.u8string() + tu::N("\\nds\\nds_adae-05ca37\\battery\\"));   // ':' is sanitized, same on every PC
+        CHECK(states_dir("nds", key) == N1.u8string() + tu::N("\\nds\\nds_adae-05ca37\\states\\"));
         std::string save(524288, '\xFF');
         save.replace(0, 8, "DSSAVE01");
         write_file(P(bd) / "Pokemon - Diamond Version (USA) (Rev 5).srm", save, 60);
@@ -388,7 +378,7 @@ int main() {
         nr = sync_folder(ncloud.u8string(), false);
         CHECK(nr.ok && nr.pulled == 2 && nr.conflicts == 0);
         CHECK(read_file(N2 / "nds/nds_adae-05ca37/battery/Pokemon - Diamond Version (USA) (Rev 5).srm") == save);
-        CHECK(battery_dir("nds", key) == N2.u8string() + "\\nds\\nds_adae-05ca37\\battery\\");
+        CHECK(battery_dir("nds", key) == N2.u8string() + tu::N("\\nds\\nds_adae-05ca37\\battery\\"));
     }
 
     printf("[12] one-side-changed: an older / empty incoming file never overwrites a newer one without a backup copy\n");
@@ -455,7 +445,7 @@ int main() {
             (void)tag;
         };
         /* the vault's battery folder cannot be opened (antivirus / sync-client lock) */
-        g_hook_mode = 1; g_hook_match = "s2V\\n64\\g";
+        g_hook_mode = 1; g_hook_match = tu::N("s2V\\n64\\g");
         set_enum_error_hook(enum_hook);
         s = sync_folder(sf.u8string(), false);
         dump(s);
@@ -469,7 +459,7 @@ int main() {
         CHECK(s.ok && s.warning.find("n64/g") != std::string::npos && s.pushed == 0 && s.pulled == 0);
         same("mid");
         /* the sync folder's listing breaks */
-        g_hook_mode = 2; g_hook_match = "s2sync\\n64\\g";
+        g_hook_mode = 2; g_hook_match = tu::N("s2sync\\n64\\g");
         s = sync_folder(sf.u8string(), false);
         CHECK(s.ok && s.warning.find("n64/g") != std::string::npos && s.pushed == 0 && s.pulled == 0);
         same("root");
@@ -481,7 +471,7 @@ int main() {
 
         /* a file that appears in the sync folder right after it was listed is not overwritten by the "only the vault has it" push */
         write_file(V / "n64/g/battery/late.sav", "vault-late", 10);
-        g_hook_mode = 3; g_hook_match = "s2sync\\n64\\g";
+        g_hook_mode = 3; g_hook_match = tu::N("s2sync\\n64\\g");
         s = sync_folder(sf.u8string(), false);
         dump(s);
         set_enum_error_hook(nullptr);
@@ -532,14 +522,14 @@ int main() {
         { bool said = false; for (auto& l : s.log) if (l.find("foreign stuff") != std::string::npos && l.find("skip") != std::string::npos) said = true; CHECK(said); }
         /* the system folder itself, or _conflicts, cannot be listed: nothing can be told apart, the whole sync stops and changes nothing */
         write_file(V / "n64/g/battery/g.sav", "g-v3", 5);
-        g_hook_tail = "s4V\\n64"; g_hook_match = "s4V\\n64";
+        g_hook_tail = tu::N("s4V\\n64"); g_hook_match = tu::N("s4V\\n64");
         s = sync_folder(sf.u8string(), false);
         CHECK(!s.ok && !s.error.empty() && s.pushed == 0 && read_file(sf / "n64/g/battery/g.sav") == "g-v2");
-        g_hook_tail = "s4sync\\_conflicts"; g_hook_match = "s4sync";
+        g_hook_tail = tu::N("s4sync\\_conflicts"); g_hook_match = "s4sync";
         fs::create_directories(sf / "_conflicts");
         s = sync_folder(sf.u8string(), false);
         CHECK(!s.ok && !s.error.empty() && s.pushed == 0 && read_file(sf / "n64/g/battery/g.sav") == "g-v2");
-        g_hook_mode = 0; g_hook_tail = "\\battery";
+        g_hook_mode = 0; g_hook_tail = tu::N("\\battery");
         set_enum_error_hook(nullptr);
     }
 
@@ -598,14 +588,14 @@ int main() {
         const std::string zip = (base / "s6.zip").u8string(), zip2 = (base / "s6-fail.zip").u8string();
         std::string err;
         set_enum_error_hook(enum_hook);
-        g_hook_mode = 1; g_hook_tail = "\\battery"; g_hook_match = "s6V\\n64\\a";
+        g_hook_mode = 1; g_hook_tail = tu::N("\\battery"); g_hook_match = tu::N("s6V\\n64\\a");
         CHECK(export_zip(zip, false, &err));
         printf("  export warning: %s\n", err.c_str());
         CHECK(err.find("n64/a") != std::string::npos);            // the gap is said, by name (it used to be silent)
-        g_hook_tail = "s6V\\n64"; g_hook_match = "s6V\\n64";       // the system folder itself: nothing can be told apart
+        g_hook_tail = tu::N("s6V\\n64"); g_hook_match = tu::N("s6V\\n64");       // the system folder itself: nothing can be told apart
         err.clear();
         CHECK(!export_zip(zip2, false, &err) && !err.empty() && !fs::exists(fs::u8path(zip2)));
-        g_hook_mode = 0; g_hook_tail = "\\battery";
+        g_hook_mode = 0; g_hook_tail = tu::N("\\battery");
         set_enum_error_hook(nullptr);
         set_vault_dir(W.u8string());
         SyncReport ir = import_zip(zip);
@@ -615,7 +605,7 @@ int main() {
         CHECK(!fs::exists(W / "n64/a/battery/a.sav"));
     }
 
-    { std::error_code ec; fs::remove_all(fs::path(L"\\\\?\\" + fs::absolute(base).wstring()), ec); }
+    { std::error_code ec; fs::remove_all(tu::longpath(base), ec); }
     printf("\n%s: %d checks, %d failed\n", g_fail ? "FAILED" : "PASSED", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

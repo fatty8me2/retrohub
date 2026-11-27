@@ -8,6 +8,7 @@
 #include "popup_guard.h"
 #include "display.h"
 #include "libview_ui.h"
+#include "winutil.h"
 
 namespace tvmode {
 
@@ -21,8 +22,10 @@ static int g_shot_h = 0;
 static bool g_prev_game = false;
 static float g_pending_base = 0.f;   // set_base_scale(): applied in frame_begin
 
+#if RH_WIN
 static const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const wchar_t* kRunName = L"RetroHub";
+#endif
 
 bool active() { return g_active; }
 bool force_icon_sidebar() { return g_active; }
@@ -148,7 +151,7 @@ void draw_corner(float right_x, float top_y, float h) {
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     std::time_t t = std::time(nullptr);
     std::tm lt{};
-    localtime_s(&lt, &t);
+    plat::local_tm(t, &lt);
     std::string clk = hubtv::clock_text(lt.tm_hour, lt.tm_min);
     ImFont* f = ui::F.h2;
     ImVec2 ts = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.f, clk.c_str());
@@ -185,6 +188,7 @@ void draw_corner(float right_x, float top_y, float h) {
 }
 
 /* ---- Start with Windows (HKCU Run key, off by default) ---- */
+#if RH_WIN
 static bool autostart_enabled() {
     HKEY k;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_QUERY_VALUE, &k) != ERROR_SUCCESS) return false;
@@ -208,6 +212,39 @@ static bool set_autostart(bool on) {
     RegCloseKey(k);
     return ok;
 }
+#else
+/* macOS: a per-user LaunchAgent (~/Library/LaunchAgents/com.retrohub.RetroHub.plist) that runs the hub with --tv at login. */
+static std::string agent_path() {
+    const std::string home = winutil::getenv_utf8("HOME");
+    return home.empty() ? std::string() : home + "/Library/LaunchAgents/com.retrohub.RetroHub.plist";
+}
+static bool autostart_enabled() {
+    const std::string p = agent_path();
+    return !p.empty() && std::filesystem::exists(std::filesystem::path(p));
+}
+static bool set_autostart(bool on) {
+    const std::string p = agent_path();
+    if (p.empty()) return false;
+    std::error_code ec;
+    if (!on) {
+        std::filesystem::remove(std::filesystem::path(p), ec);
+        return !std::filesystem::exists(std::filesystem::path(p));
+    }
+    std::string exe = winutil::exe_path();
+    std::string esc;
+    for (char c : exe) { if (c == '&') esc += "&amp;"; else if (c == '<') esc += "&lt;"; else if (c == '>') esc += "&gt;"; else esc += c; }
+    const std::string xml =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+        "<plist version=\"1.0\"><dict>\n"
+        "<key>Label</key><string>com.retrohub.RetroHub</string>\n"
+        "<key>ProgramArguments</key><array><string>" + esc + "</string><string>--tv</string></array>\n"
+        "<key>RunAtLoad</key><true/>\n"
+        "</dict></plist>\n";
+    std::filesystem::create_directories(std::filesystem::path(p).parent_path(), ec);
+    return winutil::write_file_atomic(p, xml);
+}
+#endif
 
 void settings_ui() {
     ImGui::Dummy(ImVec2(0, sp(1.f)));
@@ -217,7 +254,12 @@ void settings_ui() {
     if (ImGui::Checkbox("Start RetroHub in TV mode", &A.st.tv_start)) mark_dirty();
     if (ImGui::Checkbox("TV mode opens in Cases view", &A.st.tv_cases)) { mark_dirty(); if (g_active && A.st.tv_cases) lib_cases_tv_enter(); }
     bool w = autostart_enabled();
-    if (ImGui::Checkbox("Start with Windows into TV mode", &w)) {
+#if RH_WIN
+    const char* kAutostartLabel = "Start with Windows into TV mode";
+#else
+    const char* kAutostartLabel = "Start at login into TV mode";
+#endif
+    if (ImGui::Checkbox(kAutostartLabel, &w)) {
         if (!g_headless_mode && set_autostart(w)) { A.st.tv_windows = w; mark_dirty(); }
     }
     text_wrapped_disabled("A fullscreen 10-foot layout with a larger UI, a taller hero, an icon sidebar, and the clock and online friends in the corner. "

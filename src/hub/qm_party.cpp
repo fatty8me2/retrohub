@@ -14,7 +14,7 @@ void qm_emote_incoming(int from_slot, const std::string& code) {
     if (from_slot == room_my_slot()) return;
     if (A.st.game_chat == hubqm::kChatOff) return;
     static hubqm::EmoteInLimiter lim;
-    if (!lim.allow(from_slot, (long long)GetTickCount64())) return;
+    if (!lim.allow(from_slot, (long long)plat::tick_ms())) return;
     const std::string t = hubqm::chat_osd_text(member_name(from_slot), em->label);
     if (!t.empty()) qm_send_osd(t);
 }

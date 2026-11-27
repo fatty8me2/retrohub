@@ -5,11 +5,19 @@
 #include "library.h"
 #include "lichii.h"
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <tlhelp32.h>
+#else
+#include <libproc.h>
+#include <unistd.h>
+#include "winutil.h"
+#include "plat/plat.h"
+#include "plat/plat_proc.h"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -109,7 +117,11 @@ std::string file_of(const std::string& dir, const std::string& id) { return to_u
 bool write_entry(const std::string& dir, const Entry& e) {
     std::error_code ec;
     fs::create_directories(u8(dir), ec);
+#if defined(_WIN32)
     return durable::write_file_durable(u8(file_of(dir, e.id)).wstring(), serialize(e));
+#else
+    return durable::write_file_durable(winutil::to_wide(file_of(dir, e.id)), serialize(e));   // paths are UTF-8 on macOS
+#endif
 }
 
 void remove_entry(const std::string& dir, const std::string& id) {
@@ -129,7 +141,11 @@ void set_aside(const fs::path& p, const wchar_t* suffix) {
 std::string new_id() {
     static std::atomic<unsigned> counter{0};
     char b[64];
+#if defined(_WIN32)
     std::snprintf(b, sizeof b, "%llx-%lx-%x", (unsigned long long)GetTickCount64() ^ ((unsigned long long)std::time(nullptr) << 20), (unsigned long)GetCurrentProcessId(), counter.fetch_add(1));
+#else
+    std::snprintf(b, sizeof b, "%llx-%lx-%x", (unsigned long long)plat::tick_ms() ^ ((unsigned long long)std::time(nullptr) << 20), (unsigned long)plat::current_pid(), counter.fetch_add(1));
+#endif
     return b;
 }
 
@@ -319,6 +335,7 @@ void forget_live() {
 
 namespace { bool same_path(const std::string& a, const std::string& b); }
 
+#if defined(_WIN32)
 bool process_running(unsigned long pid, unsigned long long created, const std::string& exe, long long started_unix) {
     if (!pid) return false;
     HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, (DWORD)pid);
@@ -346,9 +363,29 @@ bool process_running(unsigned long pid, unsigned long long created, const std::s
     CloseHandle(h);
     return running;
 }
+#else
+/* macOS: libproc / plat::proc. `created` is plat::proc::pid_start_time_us() recorded at spawn (0 = not recorded). */
+bool process_running(unsigned long pid, unsigned long long created, const std::string& exe, long long started_unix) {
+    if (!pid) return false;
+    if (!plat::proc::pid_alive((int)pid)) return false;
+    if (created) {
+        const unsigned long long now_created = plat::proc::pid_start_time_us((int)pid);
+        if (now_created && now_created != created) return false;   // the pid was recycled by another program
+        return true;
+    }
+    /* no creation time recorded: compare what can be compared, and never call it "not running" while it might be the emulator */
+    if (!exe.empty()) {
+        const std::string img = plat::proc::pid_exe_path((int)pid);
+        if (!img.empty()) return same_path(img, exe);
+    }
+    if (started_unix > 0 && (long long)time(nullptr) - started_unix > 24 * 3600) return false;   // nothing to compare and the journal is old: a recycled pid
+    return true;
+}
+#endif
 
 namespace {
 
+#if defined(_WIN32)
 std::wstring norm_path(const std::string& p) {
     std::wstring w;
     try { w = u8(p).wstring(); }
@@ -364,9 +401,31 @@ bool path_under(const std::string& p, const std::string& dir) {
     if (d.back() != L'\\') d.push_back(L'\\');
     return w.size() > d.size() && w.compare(0, d.size(), d) == 0;
 }
+#else
+std::wstring norm_path(const std::string& p) {
+    std::string canon = p;
+    try {   // /var -> /private/var etc.: proc_pidpath reports the resolved path
+        std::error_code ec;
+        fs::path c = fs::weakly_canonical(fs::path(p), ec);
+        if (!ec && !c.empty()) canon = c.string();
+    } catch (...) {}
+    std::wstring w = winutil::to_wide(canon);   // not valid UTF-8 (a damaged journal): U+FFFD, still never throws
+    for (auto& c : w) { if (c == L'\\') c = L'/'; c = (wchar_t)towlower(c); }
+    while (w.size() > 1 && w.back() == L'/') w.pop_back();
+    return w;
+}
+bool same_path(const std::string& a, const std::string& b) { return !a.empty() && !b.empty() && norm_path(a) == norm_path(b); }
+bool path_under(const std::string& p, const std::string& dir) {
+    std::wstring d = norm_path(dir), w = norm_path(p);
+    if (d.empty()) return false;
+    if (d.back() != L'/') d.push_back(L'/');
+    return w.size() > d.size() && w.compare(0, d.size(), d) == 0;
+}
+#endif
 
 } // namespace
 
+#if defined(_WIN32)
 bool image_running(const std::string& exe, const std::string& managed_dir) {
     if (exe.empty() && managed_dir.empty()) return false;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -390,10 +449,31 @@ bool image_running(const std::string& exe, const std::string& managed_dir) {
     CloseHandle(snap);
     return found;
 }
+#else
+bool image_running(const std::string& exe, const std::string& managed_dir) {
+    if (exe.empty() && managed_dir.empty()) return false;
+    const int need = proc_listallpids(nullptr, 0);
+    if (need <= 0) return false;
+    std::vector<pid_t> pids((size_t)need + 64);
+    const int got = proc_listallpids(pids.data(), (int)(pids.size() * sizeof(pid_t)));
+    if (got <= 0) return false;
+    const pid_t me = getpid();
+    for (int i = 0; i < got; ++i) {
+        const pid_t pid = pids[(size_t)i];
+        if (pid <= 0 || pid == me) continue;
+        char buf[PROC_PIDPATHINFO_MAXSIZE];
+        if (proc_pidpath(pid, buf, sizeof buf) <= 0) continue;
+        const std::string img = buf;
+        if ((!exe.empty() && same_path(img, exe)) || (!managed_dir.empty() && path_under(img, managed_dir))) return true;
+    }
+    return false;
+}
+#endif
 
 namespace {
 
 std::string join_path(const std::string& a, const std::string& b) { return to_u8(u8(a) / u8(b)); }
+std::string native_rel(std::string r) { if (fs::path::preferred_separator != '\\') for (auto& c : r) if (c == '\\') c = '/'; return r; }   // "a\\b" -> "a/b" on macOS
 std::string strip_sep(std::string s) { while (!s.empty() && (s.back() == '\\' || s.back() == '/')) s.pop_back(); return s; }
 
 /* Everything the replay will touch, derived again from the CURRENT configuration exactly as begin_session does. The journal only names identity.
@@ -431,10 +511,10 @@ bool derive(const Entry& e, const Config& cfg, Entry* out, std::string* why) {
     else if (sys == hub::System::N3DS) root = hub::n3ds_sd_root(join_path(dir, "user"));
     else if (sys == hub::System::WiiU) {
         root = managed ? join_path(join_path(dir, "portable"), "mlc01") : hub::cemu_dirs_for(dir, cfg.appdata, hubemu::wiiu_probe()).mlc;
-        s.wiiu_save_parent = join_path(root, "usr\\save\\00050000");
+        s.wiiu_save_parent = join_path(root, native_rel("usr\\save\\00050000"));
     }
     else if (sys == hub::System::PS2) root = dir;
-    else if (sys == hub::System::PSP) root = join_path(dir, "memstick\\PSP");
+    else if (sys == hub::System::PSP) root = join_path(dir, native_rel("memstick\\PSP"));
     else if (sys == hub::System::Switch) root = hubemu::lichii_user_dir(dir);
     else if (sys == hub::System::GC) root = hubemu::dolphin_card_root(dir, e.game_key);
     if (root.empty() || !same_path(root, s.emu_root)) { *why = "the emulator's save folder is not where it was"; return false; }

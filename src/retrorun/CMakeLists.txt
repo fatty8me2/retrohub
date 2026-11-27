@@ -87,3 +87,8 @@ target_link_libraries(retrorun_savewrite_test PRIVATE hubbase)
 # DS Slot-2 GBA cartridge (Wave 3 X3, slot2.h): refusal rules, subsystem pick, save copy-back, backup pruning (pure logic).
 add_executable(retrorun_slot2_test test_slot2.cpp)
 target_include_directories(retrorun_slot2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# rollback.cpp includes plat/plat.h (src/common); the standalone engine tests do not link hubbase.
+foreach(_t retrorun_rollback_test retrorun_rollback_stall_test retrorun_resync_test retrorun_dropin_test)
+    target_include_directories(${_t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+endforeach()

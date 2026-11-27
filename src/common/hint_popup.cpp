@@ -5,6 +5,8 @@
 
 namespace starthint {
 
+#if RH_WIN
+
 static const wchar_t* kCls = L"RetroHubStartHint";
 
 static LRESULT CALLBACK wnd_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -92,5 +94,15 @@ void Popup::tick(HWND target, bool kb, bool runner) {
     MSG msg;
     while (PeekMessageW(&msg, hwnd_, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
 }
+
+#else  // macOS
+
+/* TODO(macOS lane 6): native popup. No SDL equivalent of an owned, click-through layered window; until lane 6 the card is simply not
+ * shown (the runners draw their own hints into the frame with starthint::composite, see start_hint.h). */
+bool Popup::create(NativeWindow) { return false; }
+void Popup::close() { hwnd_ = nullptr; state_ = Done; }
+void Popup::tick(NativeWindow, bool, bool) { (void)t_wait_; (void)t_start_; (void)scale_; (void)bmp_; state_ = Done; }
+
+#endif
 
 }  // namespace starthint

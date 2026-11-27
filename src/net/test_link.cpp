@@ -2,7 +2,7 @@
  * wrong code / tampering, identity adoption with backup, and identity file export/import. No network. */
 #include "identity_link.h"
 
-#include <windows.h>
+#include "plat/plat.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -66,11 +66,11 @@ int main()
     CHECK(link_open("ABCD2345", env2, &gotb) && gotb.user_id == b.user_id);
 
     /* adoption: PC holds a, links b -> identity.json is b, a is kept in a backup */
-    fs::path dir = fs::temp_directory_path() / ("rh_link_test_" + std::to_string(GetCurrentProcessId()));
+    fs::path dir = fs::temp_directory_path() / ("rh_link_test_" + std::to_string(plat::current_pid()));
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir);
-    std::string data_dir = dir.string() + "\\";
+    std::string data_dir = dir.string() + plat::kSep;
     std::string err;
     CHECK(identity_export_file(a, (dir / "a.json").string(), &err));
     CHECK(identity_import_file((dir / "a.json").string(), &got, &err) && got.user_id == a.user_id);

@@ -1,3 +1,4 @@
+#include "plat/plat.h"
 #include "ps1.h"
 
 #include <algorithm>
@@ -14,6 +15,9 @@
 #include "games.h"   // md5_hex
 
 #include "disc_id.h"   // shared PS1/PS2 sector reader + SYSTEM.CNF (iso/bin/cso/chd via libchdr)
+
+/* Windows-style relative literal ("\\BIOS") in the platform's separator ('\\' on Windows: unchanged). */
+static std::string N(const char* lit) { std::string r(lit); if (plat::kSep != '\\') for (char& c : r) if (c == '\\') c = plat::kSep; return r; }
 
 namespace fs = std::filesystem;
 
@@ -534,18 +538,18 @@ std::vector<std::string> bios_search_dirs(const std::vector<std::string>& rom_fo
     add(staging_dir);
     for (const std::string& f : rom_folders) {
         add(f);
-        for (const char* sub : {"BIOS", "bios", "System", "system", "GamesBios"}) add(f + "\\" + sub);
+        for (const char* sub : {"BIOS", "bios", "System", "system", "GamesBios"}) add(f + N("\\") + sub);
         std::string p = parent(f);
         for (int up = 0; up < 2 && !p.empty(); ++up, p = parent(p))
-            for (const char* sub : {"BIOS", "bios", "GamesBios", "Games BIOS"}) add(p + "\\" + sub);
+            for (const char* sub : {"BIOS", "bios", "GamesBios", "Games BIOS"}) add(p + N("\\") + sub);
     }
     if (!home.empty()) {
-        add(home + "\\Desktop\\Everything\\BIOS");
-        add(home + "\\Desktop\\Everything\\GamesBios");
-        add(home + "\\Documents\\RetroHub Games\\BIOS");
+        add(home + N("\\Desktop\\Everything\\BIOS"));
+        add(home + N("\\Desktop\\Everything\\GamesBios"));
+        add(home + N("\\Documents\\RetroHub Games\\BIOS"));
     }
-    if (!exe_dir.empty()) { add(exe_dir + "\\system"); add(exe_dir + "\\bios"); }
-    if (!appdata.empty()) add(appdata + "\\RetroArch\\system");
+    if (!exe_dir.empty()) { add(exe_dir + N("\\system")); add(exe_dir + N("\\bios")); }
+    if (!appdata.empty()) add(appdata + N("\\RetroArch\\system"));
     return out;
 }
 

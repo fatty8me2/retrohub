@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cwctype>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -15,6 +17,8 @@
 
 #include "json.h"
 #include "miniz.h"
+#include "plat/plat.h"
+#include "plat/plat_crypto.h"
 #include "winutil.h"
 
 #ifdef _WIN32
@@ -70,6 +74,21 @@ std::string sha1_file(const std::string& path) {
     while (f) { f.read(buf.data(), (std::streamsize)buf.size()); if (f.gcount() > 0) c.add(buf.data(), (size_t)f.gcount()); }
     return c.finish();
 }
+#else
+/* macOS: CommonCrypto through plat::Hasher (docs/MACOS.md). plat::hex is lowercase, like the Windows hex above. */
+std::string sha1_hex(const void* data, size_t len) { return plat::hex(plat::hash(plat::HashAlg::Sha1, data, len)); }
+std::string sha1_file(const std::string& path) {
+    FILE* f = plat::fopen_path(fs::u8path(path), "rb");
+    if (!f) return "";
+    plat::Hasher h(plat::HashAlg::Sha1);
+    std::vector<char> buf(1 << 20);
+    size_t got;
+    while ((got = std::fread(buf.data(), 1, buf.size(), f)) > 0) h.update(buf.data(), got);
+    bool ok = !ferror(f);
+    fclose(f);
+    if (!ok || !h.ok()) return "";
+    return plat::hex(h.finish());
+}
 #endif
 
 /* ------------------------------ package detection ------------------------------ */
@@ -85,7 +104,7 @@ bool is_package_dir(const std::string& dir) {
     return true;
 }
 
-static std::string slash_end(std::string d) { if (!d.empty() && d.back() != '\\' && d.back() != '/') d += '\\'; return d; }
+static std::string slash_end(std::string d) { if (!d.empty() && d.back() != '\\' && d.back() != '/') d += plat::kSep; return d; }   // kSep is '\\' on Windows: same bytes as before
 static std::string norm_entry(std::string n) { for (auto& c : n) if (c == '\\') c = '/'; return n; }
 
 std::string patch_content_id(const std::string& text, std::string* built) {
@@ -107,7 +126,7 @@ PkgVer parse_pkg_ver(const std::string& text) {
 }
 PkgVer read_pkg_ver(const std::string& dir) {
     std::string t;
-    if (!winutil::read_file(slash_end(dir) + "patch\\patch.json", &t)) return PkgVer();
+    if (!winutil::read_file(slash_end(dir) + "patch" + std::string(1, plat::kSep) + "patch.json", &t)) return PkgVer();   // kSep is '\\' on Windows
     return parse_pkg_ver(t);
 }
 VerMatch compare_versions(const PkgVer& a, const PkgVer& b) {
@@ -135,7 +154,7 @@ bool valid_ver_id(const std::string& id) {
 }
 bool has_barriers(const std::string& dir) {
     std::string t;
-    return winutil::read_file(slash_end(dir) + "app\\coop-launch.mjs", &t) && t.find("no-barriers") != std::string::npos;
+    return winutil::read_file(slash_end(dir) + "app" + std::string(1, plat::kSep) + "coop-launch.mjs", &t) && t.find("no-barriers") != std::string::npos;   // kSep is '\\' on Windows: same bytes as before
 }
 
 bool inspect_dir(const std::string& dir, Package* out) {
@@ -143,7 +162,7 @@ bool inspect_dir(const std::string& dir, Package* out) {
     Package p;
     p.path = dir;
     std::string t;
-    if (winutil::read_file(dir + (dir.empty() || dir.back() == '\\' || dir.back() == '/' ? "" : "\\") + "patch\\patch.json", &t)) p.content_id = patch_content_id(t, &p.built);
+    if (winutil::read_file(slash_end(dir) + "patch" + std::string(1, plat::kSep) + "patch.json", &t)) p.content_id = patch_content_id(t, &p.built);   // slash_end + kSep: same bytes as the old dir + "\\" + "patch\\patch.json" on Windows
     *out = p;
     return true;
 }
@@ -169,8 +188,8 @@ bool keep_on_reinstall(const std::string& rel) {
 }
 
 bool inspect_zip(const std::string& zip_path, Package* out) {
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, winutil::to_wide(zip_path).c_str(), L"rb") != 0 || !f) return false;
+    FILE* f = plat::fopen_path(P(zip_path), "rb");
+    if (!f) return false;
     mz_zip_archive za;
     memset(&za, 0, sizeof za);
     if (!mz_zip_reader_init_cfile(&za, f, 0, 0)) { fclose(f); return false; }
@@ -269,7 +288,7 @@ std::string install_dir(const std::string& data) {
     if (!d.empty() && d.back() != '\\' && d.back() != '/') d += '\\';
     return d + "apps\\KantoTogether\\";
 }
-static std::string slash(std::string d) { if (!d.empty() && d.back() != '\\' && d.back() != '/') d += '\\'; return d; }
+static std::string slash(std::string d) { if (!d.empty() && d.back() != '\\' && d.back() != '/') d += plat::kSep; return d; }   // kSep is '\\' on Windows: same bytes as before
 bool is_installed(const std::string& dir) { return is_package_dir(dir); }
 /* Keyed on the build (patch.json patchSha1 + built) so the same package as a zip or as an extracted folder does not reinstall; falls back to size/mtime. */
 static std::string marker_text(const Package& p) {
@@ -286,8 +305,8 @@ bool install_current(const std::string& dir, const Package& p) {
 static bool write_stream(const fs::path& to, const std::function<bool(FILE*)>& fn) {
     std::error_code ec;
     fs::create_directories(to.parent_path(), ec);
-    FILE* o = nullptr;
-    if (_wfopen_s(&o, to.wstring().c_str(), L"wb") != 0 || !o) return false;
+    FILE* o = plat::fopen_path(to, "wb");
+    if (!o) return false;
     bool ok = fn(o);
     fclose(o);
     return ok;
@@ -299,8 +318,8 @@ bool install(const Package& p, const std::string& dir_in, const std::function<bo
     fs::create_directories(P(dir), ec);
     uint64_t total = 0, done = 0;
     if (p.is_zip) {
-        FILE* f = nullptr;
-        if (_wfopen_s(&f, winutil::to_wide(p.path).c_str(), L"rb") != 0 || !f) { *err = "Could not open the Kanto Together zip."; return false; }
+        FILE* f = plat::fopen_path(P(p.path), "rb");
+        if (!f) { *err = "Could not open the Kanto Together zip."; return false; }
         mz_zip_archive za;
         memset(&za, 0, sizeof za);
         if (!mz_zip_reader_init_cfile(&za, f, 0, 0)) { fclose(f); *err = "The Kanto Together zip is damaged."; return false; }
@@ -528,17 +547,38 @@ bool is_kanto_runtime_exe(const std::string& exe) {
 
 bool is_non_ascii(const std::string& s) { for (unsigned char c : s) if (c >= 0x80) return true; return false; }
 
+/* Quote one argument. Windows: unchanged (winutil::quote_arg, CommandLineToArgvW rules). macOS: the launcher
+   spawner (spawn_piped / run_hidden) is still Windows-only (under #ifdef _WIN32), and the tests pin the command-line
+   shape to the Windows form, so macOS emits the same Windows-style quoting here; nothing is spawned from it yet. */
+static std::string quote_arg_os(const std::string& arg) {
+#if RH_WIN
+    return winutil::quote_arg(arg);
+#else
+    std::string o = "\"";
+    size_t bs = 0;   // pending backslashes
+    for (char c : arg) {
+        if (c == '\\') { ++bs; continue; }
+        if (c == '"') { o.append(bs * 2 + 1, '\\'); o += '"'; }
+        else { o.append(bs, '\\'); o += c; }
+        bs = 0;
+    }
+    o.append(bs * 2, '\\');   // backslashes before the closing quote must be doubled
+    o += '"';
+    return o;
+#endif
+}
+
 std::string launcher_cmdline(const LaunchOpts& o) {
-    std::string c = winutil::quote_arg(node_exe(o.dir)) + " " + winutil::quote_arg("app\\coop-launch.mjs") + (o.host ? " host" : " join " + o.code);
-    c += " --rom " + winutil::quote_arg(o.rom) + " --saves " + winutil::quote_arg(o.saves) + " --mgba " + winutil::quote_arg(mgba_exe(o.dir));
+    std::string c = quote_arg_os(node_exe(o.dir)) + " " + quote_arg_os("app\\coop-launch.mjs") + (o.host ? " host" : " join " + o.code);
+    c += " --rom " + quote_arg_os(o.rom) + " --saves " + quote_arg_os(o.saves) + " --mgba " + quote_arg_os(mgba_exe(o.dir));
     if (o.sound) c += " --unmute";
     if (o.lua_port > 0) c += " --lua-port " + std::to_string(o.lua_port);
     c += " --verbose";   // the only way "world: snapshot applied" reaches us; feed_line ignores the "[launch] <mGBA command line>" line
     return c;
 }
 std::string patch_cmdline(const std::string& dir, const std::string& base) {
-    return winutil::quote_arg(node_exe(dir)) + " " + winutil::quote_arg("app\\apply-patch.mjs") + " --manifest " + winutil::quote_arg("patch\\patch.json") +
-           " --out " + winutil::quote_arg("rom\\KantoTogether.gba") + " --rom " + winutil::quote_arg(base);
+    return quote_arg_os(node_exe(dir)) + " " + quote_arg_os("app\\apply-patch.mjs") + " --manifest " + quote_arg_os("patch\\patch.json") +
+           " --out " + quote_arg_os("rom\\KantoTogether.gba") + " --rom " + quote_arg_os(base);
 }
 std::string cmd_trade(int s) { return s >= 1 && s <= 6 ? "trade " + std::to_string(s) + "\n" : ""; }
 std::string cmd_confirm() { return "confirm\n"; }
@@ -554,10 +594,21 @@ std::string redact_log_text(const std::string& in) {
 void write_log(const std::string& dir, const std::string& line) {
     std::error_code ec;
     fs::create_directories(P(dir), ec);
-    SYSTEMTIME t; GetLocalTime(&t);
     char nm[64], ts[32];
+#if RH_WIN
+    SYSTEMTIME t; GetLocalTime(&t);
     std::snprintf(nm, sizeof nm, "kanto-%04d-%02d-%02d.log", t.wYear, t.wMonth, t.wDay);
     std::snprintf(ts, sizeof ts, "%02d:%02d:%02d.%03d ", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+#else
+    // Same local-time string as the Windows branch (docs/MACOS.md).
+    const auto wall = std::chrono::system_clock::now();
+    std::time_t tt = std::chrono::system_clock::to_time_t(wall);
+    int ms = (int)(std::chrono::duration_cast<std::chrono::milliseconds>(wall.time_since_epoch()).count() % 1000);
+    std::tm tm{};
+    plat::local_tm(tt, &tm);
+    std::snprintf(nm, sizeof nm, "kanto-%04d-%02d-%02d.log", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+    std::snprintf(ts, sizeof ts, "%02d:%02d:%02d.%03d ", tm.tm_hour, tm.tm_min, tm.tm_sec, ms);
+#endif
     std::ofstream f(P(dir) / nm, std::ios::binary | std::ios::app);
     if (f) f << ts << redact_log_text(line) << "\r\n";
     f.close();

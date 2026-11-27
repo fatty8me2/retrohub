@@ -719,7 +719,7 @@ void draw_cases(Disp& D) {
             int curc = -1;
             for (size_t k = 0; k < posmap.size(); ++k) if (posmap[k] == CS.focus) curc = (int)k;
             static uint32_t rng = 2463534242u;
-            rng ^= (uint32_t)GetTickCount64() * 2654435761u; rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+            rng ^= (uint32_t)plat::tick_ms() * 2654435761u; rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
             const int pick = pick_shuffle(cands, curc, (int64_t)std::time(nullptr), (double)(rng % 100000u) / 100000.0);
             if (pick >= 0) { cases_goto(D, posmap[(size_t)pick], true, true); shot_trace("cases-shuffle", cands[(size_t)pick].key); }
         }

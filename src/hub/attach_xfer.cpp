@@ -15,10 +15,12 @@
 #include <mutex>
 #include <thread>
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -174,7 +176,14 @@ void download_thread(std::shared_ptr<Result> r, hubnet::Attach att, std::string 
         f.write(data.data(), (std::streamsize)data.size());
         if (!f) { fail(r, 0, "", "Couldn't save the file to this PC (disk full or folder locked)."); return; }
     }
-    if (!MoveFileExW(part.c_str(), d.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+#if defined(_WIN32)
+    const bool moved = MoveFileExW(part.c_str(), d.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+#else
+    std::error_code mec;
+    fs::rename(part, d, mec);   // replaces an existing file atomically
+    const bool moved = !mec;
+#endif
+    if (!moved) {
         std::error_code ec2; fs::remove(part, ec2);
         fail(r, 0, "", "Couldn't save the file to this PC (disk full or folder locked).");
         return;

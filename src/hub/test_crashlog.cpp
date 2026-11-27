@@ -5,6 +5,7 @@
 #include "hub_log.h"
 #include "hub_log_rotate.h"
 #include "miniz.h"
+#include "../common/plat/plat.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -30,13 +31,13 @@ static bool has(const std::string& hay, const char* needle) { return hay.find(ne
 static const char* kUni = "Tr\xC3\xA4" "mer-\xE2\x82\xAC-\xC3\x9C";
 
 static fs::path fresh(const char* tag) {
-    fs::path p = fs::temp_directory_path() / fs::u8path(std::string("hubcrashlog_") + tag + "_" + std::to_string(GetCurrentProcessId()) + "_" + kUni);
+    fs::path p = fs::temp_directory_path() / fs::u8path(std::string("hubcrashlog_") + tag + "_" + std::to_string(plat::current_pid()) + "_" + kUni);
     std::error_code ec;
     fs::remove_all(p, ec);
     fs::create_directories(p, ec);
     return p;
 }
-static std::string dir8(const fs::path& p) { return p.u8string() + "\\"; }
+static std::string dir8(const fs::path& p) { return p.u8string() + plat::kSep; }
 
 static void test_scrub() {
     const std::string prof = std::string("C:\\Users\\B") + "\xC3\x9C" + "b";
@@ -48,7 +49,11 @@ static void test_scrub() {
 
 static void test_rotate_pure() {
     fs::path d = fresh("rot");
+#if RH_WIN
     const std::wstring w = d.wstring() + L"\\";
+#else
+    const std::string w = d.u8string() + "/";
+#endif
     spit(d / "hub.log", "A"); spit(d / "hub.1.log", "B"); spit(d / "hub.2.log", "C");
     hublog::rotate(w, 3);
     CHECK(!fs::exists(d / "hub.log"));
@@ -102,7 +107,11 @@ static void test_log_rotation_and_header() {
     const std::string h = slurp(d2 / "hub.log");
     CHECK(has(h, "RetroHub session started"));
     CHECK(has(h, "RetroHub 7.8.9"));
+#if RH_WIN
     CHECK(has(h, "Windows ") && has(h, " build "));
+#else
+    CHECK(has(h, "macOS "));
+#endif
     CHECK(has(h, "CPU cores: ") && has(h, "RAM: ") && has(h, " MB"));
     CHECK(has(h, "GPU: ") && has(h, "Locale: "));
     CHECK(has(h, "INFO  hello"));
@@ -168,7 +177,7 @@ static void test_diag_zip() {
     spit(d / "logs" / "crash-20260101-000001.txt", "old1");
     for (int i = 2; i <= 8; ++i) { char nb[64]; std::snprintf(nb, sizeof nb, "crash-20260101-00000%d.txt", i); spit(d / "logs" / nb, "c"); }
     spit(d / "logs" / "identity.json", "SECRET");
-    auto files = hubdiag::newest_crash_reports_only(hubdiag::collect_dir(d.u8string() + "\\logs", "logs/"));
+    auto files = hubdiag::newest_crash_reports_only(hubdiag::collect_dir(d.u8string() + plat::kSep + "logs", "logs/"));
     int crashes = 0; bool hub = false, old1 = false;
     for (auto& e : files) { crashes += e.zip_name.find("logs/crash-") == 0; hub |= e.zip_name == "logs/hub.log"; old1 |= e.zip_name.find("000001") != std::string::npos; }
     CHECK(crashes == 5 && hub && !old1);
@@ -177,9 +186,9 @@ static void test_diag_zip() {
         spit(d / "cap" / "old.log", std::string(600, 'o'));
         fs::last_write_time(d / "cap" / "old.log", fs::file_time_type::clock::now() - std::chrono::hours(48));
         spit(d / "cap" / "new.log", std::string(600, 'n'));
-        auto capped = hubdiag::limit_total_bytes(hubdiag::collect_dir(d.u8string() + "\\cap", "cap/"), 1000);
+        auto capped = hubdiag::limit_total_bytes(hubdiag::collect_dir(d.u8string() + plat::kSep + "cap", "cap/"), 1000);
         CHECK(capped.size() == 1 && capped[0].zip_name == "cap/new.log");
-        CHECK(hubdiag::limit_total_bytes(hubdiag::collect_dir(d.u8string() + "\\cap", "cap/"), 2000).size() == 2);
+        CHECK(hubdiag::limit_total_bytes(hubdiag::collect_dir(d.u8string() + plat::kSep + "cap", "cap/"), 2000).size() == 2);
     }
     const fs::path zip = d / fs::u8path(std::string("out-") + kUni + ".zip");
     std::string err;
@@ -214,6 +223,7 @@ static void test_find_unseen() {
     CHECK(crashrep::list_reports(ds).size() == 2);
 }
 
+#if RH_WIN
 static bool run_helper(const std::wstring& exe, const fs::path& dir, const wchar_t* mode, DWORD* exit_code) {
     std::wstring cmd = L"\"" + exe + L"\" \"" + dir.wstring() + L"\" " + mode;
     STARTUPINFOW si;
@@ -260,6 +270,8 @@ static void test_child_crash(const std::wstring& helper, const wchar_t* mode, co
     CHECK(!has(r, "dbghelp"));
 }
 
+#endif
+
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("scrub\n"); test_scrub();
@@ -268,6 +280,7 @@ int main(int argc, char** argv) {
     std::printf("formatter\n"); test_formatter();
     std::printf("zip\n"); test_diag_zip();
     std::printf("seen\n"); test_find_unseen();
+#if RH_WIN
     if (argc > 1) {
         std::wstring helper = fs::u8path(argv[1]).wstring();
         test_child_crash(helper, L"av", "ACCESS_VIOLATION");
@@ -294,6 +307,10 @@ int main(int argc, char** argv) {
     } else {
         std::printf("no helper given: child-crash checks skipped\n");
     }
+#else
+    (void)argc; (void)argv;   // TODO(macOS lane 8): child-crash checks need a signal-based crash handler (crash_report.cpp is Windows-only SEH today)
+    std::printf("child-crash checks skipped on macOS\n");
+#endif
     std::printf(g_fail ? "hub_crashlog_test: %d FAILED\n" : "hub_crashlog_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

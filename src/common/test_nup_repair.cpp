@@ -2,11 +2,19 @@
  * packages, dirs, files, children, pool, blobs; zstd members are hand-built RAW-block frames, no compressor), all under a scratch folder in %TEMP%.
  * Real-file QA, never run by ctest:  nuprepair_test --scan <file.nup>  |  --apply <file.nup> <user_dir>  |  --ensure <file.nup> <user_dir> */
 
+#include "plat/plat.h"
+#include "plat/plat_crypto.h"
+#include "test_platform_paths.h"
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <bcrypt.h>
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -33,7 +41,12 @@ static int g_fail = 0, g_checks = 0;
 // ---------------------------------------------------------------- helpers
 static std::string sha_hex(const void* d, size_t n) {
     uint8_t h[32] = {};
+#if RH_WIN
     BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, (PUCHAR)d, (ULONG)n, h, 32);
+#else
+    const std::string raw = plat::hash(plat::HashAlg::Sha256, d, n);
+    if (raw.size() == 32) std::memcpy(h, raw.data(), 32);
+#endif
     static const char* x = "0123456789abcdef";
     std::string s;
     for (int i = 0; i < 32; ++i) { s += x[h[i] >> 4]; s += x[h[i] & 15]; }
@@ -41,7 +54,11 @@ static std::string sha_hex(const void* d, size_t n) {
 }
 static std::string sha_hex(const Bytes& b) { return sha_hex(b.data(), b.size()); }
 
+#if RH_WIN
 static fs::path FP(const std::string& utf8) { return fs::path(winutil::to_wide(utf8)); }
+#else
+static fs::path FP(const std::string& utf8) { return fs::path(utf8); }
+#endif
 static bool exists(const std::string& p) { std::error_code ec; return fs::exists(FP(p), ec); }
 static bool read_all(const std::string& p, Bytes* out) { return winutil::read_file(p, out); }
 static bool write_all(const std::string& p, const Bytes& b) {
@@ -62,6 +79,7 @@ static std::vector<std::string> list_files(const std::string& dir) {   // relati
     return v;
 }
 
+#if RH_WIN
 static bool set_mtime(const std::string& p, uint64_t ticks) {
     HANDLE h = CreateFileW(winutil::to_wide(p).c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return false;
@@ -72,6 +90,15 @@ static bool set_mtime(const std::string& p, uint64_t ticks) {
     CloseHandle(h);
     return ok != 0;
 }
+#else
+static bool set_mtime(const std::string& p, uint64_t ticks) {   // ticks: Windows FILETIME (100 ns since 1601)
+    struct timespec ts[2];
+    const uint64_t secs = ticks / 10000000ull - 11644473600ull;
+    ts[0].tv_sec = ts[1].tv_sec = (time_t)secs;
+    ts[0].tv_nsec = ts[1].tv_nsec = (long)((ticks % 10000000ull) * 100);
+    return utimensat(AT_FDCWD, p.c_str(), ts, 0) == 0;
+}
+#endif
 
 // ---------------------------------------------------------------- synthetic NUP writer
 static void put32(Bytes& b, size_t at, uint32_t v) { for (int i = 0; i < 4; ++i) b[at + i] = (uint8_t)(v >> (8 * i)); }
@@ -241,9 +268,9 @@ static Bytes make_oot(uint64_t tid, bool soil_damaged = true, bool water_damaged
 // ---------------------------------------------------------------- scratch
 static std::string g_root;
 static int g_n = 0;
-static std::string fresh(const std::string& stem) { return g_root + "\\" + stem + std::to_string(++g_n); }
-static std::string put_nup(const std::string& name, const Bytes& b) { const std::string p = g_root + "\\nups\\" + name + ".nup"; CHECK(write_all(p, b)); return p; }
-static std::string mod_of(const std::string& user, uint64_t tid) { char t[24]; std::snprintf(t, sizeof t, "%016llX", (unsigned long long)tid); return user + "\\load\\" + t + "\\" + np::kModFolder; }
+static std::string fresh(const std::string& stem) { return g_root + wp("\\") + stem + std::to_string(++g_n); }
+static std::string put_nup(const std::string& name, const Bytes& b) { const std::string p = g_root + wp("\\nups\\") + name + ".nup"; CHECK(write_all(p, b)); return p; }
+static std::string mod_of(const std::string& user, uint64_t tid) { char t[24]; std::snprintf(t, sizeof t, "%016llX", (unsigned long long)tid); return user + wp("\\load\\") + t + wp("\\") + np::kModFolder; }
 
 static const np::Repair* find_repair(const np::Scan& s, const std::string& dmg) { for (const np::Repair& r : s.repairs) if (r.damaged.path == dmg) return &r; return nullptr; }
 
@@ -266,11 +293,11 @@ static void test_healthy() {
     const std::string user = fresh("user");
     np::Applied a = np::apply(p, s, user);
     CHECK(a.ok && a.written == 0 && a.kept == 0 && a.removed == 0 && a.unrepaired == 0);
-    CHECK(!exists(user + "\\load"));
+    CHECK(!exists(user + wp("\\load")));
     np::Ensure e = np::ensure(p, user, true);
     CHECK(e.scanned && e.scan.ok && e.applied.ok);
     CHECK(e.summary.find("nothing to repair") != std::string::npos);
-    CHECK(!exists(user + "\\load"));
+    CHECK(!exists(user + wp("\\load")));
     // member contents: raw and zstd extents come back byte-exact
     Bytes b;
     std::string err;
@@ -302,7 +329,7 @@ static void test_standin_choice() {
     np::Applied a = np::apply(p, s, user);
     CHECK(a.ok && a.written == 2 && a.unrepaired == 0);
     Bytes got;
-    CHECK(read_all(mod_of(user, kTid) + "\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs", &got) && got == good_body(900, 'A'));
+    CHECK(read_all(mod_of(user, kTid) + wp("\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"), &got) && got == good_body(900, 'A'));
 
     // equal prefix -> closest size; equal gap -> first by name; a codec-1 stand-in; a garbage codec-1 frame counts as damaged
     TFile garbage = F("Aa_Zz_Nrm.bntx.zs", good_body(1000, 'z'));
@@ -333,10 +360,10 @@ static void test_no_standin() {
     const std::string user = fresh("user");
     np::Applied a = np::apply(p, s, user);
     CHECK(a.ok && a.written == 0 && a.unrepaired == 1);
-    CHECK(!exists(user + "\\load"));
+    CHECK(!exists(user + wp("\\load")));
     np::Ensure e = np::ensure(p, user, true);
     CHECK(e.scanned && e.applied.ok && e.applied.unrepaired == 1 && e.summary.find("without a stand-in") != std::string::npos);
-    CHECK(!exists(user + "\\load"));
+    CHECK(!exists(user + wp("\\load")));
 }
 
 static void test_merge() {
@@ -381,7 +408,7 @@ static void test_merge() {
     CHECK(s2.repairs.size() == 1 && s2.repairs[0].stand_in.path == "Tex/L_Nrm.bntx.zs");
     const std::string user = fresh("user");
     CHECK(np::apply(p2, s2, user).ok);
-    CHECK(exists(mod_of(user, upd) + "\\romfs\\Tex\\K_Nrm.bntx.zs"));
+    CHECK(exists(mod_of(user, upd) + wp("\\romfs\\Tex\\K_Nrm.bntx.zs")));
     CHECK(!exists(mod_of(user, kTid)));
 
     // only add-on packages: no program
@@ -443,16 +470,16 @@ static void test_malformed() {
         np::Ensure e = np::ensure(p, user, true);
         CHECK(!e.applied.ok);
         CHECK(!e.summary.empty());
-        CHECK(!exists(user + "\\load"));
+        CHECK(!exists(user + wp("\\load")));
         CHECK(!np::apply(p, s, user).ok);
-        CHECK(!exists(user + "\\load"));
+        CHECK(!exists(user + wp("\\load")));
     }
-    CHECK(!np::scan(g_root + "\\nups\\does_not_exist.nup").ok);
-    CHECK(!np::scan(g_root + "\\nups").ok);   // a directory
+    CHECK(!np::scan(g_root + wp("\\nups\\does_not_exist.nup")).ok);
+    CHECK(!np::scan(g_root + wp("\\nups")).ok);   // a directory
     CHECK(!np::scan("").ok);
 
     // every truncation length, and random TOC byte flips (hash re-sealed): never a crash; truncations are never ok
-    const std::string tp = g_root + "\\nups\\trunc.nup";
+    const std::string tp = g_root + wp("\\nups\\trunc.nup");
     for (size_t n = 0; n < 0x300; n += 7) {
         Bytes t(good.begin(), good.begin() + (std::ptrdiff_t)std::min(n, good.size()));
         write_all(tp, t);
@@ -522,19 +549,19 @@ static void test_apply() {
     const std::string user = fresh("user");
     const std::string mod = mod_of(user, kTid);
     // foreign files: another mod of the same title, another title, a file inside RetroHub's folder
-    write_text(user + "\\load\\" + "0400486024DEC000" + "\\Other mod\\romfs\\Tex\\keep.bin", "other");
-    write_text(user + "\\load\\0100000000001000\\x\\romfs\\a.bin", "x");
-    write_text(mod + "\\readme.txt", "mine");
-    write_text(mod + "\\romfs\\Tex\\Foreign.bin", "foreign");
+    write_text(user + wp("\\load\\") + "0400486024DEC000" + wp("\\Other mod\\romfs\\Tex\\keep.bin"), "other");
+    write_text(user + wp("\\load\\0100000000001000\\x\\romfs\\a.bin"), "x");
+    write_text(mod + wp("\\readme.txt"), "mine");
+    write_text(mod + wp("\\romfs\\Tex\\Foreign.bin"), "foreign");
 
     np::Applied a = np::apply(nup, s, user);
     CHECK(a.ok && a.written == 2 && a.kept == 0 && a.removed == 0 && a.unrepaired == 1);
     Bytes got;
-    CHECK(read_all(mod + "\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs", &got) && got == water_body());
-    CHECK(read_all(mod + "\\romfs\\Tex\\CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs", &got) && got == soil_body());
-    CHECK(!exists(mod + "\\romfs\\Tex\\Lone_Alb.bntx.zs"));
+    CHECK(read_all(mod + wp("\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"), &got) && got == water_body());
+    CHECK(read_all(mod + wp("\\romfs\\Tex\\CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs"), &got) && got == soil_body());
+    CHECK(!exists(mod + wp("\\romfs\\Tex\\Lone_Alb.bntx.zs")));
     std::string mf;
-    CHECK(winutil::read_file(mod + "\\" + np::kManifestName, &mf));
+    CHECK(winutil::read_file(mod + wp("\\") + np::kManifestName, &mf));
     CHECK_EQ(mf, expected_manifest(s, {{sha_hex(soil_body()), "420", kSoil, kSoilSI}, {sha_hex(water_body()), "710", kWater, kWaterSI}}));
     {   // sorted by damaged path: CmnTex... < Rock...
         np::Manifest m;
@@ -544,16 +571,16 @@ static void test_apply() {
     }
     // nothing else touched, no temp files left
     CHECK_EQ(list_files(user).size(), 7u);   // keep.bin, a.bin, readme.txt, Foreign.bin, 2 stand-ins, manifest
-    CHECK(exists(user + "\\load\\0400486024DEC000\\Other mod\\romfs\\Tex\\keep.bin") && exists(user + "\\load\\0100000000001000\\x\\romfs\\a.bin"));
+    CHECK(exists(user + wp("\\load\\0400486024DEC000\\Other mod\\romfs\\Tex\\keep.bin")) && exists(user + wp("\\load\\0100000000001000\\x\\romfs\\a.bin")));
 
     np::Applied a2 = np::apply(nup, s, user);
     CHECK(a2.ok && a2.written == 0 && a2.kept == 2 && a2.removed == 0 && a2.unrepaired == 1);
 
     // an altered file is rewritten, the intact one is kept
-    write_text(mod + "\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs", "tampered");
+    write_text(mod + wp("\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"), "tampered");
     np::Applied a3 = np::apply(nup, s, user);
     CHECK(a3.ok && a3.written == 1 && a3.kept == 1);
-    CHECK(read_all(mod + "\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs", &got) && got == water_body());
+    CHECK(read_all(mod + wp("\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"), &got) && got == water_body());
 
     // a changed game file between scan and apply is refused
     const std::string other = put_nup("oot_other", make_oot(kTid, false));
@@ -565,8 +592,8 @@ static void test_apply() {
     CHECK(s2.ok && s2.repairs.size() == 2);
     np::Applied a4 = np::apply(nup2, s2, user);
     CHECK(a4.ok && a4.removed == 1 && a4.written == 0 && a4.kept == 1);
-    CHECK(!exists(mod + "\\romfs\\Tex\\CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs"));
-    CHECK(exists(mod + "\\romfs\\Tex\\Foreign.bin") && exists(mod + "\\readme.txt"));
+    CHECK(!exists(mod + wp("\\romfs\\Tex\\CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs")));
+    CHECK(exists(mod + wp("\\romfs\\Tex\\Foreign.bin")) && exists(mod + wp("\\readme.txt")));
     { np::Manifest m; CHECK(np::read_manifest(user, kTid, &m) && m.entries.size() == 1 && m.entries[0].damaged_path == kWater); }
 
     // empty result: RetroHub's files and manifest go, the folder stays because of the foreign files
@@ -575,33 +602,33 @@ static void test_apply() {
     CHECK(s3.ok && s3.repairs.size() == 1 && s3.repairs[0].stand_in.path.empty());   // Lone only
     np::Applied a5 = np::apply(nup3, s3, user);
     CHECK(a5.ok && a5.removed == 1 && a5.written == 0 && a5.unrepaired == 1);
-    CHECK(!exists(mod + "\\" + np::kManifestName) && !exists(mod + "\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"));
-    CHECK(exists(mod + "\\romfs\\Tex\\Foreign.bin") && exists(mod + "\\readme.txt"));
-    CHECK(exists(user + "\\load\\0400486024DEC000\\Other mod\\romfs\\Tex\\keep.bin"));
+    CHECK(!exists(mod + wp("\\") + np::kManifestName) && !exists(mod + wp("\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs")));
+    CHECK(exists(mod + wp("\\romfs\\Tex\\Foreign.bin")) && exists(mod + wp("\\readme.txt")));
+    CHECK(exists(user + wp("\\load\\0400486024DEC000\\Other mod\\romfs\\Tex\\keep.bin")));
 
     // no foreign files: the whole mod folder goes, nothing else
     const std::string user2 = fresh("user");
     CHECK(np::apply(nup, s, user2).ok);
     CHECK(exists(mod_of(user2, kTid)));
-    write_text(user2 + "\\load\\0400486024DEC000\\Other mod\\romfs\\k.bin", "k");
+    write_text(user2 + wp("\\load\\0400486024DEC000\\Other mod\\romfs\\k.bin"), "k");
     np::Applied a6 = np::apply(nup3, s3, user2);
     CHECK(a6.ok && a6.removed == 2);
     CHECK(!exists(mod_of(user2, kTid)));
-    CHECK(exists(user2 + "\\load\\0400486024DEC000\\Other mod\\romfs\\k.bin"));
+    CHECK(exists(user2 + wp("\\load\\0400486024DEC000\\Other mod\\romfs\\k.bin")));
 
     // a hand-made folder without a manifest is adopted (identical file kept, listed), then remove() deletes only the listed files
     const std::string user3 = fresh("user");
     const std::string mod3 = mod_of(user3, kTid);
-    write_all(mod3 + "\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs", water_body());
-    write_text(mod3 + "\\romfs\\Tex\\Mine.bin", "mine");
-    CHECK(!exists(mod3 + "\\" + np::kManifestName));
+    write_all(mod3 + wp("\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"), water_body());
+    write_text(mod3 + wp("\\romfs\\Tex\\Mine.bin"), "mine");
+    CHECK(!exists(mod3 + wp("\\") + np::kManifestName));
     CHECK_EQ(np::remove(user3, kTid), 0);   // no manifest: nothing is touched
-    CHECK(exists(mod3 + "\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"));
+    CHECK(exists(mod3 + wp("\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs")));
     np::Applied a7 = np::apply(nup, s, user3);
     CHECK(a7.ok && a7.kept == 1 && a7.written == 1);
     CHECK_EQ(np::remove(user3, kTid), 2);
-    CHECK(!exists(mod3 + "\\" + np::kManifestName) && !exists(mod3 + "\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"));
-    CHECK(exists(mod3 + "\\romfs\\Tex\\Mine.bin"));
+    CHECK(!exists(mod3 + wp("\\") + np::kManifestName) && !exists(mod3 + wp("\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs")));
+    CHECK(exists(mod3 + wp("\\romfs\\Tex\\Mine.bin")));
     CHECK_EQ(np::remove(user3, kTid), 0);
 
     // apply refuses a scan that was not ok and an empty user folder
@@ -630,25 +657,29 @@ static void test_ensure() {
     CHECK(!np::ensure(nup, user, true).scanned);
 
     // a listed file deleted / altered -> rescan and rewrite
-    DeleteFileW(winutil::to_wide(mod + "\\romfs\\Tex\\" + "Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs").c_str());
+#if RH_WIN
+    DeleteFileW(winutil::to_wide(mod + wp("\\romfs\\Tex\\") + "Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs").c_str());
+#else
+    { std::error_code de; fs::remove(FP(mod + wp("\\romfs\\Tex\\") + "Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"), de); }
+#endif
     np::Ensure e4 = np::ensure(nup, user, true);
     CHECK(e4.scanned && e4.applied.written == 1 && e4.applied.kept == 1);
-    write_text(mod + "\\romfs\\Tex\\CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs", "x");
+    write_text(mod + wp("\\romfs\\Tex\\CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs"), "x");
     np::Ensure e5 = np::ensure(nup, user, true);
     CHECK(e5.scanned && e5.applied.written == 1 && e5.applied.kept == 1);
     Bytes got;
-    CHECK(read_all(mod + "\\romfs\\Tex\\CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs", &got) && got == soil_body());
+    CHECK(read_all(mod + wp("\\romfs\\Tex\\CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs"), &got) && got == soil_body());
     CHECK(!np::ensure(nup, user, true).scanned);
 
     // another rule version in the manifest -> rescan
     {
         std::string mf;
-        CHECK(winutil::read_file(mod + "\\" + np::kManifestName, &mf));
+        CHECK(winutil::read_file(mod + wp("\\") + np::kManifestName, &mf));
         const std::string cur = " rule " + std::to_string(np::kRuleVersion) + "\n";
         const size_t at = mf.find(cur);
         CHECK(at != std::string::npos);
         if (at != std::string::npos) mf.replace(at, cur.size(), " rule 0\n");
-        write_text(mod + "\\" + np::kManifestName, mf);
+        write_text(mod + wp("\\") + np::kManifestName, mf);
         CHECK(np::ensure(nup, user, true).scanned);
     }
 
@@ -656,39 +687,39 @@ static void test_ensure() {
     write_all(nup, make_oot(kTid, false, true));
     np::Ensure e6 = np::ensure(nup, user, true);
     CHECK(e6.scanned && e6.applied.ok && e6.applied.removed == 1 && e6.applied.kept == 1);
-    CHECK(!exists(mod + "\\romfs\\Tex\\CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs"));
+    CHECK(!exists(mod + wp("\\romfs\\Tex\\CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs")));
 
     // a damaged manifest is just rescanned
-    write_text(mod + "\\" + np::kManifestName, "garbage\n");
+    write_text(mod + wp("\\") + np::kManifestName, "garbage\n");
     CHECK(np::ensure(nup, user, true).scanned);
 
     // the setting off removes what is listed and nothing else
-    write_text(mod + "\\readme.txt", "mine");
+    write_text(mod + wp("\\readme.txt"), "mine");
     np::Ensure off = np::ensure(nup, user, false);
     CHECK(!off.scanned && off.applied.ok && off.applied.removed == 1 && off.summary.find("off") != std::string::npos);
-    CHECK(exists(mod + "\\readme.txt") && !exists(mod + "\\" + np::kManifestName) && !exists(mod + "\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"));
+    CHECK(exists(mod + wp("\\readme.txt")) && !exists(mod + wp("\\") + np::kManifestName) && !exists(mod + wp("\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs")));
     CHECK_EQ(np::ensure(nup, user, false).applied.removed, 0);
     // and back on
     CHECK(np::ensure(nup, user, true).scanned);
 
     // a non-NUP path / a missing file: an error line, never a throw
-    np::Ensure bad = np::ensure(g_root + "\\nope.nup", user, true);
+    np::Ensure bad = np::ensure(g_root + wp("\\nope.nup"), user, true);
     CHECK(!bad.scanned && !bad.applied.ok && bad.summary.find("error") != std::string::npos);
-    np::Ensure bad2 = np::ensure(g_root + "\\nope.nup", user, false);
+    np::Ensure bad2 = np::ensure(g_root + wp("\\nope.nup"), user, false);
     CHECK(!bad2.applied.ok && !bad2.summary.empty());
 }
 
 static void test_unicode() {
     const std::wstring wdir = L"Zelda – テスト";
-    const std::string dir = g_root + "\\" + winutil::to_utf8(wdir);
-    const std::string nup = dir + "\\" + winutil::to_utf8(wdir) + ".nup";
+    const std::string dir = g_root + wp("\\") + winutil::to_utf8(wdir);
+    const std::string nup = dir + wp("\\") + winutil::to_utf8(wdir) + ".nup";
     CHECK(write_all(nup, make_oot(kTid)));
-    const std::string user = g_root + "\\" + winutil::to_utf8(L"ユーザー é") + "\\user";
+    const std::string user = g_root + wp("\\") + winutil::to_utf8(L"ユーザー é") + wp("\\user");
     np::Scan s = np::scan(nup);
     CHECK(s.ok && s.repairs.size() == 3);
     np::Ensure e = np::ensure(nup, user, true);
     CHECK(e.scanned && e.applied.ok && e.applied.written == 2);
-    CHECK(exists(mod_of(user, kTid) + "\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs"));
+    CHECK(exists(mod_of(user, kTid) + wp("\\romfs\\Tex\\Rock_WaterTemple_Gate_M_01_Nrm.bntx.zs")));
     CHECK(!np::ensure(nup, user, true).scanned);
     Bytes b;
     std::string err;
@@ -714,7 +745,7 @@ static void test_text_and_manifest() {
 
     // read_manifest: malformed variants
     const std::string user = fresh("user");
-    const std::string mp = mod_of(user, kTid) + "\\" + np::kManifestName;
+    const std::string mp = mod_of(user, kTid) + wp("\\") + np::kManifestName;
     np::Manifest m;
     CHECK(!np::read_manifest(user, kTid, &m));   // missing
     const std::string sha = std::string(64, 'b'), toc = std::string(64, 'c');
@@ -736,25 +767,25 @@ static void test_text_and_manifest() {
     write_text(mp, head + "repair " + sha + " 5\tC:\\evil.zs\tTex/b.zs\n");
     CHECK(!np::read_manifest(user, kTid, &m));
     // a manifest naming a path outside the mod folder never makes remove() delete it
-    write_text(user + "\\outside.txt", "keep");
+    write_text(user + wp("\\outside.txt"), "keep");
     write_text(mp, head + "repair " + sha + " 5\t../../../../outside.txt\tTex/b.zs\n");
     CHECK_EQ(np::remove(user, kTid), 0);
-    CHECK(exists(user + "\\outside.txt"));
+    CHECK(exists(user + wp("\\outside.txt")));
 }
 
 static void test_followups() {
     // 1. a healthy copy is scanned once: the record lives in the state dir, never in the emulator's folders
     {
         const std::string nup = put_nup("state_healthy", build_nup({base_pkg(kTid, D("romfs", {}, {D("Tex", {F("A_Nrm.bntx.zs", good_body(100, 'a'))})}))}));
-        const std::string user = fresh("user"), state = fresh("state") + "\\nup-repair";
+        const std::string user = fresh("user"), state = fresh("state") + wp("\\nup-repair");
         np::Ensure e1 = np::ensure(nup, user, true, state);
         CHECK(e1.scanned && e1.applied.ok && e1.summary.find("nothing to repair") != std::string::npos);
-        const std::string rec = state + "\\nup-repair-0400486024DEC000.txt";
+        const std::string rec = state + wp("\\nup-repair-0400486024DEC000.txt");
         std::string txt;
         CHECK(winutil::read_file(rec, &txt));
         CHECK(txt.find("nup " + std::to_string(e1.scan.file_size) + " " + std::to_string(e1.scan.mtime) + " " + e1.scan.toc_sha256 + " rule " + std::to_string(np::kRuleVersion) + "\n") == 0);
         CHECK(txt.find("\npath " + nup + "\n") != std::string::npos);
-        CHECK(!exists(user + "\\load"));
+        CHECK(!exists(user + wp("\\load")));
         np::Ensure e2 = np::ensure(nup, user, true, state);
         CHECK(!e2.scanned && e2.applied.ok && e2.summary.find("unchanged") != std::string::npos);
         CHECK(np::ensure(nup, user, true).scanned);   // without a state dir it rescans
@@ -789,14 +820,14 @@ static void test_followups() {
         CHECK(s.ok && s.repairs.size() == 3);
         const std::string user = fresh("user"), mod = mod_of(user, kTid);
         const Bytes same = good_body(90, 'x'), other = Bytes{9, 8, 7, 6, 5};
-        write_all(mod + "\\romfs\\Tex\\Aa_X.bntx.zs", same);    // identical to its stand-in
-        write_all(mod + "\\romfs\\Tex\\Bb_Y.bntx.zs", other);   // different
+        write_all(mod + wp("\\romfs\\Tex\\Aa_X.bntx.zs"), same);    // identical to its stand-in
+        write_all(mod + wp("\\romfs\\Tex\\Bb_Y.bntx.zs"), other);   // different
         np::Applied a = np::apply(nup, s, user);
         CHECK(!a.ok && a.written == 0 && a.kept == 0);
         Bytes got;
-        CHECK(read_all(mod + "\\romfs\\Tex\\Aa_X.bntx.zs", &got) && got == same);
-        CHECK(read_all(mod + "\\romfs\\Tex\\Bb_Y.bntx.zs", &got) && got == other);
-        CHECK(!exists(mod + "\\romfs\\Tex\\Cc_Z.bntx.zs") && !exists(mod + "\\" + np::kManifestName));
+        CHECK(read_all(mod + wp("\\romfs\\Tex\\Aa_X.bntx.zs"), &got) && got == same);
+        CHECK(read_all(mod + wp("\\romfs\\Tex\\Bb_Y.bntx.zs"), &got) && got == other);
+        CHECK(!exists(mod + wp("\\romfs\\Tex\\Cc_Z.bntx.zs")) && !exists(mod + wp("\\") + np::kManifestName));
         CHECK_EQ(list_files(user).size(), 2u);
     }
     // 3. a near-maximal first block must not look damaged
@@ -810,7 +841,7 @@ static void test_followups() {
     // 4. Windows device names are never paths
     {
         const std::string user = fresh("user");
-        const std::string mp = mod_of(user, kTid) + "\\" + np::kManifestName;
+        const std::string mp = mod_of(user, kTid) + wp("\\") + np::kManifestName;
         const std::string sha = std::string(64, 'b'), toc = std::string(64, 'c');
         auto accepts = [&](const std::string& dmg) {
             write_text(mp, "RetroHub damaged-file repair 1\nnup 1 2 " + toc + " rule 1\nrepair " + sha + " 5\t" + dmg + "\tTex/b.zs\n");
@@ -825,12 +856,12 @@ static void test_followups() {
         np::Scan s = np::scan(nup);
         CHECK(s.ok && s.repairs.size() == 1 && s.repairs[0].stand_in.path.empty());
         const std::string u2 = fresh("user");
-        CHECK(np::apply(nup, s, u2).unrepaired == 1 && !exists(u2 + "\\load"));
+        CHECK(np::apply(nup, s, u2).unrepaired == 1 && !exists(u2 + wp("\\load")));
     }
     // 5. an oversized manifest is not read
     {
         const std::string user = fresh("user");
-        write_all(mod_of(user, kTid) + "\\" + np::kManifestName, Bytes((17u << 20), 'x'));
+        write_all(mod_of(user, kTid) + wp("\\") + np::kManifestName, Bytes((17u << 20), 'x'));
         np::Manifest m;
         CHECK(!np::read_manifest(user, kTid, &m));
     }
@@ -879,7 +910,7 @@ static void test_audio() {
     np::Applied a = np::apply(p, s, user);
     CHECK(a.ok && a.written == 5 && a.unrepaired == 0);
     Bytes got;
-    CHECK(read_all(mod + "\\romfs\\Sound\\Voice\\EUde_Text_Dm_Time_0050_Text_001_b.bwav", &got) && got == bwav_body(5200, 'b'));
+    CHECK(read_all(mod + wp("\\romfs\\Sound\\Voice\\EUde_Text_Dm_Time_0050_Text_001_b.bwav"), &got) && got == bwav_body(5200, 'b'));
     np::Manifest m;
     CHECK(np::read_manifest(user, kTid, &m) && m.rule == np::kRuleVersion && m.entries.size() == 5);
     CHECK(np::page_text(m).find("5 damaged files, so some rooms would be invisible and some sounds would be missing.") != std::string::npos);
@@ -898,10 +929,10 @@ static void test_audio_text_and_rule() {
     // an old clean record (rule 1) and an old manifest (rule 1) no longer count: the copy is scanned once more, and finds the sound
     const Bytes nup_bytes = build_nup({base_pkg(kTid, D("romfs", {}, {D("Sound", {F("X_b.bwav", zero_prefix_body(4300)), F("Y_b.bwav", bwav_body(4400, 'y'))})}))});
     const std::string nup = put_nup("audio_rule", nup_bytes);
-    const std::string user = fresh("user"), state = fresh("state") + "\\nup-repair";
+    const std::string user = fresh("user"), state = fresh("state") + wp("\\nup-repair");
     np::Scan s0 = np::scan(nup);
     CHECK(s0.ok);
-    const std::string rec = state + "\\nup-repair-0400486024DEC000.txt";
+    const std::string rec = state + wp("\\nup-repair-0400486024DEC000.txt");
     write_text(rec, "nup " + std::to_string(s0.file_size) + " " + std::to_string(s0.mtime) + " " + s0.toc_sha256 + " rule 1\npath " + nup + "\n");
     np::Ensure e = np::ensure(nup, user, true, state);
     CHECK(e.scanned && e.applied.written == 1);
@@ -917,7 +948,7 @@ static void print_written(const std::string& user, uint64_t tid) {
     for (const np::ManifestEntry& e : m.entries) {
         std::string rel = e.damaged_path;
         std::replace(rel.begin(), rel.end(), '/', '\\');
-        std::printf("  %s  %s  (%llu bytes, from %s)\n", file_sha(mod_of(user, tid) + "\\romfs\\" + rel).c_str(), e.damaged_path.c_str(), (unsigned long long)e.size, e.stand_in_path.c_str());
+        std::printf("  %s  %s  (%llu bytes, from %s)\n", file_sha(mod_of(user, tid) + wp("\\romfs\\") + rel).c_str(), e.damaged_path.c_str(), (unsigned long long)e.size, e.stand_in_path.c_str());
     }
 }
 
@@ -961,7 +992,7 @@ static int real_mode(int argc, char** argv) {
         quick.title_id = e.scan.title_id;
         if (!e.scanned) {   // title id for the listing: read from the manifests the folder holds
             std::error_code ec;
-            for (fs::directory_iterator it(FP(user + "\\load"), ec), end; !ec && it != end; it.increment(ec)) {
+            for (fs::directory_iterator it(FP(user + wp("\\load")), ec), end; !ec && it != end; it.increment(ec)) {
                 const std::string name = winutil::to_utf8(it->path().filename().wstring());
                 if (name.size() == 16) quick.title_id = std::stoull(name, nullptr, 16);
             }
@@ -976,13 +1007,18 @@ static int real_mode(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == '-') return real_mode(argc, argv);
+#if RH_WIN
     wchar_t tmp[MAX_PATH] = {};
     GetTempPathW(MAX_PATH, tmp);
     g_root = winutil::to_utf8(std::wstring(tmp)) + "nuprepair_test_" + std::to_string(GetCurrentProcessId());
     while (!g_root.empty() && g_root.back() == '\\') g_root.pop_back();
+#else
+    g_root = plat::join(fs::temp_directory_path().string(), "nuprepair_test_" + std::to_string(plat::current_pid()));
+    while (!g_root.empty() && g_root.back() == '/') g_root.pop_back();
+#endif
     std::error_code ec;
     fs::remove_all(FP(g_root), ec);
-    fs::create_directories(FP(g_root + "\\nups"), ec);
+    fs::create_directories(FP(g_root + wp("\\nups")), ec);
 
     test_healthy();
     test_standin_choice();

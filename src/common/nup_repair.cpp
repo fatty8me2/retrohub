@@ -2,11 +2,16 @@
 /* Damaged-member repair for Lichii's NUP packages (nup_repair.h has the contract). Reads the NUP only; every TOC bound is checked like
  * Lichii's nup_container.cpp Parse() / ValidateDirTree(), so a malformed file ends in Scan.ok = false and never in a crash. */
 
+#include "plat/plat.h"
+#include "plat/plat_crypto.h"
+
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <bcrypt.h>
+#endif
 #include <zstd.h>
 
 #include <algorithm>
@@ -18,6 +23,12 @@
 #include <memory>
 #include <set>
 #include <unordered_map>
+
+#if RH_MAC
+#include <cerrno>
+#include <unistd.h>
+#include <sys/stat.h>
+#endif
 
 #include "winutil.h"
 
@@ -39,7 +50,14 @@ constexpr const char* kManifestHead = "RetroHub damaged-file repair 1";
 uint32_t rd32(const uint8_t* p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 uint64_t rd64(const uint8_t* p) { return (uint64_t)rd32(p) | ((uint64_t)rd32(p + 4) << 32); }
 
+#if RH_WIN
+using wpath_t = std::wstring;
 std::wstring W(const std::string& s) { return winutil::to_wide(s); }
+#else
+/* macOS: paths are UTF-8 bytes, so the wide form is the same string and the Win32 helpers below take it directly. */
+using wpath_t = std::string;
+std::string W(const std::string& s) { return s; }
+#endif
 
 std::string hex(const uint8_t* p, size_t n) {
     static const char* d = "0123456789abcdef";
@@ -55,7 +73,8 @@ std::string tid_hex(uint64_t tid) {
     return b;
 }
 
-// ---- SHA-256 (Windows CNG) ----
+// ---- SHA-256 (Windows CNG; plat::Hasher on macOS: BCrypt on Windows, CommonCrypto on macOS, same bytes) ----
+#if RH_WIN
 struct Sha {
     BCRYPT_ALG_HANDLE alg = nullptr;
     BCRYPT_HASH_HANDLE h = nullptr;
@@ -85,6 +104,25 @@ struct Sha {
     }
 };
 
+#else
+struct Sha {
+    plat::Hasher h{plat::HashAlg::Sha256};
+    Sha() = default;
+    Sha(const Sha&) = delete;
+    Sha& operator=(const Sha&) = delete;
+    bool ok = h.ok();
+    void add(const void* d, size_t n) { if (ok) h.update(d, n); }
+    bool finish(uint8_t out[32]) {
+        if (!ok) return false;
+        std::string raw = h.finish();
+        if (raw.size() != 32) return false;
+        std::memcpy(out, raw.data(), 32);
+        ok = false;
+        return true;
+    }
+};
+#endif
+
 bool sha_of(const void* d, size_t n, uint8_t out[32]) {
     Sha s;
     s.add(d, n);
@@ -92,6 +130,7 @@ bool sha_of(const void* d, size_t n, uint8_t out[32]) {
 }
 
 // ---- read-only file ----
+#if RH_WIN
 struct RFile {
     HANDLE h = INVALID_HANDLE_VALUE;
     uint64_t size = 0, mtime = 0;
@@ -121,6 +160,39 @@ struct RFile {
         return true;
     }
 };
+#else
+struct RFile {
+    FILE* f = nullptr;
+    uint64_t size = 0, mtime = 0;
+    RFile() = default;
+    ~RFile() { if (f) std::fclose(f); }
+    RFile(const RFile&) = delete;
+    RFile& operator=(const RFile&) = delete;
+    bool open(const std::string& w) {
+        f = plat::fopen_path(std::filesystem::path(w), "rb");
+        if (!f) return false;
+        struct stat st;
+        if (fstat(fileno(f), &st) != 0 || !S_ISREG(st.st_mode)) return false;
+        size = (uint64_t)st.st_size;
+        // same role as the Windows FILETIME stamp: change detection only, so any consistent clock value works
+        mtime = (uint64_t)st.st_mtimespec.tv_sec * 1000000000ull + (uint64_t)st.st_mtimespec.tv_nsec;
+        return true;
+    }
+    bool read_at(uint64_t off, void* buf, size_t n) const {
+        if (off > size || n > size - off) return false;
+        if (plat::fseek64(f, (int64_t)off, SEEK_SET) != 0) return false;
+        uint8_t* p = (uint8_t*)buf;
+        while (n) {
+            const size_t want = std::min<size_t>(n, 1u << 24), got = std::fread(p, 1, want, f);
+            if (got != want) return false;
+            p += got;
+            off += got;
+            n -= got;
+        }
+        return true;
+    }
+};
+#endif
 
 // ---- parsed NUP ----
 struct Pkg { uint64_t tid = 0; uint32_t romfs_dir = kNoDir, version = 0; uint8_t kind = 0, flags = 0; };
@@ -490,11 +562,13 @@ std::string join_user(const std::string& user_dir) {
     while (!u.empty() && (u.back() == '\\' || u.back() == '/')) u.pop_back();
     return u;
 }
-std::string mod_dir_of(const std::string& user_dir, uint64_t tid) { return join_user(user_dir) + "\\load\\" + tid_hex(tid) + "\\" + kModFolder; }
+std::string mod_dir_of(const std::string& user_dir, uint64_t tid) {
+    return join_user(user_dir) + plat::kSep + "load" + plat::kSep + tid_hex(tid) + plat::kSep + kModFolder;   // '\\' on Windows: identical
+}
 std::string file_in_mod(const std::string& mod_dir, const std::string& romfs_path) {
     std::string p = romfs_path;
-    std::replace(p.begin(), p.end(), '/', '\\');
-    return mod_dir + "\\romfs\\" + p;
+    std::replace(p.begin(), p.end(), '/', plat::kSep);   // '\\' on Windows: identical
+    return mod_dir + plat::kSep + "romfs" + plat::kSep + p;
 }
 
 bool file_sha_and_size(const std::string& path, std::string* sha, uint64_t* size) {
@@ -515,6 +589,7 @@ bool file_sha_and_size(const std::string& path, std::string* sha, uint64_t* size
     return true;
 }
 
+#if RH_WIN
 bool delete_file(const std::wstring& w) {
     if (DeleteFileW(w.c_str())) return true;
     const DWORD e = GetLastError();
@@ -538,8 +613,34 @@ std::wstring parent_of(const std::wstring& p) {
     return cut == std::wstring::npos ? std::wstring() : p.substr(0, cut);
 }
 
+void force_delete(const std::string& p) { DeleteFileW(W(p).c_str()); }
+#else
+bool delete_file(const std::string& w) {
+    if (unlink(w.c_str()) == 0) return true;
+    if (errno == ENOENT) return false;
+    return false;
+}
+
+void prune_up(std::string dir, const std::string& stop) {
+    while (!dir.empty() && dir.size() > stop.size() && dir.compare(0, stop.size(), stop) == 0) {
+        if (rmdir(dir.c_str()) != 0) return;
+        const size_t cut = dir.find_last_of(plat::kSep);
+        if (cut == std::string::npos) return;
+        dir.resize(cut);
+    }
+}
+
+std::string parent_of(const std::string& p) {
+    const size_t cut = p.find_last_of(plat::kSep);
+    return cut == std::string::npos ? std::string() : p.substr(0, cut);
+}
+
+void force_delete(const std::string& p) { unlink(p.c_str()); }
+#endif
+
 using Bytes_t = std::vector<uint8_t>;
 bool read_bytes(const std::string& path, Bytes_t* out) { return winutil::read_file(path, out); }
+bool read_text(const std::string& path, std::string* out) { return winutil::read_file(path, out); }
 
 bool write_bytes_atomic(const std::string& path, const std::vector<uint8_t>& data) {
     std::error_code ec;
@@ -576,10 +677,10 @@ std::string manifest_text(const Scan& s, const std::vector<ManifestEntry>& entri
 /* Deletes the files `m` lists (those whose path is not in `keep`), counts them. */
 int delete_listed(const std::string& mod, const Manifest& m, const std::set<std::string>* keep) {
     int n = 0;
-    const std::wstring stop = W(mod);
+    const wpath_t stop = W(mod);
     for (const ManifestEntry& e : m.entries) {
         if (keep && keep->count(e.damaged_path)) continue;
-        const std::wstring w = W(file_in_mod(mod, e.damaged_path));
+        const wpath_t w = W(file_in_mod(mod, e.damaged_path));
         if (delete_file(w)) ++n;
         prune_up(parent_of(w), stop);
     }
@@ -593,7 +694,7 @@ bool read_manifest(const std::string& user_dir, uint64_t title_id, Manifest* out
         std::string txt;
         {   // size first: a huge file in the mod folder is never read
             RFile mf;
-            if (!mf.open(W(mod_dir_of(user_dir, title_id) + "\\" + kManifestName)) || mf.size > (16u << 20)) return false;
+            if (!mf.open(W(mod_dir_of(user_dir, title_id) + plat::kSep + kManifestName)) || mf.size > (16u << 20)) return false;
             txt.resize((size_t)mf.size);
             if (!txt.empty() && !mf.read_at(0, &txt[0], txt.size())) return false;
         }
@@ -758,8 +859,8 @@ int remove(const std::string& user_dir, uint64_t title_id) {
         if (!read_manifest(user_dir, title_id, &m)) return 0;
         const std::string mod = mod_dir_of(user_dir, title_id);
         const int n = delete_listed(mod, m, nullptr);
-        const std::wstring wmod = W(mod);
-        DeleteFileW(W(mod + "\\" + kManifestName).c_str());
+        const wpath_t wmod = W(mod);
+        force_delete(mod + plat::kSep + kManifestName);
         prune_up(wmod, parent_of(wmod));   // the mod folder goes only when empty
         return n;
     } catch (...) {
@@ -825,11 +926,11 @@ Applied apply(const std::string& nup_path, const Scan& sc, const std::string& us
         }
         if (!failed) {
             if (have_old) a.removed = delete_listed(mod, old, &keep);
-            if (!winutil::write_file_atomic(mod + "\\" + kManifestName, manifest_text(sc, want))) { a.error = "cannot write the manifest"; failed = true; }
+            if (!winutil::write_file_atomic(plat::join(mod, kManifestName), manifest_text(sc, want))) { a.error = "cannot write the manifest"; failed = true; }
         }
         if (failed) {
             for (const auto& b : backups) write_bytes_atomic(b.first, b.second);
-            for (const std::string& f : fresh) { const std::wstring w = W(f); delete_file(w); prune_up(parent_of(w), W(mod)); }
+            for (const std::string& f : fresh) { const wpath_t w = W(f); delete_file(w); prune_up(parent_of(w), W(mod)); }
             a.written = 0;
             a.kept = 0;
             a.removed = 0;
@@ -850,7 +951,7 @@ Applied apply(const std::string& nup_path, const Scan& sc, const std::string& us
 namespace {
 
 /* RetroHub-side "this copy needs no repair" record: <state_dir>\nup-repair-<TITLE ID>.txt, never in the emulator's folders. */
-std::string clean_path(const std::string& state_dir, uint64_t tid) { return join_user(state_dir) + "\\nup-repair-" + tid_hex(tid) + ".txt"; }
+std::string clean_path(const std::string& state_dir, uint64_t tid) { return join_user(state_dir) + plat::kSep + "nup-repair-" + tid_hex(tid) + ".txt"; }
 std::string identity_line(uint64_t size, uint64_t mtime, const std::string& toc) {
     return "nup " + std::to_string(size) + " " + std::to_string(mtime) + " " + toc + " rule " + std::to_string(kRuleVersion);
 }
@@ -864,7 +965,7 @@ bool clean_matches(const std::string& state_dir, uint64_t tid, const std::string
     if (!l.empty() && l.back() == '\r') l.pop_back();
     return l == identity;
 }
-void clean_remove(const std::string& state_dir, uint64_t tid) { DeleteFileW(W(clean_path(state_dir, tid)).c_str()); }
+void clean_remove(const std::string& state_dir, uint64_t tid) { force_delete(clean_path(state_dir, tid)); }
 
 }  // namespace
 

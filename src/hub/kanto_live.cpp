@@ -4,6 +4,12 @@
  * usage: kanto_live <package zip|folder> <scratch dir> <FireRed.gba|stub> <seconds> [relay.mjs] [desktop name]
  * "stub" instead of a FireRed: install only and use a 16 MiB zero ROM (mGBA + coop.lua start, but there is no game: for connect/saves tests).
  * Saves go through a scratch vault (<scratch>\vault) with kanto::stage_saves / flush_saves per role, like the hub does. The scratch dir must not be under %TEMP%. */
+#include "../common/plat/plat.h"
+#if !RH_WIN
+/* TODO(macOS lane 7): the Kanto Together launcher (kanto.h's Windows section: hidden desktop, mGBA, relay) is Windows-only for now. */
+#include <cstdio>
+int main() { std::printf("kanto_live: Windows-only (the Kanto Together launcher is not ported to macOS yet)\n"); return 0; }
+#else
 #include <winsock2.h>
 #include <windows.h>
 
@@ -135,3 +141,5 @@ int main(int argc, char** argv) {
     std::printf(rc == 0 ? "RESULT: both partners connected\n" : "RESULT: FAILED\n");
     return rc;
 }
+
+#endif   // RH_WIN

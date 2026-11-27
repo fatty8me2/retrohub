@@ -1,6 +1,7 @@
 #include "console_names.h"
 #include "winutil.h"
 #include "app.h"
+#include "plat/plat_proc.h"
 #include "real_boot.h"
 #include "pcsx2.h"
 
@@ -44,7 +45,7 @@ std::vector<std::string> search_dirs() {
     add(hub::data_dir() + "system");
     add(hub::exe_dir() + "system");
     hubemu::Install dol = hubemu::find(hubemu::Kind::Dolphin, "", "");
-    if (!dol.dir.empty()) add(dol.dir + "\\User\\GC");
+    if (!dol.dir.empty()) add(dol.dir + plat::kSep + "User" + plat::kSep + "GC");
     return d;
 }
 
@@ -83,7 +84,7 @@ std::string real_boot_retro_args(const hub::GameEntry& e, const RealBootPlan& p,
     }
     if (e.system == hub::System::PS2 || e.system == hub::System::GC) return "";
     if (!p.use) return "";
-    const std::string dir = hub::data_dir() + "system\\realboot_" + hub::system_short(e.system);
+    const std::string dir = hub::data_dir() + "system" + plat::kSep + "realboot_" + hub::system_short(e.system);
     std::error_code ec;
     fs::create_directories(P(dir), ec);
     for (auto& c : p.stage.copies) fs::copy_file(P(c.first), P(dir) / c.second, fs::copy_options::overwrite_existing, ec);
@@ -106,13 +107,13 @@ void real_boot_dolphin_apply(const std::string& install_dir, const RealBootPlan&
     ec.clear();
     if (read_all(dst.u8string()) != src_bytes) fs::copy_file(P(p.stage.copies[0].first), dst, fs::copy_options::overwrite_existing, ec);
     if (ec) return;
-    const std::string ini = install_dir + "\\User\\Config\\Dolphin.ini";
+    const std::string ini = install_dir + plat::kSep + "User" + plat::kSep + "Config" + plat::kSep + "Dolphin.ini";
     write_all(ini, hub::realboot::dolphin_skip_ipl(read_all(ini), false));
 }
 
 /* PCSX2: fast boot off for real startup, on otherwise (every launch). */
 void real_boot_pcsx2_apply(const std::string& install_dir, const RealBootPlan& p) {
-    const std::string ini = install_dir + "\\inis\\PCSX2.ini";
+    const std::string ini = install_dir + plat::kSep + "inis" + plat::kSep + "PCSX2.ini";
     write_all(ini, hub::realboot::pcsx2_fast_boot(read_all(ini), !p.use));
 }
 
@@ -156,6 +157,10 @@ void real_boot_settings_ui() {
     if (button("Open folder##bootsounds", ImVec2(0, 0))) {
         std::error_code ec;
         fs::create_directories(P(sound_dir()), ec);
+#if RH_WIN
         ShellExecuteW(nullptr, L"open", P(sound_dir()).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+        plat::proc::open_path(sound_dir());
+#endif
     }
 }

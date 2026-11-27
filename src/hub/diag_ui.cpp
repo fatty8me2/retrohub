@@ -5,16 +5,26 @@
 #include "hub_version.h"
 
 #include <ctime>
+#if RH_WIN
 #include <shlobj.h>
+#else
+#include "plat/plat_proc.h"
+#include "winutil.h"
+#endif
 
 namespace {
 
 std::string desktop_dir() {
+#if RH_MAC
+    const std::string home = winutil::getenv_utf8("HOME");
+    return home.empty() ? std::string() : home + "/Desktop";
+#else
     PWSTR w = nullptr;
     std::string out;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &w)) && w) out = U(w);
     if (w) CoTaskMemFree(w);
     return out;
+#endif
 }
 
 std::string build_and_save(std::string* where) {
@@ -36,8 +46,8 @@ std::string build_and_save(std::string* where) {
         hubemu::Install in = hubemu::find(k, k == hubemu::Kind::Cemu ? A.st.cemu_exe : "", "");
         emus += std::string(hubemu::name(k)) + ": " + (in.exe.empty() ? "not installed" : in.exe + "  (" + in.how + ")") + "\n";
     }
-    emus += "n64run.exe: " + std::string(file_exists(n64run_path()) ? "present" : "missing") + "\n";
-    emus += "retrorun.exe: " + std::string(file_exists(hub::exe_dir() + "retrorun.exe") ? "present" : "missing") + "\n";
+    emus += std::string("n64run") + plat::kExeSuffix + ": " + std::string(file_exists(n64run_path()) ? "present" : "missing") + "\n";
+    emus += std::string("retrorun") + plat::kExeSuffix + ": " + std::string(file_exists(hub::exe_dir() + "retrorun" + plat::kExeSuffix) ? "present" : "missing") + "\n";
     std::string settings = "games: " + std::to_string(A.lib.size()) + "\nrom folders: " + std::to_string(A.st.rom_folders.size()) +
                            "\nserver: " + server_url() + "\ncontroller family: " + pad_kind_label() + "\n";
     std::string dir = desktop_dir();
@@ -67,7 +77,11 @@ void diag_settings_ui() {
         g_ok = g_result.empty();
         if (g_ok) {
             g_result = "Saved " + file_name(where);
+#if RH_WIN
             if (!g_headless) ShellExecuteW(nullptr, L"open", L"explorer.exe", (L"/select,\"" + W(where) + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+#else
+            if (!g_headless) plat::proc::reveal_in_finder(where);   // Finder, with the zip selected
+#endif
         }
     }
     if (!g_result.empty()) {

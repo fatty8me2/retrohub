@@ -51,7 +51,7 @@ WiiuFacts wiiu_info_compute(const hub::GameEntry& e, const std::string& cemu_exe
     hub::FsProbe fp = hubemu::wiiu_probe();
     std::string user_data, mlc;
     if (!inst.exe.empty()) {
-        if (inst.managed) { user_data = inst.dir + "\\portable"; mlc = user_data + "\\mlc01"; }
+        if (inst.managed) { user_data = inst.dir + plat::kSep + "portable"; mlc = user_data + plat::kSep + "mlc01"; }
         else {
             const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str();
             hub::CemuDirs d = hub::cemu_dirs_for(inst.dir, ad ? ad : "", fp);
@@ -134,8 +134,8 @@ WiiuFacts wiiu_info_lines(const hub::GameEntry& e) {
 int pt_local_tz() {
     std::time_t t = std::time(nullptr);
     std::tm lt{}, gm{};
-    localtime_s(&lt, &t);
-    gmtime_s(&gm, &t);
+    plat::local_tm(t, &lt);
+    plat::utc_tm(t, &gm);
     int tz = (int)std::difftime(std::mktime(&lt), std::mktime(&gm));
     if (lt.tm_isdst > 0) tz += 3600;
     return tz;
@@ -397,7 +397,7 @@ void draw_notices(Ctx& c) {
         const std::string* why = s_keys_why.get(e.key + "|" + A.st.cemu_exe, 2.0, [&] {
             std::string ud;
             hubemu::Install ki = hubemu::find(hubemu::Kind::Cemu, A.st.cemu_exe, e.path);
-            if (!ki.exe.empty()) { const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str(); ud = ki.managed ? ki.dir + "\\portable" : hub::cemu_dirs_for(ki.dir, ad ? ad : "", hubemu::wiiu_probe()).user_data; }
+            if (!ki.exe.empty()) { const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str(); ud = ki.managed ? ki.dir + plat::kSep + "portable" : hub::cemu_dirs_for(ki.dir, ad ? ad : "", hubemu::wiiu_probe()).user_data; }
             return hub::wiiu_keys_message(hub::wiiu_keys_check(ud, ki.dir, hubemu::wiiu_probe()), "wud");
         });
         if (why) {   // (nothing until it is known)

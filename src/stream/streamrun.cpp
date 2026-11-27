@@ -1,4 +1,13 @@
 // streamrun: remote play host / guest (see docs/REMOTE_PLAY.md).
+#include "plat/plat.h"
+#if !RH_WIN
+/* TODO(macOS lane 8): ScreenCaptureKit (window capture) + VideoToolbox (H.264) + CoreAudio (process audio tap) behind media.h. */
+#include <cstdio>
+int main(int, char**) {
+    std::fprintf(stderr, "streamrun: streaming is not supported on macOS yet\n");
+    return 2;
+}
+#else
 #define SDL_MAIN_HANDLED
 #include <cstdarg>
 #include "media.h"
@@ -1024,3 +1033,4 @@ int main(int argc, char** argv)
     if (a.probe) return run_probe(a);
     return a.host ? run_host(a) : run_guest(a);
 }
+#endif  // RH_WIN

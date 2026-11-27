@@ -15,6 +15,16 @@
  *   HUB_USERFLOW=prompt     UF_CLAIM=<name>              (needs_new_name prompt appears by itself, then pick + claim)
  *   HUB_USERFLOW=cloudpush  (waits until the cloud engine has nothing queued; used after seeding the vault) */
 #include "app.h"
+#if !RH_WIN
+#include <unistd.h>
+#endif
+static unsigned long uf_pid() {
+#if RH_WIN
+    return (unsigned long)GetCurrentProcessId();
+#else
+    return (unsigned long)getpid();
+#endif
+}
 #include "cloud_internal.h"
 
 #include <fstream>
@@ -42,7 +52,7 @@ struct Flow {
     double wait_until = 0;
 } F;
 
-double now_s() { return (double)GetTickCount64() / 1000.0; }
+double now_s() { return (double)plat::tick_ms() / 1000.0; }
 
 void log(const std::string& line) {
     if (F.log_path.empty()) return;
@@ -249,7 +259,7 @@ void build() {
         const std::string n = env("UF_NAME") ? env("UF_NAME") : "";
         const double ms = env("UF_SLEEP_MS") ? std::atof(env("UF_SLEEP_MS")) : 4800;
         F.steps.push_back(s_probe(n, env("UF_EXPECT_NOW") ? env("UF_EXPECT_NOW") : "Taken", "held"));
-        F.steps.push_back(s_probe("x_reset_" + std::to_string(GetCurrentProcessId() % 1000), ""));
+        F.steps.push_back(s_probe("x_reset_" + std::to_string((unsigned long)uf_pid() % 1000), ""));
         F.steps.push_back(s_wait(ms / 1000.0));
         F.steps.push_back(s_probe(n, "Available", "released"));
     } else if (flow == "prompt") {

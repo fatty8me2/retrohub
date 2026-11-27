@@ -1,6 +1,7 @@
 #include "state_slots.h"
 
 #include "json.h"
+#include "plat/plat.h"
 #include "state_tombstones.h"
 
 #include <chrono>
@@ -15,11 +16,7 @@ namespace hubui {
 
 namespace {
 std::string base_name(int slot) { return slot < 0 ? std::string("auto") : "slot" + std::to_string(slot); }
-std::string join(const std::string& dir, const std::string& name) {
-    if (dir.empty()) return name;
-    char c = dir.back();
-    return (c == '\\' || c == '/') ? dir + name : dir + "\\" + name;
-}
+std::string join(const std::string& dir, const std::string& name) { return plat::join(dir, name); }
 bool read_all(const std::string& p, std::string* out) {
     std::ifstream f(fs::u8path(p), std::ios::binary);
     if (!f) return false;

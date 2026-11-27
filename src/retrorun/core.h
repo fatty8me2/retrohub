@@ -1,8 +1,8 @@
 #pragma once
-/* libretro core host: loads a *_libretro.dll, implements the environment/video/audio/input
+/* libretro core host: loads a *_libretro.dll (.dylib on macOS: plat::kLibSuffix), implements the environment/video/audio/input
  * callbacks (software rendering only) and exposes a small C++ API to the frontend. */
 
-#include <windows.h>
+#include "plat/plat.h"
 
 #include <cstdint>
 #include <functional>
@@ -109,7 +109,7 @@ class Core {
     void parse_v1_defs(const retro_core_option_definition* d);
     void parse_v2_defs(const retro_core_option_v2_definition* d);
 
-    HMODULE dll_ = nullptr;
+    plat::LibHandle dll_ = nullptr;
     bool loaded_ = false, inited_ = false, ff_ = false;
     std::string core_path_;
     std::string game_path_;

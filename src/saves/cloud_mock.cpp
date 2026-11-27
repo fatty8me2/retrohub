@@ -5,11 +5,12 @@
 #include "cloud_internal.h"
 #include "json.h"
 
-#ifndef NOMINMAX
-#define NOMINMAX
+#include "plat/plat_sock.h"
+
+#if !RH_WIN
+using SOCKET = plat::socket_t;
+#define INVALID_SOCKET plat::kBadSocket
 #endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
 
 #include <algorithm>
 #include <chrono>
@@ -18,6 +19,11 @@
 
 namespace hub::saves {
 
+#if RH_WIN
+#define RH_SHUT_WR SD_SEND
+#else
+#define RH_SHUT_WR SHUT_WR
+#endif
 using str = std::string;
 typedef json::Value JV;
 
@@ -483,16 +489,21 @@ struct MockServer::Impl {
     }
 
     void serve(SOCKET s) {
+#if RH_WIN
         DWORD to = 15000;
         setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&to, sizeof to);
+#else
+        timeval to = {15, 0};
+        plat::sock_setopt(s, SOL_SOCKET, SO_RCVTIMEO, to);
+#endif
         str buf;
         char tmp[8192];
         size_t hend = str::npos;
         while ((hend = buf.find("\r\n\r\n")) == str::npos) {
             int n = recv(s, tmp, sizeof tmp, 0);
-            if (n <= 0) { closesocket(s); return; }
+            if (n <= 0) { plat::sock_close(s); return; }
             buf.append(tmp, (size_t)n);
-            if (buf.size() > (1u << 20)) { closesocket(s); return; }
+            if (buf.size() > (1u << 20)) { plat::sock_close(s); return; }
         }
         Req rq;
         {
@@ -534,12 +545,12 @@ struct MockServer::Impl {
         rq.body = buf.substr(hend + 4);
         while (rq.body.size() < clen) {
             int n = recv(s, tmp, sizeof tmp, 0);
-            if (n <= 0) { closesocket(s); return; }
+            if (n <= 0) { plat::sock_close(s); return; }
             rq.body.append(tmp, (size_t)n);
         }
         Res rs;
         if (rq.path == "/saves/v2/plan") { auto hk = self->get_before_plan(); if (hk) hk(); }   // test hook: runs outside the server lock
-        if (rq.path != "/__ctl" && self->delay_ms > 0) Sleep((DWORD)self->delay_ms.load());
+        if (rq.path != "/__ctl" && self->delay_ms > 0) plat::sleep_ms((unsigned)self->delay_ms.load());
         {
             std::lock_guard<std::mutex> lk(mu);
             rs = handle(rq, s);
@@ -552,16 +563,16 @@ struct MockServer::Impl {
         if (rs.truncate > 0) {
             send_all(s, out.data(), out.size());
             send_all(s, rs.body.data(), (size_t)rs.truncate);
-            shutdown(s, SD_SEND);      // clean close before Content-Length bytes arrived: the client sees a broken transfer
-            Sleep(100);
-            closesocket(s);
+            shutdown(s, RH_SHUT_WR);      // clean close before Content-Length bytes arrived: the client sees a broken transfer
+            plat::sleep_ms(100);
+            plat::sock_close(s);
             return;
         }
         send_all(s, out.data(), out.size());
         send_all(s, rs.body.data(), rs.body.size());
-        shutdown(s, SD_SEND);
-        Sleep(5);
-        closesocket(s);
+        shutdown(s, RH_SHUT_WR);
+        plat::sleep_ms(5);
+        plat::sock_close(s);
     }
 
     void accept_loop() {
@@ -570,7 +581,7 @@ struct MockServer::Impl {
             FD_ZERO(&fds);
             FD_SET(ls, &fds);
             timeval tv = {0, 100000};
-            if (select(0, &fds, nullptr, nullptr, &tv) <= 0) continue;
+            if (select((int)ls + 1, &fds, nullptr, nullptr, &tv) <= 0) continue;
             SOCKET c = accept(ls, nullptr, nullptr);
             if (c == INVALID_SOCKET) continue;
             std::lock_guard<std::mutex> lk(tmu);
@@ -583,16 +594,15 @@ MockServer::MockServer() : p_(new Impl) { p_->self = this; }
 MockServer::~MockServer() { stop(); }
 
 bool MockServer::start(int port) {
-    WSADATA wd;
-    WSAStartup(MAKEWORD(2, 2), &wd);
+    plat::sock_init();
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) return false;
     sockaddr_in a = {};
     a.sin_family = AF_INET;
-    a.sin_port = htons((u_short)port);
+    a.sin_port = htons((unsigned short)port);
     inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
-    if (bind(s, (sockaddr*)&a, sizeof a) != 0 || listen(s, 32) != 0) { closesocket(s); return false; }
-    int len = sizeof a;
+    if (bind(s, (sockaddr*)&a, sizeof a) != 0 || listen(s, 32) != 0) { plat::sock_close(s); return false; }
+    plat::socklen len = sizeof a;
     getsockname(s, (sockaddr*)&a, &len);
     port_ = ntohs(a.sin_port);
     p_->ls = s;
@@ -605,7 +615,7 @@ void MockServer::stop() {
     if (p_->ls == INVALID_SOCKET) return;
     p_->stop = true;
     if (p_->th.joinable()) p_->th.join();
-    closesocket(p_->ls);
+    plat::sock_close(p_->ls);
     p_->ls = INVALID_SOCKET;
     std::vector<std::thread> cs;
     { std::lock_guard<std::mutex> lk(p_->tmu); cs.swap(p_->conns); }

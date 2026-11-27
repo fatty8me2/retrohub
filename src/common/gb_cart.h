@@ -5,7 +5,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
+
+#include "plat/plat.h"
 
 namespace gbcart {
 
@@ -20,6 +23,30 @@ inline std::string online_gb_core(const std::string& setting, bool has_clock) {
 
 /* Reads the cartridge type from a plain .gb / .gbc / .sgb file. Returns false when the file is not one of those or has no readable header
  * (archives, missing file): callers then keep the setting. `path` is UTF-8. */
+#if !RH_WIN
+/* macOS: UTF-8 path. */
+inline bool read_cart_type(const std::string& path, uint8_t* out) {
+    auto ends = [&](const char* ext) {
+        const size_t n = std::strlen(ext);
+        if (path.size() < n) return false;
+        for (size_t i = 0; i < n; i++) {
+            char c = path[path.size() - n + i];
+            if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+            if (c != ext[i]) return false;
+        }
+        return true;
+    };
+    if (!ends(".gb") && !ends(".gbc") && !ends(".sgb")) return false;
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    unsigned char hdr[0x150];
+    size_t got = fread(hdr, 1, sizeof hdr, f);
+    fclose(f);
+    if (got < sizeof hdr) return false;
+    *out = hdr[0x147];
+    return true;
+}
+#else
 inline bool read_cart_type(const std::wstring& wpath, uint8_t* out) {
     auto ends = [&](const wchar_t* ext) {
         size_t n = 0; while (ext[n]) n++;
@@ -41,5 +68,6 @@ inline bool read_cart_type(const std::wstring& wpath, uint8_t* out) {
     *out = hdr[0x147];
     return true;
 }
+#endif
 
 }  // namespace gbcart

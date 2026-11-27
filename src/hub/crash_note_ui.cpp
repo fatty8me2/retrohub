@@ -1,4 +1,5 @@
 #include "app.h"
+#include "plat/plat_proc.h"
 #include "crash_note.h"
 #include "imgui_internal.h"
 
@@ -12,7 +13,11 @@ bool g_pending = false;
 
 void open_folder(const std::string& dir) {
     if (dir.empty() || g_headless) return;
+#if RH_WIN
     ShellExecuteW(nullptr, L"open", std::filesystem::u8path(dir).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);   // only from a button click
+#else
+    plat::proc::open_path(dir);   // only from a button click
+#endif
 }
 }
 
@@ -33,7 +38,7 @@ void crash_note_session_ended(int emu_kind, const std::string& exe_path, const s
     c.dump_path = hubcrash::find_dump(hubcrash::default_dumps_dir(), c.exe_name, pid, start_unix > 0 ? start_unix - 2 : 0);   // a dump older than this session is a recycled pid's
     if (hubemu::is_nx(k) && !emu_dir.empty()) {
         std::error_code ec;
-        const std::string lg = emu_dir + "\\user\\log";
+        const std::string lg = emu_dir + plat::kSep + "user" + plat::kSep + "log";
         if (std::filesystem::is_directory(std::filesystem::u8path(lg), ec)) c.log_dir = lg;
     }
     g_note = c;

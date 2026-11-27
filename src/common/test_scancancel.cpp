@@ -2,7 +2,16 @@
  *  1. A cancel raised mid-scan makes scan_library return promptly with nothing, leaves library_cache.json exactly as it was (or absent), leaves no
  *     ".part" files, and a following scan gives the full, correct result.
  *  2. A scan that unpacks zipped ROMs while rom_cache_clear / rom_cache_trim run on other threads never loses a game (clear waits for unpacks). */
+#include "plat/plat.h"
+#include "test_platform_paths.h"
+#if RH_WIN
 #include <windows.h>
+#else
+#include <errno.h>
+#include <signal.h>
+#include <spawn.h>
+extern char** environ;
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -73,7 +82,7 @@ static int count_part_files(const fs::path& d) {
 static double secs_since(std::chrono::steady_clock::time_point t) { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count(); }
 
 int main() {
-    fs::path root = fs::temp_directory_path() / (L"scancancel_test_" + std::to_wstring(GetCurrentProcessId()));
+    fs::path root = fs::temp_directory_path() / ("scancancel_test_" + std::to_string(plat::current_pid()));
     std::error_code ec;
     fs::remove_all(root, ec);
     library_set_data_dir((root / "data").u8string());
@@ -101,13 +110,19 @@ int main() {
         std::atomic<int> seen{0};
         std::vector<GameEntry> got;
         std::atomic<bool> finished{false};
+        std::atomic<bool> cancelled_in_cb{false};   // macOS: unpacking is too fast for the polling loop below to catch the scan mid-way, so the cancel comes from the progress callback itself
         std::thread th([&] {
-            got = scan_library({libs}, [&](int d, int) { seen = d; });
+            got = scan_library({libs}, [&](int d, int) {
+                seen = d;
+#if !RH_WIN
+                if (d >= 40 && !cancelled_in_cb.exchange(true)) scan_request_cancel();   // the first report: 40 cached, 60 still to unpack
+#endif
+            });
             finished = true;
         });
         auto t0 = std::chrono::steady_clock::now();
         while (seen.load() < 50 && !finished.load() && secs_since(t0) < 60) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        const bool was_running = !finished.load();
+        const bool was_running = !finished.load() || cancelled_in_cb.load();
         scan_request_cancel();
         auto t1 = std::chrono::steady_clock::now();
         while (!finished.load() && secs_since(t1) < 20) std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -184,6 +199,7 @@ int main() {
 
     std::printf("-- child waits, list_archive, 3DS unzip and the apply guard under a cancel\n");
     {
+#if RH_WIN
         auto spawn_ping = [](int count) -> HANDLE {   // a harmless long-running System32 command, started and ended by this test
             wchar_t sysdir[MAX_PATH];
             GetSystemDirectoryW(sysdir, MAX_PATH);
@@ -194,6 +210,22 @@ int main() {
             CloseHandle(pi.hThread);
             return pi.hProcess;
         };
+#else
+        using HANDLE = void*;   // the pid of a child, as child_wait_cancellable() takes it on macOS
+        auto spawn_ping = [](int count) -> HANDLE {   // a harmless long-running command, started and ended by this test
+            std::string n = std::to_string(count);
+            char* argv[] = {(char*)"sleep", (char*)n.c_str(), nullptr};
+            pid_t pid = 0;
+            return posix_spawn(&pid, "/bin/sleep", nullptr, nullptr, argv, environ) == 0 ? (HANDLE)(intptr_t)pid : nullptr;
+        };
+        auto CloseHandle = [](HANDLE) {};
+        auto ended = [](HANDLE h) { return kill((pid_t)(intptr_t)h, 0) != 0 && errno == ESRCH; };   // reaped by child_wait_cancellable
+#endif
+#if RH_WIN
+#define CHILD_ENDED(h) (WaitForSingleObject(h, 0) == WAIT_OBJECT_0)
+#else
+#define CHILD_ENDED(h) ended(h)
+#endif
         scan_cancel_reset_for_tests();
         CHECK(scan_result_applies());
         {   // exits by itself
@@ -206,7 +238,7 @@ int main() {
             auto t0 = std::chrono::steady_clock::now();
             CHECK(h && child_wait_cancellable(h, 300) == 1);
             CHECK(secs_since(t0) < 5.0);
-            if (h) { CHECK(WaitForSingleObject(h, 0) == WAIT_OBJECT_0); CloseHandle(h); }
+            if (h) { CHECK(CHILD_ENDED(h)); CloseHandle(h); }
         }
         {   // cancel raised while waiting: ended promptly, long before its 30 s
             HANDLE h = spawn_ping(30);
@@ -215,13 +247,14 @@ int main() {
             CHECK(h && child_wait_cancellable(h, 120000) == 2);
             t.join();
             CHECK(secs_since(t0) < 5.0);
-            if (h) { CHECK(WaitForSingleObject(h, 0) == WAIT_OBJECT_0); CloseHandle(h); }
+            if (h) { CHECK(CHILD_ENDED(h)); CloseHandle(h); }
             CHECK(!scan_result_applies());
         }
         /* list_archive through tar under a cancel: refused, and the failure is not remembered for later */
         const fs::path arc = root / "arc" / "probe.7z";
         fs::create_directories(arc.parent_path());
         write_file(root / "arc" / "stage" / "a.txt", Bytes(100, 'a'));
+#if RH_WIN
         {
             wchar_t sysdir[MAX_PATH];
             GetSystemDirectoryW(sysdir, MAX_PATH);
@@ -233,6 +266,9 @@ int main() {
                 CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
             }
         }
+#else
+        tar7z(arc, root / "arc" / "stage", {"a.txt"});
+#endif
         if (fs::exists(arc)) {
             scan_request_cancel();
             const std::string while_cancelled = archive_skip_reason(arc.u8string());   // the listing is refused: "could not be read"

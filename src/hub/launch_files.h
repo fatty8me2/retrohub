@@ -2,7 +2,9 @@
 /* Small file helpers for the online launch (probe, pid and status files under the data dir). Paths are UTF-8; every call goes
  * through a wide path, so an install or profile folder with non-ASCII characters works (narrow fopen/ifstream/remove would use the
  * ANSI code page and miss the file). */
-#include <windows.h>
+#ifdef _WIN32
+#include <windows.h>   // Windows includers rely on it
+#endif
 
 #include <cstdio>
 #include <filesystem>

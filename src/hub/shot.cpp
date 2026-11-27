@@ -247,7 +247,7 @@ ShotDriver SH;
 void ShotDriver::init(const char* shot_path) {
     path = shot_path;
     update = shot_path && std::getenv("HUB_SHOT_UPDATE");   // screenshot the update prompt
-    t0 = GetTickCount64();
+    t0 = plat::tick_ms();
     if (shot_path) {
         if (const char* ss = std::getenv("HUB_SHOT_SECS")) secs = std::atof(ss);
         if (const char* ks = std::getenv("HUB_SHOT_KEYS")) {
@@ -347,7 +347,7 @@ void ShotDriver::pad_trace(const std::string& tok) {
 
 /* Called every frame after the SDL/ImGui backends' NewFrame: sends the scripted keys / wheel. */
 void ShotDriver::pre_frame(ImGuiIO& io) {
-    el = (GetTickCount64() - t0) / 1000.0;
+    el = (plat::tick_ms() - t0) / 1000.0;
     if (path && !pad_seq.empty()) {
         io.BackendFlags |= ImGuiBackendFlags_HasGamepad;   // headless: no device, so the SDL backend would clear this every frame
         static ImGuiKey pad_key2 = ImGuiKey_None;   // the second key of a token like "up+b": both go down in the same frame

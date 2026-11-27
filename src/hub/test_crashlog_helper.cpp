@@ -4,17 +4,20 @@
 #include "crash_report.h"
 #include "hub_log.h"
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#endif
 
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <thread>
 
+#if defined(_WIN32)
 static std::string to_utf8(const wchar_t* w) {
     int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
     std::string s((size_t)(n > 1 ? n - 1 : 0), '\0');
@@ -74,3 +77,40 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
     return 3;
 }
+#else
+/* macOS: same modes through the POSIX signal handlers of crash_report.cpp. main() on the main thread (the alternate stack is armed there). */
+static const char* phase() { return "helper_phase"; }
+
+static int recurse(volatile int depth) {
+    volatile char pad[512];
+    pad[0] = (char)depth;
+    return recurse(depth + 1) + pad[0];
+}
+
+int main(int argc, char** argv) {
+    if (argc < 3) return 2;
+    const std::string dir = argv[1];
+    const std::string mode = argv[2];
+    hublog::Options o;
+    o.worker = false;   // exercise the crash-time flush
+    hublog::init(dir, "9.9.9", o);
+    crashrep::install(dir, "9.9.9", phase);
+    const char* home = std::getenv("HOME");
+    hublog::info("helper started, profile %s/Library peer 192.168.1.5", home ? home : "");
+    hublog::info("about to crash: %s", mode.c_str());
+    if (mode == "av") {
+        *(volatile int*)nullptr = 1;
+    } else if (mode == "terminate") {
+        throw std::runtime_error("boom");
+    } else if (mode == "terminate-call") {
+        std::terminate();
+    } else if (mode == "overflow") {
+        return recurse(0);
+    } else if (mode == "thread-throw") {
+        std::thread([] { throw std::runtime_error("worker boom"); }).join();
+    } else if (mode == "thread-abort") {
+        std::thread([] { std::abort(); }).join();
+    }
+    return 3;
+}
+#endif

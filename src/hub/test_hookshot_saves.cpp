@@ -5,7 +5,7 @@
 // Only temp dirs are written. The real save files are READ from the backup folder (argv[1]) and copied; that folder is
 // checked byte-for-byte before and after. hookshot::user_dir() is exe_dir\userdata\emulators\hookshot\user, so run this
 // from the QA build folder (never from a RetroHub install) and it writes nowhere else.
-#include <windows.h>
+#include "../common/plat/plat.h"
 #include "emulators.h"
 #include "games.h"
 #include "hookshot.h"
@@ -157,7 +157,11 @@ static void clear_readonly_tree(const fs::path& root) {
 int main(int argc, char** argv) {
     const fs::path real = argc > 1 ? fs::u8path(argv[1])
                                    : fs::u8path("C:\\Users\\fatty\\AppData\\Local\\RetroHub\\save-backups\\oot-switch2-before-hookshot-2026-11-07\\lichii-nand");
-    const fs::path root = fs::temp_directory_path() / ("hs_qa_saves_" + std::to_string(GetCurrentProcessId()));
+    {   // the 14 real save files are one PC's backup (a Windows folder on the dev PC, or a folder given as argv[1]); CI and other machines have none
+        std::error_code e0;
+        if (!fs::is_directory(real, e0)) { std::printf("SKIP hookshot saves QA: no backup folder of real saves on this machine (pass one as argv[1])\n"); return 0; }
+    }
+    const fs::path root = fs::temp_directory_path() / ("hs_qa_saves_" + std::to_string(plat::current_pid()));
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root);

@@ -1,6 +1,7 @@
 #include "crash_report.h"
 #include "hub_log.h"
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -9,6 +10,7 @@
 #endif
 #include <windows.h>
 #include <psapi.h>
+#endif
 
 #include <csignal>
 #include <cstdio>
@@ -22,7 +24,19 @@
 #include <algorithm>
 #include <set>
 #include <sstream>
+#if defined(_WIN32)
 #include <crtdbg.h>
+#else
+#include <cerrno>
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <ctime>
+#include <unistd.h>
+#include <sys/ucontext.h>
+#include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
+#endif
 
 namespace crashrep {
 
@@ -78,6 +92,15 @@ const char* exception_name(uint32_t c) {
         case 0xE0485001u: return "STD_TERMINATE";
         case 0xE0485002u: return "PURE_VIRTUAL_CALL";
         case 0xE0485003u: return "ABORT";
+#if !defined(_WIN32)
+        case 0x53000004u: return "SIGILL (illegal instruction)";
+        case 0x53000005u: return "SIGTRAP (breakpoint / trap)";
+        case 0x53000006u: return "SIGABRT (abort)";
+        case 0x53000008u: return "SIGFPE (arithmetic)";
+        case 0x5300000Au: return "SIGBUS (bus error)";
+        case 0x5300000Bu: return "SIGSEGV (access violation)";
+        case 0x53000100u: return "STD_TERMINATE";
+#endif
         default: return "unknown";
     }
 }
@@ -131,6 +154,7 @@ size_t format_report(const Input& in, char* out, size_t cap) {
     return o.n;
 }
 
+#if defined(_WIN32)
 /* ------------------------------------------------------------------ handler */
 namespace {
 
@@ -415,7 +439,217 @@ bool reassert() {
     return true;
 }
 
+#else
+/* macOS: signal handlers (SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGABRT) on an alternate stack write the same plain-text crash
+ * note as Windows (no minidump: macOS writes its own .ips report in ~/Library/Logs/DiagnosticReports, which still happens because the
+ * handler restores the default action and re-raises). Static buffers only; the report is formatted by the shared format_report(). */
+namespace {
+
+constexpr int kMaxMods = 256;
+constexpr int kMaxStack = 48;
+
+char g_dir[1024];
+char g_version[64];
+Module g_mods[kMaxMods];
+int g_n_mods = 0;
+uint64_t g_stack[kMaxStack];
+char g_logtail[12 * 1024];
+char g_out[96 * 1024];
+char g_time[40];
+char g_path[1100];
+const char* (*g_phase_fn)() = nullptr;
+volatile sig_atomic_t g_busy = 0;
+unsigned long long g_t0_ms = 0;
+char g_altstack[64 * 1024];
+
+#if defined(__aarch64__)
+const char* const kRegNames[] = {"x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17",
+                                 "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "fp", "lr", "sp", "pc"};
+uint64_t g_regs[33];
+constexpr int kNRegs = 33;
+#else
+const char* const kRegNames[] = {"pc"};
+uint64_t g_regs[1];
+constexpr int kNRegs = 0;
+#endif
+
+void load_modules() {   // called from install(): dyld calls are not signal safe
+    g_n_mods = 0;
+    uint32_t n = _dyld_image_count();
+    for (uint32_t i = 0; i < n && g_n_mods < kMaxMods; ++i) {
+        const mach_header* h = _dyld_get_image_header(i);
+        const char* nm = _dyld_get_image_name(i);
+        if (!h || !nm) continue;
+#if defined(__LP64__)
+        unsigned long sz = 0;
+        if (!getsegmentdata((const mach_header_64*)h, "__TEXT", &sz)) continue;
+        Module& m = g_mods[g_n_mods++];
+        m.base = (uint64_t)(uintptr_t)h;
+        m.size = (uint64_t)sz;
+        const char* base = std::strrchr(nm, '/');
+        std::snprintf(m.name, sizeof m.name, "%s", base ? base + 1 : nm);
+#endif
+    }
+}
+
+void put_dec2(char* p, unsigned v, int w) { for (int i = w - 1; i >= 0; --i) { p[i] = (char)('0' + v % 10); v /= 10; } }
+
+int scan_stack(uint64_t sp, uint64_t top, const Module* mods, int nm) {
+    int found = 0;
+    if (!sp || sp >= top) return 0;
+    uint64_t lim = sp + 4096 * 8;
+    if (top && lim > top) lim = top;
+    for (uint64_t p = sp & ~7ull; p + 8 <= lim && found < kMaxStack; p += 8) {
+        uint64_t v = *(volatile uint64_t*)p;
+        if (v && locate(mods, nm, v, nullptr, nullptr)) g_stack[found++] = v;
+    }
+    return found;
+}
+
+void do_report(const char* kind, uint32_t code, uint64_t addr, uint64_t fault_addr, ucontext_t* uc) {
+    hublog::flush_from_crash();
+    Input in;
+    in.kind = kind;
+    in.code = code;
+    in.version = g_version;
+    in.system = hublog::system_info();
+    in.thread_id = (uint32_t)(uintptr_t)pthread_mach_thread_np(pthread_self());
+    in.uptime_ms = hublog::since_start_ms();
+    in.phase = g_phase_fn ? g_phase_fn() : nullptr;
+    std::time_t now = std::time(nullptr);
+    std::tm t;
+    localtime_r(&now, &t);
+    put_dec2(g_time, (unsigned)(t.tm_year + 1900), 4); g_time[4] = '-'; put_dec2(g_time + 5, (unsigned)t.tm_mon + 1, 2); g_time[7] = '-'; put_dec2(g_time + 8, (unsigned)t.tm_mday, 2);
+    g_time[10] = ' '; put_dec2(g_time + 11, (unsigned)t.tm_hour, 2); g_time[13] = ':'; put_dec2(g_time + 14, (unsigned)t.tm_min, 2); g_time[16] = ':'; put_dec2(g_time + 17, (unsigned)t.tm_sec, 2); g_time[19] = 0;
+    in.time_text = g_time;
+    in.modules = g_mods; in.n_modules = g_n_mods;
+    in.address = addr;
+    uint64_t sp = 0;
+#if defined(__aarch64__)
+    if (uc && uc->uc_mcontext) {
+        const __darwin_arm_thread_state64* ss = &uc->uc_mcontext->__ss;
+        for (int i = 0; i < 29; ++i) g_regs[i] = ss->__x[i];
+        g_regs[29] = __darwin_arm_thread_state64_get_fp(*ss);
+        g_regs[30] = (uint64_t)(uintptr_t)__darwin_arm_thread_state64_get_lr_fptr(*ss);
+        g_regs[31] = __darwin_arm_thread_state64_get_sp(*ss);
+        g_regs[32] = __darwin_arm_thread_state64_get_pc(*ss);
+        sp = g_regs[31];
+        in.reg_names = kRegNames; in.reg_values = g_regs; in.n_regs = kNRegs;
+        if (in.address == 0) in.address = g_regs[32];
+    }
+#else
+    (void)uc;
+#endif
+    if (fault_addr) { in.n_params = 2; in.params[0] = 0; in.params[1] = fault_addr; }
+    uint64_t top = sp ? (uint64_t)(uintptr_t)pthread_get_stackaddr_np(pthread_self()) : 0;
+    if (top && sp < top - (uint64_t)pthread_get_stacksize_np(pthread_self()) + 65536) top = 0;   // stack overflow: sp sits in the guard page, do not read it
+    in.n_stack = scan_stack(sp, top, g_mods, g_n_mods);
+    in.stack = g_stack;
+    hublog::recent_lines(g_logtail, sizeof g_logtail, 50);
+    in.log_tail = g_logtail;
+    size_t len = format_report(in, g_out, sizeof g_out);
+
+    size_t dl = std::strlen(g_dir);
+    std::memcpy(g_path, g_dir, dl);
+    char* q = g_path + dl;
+    std::memcpy(q, "crash-", 6); q += 6;
+    put_dec2(q, (unsigned)(t.tm_year + 1900), 4); put_dec2(q + 4, (unsigned)t.tm_mon + 1, 2); put_dec2(q + 6, (unsigned)t.tm_mday, 2); q[8] = '-';
+    put_dec2(q + 9, (unsigned)t.tm_hour, 2); put_dec2(q + 11, (unsigned)t.tm_min, 2); put_dec2(q + 13, (unsigned)t.tm_sec, 2);
+    q += 15;
+    char* const stem_end = q;
+    int fd = -1;
+    for (int attempt = 1; attempt <= 9 && fd < 0; ++attempt) {   // two crashes in one second never overwrite each other
+        q = stem_end;
+        if (attempt > 1) { *q++ = '-'; *q++ = (char)('0' + attempt); }
+        std::memcpy(q, ".txt", 5);
+        fd = ::open(g_path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+        if (fd < 0 && errno != EEXIST) break;
+    }
+    if (fd >= 0) {
+        const char* p = g_out;
+        size_t n = len;
+        while (n > 0) { ssize_t w = ::write(fd, p, n); if (w <= 0) break; p += w; n -= (size_t)w; }
+        ::fsync(fd);
+        ::close(fd);
+    }
+}
+
+void fatal_handler(int sig, siginfo_t* info, void* ctx) {
+    if (!g_busy) {
+        g_busy = 1;
+        const char* kind = "Unhandled signal";
+        uint64_t fa = (sig == SIGSEGV || sig == SIGBUS) && info ? (uint64_t)(uintptr_t)info->si_addr : 0;
+        do_report(kind, 0x53000000u | (uint32_t)sig, info ? (uint64_t)(uintptr_t)info->si_addr : 0, fa, (ucontext_t*)ctx);
+    }
+    signal(sig, SIG_DFL);   // default action: macOS writes its own .ips report
+    raise(sig);
+}
+
+void terminate_handler() {
+    if (!g_busy) {
+        g_busy = 1;
+        do_report("std::terminate (uncaught C++ exception or abort)", 0x53000100u, 0, 0, nullptr);
+    }
+    signal(SIGABRT, SIG_DFL);
+    abort();
+}
+
+bool is_report_name(const std::string& n) {
+    /* crash-yyyymmdd-hhmmss.txt, or crash-yyyymmdd-hhmmss-N.txt when two reports share a second */
+    if (n.size() < 6 + 15 + 4 || n.size() > 6 + 15 + 2 + 4 || n.compare(0, 6, "crash-") != 0 || n.compare(n.size() - 4, 4, ".txt") != 0) return false;
+    for (size_t i = 6; i < n.size() - 4; ++i)
+        if (!((n[i] >= '0' && n[i] <= '9') || n[i] == '-')) return false;
+    return true;
+}
+
+}  // namespace
+
+void install(const std::string& logs_dir_utf8, const std::string& version, const char* (*phase_fn)()) {
+    try {
+        static bool done = false;
+        if (done) return;
+        done = true;
+        std::string d = logs_dir_utf8;
+        if (d.empty() || d.back() != '/') d += '/';
+        if (d.size() >= sizeof g_dir - 30) return;
+        std::memcpy(g_dir, d.c_str(), d.size() + 1);
+        std::error_code ec;
+        std::filesystem::create_directories(logs_dir_utf8, ec);
+        std::snprintf(g_version, sizeof g_version, "%s", version.c_str());
+        g_phase_fn = phase_fn;
+        load_modules();
+        {   // keep the newest 10 reports
+            std::vector<std::string> names = list_reports(logs_dir_utf8);
+            for (size_t i = 10; i < names.size(); ++i) {
+                std::error_code e2;
+                std::filesystem::remove(std::filesystem::path(logs_dir_utf8) / names[i], e2);
+            }
+        }
+        stack_t ss;
+        ss.ss_sp = g_altstack;
+        ss.ss_size = sizeof g_altstack;
+        ss.ss_flags = 0;
+        sigaltstack(&ss, nullptr);   // this thread only; other threads fall back to their own stack
+        struct sigaction sa;
+        std::memset(&sa, 0, sizeof sa);
+        sa.sa_sigaction = fatal_handler;
+        sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+        sigemptyset(&sa.sa_mask);
+        for (int sig : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGABRT}) sigaction(sig, &sa, nullptr);
+        std::set_terminate(terminate_handler);
+    } catch (...) {}
+}
+
+bool reassert() { return false; }   // no vendor DLLs replace signal handlers on macOS
+#endif  // _WIN32
+
 /* ------------------------------------------------------------------ next start */
+#if defined(_WIN32)
+#define CRASH_SEEN_NAME L"crash-seen.txt"
+#else
+#define CRASH_SEEN_NAME "crash-seen.txt"
+#endif
+#if defined(_WIN32)
 std::vector<std::string> list_reports(const std::string& logs_dir_utf8) {
     std::vector<std::string> out;
     try {
@@ -428,11 +662,25 @@ std::vector<std::string> list_reports(const std::string& logs_dir_utf8) {
     std::sort(out.begin(), out.end(), std::greater<std::string>());
     return out;
 }
+#else
+std::vector<std::string> list_reports(const std::string& logs_dir_utf8) {
+    std::vector<std::string> out;
+    try {
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(std::filesystem::path(logs_dir_utf8), ec), end; !ec && it != end; it.increment(ec)) {
+            std::string n = it->path().filename().string();
+            if (is_report_name(n)) out.push_back(n);
+        }
+    } catch (...) {}
+    std::sort(out.begin(), out.end(), std::greater<std::string>());
+    return out;
+}
+#endif
 
 static std::set<std::string> read_seen(const std::string& logs_dir) {
     std::set<std::string> s;
     try {
-        std::ifstream in(std::filesystem::u8path(logs_dir) / L"crash-seen.txt");
+        std::ifstream in(std::filesystem::u8path(logs_dir) / CRASH_SEEN_NAME);
         std::string line;
         while (std::getline(in, line)) { while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back(); if (!line.empty()) s.insert(line); }
     } catch (...) {}
@@ -458,7 +706,7 @@ bool find_unseen(const std::string& logs_dir_utf8, Found* out) {
 void mark_all_seen(const std::string& logs_dir_utf8) {
     try {
         std::vector<std::string> existing = list_reports(logs_dir_utf8);
-        std::ofstream o(std::filesystem::u8path(logs_dir_utf8) / L"crash-seen.txt", std::ios::trunc);
+        std::ofstream o(std::filesystem::u8path(logs_dir_utf8) / CRASH_SEEN_NAME, std::ios::trunc);
         for (const std::string& n : existing) o << n << "\n";   // only names that still exist: the file never grows
     } catch (...) {}
 }

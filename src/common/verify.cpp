@@ -10,6 +10,7 @@
 
 #include "games.h"
 #include "miniz.h"
+#include "plat/plat.h"
 #include "winutil.h"
 
 namespace fs = std::filesystem;
@@ -204,11 +205,11 @@ bool hash_stream(System s, uint64_t total, const ReadFn& read, FileHash* out, co
 }
 
 bool hash_file(System s, const std::string& path, FileHash* out, const std::atomic<bool>* stop) {
-    FILE* f = _wfopen(winutil::to_wide(path).c_str(), L"rbN");
+    FILE* f = plat::fopen_path(fs::u8path(path), "rbN");
     if (!f) return false;
-    _fseeki64(f, 0, SEEK_END);
-    uint64_t total = (uint64_t)_ftelli64(f);
-    _fseeki64(f, 0, SEEK_SET);
+    plat::fseek64(f, 0, SEEK_END);
+    uint64_t total = (uint64_t)plat::ftell64(f);
+    plat::fseek64(f, 0, SEEK_SET);
     bool ok = hash_stream(s, total, [&](uint8_t* b, size_t n) { return std::fread(b, 1, n, f); }, out, stop);
     std::fclose(f);
     return ok;

@@ -1,4 +1,8 @@
 ﻿#include "app.h"
+#if !RH_WIN
+#include <strings.h>
+#define _stricmp strcasecmp   // macOS: POSIX name for the case-insensitive compare
+#endif
 
 #include "customize_logic.h"
 #include "hidden_ui.h"
@@ -146,7 +150,7 @@ bool decode_rgba(const std::string& path, std::vector<unsigned char>* px, int* w
 std::string vault_cover_path(const hub::GameEntry& e) {
     std::string d = hub::saves::game_dir_path(sys_short(e), e.key);
     while (!d.empty() && (d.back() == '\\' || d.back() == '/')) d.pop_back();
-    return d + "\\cover.png";
+    return d + plat::kSep + "cover.png";
 }
 
 /* Decode `src` (PNG or BMP), shrink it to at most 800 px on the long side (a cover is a small picture: keeps the synced file tiny),
@@ -553,7 +557,7 @@ void draw_manager() {
 void refresh_shots(const hub::GameEntry& e) {
     CU.shot_dir = hub::saves::game_dir_path(sys_short(e), e.key);
     while (!CU.shot_dir.empty() && (CU.shot_dir.back() == '\\' || CU.shot_dir.back() == '/')) CU.shot_dir.pop_back();
-    CU.shot_dir += "\\shots";
+    CU.shot_dir += plat::kSep; CU.shot_dir += "shots";
     CU.shot_files.clear();
     std::error_code ec;
     for (auto& it : std::filesystem::directory_iterator(std::filesystem::u8path(CU.shot_dir), ec)) {

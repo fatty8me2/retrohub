@@ -41,12 +41,23 @@ void set_text(const std::string& t) {
 }
 
 /* getenv() returns the ANSI code page; names with accents need the UTF-8 form. */
+#if RH_WIN
+#define UN_ENV(s) L##s
 bool env_utf8(const wchar_t* name, std::string* out) {
     const wchar_t* w = _wgetenv(name);
     if (!w) return false;
     *out = winutil::to_utf8(w);
     return true;
 }
+#else
+#define UN_ENV(s) s
+bool env_utf8(const char* name, std::string* out) {   // macOS: the environment is UTF-8 already
+    const char* v = std::getenv(name);
+    if (!v) return false;
+    *out = v;
+    return true;
+}
+#endif
 
 void seed_shot() {
     if (UN.seeded) return;
@@ -54,7 +65,7 @@ void seed_shot() {
     UN.t_start = ImGui::GetTime();
     if (!g_headless) return;
     std::string claimed;
-    if (env_utf8(L"HUB_SHOT_USERNAME_CLAIMED", &claimed)) { A.st.name = claimed; A.st.username_claimed = true; UN.chk.mine_key = hubnet::username_fold_key(claimed); }
+    if (env_utf8(UN_ENV("HUB_SHOT_USERNAME_CLAIMED"), &claimed)) { A.st.name = claimed; A.st.username_claimed = true; UN.chk.mine_key = hubnet::username_fold_key(claimed); }
     const char* s = std::getenv("HUB_SHOT_USERNAME");
     const char* pr = std::getenv("HUB_SHOT_USERNAME_PROMPT");   // "late": opens after start-up, like a real prompt (gets its first focus)
     UN.prompt_open = pr != nullptr && std::string(pr) != "late";
@@ -63,7 +74,7 @@ void seed_shot() {
     UN.shot = true;
     std::string m = s;
     std::string tx;
-    const bool have_tx = env_utf8(L"HUB_SHOT_USERNAME_TEXT", &tx);
+    const bool have_tx = env_utf8(UN_ENV("HUB_SHOT_USERNAME_TEXT"), &tx);
     std::string text = have_tx ? tx : (m == "taken" ? "kai" : m == "notallowed" ? "admin" : m == "invalid" ? "k a!" : m == "empty" ? "" : "kai_64");
     set_text(text);
     Checker& c = UN.chk;

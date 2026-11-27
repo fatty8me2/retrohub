@@ -1,6 +1,10 @@
 #include "app.h"
 #include "kanto_pad.h"
+#if RH_WIN
 #include <shlobj.h>
+#else
+#include "plat/plat_proc.h"
+#endif
 #include "winutil.h"
 #include "ui_sheet.h"
 #include "dialogs2b_logic.h"
@@ -8,6 +12,54 @@
 /* Kanto Together inside RetroHub (see src/common/kanto.h and docs/KANTO_TOGETHER.md).
  * Library card -> first Play installs + builds the game -> rooms: the host's Launch starts the package's launcher HIDDEN (kanto::Session),
  * its ROOM CODE goes to the guest in an `np_kt` lobby message and the guest's RetroHub runs `join` by itself. */
+
+#if !RH_WIN
+/* TODO(macOS lane 7c): Kanto Together's launcher (kanto.h Session / Prep: node.exe + mGBA, Win32 job objects) is Windows-only for now.
+ * These stand-ins keep the UI compiling: nothing installs or starts, Prep reports a plain failure and Session refuses to start. */
+namespace kanto {
+class Session {
+  public:
+    bool start(const LaunchOpts&, std::string* err) { if (err) *err = "Kanto Together is not supported on macOS yet."; return false; }
+    void update() {}
+    bool running() const { return false; }
+    void send(const std::string&) {}
+    void trade(int) {}
+    void confirm() {}
+    void cancel() {}
+    void go() {}
+    void rejoin(const std::string&) {}
+    void stop(bool = false) {}
+    static int stopping() { return 0; }
+    void set_line_sink(std::function<void(const std::string&)>) {}
+    const State& state() const { return st_; }
+    State& mutable_state() { return st_; }
+    ProcHandle dup_handle() const { return ProcHandle(); }
+    bool active() const { return false; }
+  private:
+    State st_;
+};
+class Prep {
+  public:
+    enum class Stage { Idle, Installing, FindingRom, Patching, Done, Failed };
+    void start(const Package&, const std::string&, const std::vector<RomCandidate>&, const std::string& = "") { stage_ = Stage::Failed; }
+    Stage stage() const { return stage_; }
+    bool busy() const { return false; }
+    bool ok() const { return false; }
+    bool failed() const { return stage_ == Stage::Failed; }
+    float progress() const { return 0.f; }
+    std::string message() const { return "Kanto Together is not supported on macOS yet."; }
+    std::string reason() const { return "install"; }
+    RomState rom_state() const { return RomState::Ok; }
+    std::string dir() const { return std::string(); }
+    void join() {}
+    void cancel() {}
+    void reset() { stage_ = Stage::Idle; }
+  private:
+    Stage stage_ = Stage::Idle;
+};
+inline std::string running_instance_block() { return std::string(); }
+}  // namespace kanto
+#endif
 
 namespace {
 
@@ -72,7 +124,7 @@ std::vector<kanto::RomCandidate> rom_candidates() {
 }
 
 /* one staged folder per role: a host session and a guest session on the same PC never share a .sav or a trade journal */
-std::string scratch_saves(bool host) { return no_slash(hub::data_dir()) + "\\netplay\\kanto\\saves_" + kanto::role_name(host); }
+std::string scratch_saves(bool host) { return no_slash(hub::data_dir()) + plat::kSep + "netplay" + plat::kSep + "kanto" + plat::kSep + "saves_" + kanto::role_name(host); }
 
 bool prep_ready() { return KT.prep.ok(); }
 
@@ -158,7 +210,7 @@ bool start_session(const hub::GameEntry& e, bool host, const std::string& code) 
     A.proc_title = e.title;
     A.run = run_info_for(e, false);   // a real save: play time + vault like an offline session
     A.run.start_unix = unix_now();
-    A.run.start_tick = GetTickCount64();
+    A.run.start_tick = plat::tick_ms();
     A.run.pad_exit = true;
     A.run.room = host ? false : true;   // a guest follows the host: the session is gone when the room host leaves
     A.run.pad_exit_fn = []() { KT.sess.stop(); };
@@ -190,6 +242,7 @@ void kt_scan_append(std::vector<hub::GameEntry>* out, const std::vector<std::str
     std::vector<kanto::Package> pk = kanto::find_packages(folders);
     /* a package the user just downloaded and has not moved yet: Downloads, top level only, kanto-named zips/folders only */
     {
+#if RH_WIN
         PWSTR dl = nullptr;
         if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Downloads, 0, nullptr, &dl)) && dl) {
             for (auto& p : kanto::find_packages({winutil::to_utf8(dl)}, 1)) {
@@ -199,6 +252,15 @@ void kt_scan_append(std::vector<hub::GameEntry>* out, const std::vector<std::str
             }
         }
         if (dl) CoTaskMemFree(dl);
+#else
+        if (const char* home = std::getenv("HOME")) {
+            for (auto& p : kanto::find_packages({std::string(home) + "/Downloads"}, 1)) {
+                bool dup = false;
+                for (auto& q : pk) if (q.path == p.path) dup = true;
+                if (!dup) pk.push_back(p);
+            }
+        }
+#endif
     }
     std::string path;
     uint64_t size = 0;
@@ -622,7 +684,13 @@ void kt_draw_modals() {
         std::string lic = KT.prep.dir() + "LICENSES.txt";
         if (!KT.fake && file_exists(lic)) {
             ui::dialog_same_line(sp(16.f));
-            if (button("Open licences", ImVec2(sp(16.f), sp(5.f)))) ShellExecuteW(nullptr, L"open", W(lic).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            if (button("Open licences", ImVec2(sp(16.f), sp(5.f)))) {
+#if RH_WIN
+                ShellExecuteW(nullptr, L"open", W(lic).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+                plat::proc::open_path(lic);
+#endif
+            }
         }
         ui::dialog_end();
     }

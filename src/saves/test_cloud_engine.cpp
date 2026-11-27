@@ -12,10 +12,7 @@
 #include "cheat_store.h"
 #include "state_tombstones.h"
 
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
+#include "test_util.h"
 
 #include <chrono>
 #include <exception>
@@ -224,7 +221,7 @@ static void test_wire() {
 
 /* Per-process scratch root: parallel ctest runs (and stale dirs from crashed runs) must never share paths. */
 static fs::path scratch_root() {
-    static const fs::path r = fs::temp_directory_path() / ("rhq_cloudc_" + std::to_string((unsigned long)GetCurrentProcessId()));
+    static const fs::path r = fs::temp_directory_path() / ("rhq_cloudc_" + std::to_string(tu::pid()));
     return r;
 }
 
@@ -232,7 +229,7 @@ static void test_queue_and_base() {
     CHECK(backoff_secs(1) == 30 && backoff_secs(2) == 120 && backoff_secs(3) == 600 && backoff_secs(4) == 3600 && backoff_secs(5) == -1);
     str dir = (scratch_root() / "queue").u8string();
     fs::remove_all(dir); fs::create_directories(dir);
-    str qp = dir + "\\cloud-queue.json";
+    str qp = dir + plat::kSep + "cloud-queue.json";
     CloudQueue q;
     q.set_path(qp);
     q.put("n64/a", "push", 100);
@@ -269,9 +266,9 @@ static void test_queue_and_base() {
     b.games["n64/a"].files["states/s.state"] = BFile{1, 9, 66, "sha2", "cap"};
     b.games["n64/a"].files["states/s.state"].lsha = "refused-sha";
     b.games["n64/a"].lo_user = true; b.games["n64/a"].played = 123;
-    CHECK(b.save(dir + "\\base.json"));
+    CHECK(b.save(dir + plat::kSep + "base.json"));
     BaseStore c;
-    CHECK(c.load(dir + "\\base.json") && c.rev == 77 && c.restore && c.games["n64/a"].files["battery/x.sra"].ver == 3 &&
+    CHECK(c.load(dir + plat::kSep + "base.json") && c.rev == 77 && c.restore && c.games["n64/a"].files["battery/x.sra"].ver == 3 &&
           c.games["n64/a"].files["states/s.state"].lo == "cap" && c.games["n64/a"].lo_user && c.games["n64/a"].played == 123);
     CHECK(c.games["n64/a"].files["states/s.state"].lsha == "refused-sha" && c.games["n64/a"].files["battery/x.sra"].lsha.empty());   // the refused content survives a restart
     fs::remove_all(dir);
@@ -287,7 +284,11 @@ static void test_failure_text() {
     CHECK(sync_failure_text(400, "bad-plan").find("could not take") != str::npos);
     CHECK(sync_failure_text(0, "backup-failed").find("safety copy") != str::npos);
     CHECK(sync_failure_text(0, "file-locked").find("Another program") != str::npos);
+#if RH_WIN
     CHECK(sync_failure_text(0, "access-denied") == "Windows would not allow writing the file.");
+#else
+    CHECK(sync_failure_text(0, "access-denied") == "macOS would not allow writing the file.");
+#endif
     CHECK(sync_failure_text(0, "disk-full").find("disk space") != str::npos);
     CHECK(sync_failure_text(0, "write-failed") == "Could not write the save on this PC.");   // a LOCAL failure is never called "Offline"
     const char* locals[] = {"backup-failed", "merge-failed", "file-locked", "access-denied", "disk-full", "write-failed"};
@@ -307,12 +308,14 @@ static void test_write_atomic_safe() {
     CHECK(cloud_write_atomic(f, "old contents") && get(fs::u8path(f)) == "old contents");
     CHECK(cloud_write_atomic(f, "new contents") && get(fs::u8path(f)) == "new contents");
     CHECK(!fs::exists(d / "state.json.hubtmp"));
+#if RH_WIN   // Windows only: an open handle without FILE_SHARE_DELETE blocks the swap (POSIX renames over an open file by design)
     HANDLE h = CreateFileW(fs::u8path(f).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);   // another program holds it: it cannot be swapped
     CHECK(h != INVALID_HANDLE_VALUE);
     CHECK(!cloud_write_atomic(f, "third"));
     CHECK(get(fs::u8path(f)) == "new contents");
     CHECK(!fs::exists(d / "state.json.hubtmp"));
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+#endif
     CHECK(cloud_write_atomic(f, "third") && get(fs::u8path(f)) == "third");
     fs::remove_all(d, ec);
 }
@@ -418,7 +421,7 @@ static void pump() {
             if (at > 0 && delta >= 0 && delta <= 2) soon = true;
         }
         if (!soon) break;
-        Sleep(100);
+        plat::sleep_ms(100);
         cloud_engine_pump(200);
     }
 }
@@ -822,13 +825,13 @@ static void test_unreadable_local_is_not_pulled_over() {
     use(pc2);
     const fs::path f = pc2.game() / "battery" / "s.sra";
     put(f, rnd(3000, 63), now_unix() - 2000);                         // pc2 saved too since the last sync
-    HANDLE h = CreateFileW(f.c_str(), GENERIC_READ, FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);   // no read sharing
-    CHECK(h != INVALID_HANDLE_VALUE);
+    tu::Unreadable lock(f);   // no read sharing (Windows) / no read permission (macOS)
+    CHECK(lock.ok());
     const int gets = g_srv->n_get;
     PrelaunchResult r = cloud_prelaunch(G, SyncMode::ReadWrite);
     CHECK(g_srv->n_get == gets);                                      // nothing downloaded to put over it
     CHECK(r.action == PrelaunchResult::Proceed && r.files_pulled == 0);
-    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    lock.release();
     CHECK(get(f) == rnd(3000, 63));
     r = cloud_prelaunch(G, SyncMode::ReadWrite);                       // readable again: both sides changed, the player decides
     CHECK(r.action == PrelaunchResult::NeedConflictDecision && r.conflicts.size() == 1);
@@ -1720,7 +1723,11 @@ int main(int argc, char** argv) {
         printf("terminate called (last data dir %s)\n", g_last_data.c_str());
         abort();
     });
+#if RH_WIN
     _putenv_s("RETROHUB_QA", "1");
+#else
+    setenv("RETROHUB_QA", "1", 1);
+#endif
     const char* only = argc > 1 ? argv[1] : nullptr;   // dev aid: `hubsaves_engine_test refused` runs only the engine scenarios whose function name contains that text
     printf("pure rules\n");
     test_classify();

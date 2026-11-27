@@ -1,4 +1,5 @@
 #include "image.h"
+#include "plat/plat.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -22,7 +23,7 @@ bool write_frame_image(const std::string& path, const FrameBuf& f) {
     }
     std::filesystem::path fp = std::filesystem::u8path(path);
     if (fp.has_parent_path()) { std::error_code ec; std::filesystem::create_directories(fp.parent_path(), ec); }
-    FILE* fh = _wfopen(fp.c_str(), L"wb");
+    FILE* fh = plat::fopen_path(fp, "wb");
     if (!fh) return false;
     bool bmp = fp.extension() == ".bmp" || fp.extension() == ".BMP";
     int ok = bmp ? stbi_write_bmp_to_func(to_file, fh, f.w, f.h, 3, rgb.data())

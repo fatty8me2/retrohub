@@ -6,7 +6,12 @@
  *        MANUAL smoke test: runs kit_prepare() for real (downloads ~290 MB, verifies, unpacks) into the given folder. <data> = the
  *        folder with hookshot-src-8ef8461.zip, longshot-src-5c1f00d.zip, unpack_tar.py and requirements.txt (set HOOKSHOT_SMOKE_FLAVOR=longshot for Longshot).
  *        Never run by ctest. */
+#include "../common/plat/plat.h"
+#if RH_WIN
 #include <windows.h>
+#else
+#include "../common/plat/plat_proc.h"
+#endif
 
 #include <cstdio>
 #include <cstdlib>
@@ -118,7 +123,7 @@ static void test_hashes() {
     CHECK(hash_data(HashAlg::Sha512, "abc", 3, &d));
     CHECK_EQ(to_base64(d), std::string("3a81oZNherrMQXNJriBBMRLm+k6JqX6iCp7u5ktV05ohkpkqJ0/BqDa6PCOj/uu9RU1EI2Q86A4qmslPpUyknw=="));
     // a file, bigger than one read buffer
-    const fs::path tmp = fs::temp_directory_path() / ("hs_hash_test_" + std::to_string(GetCurrentProcessId()));
+    const fs::path tmp = fs::temp_directory_path() / ("hs_hash_test_" + std::to_string(plat::current_pid()));
     std::error_code ec;
     fs::create_directories(tmp, ec);
     std::string big(3 * 1024 * 1024 + 17, 'x');
@@ -186,7 +191,7 @@ static void test_languages() {
 
 /* ---- game source ---- */
 static void test_game_source() {
-    const fs::path tmp = fs::temp_directory_path() / ("hs_src_test_" + std::to_string(GetCurrentProcessId()));
+    const fs::path tmp = fs::temp_directory_path() / ("hs_src_test_" + std::to_string(plat::current_pid()));
     std::error_code ec;
     fs::remove_all(tmp, ec);
     write(tmp / "zelda.nup", "NUP");
@@ -298,7 +303,7 @@ static void test_overall() {
 struct Dirs {
     fs::path root, staging, game, old;
     Dirs() {
-        root = fs::temp_directory_path() / ("hs_swap_test_" + std::to_string(GetCurrentProcessId()) + "_" + std::to_string(GetTickCount()));
+        root = fs::temp_directory_path() / ("hs_swap_test_" + std::to_string(plat::current_pid()) + "_" + std::to_string((unsigned long long)plat::tick_ms()));
         std::error_code ec;
         fs::remove_all(root, ec);
         fs::create_directories(root, ec);
@@ -413,11 +418,17 @@ static void test_swap() {
         d.make_old_game();
         d.make_staging();
         const fs::path held = d.game / "user" / "save" / "5a3c9e1f0b7d24680000000000000001" / "account.sav";
+#if RH_WIN
         HANDLE h = CreateFileW(held.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
         CHECK(h != INVALID_HANDLE_VALUE);
+#else
+        (void)held;   // macOS has no mandatory share modes: an open file never blocks a folder move (the "if (ok)" branch below)
+#endif
         std::string err;
         const bool ok = swap_in(d.staging.u8string(), d.game.u8string(), d.old.u8string(), &err);
+#if RH_WIN
         CloseHandle(h);
+#endif
         if (ok) {   // (a file system that lets a folder move under an open file: the saves must still have come along)
             CHECK(slurp(d.game / "user" / "save" / "5a3c9e1f0b7d24680000000000000001" / "account.sav") == "ACCOUNT");
         } else {
@@ -532,14 +543,21 @@ static void test_staging_saves() {
 }
 
 static void test_exe_running() {
+#if RH_WIN
     wchar_t me[MAX_PATH];
     GetModuleFileNameW(nullptr, me, MAX_PATH);
+#else
+    const std::string me = plat::proc::pid_exe_path((int)plat::current_pid());
+#endif
     CHECK(exe_running_from(fs::path(me).u8string()));                                  // this very test is running from here
     Dirs d;
     CHECK(!exe_running_from((d.root / fs::path(me).filename()).u8string()));         // same file name, other folder
     CHECK(!swap_in_progress());
 }
 
+#if !RH_WIN
+static void test_runner() { std::printf("SKIP runner tests (the Hookshot build runner is Windows-only: macOS returns \"not supported\")\n"); }
+#else
 static void test_runner() {
     const std::string ps = R"(C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe)";
     if (!has(ps)) { std::printf("SKIP runner tests (no powershell.exe)\n"); return; }
@@ -583,9 +601,10 @@ static void test_runner() {
     }
 }
 
+#endif   // RH_WIN
 /* The tar guard lives in data\hookshot\unpack_tar.py (--selftest): run it when a Python 3 is at hand */
 static void test_unpack_selftest() {
-#ifdef HOOKSHOT_DATA_DIR
+#if defined(HOOKSHOT_DATA_DIR) && RH_WIN
     wchar_t found[MAX_PATH] = {0};
     const wchar_t* cand = _wgetenv(L"HOOKSHOT_TEST_PYTHON");
     std::wstring py = cand ? cand : L"";

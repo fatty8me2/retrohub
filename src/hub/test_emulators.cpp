@@ -6,6 +6,7 @@
 #include "emu_saves.h"
 #include "emulators.h"
 #include "ppsspp.h"
+#include "lichii.h"
 #include "games.h"
 #include "library.h"
 #include "logic.h"
@@ -14,11 +15,27 @@
 
 #include <chrono>
 #include <memory>
+#include "plat/plat.h"
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <process.h>
+#else
+#include <unistd.h>
+#include <cstdlib>
+/* macOS stand-ins for the few Win32 calls the checks below use. */
+static int _getpid() { return (int)getpid(); }
+static void Sleep(unsigned ms) { plat::sleep_ms(ms); }
+/* LOCALAPPDATA (where the snapshots of a user's own install go) is RETROHUB_LOCALAPPDATA on macOS; an empty value = "nowhere to put one" (HOME goes too). */
+static void _putenv_s(const char* name, const char* value) {
+    const std::string n = std::string(name) == "LOCALAPPDATA" ? "RETROHUB_LOCALAPPDATA" : name;
+    setenv(n.c_str(), value, 1);
+    if (n == "RETROHUB_LOCALAPPDATA" && !*value) unsetenv("HOME");
+}
+using hubemu::ERROR_DISK_FULL; using hubemu::ERROR_HANDLE_DISK_FULL; using hubemu::ERROR_SHARING_VIOLATION; using hubemu::ERROR_ACCESS_DENIED;
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -300,6 +317,7 @@ static void test_save_paths() {
     p.dir_exists = [&](const std::string& s) { return dirs.count(s) > 0; };
     p.file_exists = [&](const std::string& s) { return files.count(s) > 0; };
     p.read_text = [&](const std::string& s) { auto it = text.find(s); return it == text.end() ? std::string() : it->second; };
+#if RH_WIN
     CemuDirs d = cemu_dirs_for("C:\\Cemu_2.6", "C:\\Users\\me\\AppData\\Roaming", p);
     CHECK(!d.portable && d.user_data == "C:\\Users\\me\\AppData\\Roaming\\Cemu" && d.mlc == "C:\\Users\\me\\AppData\\Roaming\\Cemu\\mlc01");
     files.insert("C:\\Cemu_2.6\\settings.xml");
@@ -311,6 +329,19 @@ static void test_save_paths() {
     text["C:\\Cemu_2.6\\portable\\settings.xml"] = "<content><mlc_path>D:\\Wiiu\\mlc</mlc_path></content>";
     d = cemu_dirs_for("C:\\Cemu_2.6", "C:\\AppData", p);
     CHECK(d.mlc == "D:\\Wiiu\\mlc");
+#else
+    CemuDirs d = cemu_dirs_for("/Apps/Cemu_2.6", "/Users/me/Library/Application Support", p);
+    CHECK(!d.portable && d.user_data == "/Users/me/Library/Application Support/Cemu" && d.mlc == "/Users/me/Library/Application Support/Cemu/mlc01");
+    files.insert("/Apps/Cemu_2.6/settings.xml");
+    d = cemu_dirs_for("/Apps/Cemu_2.6/", "/AppData", p);
+    CHECK(d.portable && d.user_data == "/Apps/Cemu_2.6" && d.mlc == "/Apps/Cemu_2.6/mlc01");
+    dirs.insert("/Apps/Cemu_2.6/portable");
+    d = cemu_dirs_for("/Apps/Cemu_2.6", "/AppData", p);
+    CHECK(d.portable && d.user_data == "/Apps/Cemu_2.6/portable");
+    text["/Apps/Cemu_2.6/portable/settings.xml"] = "<content><mlc_path>/Wiiu/mlc</mlc_path></content>";
+    d = cemu_dirs_for("/Apps/Cemu_2.6", "/AppData", p);
+    CHECK(d.mlc == "/Wiiu/mlc");
+#endif
     CHECK(cemu_settings_mlc_path("<mlc_path></mlc_path>").empty() && cemu_settings_mlc_path("<mlc_path/>").empty());
 }
 
@@ -546,17 +577,26 @@ static void test_sessions(const fs::path& dir) {
             hubemu::end_session(b);
             CHECK(!b.active);
         }
+#if RH_WIN
         CHECK(!hubemu::begin_session(w, ci, "C:battery", vault.u8string()).active);   // drive-relative: the current folder of drive C
+#endif
         CHECK(fs::is_empty(here, ec));   // no usr\save\..., no .sync\emu--.json
         fs::current_path(cwd0, ec);
         CHECK(read_text(save) == "ZELDA1");   // the emulator's own save is untouched
         /* what counts as a vault folder (pure, no disk access: a UNC path is never looked up) */
+#if RH_WIN
         CHECK(hubemu::vault_battery_ok("C:\\Users\\x\\vault\\wiiu\\g\\battery") && hubemu::vault_battery_ok("C:/Users/x/vault/wiiu/g/battery/"));
         CHECK(hubemu::vault_battery_ok("\\\\nas\\share\\vault\\wiiu\\g\\battery") && hubemu::vault_battery_ok("//nas/share/vault/wiiu/g/battery"));
         CHECK(hubemu::vault_battery_ok("\\\\?\\C:\\vault\\wiiu\\g\\battery"));
         CHECK(!hubemu::vault_battery_ok("") && !hubemu::vault_battery_ok("\\") && !hubemu::vault_battery_ok("C:foo\\battery") && !hubemu::vault_battery_ok("C:"));
         CHECK(!hubemu::vault_battery_ok("vault\\wiiu\\g\\battery") && !hubemu::vault_battery_ok("\\vault\\battery") && !hubemu::vault_battery_ok("..\\battery"));
         CHECK(!hubemu::vault_battery_ok("C:\\bad\xEB\xFF"));   // not UTF-8: refused, never throws
+#else
+        CHECK(hubemu::vault_battery_ok("/Users/x/vault/wiiu/g/battery") && hubemu::vault_battery_ok("/Users/x/vault/wiiu/g/battery/"));
+        CHECK(!hubemu::vault_battery_ok("") && !hubemu::vault_battery_ok("relative/battery"));
+        CHECK(!hubemu::vault_battery_ok("vault/wiiu/g/battery") && !hubemu::vault_battery_ok("../battery") && !hubemu::vault_battery_ok("battery"));
+        CHECK(!hubemu::vault_battery_ok("/bad\xEB\xFF"));   // not UTF-8: refused, never throws
+#endif
         /* forward slashes are fine: a real session from "C:/.../battery" */
         std::string fwd = vb.u8string();
         for (char& c : fwd) if (c == '\\') c = '/';
@@ -591,15 +631,27 @@ static void test_config() {
     for (size_t p = pad.find("<entry>"); p != std::string::npos; p = pad.find("<entry>", p + 1)) ++entries;
     CHECK(entries == 24);
 
+#if RH_WIN
     CHECK(hubemu::azahar_args("C:\\g\\x.3ds", true) == "-f \"C:\\g\\x.3ds\"");
     CHECK(hubemu::azahar_args("C:\\g\\x.3ds", false) == "-w \"C:\\g\\x.3ds\"");
     CHECK(hubemu::cemu_args("D:\\w\\z.wua", true) == "-g \"D:\\w\\z.wua\" -f");
     CHECK(hubemu::cemu_args("D:\\w\\z.wua", false) == "-g \"D:\\w\\z.wua\"");
+#else   // (macOS: winutil::quote_arg is POSIX single-quote quoting)
+    CHECK(hubemu::azahar_args("/g/x 1.3ds", true) == "-f '/g/x 1.3ds'");
+    CHECK(hubemu::azahar_args("/g/x.3ds", false) == "-w '/g/x.3ds'");
+    CHECK(hubemu::cemu_args("/w/z.wua", true) == "-g '/w/z.wua' -f");
+    CHECK(hubemu::cemu_args("/w/z.wua", false) == "-g '/w/z.wua'");
+#endif
 
     /* Dolphin */
     CHECK(std::string(hubemu::release(hubemu::Kind::Dolphin).sha256).size() == 64 && hubemu::kind_for(hub::System::GC) == hubemu::Kind::Dolphin);
+#if RH_WIN
     CHECK(hubemu::dolphin_args("D:\\g\\m.iso", true, "C:\\c\\GCI") ==
           "-b -C Dolphin.Display.Fullscreen=True -C Dolphin.Core.SlotA=8 -C \"Dolphin.Core.GCIFolderAPathOverride=C:\\c\\GCI\" -e \"D:\\g\\m.iso\"");
+#else
+    CHECK(hubemu::dolphin_args("/g/m.iso", true, "/c/GCI") ==
+          "-b -C Dolphin.Display.Fullscreen=True -C Dolphin.Core.SlotA=8 -C 'Dolphin.Core.GCIFolderAPathOverride=/c/GCI' -e '/g/m.iso'");
+#endif
     hubemu::DolphinPads none, two;
     two.xinput[1] = true;
     std::string di = hubemu::dolphin_dolphin_ini_patch("", none);
@@ -639,6 +691,9 @@ static void test_config() {
     CHECK(hubemu::cemu_settings_apply(off, w) == cx);
 }
 
+static std::string U8(const wchar_t* w) { std::string o; for (; *w; ++w) o += (char)*w; return o; }   // (ASCII names)
+/* The executable of a kind's real pin, relative to its install folder ("lichii.exe" on Windows, the .app bundle path on macOS). */
+static fs::path pin_exe(hubemu::Kind k) { return fs::u8path(U8(hubemu::release(k).exe)); }
 static void test_prepare_and_find(const fs::path& dir) {
     fs::path az = dir / "root" / "azahar";
     hubemu::prepare_azahar(az.u8string());
@@ -655,28 +710,42 @@ static void test_prepare_and_find(const fs::path& dir) {
 
     /* discovery: an install above the game file wins and is flagged unmanaged; otherwise RetroHub's own */
     fs::path user_cemu = dir / "Everything" / "Cemu_2.6";
-    write_text(user_cemu / "Cemu.exe", "x");
+#if RH_WIN
+    const fs::path cemu_rel = "Cemu.exe";
+#else
+    const fs::path cemu_rel = fs::path("Cemu.app") / "Contents" / "MacOS" / "Cemu";   // (macOS: the app bundle's executable)
+#endif
+    write_text(user_cemu / cemu_rel, "x");
     write_text(user_cemu / "game" / "TPHD.wua", "x");
     hubemu::Install i = hubemu::find(hubemu::Kind::Cemu, "", (user_cemu / "game" / "TPHD.wua").u8string(), (dir / "root").u8string());
-    CHECK(i.exe == (user_cemu / "Cemu.exe").u8string() && !i.managed);
-    write_text(ce / "Cemu.exe", "x");
-    i = hubemu::find(hubemu::Kind::Cemu, (ce / "Cemu.exe").u8string(), "", (dir / "root").u8string());
-    CHECK(i.exe == (ce / "Cemu.exe").u8string() && !i.managed);   // an explicit Settings path is honored
+    CHECK(i.exe == (user_cemu / cemu_rel).u8string() && !i.managed);
+    write_text(ce / cemu_rel, "x");
+    i = hubemu::find(hubemu::Kind::Cemu, (ce / cemu_rel).u8string(), "", (dir / "root").u8string());
+    CHECK(i.exe == (ce / cemu_rel).u8string() && !i.managed);   // an explicit Settings path is honored
     i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").u8string());
     CHECK(i.exe.empty());   // not downloaded yet
-    write_text(az / "azahar.exe", "x");
+#if RH_WIN
+    const fs::path az_rel = "azahar.exe";
+#else
+    const fs::path az_rel = fs::u8path(U8(hubemu::release(hubemu::Kind::Azahar).exe));   // the macOS pin's bundle path
+#endif
+    write_text(az / az_rel, "x");
     i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").u8string());
     CHECK(i.exe.empty());   // exe without the install marker = an incomplete install
     write_text(az / "retrohub-install.txt", "Azahar test");
     i = hubemu::find(hubemu::Kind::Azahar, "", "", (dir / "root").u8string());
-    CHECK(i.managed && i.exe == (az / "azahar.exe").u8string());
+    CHECK(i.managed && i.exe == (az / az_rel).u8string());
 
     /* Dolphin: defaults once, user edits survive, per-launch ports follow the pads; old layout is tidied without touching saves */
     fs::path dd = dir / "dol";
     hubemu::DolphinPads none, two;
     two.xinput[1] = true;
     hubemu::prepare_dolphin(dd.u8string(), none);
+#if RH_WIN
     CHECK(fs::exists(dd / "portable.txt") && fs::exists(dd / "User" / "Config" / "GCPadNew.ini"));
+#else   // macOS: no portable.txt (it would have to sit inside the signed .app); DOLPHIN_EMU_USERPATH points Dolphin at <install>/User
+    CHECK(!fs::exists(dd / "portable.txt") && fs::exists(dd / "User" / "Config" / "GCPadNew.ini"));
+#endif
     write_text(dd / "User" / "Config" / "GCPadNew.ini", "[GCPad1]\nButtons/A = custom\n");
     std::string di = read_text(dd / "User" / "Config" / "Dolphin.ini");
     write_text(dd / "User" / "Config" / "Dolphin.ini", hubui::ini_set(di, "Interface", "ConfirmStop", "True"));
@@ -742,7 +811,7 @@ static void test_prepare_and_find(const fs::path& dir) {
     write_text(od / "saves" / "gc" / "g" / "battery" / "GCI" / "x.gci", "card");
     write_text(dir / "oldexe" / "dolphin" / "Dolphin.exe", "x");
     write_text(dir / "oldexe" / "dolphin" / "portable.txt", "");
-    hubemu::dolphin_migrate_old(od.u8string(), (dir / "oldexe").u8string() + "\\", dd.u8string());
+    hubemu::dolphin_migrate_old(od.u8string(), (dir / "oldexe").u8string() + std::string(1, plat::kSep), dd.u8string());
     CHECK(fs::exists(dd / "User" / "StateSaves" / "a.sav") && fs::exists(od / "dolphin-user.migrated") && !fs::exists(od / "dolphin-user"));
     CHECK(fs::exists(od / "saves" / "gc" / "g" / "battery" / "GCI" / "x.gci") && !fs::exists(dir / "oldexe" / "dolphin"));
 }
@@ -1029,7 +1098,11 @@ static void test_controls2_emulators(const fs::path& dir) {
         /* data dir: portable\ folder, else settings.xml beside the exe, else %APPDATA%\Cemu */
         fs::path ex = dir / "own_cemu_exe";
         fs::create_directories(ex);
+#if RH_WIN
         CHECK(hubemu::cemu_user_data_dir(ex.u8string(), "C:\\AD") == "C:\\AD\\Cemu");
+#else
+        CHECK(hubemu::cemu_user_data_dir(ex.u8string(), "/AD") == "/AD/Cemu");
+#endif
         write_text(ex / "settings.xml", "<content/>");
         CHECK(fs::u8path(hubemu::cemu_user_data_dir(ex.u8string(), "C:\\AD")) == ex);
         fs::create_directories(ex / "portable");
@@ -1069,9 +1142,13 @@ static void test_controls2_emulators(const fs::path& dir) {
 static void test_ppsspp_pin_and_config(const fs::path& d) {
     using namespace hubemu;
     const Release& r = release(Kind::Ppsspp);
+#if RH_WIN
     CHECK(std::string(r.version) == "1.20.4" && r.size == 27658759ull && std::string(r.sha256).size() == 64);
     CHECK(std::string(r.sha256) == "a60f04ebdb0b5f1655422bd7f88349a46999b17ad5115d6ddb290c3934bd5163");
     CHECK(std::wstring(r.host) == L"www.ppsspp.org" && std::wstring(r.exe) == L"PPSSPPWindows64.exe");
+#else   // macOS: the official PPSSPP 1.20.4 dmg (details: test_mac_pins_and_archives)
+    CHECK(!release_is_placeholder(Kind::Ppsspp) && std::wstring(r.exe) == L"PPSSPPSDL.app/Contents/MacOS/PPSSPPSDL" && std::wstring(r.host) == L"www.ppsspp.org" && std::string(r.version) == "1.20.4");
+#endif
     CHECK(kind_for(hub::System::PSP) == Kind::Ppsspp && std::string(name(Kind::Ppsspp)) == "PPSSPP");
     CHECK(fs::path(managed_dir(Kind::Ppsspp, (d / "root").u8string())).filename() == "ppsspp");
     hub::gs::Values v = hub::gs::defaults_for(hub::System::PSP);
@@ -1244,6 +1321,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
         CHECK(playable("EXE-2") && marker_has(v2) && snapshot(user) == data && scratch_gone());
         is_running = false;
     }
+#if RH_WIN   // (file locks that block a rename are a Windows behaviour; a macOS file can always be renamed)
     {   // a swap that fails half way (a file in use): the old build is put back
         const fs::path locked = dir / "Qt6Core.dll";
         HANDLE h = CreateFileW(locked.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);   // no FILE_SHARE_DELETE: a rename fails
@@ -1255,6 +1333,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
         CHECK(playable("EXE-2") && marker_has(v2) && read_text(dir / "Qt6Core.dll") == "qt-2" && read_text(dir / "new.dll") == "fresh" && read_text(dir / "platforms" / "qwindows.dll") == "plat-2");
         CHECK(snapshot(user) == data && scratch_gone());
     }
+#endif
     CHECK(run(&err) && playable("EXE-3") && marker_has(v3) && snapshot(user) == data && scratch_gone());   // and with everything fine again it upgrades (build-96)
     CHECK(!fs::exists(dir / "new.dll") && !fs::exists(dir / "platforms"));
 
@@ -1335,6 +1414,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
         CHECK(snapshot(dir) == before && playable("EXE-4") && scratch_gone());
     }
 
+#if RH_WIN   // sections 8-11 hold a file open without FILE_SHARE_DELETE so a rename fails (Windows only)
     // ---- 8. a rollback that cannot finish yet (a parked file still in use): the next install job must keep _old, not wipe it, and finish later
     {
         const Files before = snapshot(dir);
@@ -1425,6 +1505,7 @@ static void test_nx_upgrade(hubemu::Kind kind, const fs::path& root) {
         hubemu::recover_interrupted(kind, root.u8string());   // the next start finishes it
         CHECK(snapshot(dir) == before && playable("EXE-4") && marker_has(v4) && scratch_gone());
     }
+#endif
     hubemu::set_install_test_hooks(nullptr);
     fs::remove_all(root, ec);
 }
@@ -1438,6 +1519,7 @@ static void test_fritchii_install(const fs::path& root) {
     CHECK(std::string(hubemu::name(K)) == "Fritchii" && hubemu::is_nx(K) && hubemu::is_nx(hubemu::Kind::Lichii) && !hubemu::is_nx(hubemu::Kind::Cemu));
     CHECK(hubemu::managed_dir(K, root.u8string()) != hubemu::managed_dir(hubemu::Kind::Lichii, root.u8string()));
     CHECK(fs::u8path(hubemu::managed_dir(K, root.u8string())).filename() == "fritchii");
+#if RH_WIN
     CHECK(std::wstring(hubemu::release(K).exe) == L"lichii.exe" && std::string(hubemu::release(K).license) == "GPL-3.0" && std::string(hubemu::release(K).version) == "v5.8.4");
     // the v5.8.4 pin is real: RetroHub's own local build of Fritchii v5.8.4 (emulators.cpp, fritchii_pin)
     {
@@ -1446,6 +1528,14 @@ static void test_fritchii_install(const fs::path& root) {
         CHECK(std::wstring(r.host) == L"github.com" && std::wstring(r.path) == L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5.8.4/Fritchii-v5.8.4-RetroHub-windows-x64.zip");
         CHECK(r.size == 66372119ull && std::string(r.sha256) == "3b359e27ef2eed69a1ce620e65d051f4c533613fb688ec2ea1692035108f6523");
     }
+#else   // macOS: Lichii has a real pin, Fritchii (built from source) is still a placeholder: nothing is downloaded for it
+    CHECK(std::string(hubemu::release(K).license) == "GPL-3.0" && hubemu::release_is_placeholder(K) && !hubemu::release_is_placeholder(hubemu::Kind::Lichii));
+    {
+        std::string perr;
+        CHECK(!hubemu::install_blocking(K, root.u8string(), &perr, nullptr) && perr.find("not available on macOS yet") != std::string::npos);   // never a Windows zip
+        CHECK(!fs::exists(root / "_downloads") && hubemu::find(K, "", "", root.u8string()).exe.empty());
+    }
+#endif
     // a placeholder pin (all-zero sha) still refuses with a plain message and creates nothing
     {
         const hubemu::Release ph = {"v0", L"github.com", L"/x/y.zip", 0, "0000000000000000000000000000000000000000000000000000000000000000", L"lichii.exe", "GPL-3.0"};
@@ -1455,7 +1545,11 @@ static void test_fritchii_install(const fs::path& root) {
         hubemu::set_install_test_hooks(&hp);
         CHECK(hubemu::release_is_placeholder(K));
         std::string err;
+        #if RH_WIN
         CHECK(!hubemu::install_blocking(K, root.u8string(), &err, nullptr) && err.find("not published") != std::string::npos);
+#else
+        CHECK(!hubemu::install_blocking(K, root.u8string(), &err, nullptr) && err.find("not available on macOS yet") != std::string::npos);
+#endif
         CHECK(hubemu::find(K, "", "", root.u8string()).exe.empty());
         hubemu::set_install_test_hooks(nullptr);
     }
@@ -1655,7 +1749,11 @@ static void test_install_robustness(const fs::path& root) {
     }
     {   // the log keeps the Windows code
         const std::string lg = read_text(root / "install-log.txt");
+#if RH_WIN
         CHECK(lg.find("Windows error 112") != std::string::npos && lg.find("Windows error 32") != std::string::npos && lg.find("Windows error 5") != std::string::npos);
+#else
+        CHECK(lg.find("system error 28") != std::string::npos && lg.find("system error 16") != std::string::npos && lg.find("system error 13") != std::string::npos);
+#endif
     }
 
     // ---- free-space precheck: fails before downloading anything, names the space needed
@@ -1673,6 +1771,7 @@ static void test_install_robustness(const fs::path& root) {
     CHECK(run(&err) && installed("EXE-R1"));
     write_text(dir / "user" / "keys" / "prod.keys", "KEYS");
     use(v2);
+#if RH_WIN   // (a held-open file blocks a rename only on Windows)
     {
         HANDLE h = CreateFileW((dir / "Qt6Core.dll").wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);   // no FILE_SHARE_DELETE
         CHECK(h != INVALID_HANDLE_VALUE);
@@ -1693,6 +1792,10 @@ static void test_install_robustness(const fs::path& root) {
         CHECK(!r && err.find("could not move") != std::string::npos && at != std::string::npos && err.size() > at + 26);   // the OS reason follows
         CHECK(installed("EXE-R2") && read_text(dir / "user" / "keys" / "prod.keys") == "KEYS" && !fs::exists(dir / "_old") && !fs::exists(dir / "retrohub-upgrade.txt"));   // rolled back as before
     }
+#else
+    CHECK(run(&err) && installed("EXE-R2"));   // macOS: no held-open lock; the plain upgrade to v2 must work
+    use(v1);
+#endif
 
     // ---- a failed 7z unpack says what tar said (Dolphin ships as .7z)
     {
@@ -1734,7 +1837,7 @@ static void test_cleanup_leftovers(const fs::path& root) {
     // Lichii: abandoned scratch (no journal) goes; the player's data stays
     write_text(D(hubemu::Kind::Lichii) / "_old" / "x.dll", "x");
     write_text(D(hubemu::Kind::Lichii) / "_extract" / "sub" / "y.dll", "y");
-    write_text(D(hubemu::Kind::Lichii) / "lichii.exe", "EXE");
+    write_text(D(hubemu::Kind::Lichii) / pin_exe(hubemu::Kind::Lichii), "EXE");
     write_text(D(hubemu::Kind::Lichii) / "retrohub-install.txt", "Lichii x\nsha256 0\n");
     write_text(D(hubemu::Kind::Lichii) / "user" / "keys" / "prod.keys", "KEYS");
     age(D(hubemu::Kind::Lichii) / "_old", 2);
@@ -1756,7 +1859,7 @@ static void test_cleanup_leftovers(const fs::path& root) {
     const fs::path outside = root / "outside";
     write_text(outside / "precious.txt", "precious");
     write_text(D(hubemu::Kind::Dolphin) / "_old" / "a.dll", "a");
-    write_text(D(hubemu::Kind::Dolphin) / "Dolphin.exe", "D");
+    write_text(D(hubemu::Kind::Dolphin) / pin_exe(hubemu::Kind::Dolphin), "D");
     write_text(D(hubemu::Kind::Dolphin) / "retrohub-install.txt", "Dolphin x\nsha256 0\n");
     // PCSX2: an old _old but the live install has no exe / marker: it may be the only working copy, so it stays
     write_text(D(hubemu::Kind::Pcsx2) / "_old" / "pcsx2-qt.exe", "P");
@@ -1789,7 +1892,7 @@ static void test_cleanup_leftovers(const fs::path& root) {
     CHECK(n == (linked ? 4 : 5));   // two old downloads + Lichii's _old and _extract (+ Dolphin's _old when no link could be made)
     CHECK(!fs::exists(dl / "a.zip.part") && !fs::exists(dl / "list.txt") && fs::exists(dl / "fresh.zip"));
     CHECK(!fs::exists(D(hubemu::Kind::Lichii) / "_old") && !fs::exists(D(hubemu::Kind::Lichii) / "_extract"));
-    CHECK(read_text(D(hubemu::Kind::Lichii) / "user" / "keys" / "prod.keys") == "KEYS" && read_text(D(hubemu::Kind::Lichii) / "lichii.exe") == "EXE");
+    CHECK(read_text(D(hubemu::Kind::Lichii) / "user" / "keys" / "prod.keys") == "KEYS" && read_text(D(hubemu::Kind::Lichii) / pin_exe(hubemu::Kind::Lichii)) == "EXE");
     CHECK(fs::exists(D(hubemu::Kind::Fritchii) / "_old" / "keep.dll") && fs::exists(D(hubemu::Kind::Fritchii) / "retrohub-upgrade.txt"));
     CHECK(fs::exists(D(hubemu::Kind::Cemu) / "_extract" / "z.dll"));
     CHECK(fs::exists(D(hubemu::Kind::Azahar) / "_extract" / "user" / "x.bin"));
@@ -1872,6 +1975,140 @@ static void test_repair_keeps_userdata(const fs::path& root) {
     fs::remove_all(root, ec);
 }
 
+#if !RH_WIN
+/* ---- macOS: the pin table, .dmg / .tar.xz installs (a synthetic image built here with hdiutil / tar: nothing from the network, nothing run), Rosetta for Cemu ---- */
+static int sh(const std::string& cmd) { return std::system((cmd + " >/dev/null 2>&1").c_str()); }
+static std::string shq(const fs::path& p) { return "'" + p.string() + "'"; }
+
+static void test_mac_pins_and_archives(const fs::path& root) {
+    using hubemu::Kind;
+    struct Pin { Kind k; const char* ver; const wchar_t* host; const wchar_t* path; uint64_t size; const char* sha; const wchar_t* exe; };
+    const Pin pins[] = {
+        {Kind::Dolphin, "2509", L"dl.dolphin-emu.org", L"/releases/2509/dolphin-2509-universal.dmg", 43276379ull, "14b7bd96ead242db4020acd991aae84ee83c3df65de9b09f2e79c8d531bf9780", L"Dolphin.app/Contents/MacOS/Dolphin"},
+        {Kind::Ppsspp, "1.20.4", L"www.ppsspp.org", L"/files/1_20_4/PPSSPP_macOS.dmg", 37090805ull, "bad86fc544a2c2fc5795d6a5832a8925d6db43e5789fe507f742305aaa357e17", L"PPSSPPSDL.app/Contents/MacOS/PPSSPPSDL"},
+        {Kind::Cemu, "2.6", L"github.com", L"/cemu-project/Cemu/releases/download/v2.6/cemu-2.6-macos-12-x64.dmg", 36588188ull, "698c4b298f94983e4d6c30e9687ba8ff05094dd3930837c5104cddc0b0a49e4e", L"Cemu.app/Contents/MacOS/Cemu"},
+        {Kind::Azahar, "2126.2", L"github.com", L"/azahar-emu/azahar/releases/download/2126.2/azahar-macos-arm64-2126.2.zip", 99740365ull, "c24dec2bd5111b7d79513d686c5aece6612cdbf9737b2e6ea99cfc426f1d4aef", L"azahar-macos-arm64-2126.2/Azahar.app/Contents/MacOS/azahar"},
+        {Kind::Pcsx2, "2.8.2", L"github.com", L"/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-v2.8.2-macos-Qt.tar.xz", 24377200ull, "3ed9eb40a33eae67134142c24255a079be444f0616ca29575a04a37981f7d426", L"PCSX2-v2.8.2.app/Contents/MacOS/PCSX2"},
+        {Kind::Lichii, "build 177", L"github.com", L"/zortos293/Lichii/releases/download/build-177/lichii-macos-arm64.zip", 80007273ull, "6504170d1530ebe42fe150724f44af20579f24f8336b87379155e1b7c19b775b", L"lichii.app/Contents/MacOS/lichii"},
+    };
+    for (const Pin& p : pins) {
+        const hubemu::Release& r = hubemu::release(p.k);
+        CHECK(!hubemu::release_is_placeholder(p.k) && std::string(r.version) == p.ver && std::wstring(r.host) == p.host && std::wstring(r.path) == p.path);
+        CHECK(r.size == p.size && std::string(r.sha256) == p.sha && std::wstring(r.exe) == p.exe);
+    }
+    CHECK(hubemu::release_is_placeholder(Kind::Lrps2) && hubemu::release_is_placeholder(Kind::Fritchii));   // still need a mirrored / self-built asset
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+    // a synthetic app bundle: an executable, a relative symbolic link, a data file
+    const fs::path src = root / "src";
+    write_text(src / "Fake.app" / "Contents" / "MacOS" / "fake", "#!/bin/sh\nexit 0\n");
+    fs::permissions(src / "Fake.app" / "Contents" / "MacOS" / "fake", fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
+    write_text(src / "Fake.app" / "Contents" / "Resources" / "data.txt", "DATA");
+    fs::create_symlink("../Resources/data.txt", src / "Fake.app" / "Contents" / "MacOS" / "link.txt", ec);
+    write_text(src / "readme.txt", "not an app: never copied");
+
+    auto run_install = [&](Kind k, const fs::path& archive, const wchar_t* path, const wchar_t* exe, const fs::path& inst_root, std::string* err) {
+        const std::string sha = hubemu::sha256_file(archive.u8string());
+        const std::string ver = "t1";
+        hubemu::Release rel = {ver.c_str(), L"example.invalid", path, fs::file_size(archive, ec), sha.c_str(), exe, "GPL-3.0"};
+        hubemu::InstallTestHooks hk;
+        hk.kind = k;
+        hk.release = &rel;
+        hk.fetch = [&](const hubemu::Release&, const std::string& out, std::string*) { std::error_code e2; fs::copy_file(archive, fs::u8path(out), fs::copy_options::overwrite_existing, e2); return !e2; };
+        hk.running = [](const std::string&) { return false; };
+        hubemu::set_install_test_hooks(&hk);
+        const bool ok = hubemu::install_blocking(k, inst_root.u8string(), err, nullptr);
+        hubemu::set_install_test_hooks(nullptr);
+        return ok;
+    };
+    auto check_installed = [&](Kind k, const fs::path& inst_root) {
+        const fs::path dir = fs::u8path(hubemu::managed_dir(k, inst_root.u8string()));
+        const fs::path app = dir / "Fake.app" / "Contents";
+        CHECK(fs::exists(app / "MacOS" / "fake") && (fs::status(app / "MacOS" / "fake").permissions() & fs::perms::owner_exec) != fs::perms::none);
+        CHECK(fs::is_symlink(app / "MacOS" / "link.txt") && read_text(app / "MacOS" / "link.txt") == "DATA");   // links survive as links
+        CHECK(fs::exists(dir / "retrohub-install.txt") && !fs::exists(dir / "_extract") && !fs::exists(dir / "readme.txt"));
+    };
+
+    // .tar.xz (PCSX2's kind of archive): /usr/bin/tar
+    {
+        const fs::path txz = root / "Fake.tar.xz";
+        if (sh("/usr/bin/tar -cJf " + shq(txz) + " -C " + shq(src) + " Fake.app") != 0) { std::printf("SKIP tar.xz install test: tar -cJ failed\n"); }
+        else {
+            std::string err;
+            CHECK(run_install(Kind::Pcsx2, txz, L"/test/Fake.tar.xz", L"Fake.app/Contents/MacOS/fake", root / "r_txz", &err));
+            if (!err.empty()) std::printf("tar.xz install: %s\n", err.c_str());
+            check_installed(Kind::Pcsx2, root / "r_txz");
+        }
+    }
+    // a tar.xz whose link climbs out of the archive is refused before anything is unpacked
+    {
+        const fs::path evil = root / "evil";
+        write_text(evil / "Evil.app" / "Contents" / "MacOS" / "evil", "x");
+        std::error_code e4;
+        fs::create_symlink("../../../../escape", evil / "Evil.app" / "Contents" / "MacOS" / "out", e4);
+        const fs::path etxz = root / "Evil.tar.xz";
+        if (!e4 && sh("/usr/bin/tar -cJf " + shq(etxz) + " -C " + shq(evil) + " Evil.app") == 0) {
+            std::string err;
+            CHECK(!run_install(Kind::Pcsx2, etxz, L"/test/Evil.tar.xz", L"Evil.app/Contents/MacOS/evil", root / "r_evil", &err) && err.find("link") != std::string::npos);
+            CHECK(!fs::exists(root / "r_evil" / "pcsx2" / "retrohub-install.txt"));
+        }
+    }
+    // .dmg (Dolphin / PPSSPP / Cemu): hdiutil attach + ditto of the top-level .app, volume detached again
+    {
+        const fs::path dmg = root / "Fake.dmg";
+        if (sh("/usr/bin/hdiutil create -quiet -volname RHTest -srcfolder " + shq(src) + " -format UDZO -ov " + shq(dmg)) != 0 || !fs::exists(dmg)) {
+            std::printf("SKIP dmg install test: hdiutil create failed here\n");
+        } else {
+            std::string err;
+            CHECK(run_install(Kind::Dolphin, dmg, L"/test/Fake.dmg", L"Fake.app/Contents/MacOS/fake", root / "r_dmg", &err));
+            if (!err.empty()) std::printf("dmg install: %s\n", err.c_str());
+            check_installed(Kind::Dolphin, root / "r_dmg");
+            CHECK(!fs::exists(fs::u8path(hubemu::managed_dir(Kind::Dolphin, (root / "r_dmg").u8string())) / "portable.txt"));   // never beside / inside the bundle on macOS
+            // no volume is left mounted and no mount folder is left behind
+            std::error_code e3;
+            bool leftover = false;
+            for (fs::directory_iterator it(root / "r_dmg" / "_downloads", e3), end; !e3 && it != end; it.increment(e3))
+                if (it->path().filename().string().rfind("mnt-", 0) == 0) leftover = true;
+            CHECK(!leftover);
+            CHECK(sh("/sbin/mount | /usr/bin/grep -q " + shq(root / "r_dmg")) != 0);
+            // a corrupt image fails cleanly: nothing installed, nothing mounted
+            const fs::path bad = root / "Bad.dmg";
+            write_text(bad, std::string(4096, 'x'));
+            err.clear();
+            CHECK(!run_install(Kind::Ppsspp, bad, L"/test/Bad.dmg", L"Fake.app/Contents/MacOS/fake", root / "r_bad", &err) && !err.empty());
+            CHECK(!fs::exists(fs::u8path(hubemu::managed_dir(Kind::Ppsspp, (root / "r_bad").u8string())) / "retrohub-install.txt"));
+        }
+    }
+    // Cemu needs Rosetta 2 on Apple Silicon: refused with the install command, nothing downloaded
+    {
+        hubemu::InstallTestHooks hk;
+        hk.kind = Kind::Cemu;
+        hk.rosetta = 0;
+        hubemu::set_install_test_hooks(&hk);
+        std::string msg, err;
+        CHECK(!hubemu::rosetta_present() && !hubemu::cemu_rosetta_ok(&msg) && msg.find("softwareupdate --install-rosetta") != std::string::npos);
+        CHECK(!hubemu::install_blocking(Kind::Cemu, (root / "r_cemu").u8string(), &err, nullptr) && err.find("Rosetta") != std::string::npos);
+        CHECK(!fs::exists(root / "r_cemu" / "_downloads") && hubemu::find(Kind::Cemu, "", "", (root / "r_cemu").u8string()).exe.empty());
+        hk.rosetta = 1;
+        CHECK(hubemu::rosetta_present() && hubemu::cemu_rosetta_ok(nullptr));
+        hubemu::set_install_test_hooks(nullptr);
+    }
+    // the launch helper: RetroHub's own folders, never the player's
+    {
+        const std::string inst = "/data/emulators/x";
+        auto d = hubemu::mac_launch_extra(Kind::Dolphin, inst);
+        CHECK(d.env.size() == 1 && d.env[0].first == "DOLPHIN_EMU_USERPATH" && d.env[0].second == inst + "/User");
+        auto p2 = hubemu::mac_launch_extra(Kind::Pcsx2, inst);
+        CHECK(p2.args == std::vector<std::string>({"-datapath", inst}));
+        CHECK(hubemu::mac_launch_extra(Kind::Lichii, inst).cwd == inst && hubemu::mac_launch_extra(Kind::Azahar, inst).cwd == inst);
+        CHECK(hubemu::lichii_user_dir(inst + "/lichii.app/Contents/MacOS") == inst + "/user" && hubemu::lichii_user_dir(inst) == inst + "/user");   // beside the .app, never inside it
+    }
+    fs::remove_all(root, ec);
+}
+#endif
+
 int main(int argc, char** argv) {
     test_3ds_header();
     test_wiiu_formats();
@@ -1896,6 +2133,9 @@ int main(int argc, char** argv) {
     test_install_robustness(dir / "robust");
     test_cleanup_leftovers(dir / "cleanup");
     test_repair_keeps_userdata(dir / "repair");
+#if !RH_WIN
+    test_mac_pins_and_archives(dir / "macpins");
+#endif
     fs::remove_all(dir, ec);
 
     int dl_bad = 0;

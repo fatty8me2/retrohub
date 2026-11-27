@@ -16,14 +16,21 @@
 #include "patcher_internal.h"
 #include "winutil.h"
 
+#include "plat/plat.h"
+
+#if RH_WIN
 #define PSAPI_VERSION 2
 #include <windows.h>
 #include <psapi.h>
 #include <winioctl.h>
+#else
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -1179,16 +1186,33 @@ static void test_inspect_and_limits() {
 
 /* ======================================================================================== files */
 
-static std::wstring g_dir;     // scratch folder: spaces and non-ASCII on purpose
+/* Paths in the file tests: wide strings and backslashes on Windows (as before), UTF-8 strings and '/' elsewhere. */
+#if RH_WIN
+using TStr = std::wstring;
+#define TT(x) L##x
+#define PS L"\\"
+#else
+using TStr = std::string;
+#define TT(x) x
+#define PS "/"
+#endif
+static TStr g_dir;     // scratch folder: spaces and non-ASCII on purpose
 
-static std::string u8(const std::wstring& w) { return winutil::to_utf8(w); }
-static bool exists(const std::wstring& p) { return GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES; }
-static bool put_file(const std::wstring& p, const Bytes& b) { return winutil::write_file(u8(p), b.data(), b.size()); }
-static Bytes get_file(const std::wstring& p) { Bytes b; winutil::read_file(u8(p), &b); return b; }
+#if RH_WIN
+static std::string u8(const TStr& w) { return winutil::to_utf8(w); }
+static bool exists(const TStr& p) { return GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES; }
+static void del(const TStr& p) { DeleteFileW(p.c_str()); }
+#else
+static std::string u8(const TStr& w) { return w; }
+static bool exists(const TStr& p) { std::error_code ec; return std::filesystem::exists(std::filesystem::path(p), ec); }
+static void del(const TStr& p) { std::error_code ec; std::filesystem::remove(std::filesystem::path(p), ec); }
+#endif
+static bool put_file(const TStr& p, const Bytes& b) { return winutil::write_file(u8(p), b.data(), b.size()); }
+static Bytes get_file(const TStr& p) { Bytes b; winutil::read_file(u8(p), &b); return b; }
 
 static void test_apply_file() {
     Rng r(31);
-    const std::wstring game_p = g_dir + L"\\game \u00e9.bin", patch_p = g_dir + L"\\patch \u65e5\u672c.bin", out_p = g_dir + L"\\new folder\\sub \u00e9\\hack \u00e9.out";
+    const TStr game_p = g_dir + PS TT("game \u00e9.bin"), patch_p = g_dir + PS TT("patch \u65e5\u672c.bin"), out_p = g_dir + PS TT("new folder") PS TT("sub \u00e9") PS TT("hack \u00e9.out");
     const Bytes game = make_game(r, 200000);
     const Bytes tgt = make_target(r, game);
     CHECK(put_file(game_p, game));
@@ -1198,13 +1222,13 @@ static void test_apply_file() {
                           {"xdelta", vcd_encode(game, tgt, [] { VcdOpts o; o.window = 30000; o.app = "a/b/"; return o; }())}};
     for (const Case& c : cases) {
         CHECK(put_file(patch_p, c.patch));
-        DeleteFileW(out_p.c_str());
+        del(out_p);
         std::vector<double> seen;
         const Result res = apply_file(u8(game_p), u8(patch_p), u8(out_p), 0, [&](double f) { seen.push_back(f); return true; });
         if (!res.ok()) std::printf("apply_file %s: %s | %s\n", c.name, res.message.c_str(), res.detail.c_str());
         CHECK_OK(res);
         CHECK(get_file(out_p) == tgt);
-        CHECK(!exists(out_p + L".tmp"));
+        CHECK(!exists(out_p + TT(".tmp")));
         CHECK(!seen.empty() && seen.back() == 1.0 && seen.front() == 0.0);
         bool mono = true;
         for (size_t i = 1; i < seen.size(); ++i) mono = mono && seen[i] >= seen[i - 1] && seen[i] >= 0.0 && seen[i] <= 1.0;
@@ -1214,7 +1238,7 @@ static void test_apply_file() {
         // a limit that is too small leaves the existing result alone
         CHECK_ERR(apply_file(u8(game_p), u8(patch_p), u8(out_p), tgt.size() / 2, nullptr), Error::TooBig);
         CHECK(get_file(out_p) == tgt);
-        CHECK(!exists(out_p + L".tmp"));
+        CHECK(!exists(out_p + TT(".tmp")));
     }
 
     // a wrong game: an existing result is untouched, nothing is left behind
@@ -1223,21 +1247,21 @@ static void test_apply_file() {
         CHECK(put_file(patch_p, patch));
         Bytes other = game;
         other[1234] ^= 1;
-        const std::wstring other_p = g_dir + L"\\other game.bin";
+        const TStr other_p = g_dir + PS TT("other game.bin");
         CHECK(put_file(other_p, other));
         const Bytes sentinel = B("previous result");
-        const std::wstring fresh = g_dir + L"\\keep me.out";
+        const TStr fresh = g_dir + PS TT("keep me.out");
         CHECK(put_file(fresh, sentinel));
         Result res = apply_file(u8(other_p), u8(patch_p), u8(fresh), 0, nullptr);
         CHECK_ERR(res, Error::WrongSource);
         CHECK(res.message == "This patch is for a different version of the game.");
-        CHECK(get_file(fresh) == sentinel && !exists(fresh + L".tmp"));
-        const std::wstring never = g_dir + L"\\never made.out";
+        CHECK(get_file(fresh) == sentinel && !exists(fresh + TT(".tmp")));
+        const TStr never = g_dir + PS TT("never made.out");
         res = apply_file(u8(other_p), u8(patch_p), u8(never), 0, nullptr);
         CHECK_ERR(res, Error::WrongSource);
-        CHECK(!exists(never) && !exists(never + L".tmp"));
-        DeleteFileW(other_p.c_str());
-        DeleteFileW(fresh.c_str());
+        CHECK(!exists(never) && !exists(never + TT(".tmp")));
+        del(other_p);
+        del(fresh);
     }
 
     // cancel half way through a game big enough for a progress bar
@@ -1247,13 +1271,13 @@ static void test_apply_file() {
         Bytes big2 = big;
         big2[3u << 20] ^= 0xFF;
         big2[5u << 20] ^= 0xFF;
-        const std::wstring bg = g_dir + L"\\big game.bin", bp = g_dir + L"\\big patch.bps", bo = g_dir + L"\\big out.bin";
+        const TStr bg = g_dir + PS TT("big game.bin"), bp = g_dir + PS TT("big patch.bps"), bo = g_dir + PS TT("big out.bin");
         CHECK(put_file(bg, big));
         CHECK(put_file(bp, bps_sparse(big.size(), {{3u << 20, (uint8_t)(big[3u << 20] ^ 0xFF)}, {5u << 20, (uint8_t)(big[5u << 20] ^ 0xFF)}}, crc_of(big), crc_of(big2))));
         int calls = 0;
         const Result res = apply_file(u8(bg), u8(bp), u8(bo), 0, [&](double f) { ++calls; return f < 0.5; });
         CHECK_ERR(res, Error::Cancelled);
-        CHECK(calls > 3 && !exists(bo) && !exists(bo + L".tmp"));
+        CHECK(calls > 3 && !exists(bo) && !exists(bo + TT(".tmp")));
         CHECK_OK(apply_file(u8(bg), u8(bp), u8(bo), 0, nullptr));
         CHECK(get_file(bo) == big2);
         // the result of crc32_file matches
@@ -1263,8 +1287,8 @@ static void test_apply_file() {
         double last = -1;
         CHECK(crc32_file(u8(bo), &crc, &err, [&](double f) { last = f; return true; }) && last == 1.0);
         CHECK(!crc32_file(u8(bo), &crc, &err, [](double) { return false; }) && err == "Patching was cancelled.");
-        CHECK(!crc32_file(u8(g_dir + L"\\nope.bin"), &crc, &err));
-        DeleteFileW(bg.c_str()); DeleteFileW(bp.c_str()); DeleteFileW(bo.c_str());
+        CHECK(!crc32_file(u8(g_dir + PS TT("nope.bin")), &crc, &err));
+        del(bg); del(bp); del(bo);
     }
 
     // the output may not be the game or the patch
@@ -1288,7 +1312,7 @@ static void test_apply_file() {
 
     // missing and broken inputs
     {
-        const std::wstring none = g_dir + L"\\does not exist.bin", outp = g_dir + L"\\o.out";
+        const TStr none = g_dir + PS TT("does not exist.bin"), outp = g_dir + PS TT("o.out");
         CHECK(put_file(patch_p, ups_encode(game, tgt)));
         CHECK_ERR(apply_file(u8(none), u8(patch_p), u8(outp), 0, nullptr), Error::Io);
         CHECK_ERR(apply_file(u8(game_p), u8(none), u8(outp), 0, nullptr), Error::Io);
@@ -1298,7 +1322,7 @@ static void test_apply_file() {
         CHECK_ERR(apply_file(u8(game_p), u8(patch_p), u8(outp), 0, nullptr), Error::BadPatch);
         CHECK(put_file(patch_p, B("PPF30xxxxxxxxxxxx")));
         CHECK_ERR(apply_file(u8(game_p), u8(patch_p), u8(outp), 0, nullptr), Error::Unsupported);
-        CHECK(!exists(outp) && !exists(outp + L".tmp"));
+        CHECK(!exists(outp) && !exists(outp + TT(".tmp")));
         // inspect_file
         Info info;
         std::string err;
@@ -1310,29 +1334,31 @@ static void test_apply_file() {
         CHECK(!inspect_file(u8(patch_p), &info, &err));
     }
 
+#if RH_WIN
     // a game and an output deep enough for a path past MAX_PATH (the \\?\ prefix is added for you)
     {
-        std::wstring deep = g_dir;
+        TStr deep = g_dir;
         while (deep.size() < 290) {
-            deep += L"\\level-with-a-fairly-long-name-";
+            deep += PS TT("level-with-a-fairly-long-name-");
             deep += std::to_wstring(deep.size());
-            CreateDirectoryW((L"\\\\?\\" + deep).c_str(), nullptr);
+            CreateDirectoryW((TT("\\\\?\\") + deep).c_str(), nullptr);
         }
-        const std::wstring dg = deep + L"\\game.bin", dp = deep + L"\\patch.ups", dout = deep + L"\\out.bin";
+        const TStr dg = deep + PS TT("game.bin"), dp = deep + PS TT("patch.ups"), dout = deep + PS TT("out.bin");
         const Bytes deep_patch = ups_encode(game, tgt);
-        const bool wrote = winutil::write_file(u8(L"\\\\?\\" + dg), game.data(), game.size()) &&
-                           winutil::write_file(u8(L"\\\\?\\" + dp), deep_patch.data(), deep_patch.size());
+        const bool wrote = winutil::write_file(u8(TT("\\\\?\\") + dg), game.data(), game.size()) &&
+                           winutil::write_file(u8(TT("\\\\?\\") + dp), deep_patch.data(), deep_patch.size());
         CHECK(wrote);
         if (wrote) {
             CHECK_OK(apply_file(u8(dg), u8(dp), u8(dout), 0, nullptr));
-            CHECK(exists(L"\\\\?\\" + dout));
+            CHECK(exists(TT("\\\\?\\") + dout));
         }
-        DeleteFileW((L"\\\\?\\" + dg).c_str()); DeleteFileW((L"\\\\?\\" + dp).c_str()); DeleteFileW((L"\\\\?\\" + dout).c_str());
-        for (std::wstring d = deep; d.size() > g_dir.size(); d.resize(d.find_last_of(L'\\'))) RemoveDirectoryW((L"\\\\?\\" + d).c_str());
+        DeleteFileW((TT("\\\\?\\") + dg).c_str()); DeleteFileW((TT("\\\\?\\") + dp).c_str()); DeleteFileW((TT("\\\\?\\") + dout).c_str());
+        for (TStr d = deep; d.size() > g_dir.size(); d.resize(d.find_last_of(L'\\'))) RemoveDirectoryW((TT("\\\\?\\") + d).c_str());
     }
-    DeleteFileW(game_p.c_str());
-    DeleteFileW(patch_p.c_str());
-    DeleteFileW(out_p.c_str());
+#endif
+    del(game_p);
+    del(patch_p);
+    del(out_p);
 }
 
 /* ======================================================================================== fuzz */
@@ -1365,7 +1391,7 @@ struct Seed { std::string name; Bytes game, patch; };
 static void fuzz_seed(const Seed& s, int iters, uint64_t salt) {
     std::printf("  fuzz %-28s %d mutations", s.name.c_str(), iters);
     std::fflush(stdout);
-    const ULONGLONG t0 = GetTickCount64();
+    const uint64_t t0 = plat::now_ms();
     Rng r(salt);
     Bytes out;
     int ok = 0;
@@ -1385,7 +1411,7 @@ static void fuzz_seed(const Seed& s, int iters, uint64_t salt) {
         inspect(exact.get(), m.size(), &info, &err);
         detect(exact.get(), m.size());
     }
-    std::printf("  (%llu ms, %d still applied)\n", (unsigned long long)(GetTickCount64() - t0), ok);
+    std::printf("  (%llu ms, %d still applied)\n", (unsigned long long)(plat::now_ms() - t0), ok);
 }
 
 static void test_fuzz() {
@@ -1432,8 +1458,8 @@ static void test_fuzz() {
     }
 
     // the same through files (FileSource / FileSink / the atomic rename): a few dozen mutated patches per seed
-    const ULONGLONG file_t0 = GetTickCount64();
-    const std::wstring gp = g_dir + L"\\fuzz game.bin", pp = g_dir + L"\\fuzz patch.bin", op = g_dir + L"\\fuzz out.bin";
+    const uint64_t file_t0 = plat::now_ms();
+    const TStr gp = g_dir + PS TT("fuzz game.bin"), pp = g_dir + PS TT("fuzz patch.bin"), op = g_dir + PS TT("fuzz out.bin");
     for (const Seed& s : seeds) {
         if (!put_file(gp, s.game)) { ++g_fail; continue; }
         Rng q(77);
@@ -1441,14 +1467,14 @@ static void test_fuzz() {
             Bytes m = mutate(s.patch, q);
             if (q.below(10) < 7) refresh_crc(m);
             put_file(pp, m);
-            DeleteFileW(op.c_str());
+            del(op);
             const Result res = apply_file(u8(gp), u8(pp), u8(op), 4u << 20, nullptr);
-            if (!res.ok() && (exists(op) || exists(op + L".tmp"))) { std::printf("FAIL fuzz file %s #%d: failed run left a file\n", s.name.c_str(), it); ++g_fail; break; }
+            if (!res.ok() && (exists(op) || exists(op + TT(".tmp")))) { std::printf("FAIL fuzz file %s #%d: failed run left a file\n", s.name.c_str(), it); ++g_fail; break; }
             if (res.ok() && !exists(op)) { std::printf("FAIL fuzz file %s #%d: ok but no output\n", s.name.c_str(), it); ++g_fail; break; }
         }
     }
-    DeleteFileW(gp.c_str()); DeleteFileW(pp.c_str()); DeleteFileW(op.c_str());
-    std::printf("  fuzz through files: %llu ms\n", (unsigned long long)(GetTickCount64() - file_t0));
+    del(gp); del(pp); del(op);
+    std::printf("  fuzz through files: %llu ms\n", (unsigned long long)(plat::now_ms() - file_t0));
 }
 
 /* ======================================================================================== big */
@@ -1457,7 +1483,8 @@ static void test_big() {
     std::printf("big: 1.5 GB sparse game...\n");
     std::fflush(stdout);
     const uint64_t size = 1500ull << 20;
-    const std::wstring gp = g_dir + L"\\huge game.iso", pp = g_dir + L"\\huge patch.bps", op = g_dir + L"\\huge out.iso";
+    const TStr gp = g_dir + PS TT("huge game.iso"), pp = g_dir + PS TT("huge patch.bps"), op = g_dir + PS TT("huge out.iso");
+#if RH_WIN
     {
         HANDLE h = CreateFileW(gp.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         CHECK(h != INVALID_HANDLE_VALUE);
@@ -1469,6 +1496,15 @@ static void test_big() {
         CHECK(SetFilePointerEx(h, li, nullptr, FILE_BEGIN) && SetEndOfFile(h));
         CloseHandle(h);
     }
+#else
+    {   // a sparse file: extend with ftruncate (APFS keeps the holes)
+        FILE* f = std::fopen(u8(gp).c_str(), "wb");
+        CHECK(f != nullptr);
+        if (!f) return;
+        CHECK(ftruncate(fileno(f), (off_t)size) == 0);
+        std::fclose(f);
+    }
+#endif
     // the game is all zeros; the result differs at three places
     const std::vector<Edit> edits = {{12345, 0x11}, {size / 2, 0x22}, {size - 1, 0x33}};
     Bytes zeros(1u << 20, 0);
@@ -1482,20 +1518,28 @@ static void test_big() {
         done += n;
     }
     CHECK(put_file(pp, bps_sparse(size, edits, src_crc, tgt_crc)));
+#if RH_WIN
     PROCESS_MEMORY_COUNTERS before = {}, after = {};
     GetProcessMemoryInfo(GetCurrentProcess(), &before, sizeof before);
+#endif
     int calls = 0;
     const Result res = apply_file(u8(gp), u8(pp), u8(op), 0, [&](double) { ++calls; return true; });
+#if RH_WIN
     GetProcessMemoryInfo(GetCurrentProcess(), &after, sizeof after);
+#endif
     CHECK_OK(res);
+#if RH_WIN
     const double grew = ((double)after.PeakWorkingSetSize - (double)before.PeakWorkingSetSize) / (1024.0 * 1024.0);
     const double page = ((double)after.PeakPagefileUsage - (double)before.PeakPagefileUsage) / (1024.0 * 1024.0);
     std::printf("big: %d progress calls, peak working set grew %.1f MB, peak commit grew %.1f MB\n", calls, grew, page);
     CHECK(page < 200.0);
+#else
+    std::printf("big: %d progress calls\n", calls);   // no per-process commit counter here: the check is the CRC below
+#endif
     uint32_t got = 0;
     std::string err;
     CHECK(crc32_file(u8(op), &got, &err) && got == tgt_crc);
-    DeleteFileW(gp.c_str()); DeleteFileW(pp.c_str()); DeleteFileW(op.c_str());
+    del(gp); del(pp); del(op);
 }
 
 /* ======================================================================================== main */
@@ -1507,10 +1551,15 @@ int main(int argc, char** argv) {
         else if (a == "--fuzz" && i + 1 < argc) g_fuzz_iters = std::max(1, std::atoi(argv[++i]));
         else g_data_dir = a;
     }
+#if RH_WIN
     wchar_t tmp[MAX_PATH];
     GetTempPathW(MAX_PATH, tmp);
-    g_dir = std::wstring(tmp) + L"patcher test \u00e9 \u65e5\u672c " + std::to_wstring(GetCurrentProcessId());
+    g_dir = TStr(tmp) + TT("patcher test \u00e9 \u65e5\u672c ") + std::to_wstring(GetCurrentProcessId());
     CreateDirectoryW(g_dir.c_str(), nullptr);
+#else
+    g_dir = (std::filesystem::temp_directory_path() / ("patcher test \u00e9 \u65e5\u672c " + std::to_string(plat::current_pid()))).string();
+    { std::error_code ec; std::filesystem::create_directories(std::filesystem::path(g_dir), ec); }
+#endif
     try {
         struct Step { const char* name; void (*fn)(); };
         const Step steps[] = {{"crc32", test_crc32}, {"detect", test_detect_and_ext}, {"ips", test_ips}, {"ups", test_ups},
@@ -1518,50 +1567,54 @@ int main(int argc, char** argv) {
                               {"vcdiff round trips", test_vcdiff_roundtrip}, {"xdelta3 fixtures", test_vcdiff_fixtures},
                               {"inspect, limits", test_inspect_and_limits}, {"apply_file", test_apply_file}};
         for (const Step& s : steps) {
-            const ULONGLONG t0 = GetTickCount64();
+            const uint64_t t0 = plat::now_ms();
             s.fn();
-            std::printf("%-20s %6llu ms\n", s.name, (unsigned long long)(GetTickCount64() - t0));
+            std::printf("%-20s %6llu ms\n", s.name, (unsigned long long)(plat::now_ms() - t0));
         }
         std::printf("fuzz: %d mutations per seed\n", g_fuzz_iters);
-        const ULONGLONG t0 = GetTickCount64();
+        const uint64_t t0 = plat::now_ms();
         test_fuzz();
-        std::printf("%-20s %6llu ms\n", "fuzz (all)", (unsigned long long)(GetTickCount64() - t0));
+        std::printf("%-20s %6llu ms\n", "fuzz (all)", (unsigned long long)(plat::now_ms() - t0));
         if (g_big) test_big();
     } catch (const std::exception& e) {
         std::printf("FAIL: exception escaped: %s\n", e.what());
         ++g_fail;
     }
     // best-effort cleanup of the scratch folder
+#if RH_WIN
     {
         WIN32_FIND_DATAW fd;
-        HANDLE h = FindFirstFileW((g_dir + L"\\*").c_str(), &fd);
+        HANDLE h = FindFirstFileW((g_dir + PS TT("*")).c_str(), &fd);
         if (h != INVALID_HANDLE_VALUE) {
             do {
-                const std::wstring n = fd.cFileName;
-                if (n == L"." || n == L"..") continue;
-                const std::wstring p = g_dir + L"\\" + n;
+                const TStr n = fd.cFileName;
+                if (n == TT(".") || n == TT("..")) continue;
+                const TStr p = g_dir + PS TT("") + n;
                 if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
                     WIN32_FIND_DATAW f2;
-                    HANDLE h2 = FindFirstFileW((p + L"\\*").c_str(), &f2);
+                    HANDLE h2 = FindFirstFileW((p + PS TT("*")).c_str(), &f2);
                     if (h2 != INVALID_HANDLE_VALUE) {
                         do {
-                            const std::wstring n2 = f2.cFileName;
-                            if (n2 == L"." || n2 == L"..") continue;
-                            const std::wstring p2 = p + L"\\" + n2;
+                            const TStr n2 = f2.cFileName;
+                            if (n2 == TT(".") || n2 == TT("..")) continue;
+                            const TStr p2 = p + PS TT("") + n2;
                             if (f2.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) RemoveDirectoryW(p2.c_str());
-                            else DeleteFileW(p2.c_str());
+                            else del(p2);
                         } while (FindNextFileW(h2, &f2));
                         FindClose(h2);
                     }
                     RemoveDirectoryW(p.c_str());
                 } else {
-                    DeleteFileW(p.c_str());
+                    del(p);
                 }
             } while (FindNextFileW(h, &fd));
             FindClose(h);
         }
         RemoveDirectoryW(g_dir.c_str());
     }
+#else
+    { std::error_code ec; std::filesystem::remove_all(std::filesystem::path(g_dir), ec); }
+#endif
     if (g_fail) { std::printf("patcher_test: %d FAILED\n", g_fail); return 1; }
     std::printf("patcher_test: all passed\n");
     return 0;

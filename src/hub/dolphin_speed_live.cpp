@@ -5,6 +5,12 @@
  *
  * usage: hub_dolphin_speed_live --dolphin <dir with Dolphin.exe> --work <scratch dir> [--video Null] [--settle 4]
  * exit: 0 pass, 1 fail, 77 skipped (no Dolphin / no title speed available on this machine). */
+#include "../common/plat/plat.h"
+#if !RH_WIN
+/* TODO(macOS lane 7): reading Dolphin's guest RAM needs task_for_pid (entitlement + root) and a hidden desktop does not exist on macOS: not supported. */
+#include <cstdio>
+int main() { std::printf("SKIP: the live Dolphin speed test is Windows-only (needs ReadProcessMemory + a hidden desktop)\n"); return 77; }
+#else
 #include "emulators.h"
 #include "logic.h"
 #include "controls.h"
@@ -176,3 +182,5 @@ int main(int argc, char** argv) {
     std::printf(fails ? "RESULT: FAIL (%d)\n" : "RESULT: PASS\n", fails);
     return fails ? 1 : 0;
 }
+
+#endif   // RH_WIN

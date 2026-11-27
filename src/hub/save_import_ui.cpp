@@ -55,7 +55,7 @@ std::string date_text(int64_t t) {
     if (t <= 0) return "unknown date";
     std::time_t tt = (std::time_t)t;
     std::tm lt{};
-    localtime_s(&lt, &tt);
+    plat::local_tm(tt, &lt);
     static const char* mon[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     char b[40];
     std::snprintf(b, sizeof b, "%d %s %d, %02d:%02d", lt.tm_mday, mon[lt.tm_mon % 12], lt.tm_year + 1900, lt.tm_hour, lt.tm_min);
@@ -70,7 +70,7 @@ std::string size_text(int64_t n) {
 }
 
 std::string n64_ini_text() {
-    for (const std::string& p : {hub::exe_dir() + "emu\\mupen64plus.ini", find_upward("deps\\emu\\mupen64plus.ini"), find_upward("emu\\mupen64plus.ini")}) {
+    for (const std::string& p : {hub::exe_dir() + "emu" + plat::kSep + "mupen64plus.ini", find_upward(std::string("deps") + plat::kSep + "emu" + plat::kSep + "mupen64plus.ini"), find_upward(std::string("emu") + plat::kSep + "mupen64plus.ini")}) {
         if (p.empty() || !file_exists(p)) continue;
         std::ifstream f(std::filesystem::u8path(p), std::ios::binary);
         if (f) return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -98,6 +98,17 @@ std::vector<si::GameRef> library_games() {
 
 si::Env make_env(const std::string& docs) {
     si::Env env;
+#if !RH_WIN
+    {   // macOS: no APPDATA / USERPROFILE; the per-user folders hang off $HOME (Windows-style program folders stay empty)
+        const char* home = std::getenv("HOME");
+        env.userprofile = home ? home : "";
+        env.appdata = env.userprofile + "/Library/Application Support";
+        env.localappdata = env.appdata;
+        env.documents = docs;
+        env.own_data_dir = hub::data_dir();
+        return env;
+    }
+#endif
     env.appdata = env_var(L"APPDATA");
     env.localappdata = env_var(L"LOCALAPPDATA");
     env.userprofile = env_var(L"USERPROFILE");
@@ -122,9 +133,14 @@ void si_start_scan() {
     auto out = G.scan;
     std::vector<si::GameRef> games = library_games();
     std::vector<si::Found> extra = G.extra;
+#if RH_WIN
     std::string up = env_var(L"USERPROFILE");
     std::vector<std::string> docs = {up.empty() ? std::string() : up + "\\Documents"};
     for (const wchar_t* n : {L"OneDrive", L"OneDriveConsumer"}) { std::string od = env_var(n); if (!od.empty()) docs.push_back(od + "\\Documents"); }
+#else
+    const char* home_c = std::getenv("HOME");
+    std::vector<std::string> docs = {home_c && *home_c ? std::string(home_c) + "/Documents" : std::string()};
+#endif
     std::string ini = n64_ini_text();
     std::thread([out, games, extra, docs, ini]() {
         std::vector<si::Folder> folders;
@@ -155,7 +171,7 @@ void si_start_scan() {
         out->sources.assign(src_names.begin(), src_names.end());
         for (auto& f : folders) if (f.src == si::Source::RetroArch) {
             std::string base = std::filesystem::u8path(f.dir).parent_path().u8string();
-            out->states += si::count_files_with_ext(base + "\\states", ".state");
+            out->states += si::count_files_with_ext(base + plat::kSep + "states", ".state");
         }
         out->games = games;
         out->ini = ini;

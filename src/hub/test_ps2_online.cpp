@@ -6,6 +6,7 @@
 #include <string>
 
 #include "emulators.h"
+#include "plat/plat.h"
 #include "logic.h"
 
 static int fails = 0;
@@ -43,9 +44,15 @@ int main() {
 
     /* ---- the pinned LRPS2 download (docs/PS2_ONLINE.md) ---- */
     const hubemu::Release& r = hubemu::release(hubemu::Kind::Lrps2);
+#if RH_WIN
     CHECK(r.size == 3432192ull);
     CHECK(std::string(r.sha256) == "ff97bd2690e7a53433e1deb3570a72f9a06a78253f1db3796c8df6742aca7fe7");
     CHECK(std::wstring(r.host) == L"github.com" && std::wstring(r.path).find(L"/fatty8me2/retrohub/releases/download/core-lrps2-") == 0 && std::wstring(r.path).find(L"latest") == std::wstring::npos && std::wstring(r.exe) == L"pcsx2_libretro.dll");
+#else
+    /* macOS: no LRPS2 core pin yet (TODO(macOS lane 7)): the row is a placeholder and installing is refused ("not available on macOS yet"). */
+    CHECK(hubemu::release_is_placeholder(hubemu::Kind::Lrps2));
+    CHECK(r.size == 0 && std::wstring(r.exe) == L"pcsx2_libretro.dylib");
+#endif
     CHECK(std::string(hubemu::name(hubemu::Kind::Lrps2)) == "PS2 online core");
     CHECK(hubemu::managed_dir(hubemu::Kind::Lrps2, "R").find("lrps2") != std::string::npos);
     CHECK(hubemu::kind_for(hub::System::PS2) == hubemu::Kind::Pcsx2);   // offline PS2 keeps using PCSX2

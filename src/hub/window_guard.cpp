@@ -2,8 +2,11 @@
 #include "app.h"
 #include "popup_guard.h"
 
+#if RH_WIN
 #include <shellapi.h>
+#endif
 
+#if RH_WIN
 static bool os_busy() {
     /* Cached: asked at most twice a second. QUNS_BUSY / RUNNING_D3D_FULL_SCREEN / PRESENTATION_MODE = another app owns the screen. */
     static ULONGLONG last = 0;
@@ -16,6 +19,11 @@ static bool os_busy() {
            (s == QUNS_BUSY || s == QUNS_RUNNING_D3D_FULL_SCREEN || s == QUNS_PRESENTATION_MODE);
     return busy;
 }
+#else
+/* macOS: there is no "another app owns the screen" query as cheap as SHQueryUserNotificationState; game_active() relies on the sessions the hub
+ * itself knows about. TODO(macOS lane 8): detect another app's full-screen Space / Do Not Disturb Focus with CGWindowList. */
+static bool os_busy() { return false; }
+#endif
 
 static hubguard::Sessions sessions_now();
 
@@ -51,6 +59,11 @@ bool hub_surface() {
 }
 
 void hub_show_noactivate() {
+#if RH_WIN
     if (!A.hwnd || g_headless) return;
     ShowWindow(A.hwnd, SW_SHOWMINNOACTIVE);   // in the taskbar, never in front, never focused
+#else
+    if (!A.win || g_headless) return;
+    SDL_MinimizeWindow(A.win);   // in the Dock, never in front, never focused
+#endif
 }

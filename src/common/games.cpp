@@ -1,8 +1,12 @@
 #include "winutil.h"
 #include "games.h"
+#include "plat/plat.h"
+#include "plat/plat_crypto.h"
 
+#if RH_WIN
 #include <windows.h>
 #include <bcrypt.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -26,8 +30,17 @@ constexpr size_t kMaxRomSize = 64u * 1024u * 1024u; // 64 MB
 std::wstring to_wide(const std::string& s) { return winutil::to_wide(s); }
 
 std::string to_utf8(const std::wstring& s) { return winutil::to_utf8(s); }
+#if RH_MAC
+std::string to_utf8(const std::string& s) { return s; }   // path::native() is already UTF-8 here
+#endif
 
-fs::path utf8_path(const std::string& s) { return fs::path(to_wide(s)); }
+fs::path utf8_path(const std::string& s) {
+#if RH_WIN
+    return fs::path(to_wide(s));
+#else
+    return fs::path(s);
+#endif
+}
 std::string path_utf8(const fs::path& p) { return to_utf8(p.native()); }
 
 std::string ascii_lower(std::string s) {
@@ -37,8 +50,9 @@ std::string ascii_lower(std::string s) {
     return s;
 }
 
-/* ---- MD5 via Windows BCrypt ---- */
+/* ---- MD5 via Windows BCrypt (uppercase hex) ---- */
 
+#if RH_WIN
 std::string md5_bcrypt(const uint8_t* data, size_t len) {
     BCRYPT_ALG_HANDLE alg = nullptr;
     if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&alg, BCRYPT_MD5_ALGORITHM, nullptr, 0)))
@@ -80,6 +94,7 @@ std::string md5_bcrypt(const uint8_t* data, size_t len) {
     BCryptCloseAlgorithmProvider(alg, 0);
     return result;
 }
+#endif
 
 /* ---- ROM byte order ---- */
 
@@ -1082,7 +1097,15 @@ bool load_rom(const std::string& path, std::vector<uint8_t>* z64_image) {
 }
 
 std::string md5_hex(const uint8_t* data, size_t len) {
+#if RH_WIN
     return md5_bcrypt(data, len);
+#else
+    // plat::hash: MD5 through CommonCrypto, the same digest bytes as BCrypt; uppercase hex like md5_bcrypt returns
+    std::string raw = plat::hash(plat::HashAlg::Md5, data, len);
+    std::string hex = plat::hex(raw);
+    for (char& c : hex) if (c >= 'a' && c <= 'f') c = char(c - 32);
+    return hex;
+#endif
 }
 
 bool identify_rom(const std::string& path, RomFile* out) {
@@ -1185,9 +1208,14 @@ void collect_library_folders(const fs::path& dir, int depth, std::vector<fs::pat
 
 std::vector<std::string> suggest_rom_folders(size_t max_out) {
     std::vector<std::string> out;
-    const wchar_t* up = _wgetenv(L"USERPROFILE");
-    if (!up || !*up || max_out == 0) return out;
-    const fs::path home(up);
+    std::string home_s;
+#if RH_WIN
+    if (const wchar_t* up = _wgetenv(L"USERPROFILE")) home_s = winutil::to_utf8(up);
+#else
+    if (const char* h = std::getenv("HOME")) home_s = h;
+#endif
+    if (home_s.empty() || max_out == 0) return out;
+    const fs::path home{utf8_path(home_s)};
 
     std::vector<fs::path> cands;
     for (const char* base : {"Desktop", "Documents", "Downloads"}) {
@@ -1207,7 +1235,7 @@ std::vector<std::string> suggest_rom_folders(size_t max_out) {
         if (std::find(seen.begin(), seen.end(), s) != seen.end()) continue;
         bool nested = false;   // a folder inside one already suggested adds nothing (the parent scan covers it)
         for (const std::string& q : seen)
-            if (s.size() > q.size() && s.compare(0, q.size(), q) == 0 && s[q.size()] == '\\') nested = true;
+            if (s.size() > q.size() && s.compare(0, q.size(), q) == 0 && s[q.size()] == plat::kSep) nested = true;
         if (nested) continue;
         seen.push_back(s);
         out.push_back(s);
@@ -1222,7 +1250,19 @@ std::string exe_dir() { return winutil::exe_dir(); }
 /* userdata\ beside the exe, created on the first call. Called all over (the game page draws use it every frame), so the folder is made
  * once per process and not checked on every call: create_directories walks every parent folder (two file-system calls each). */
 std::string data_dir() {
+#if RH_WIN
     std::string dir = exe_dir() + "userdata\\";
+#else
+    /* macOS: an app bundle is read-only (and signed), so a bundled RetroHub keeps its data in
+     * ~/Library/Application Support/RetroHub/userdata/. A loose build (dev tree, tests) keeps userdata/ beside the exe, like Windows. */
+    static const std::string dir = [] {
+        const std::string ed = exe_dir();
+        const char* home = std::getenv("HOME");
+        if (ed.find(".app/Contents/MacOS/") != std::string::npos && home && *home)
+            return std::string(home) + "/Library/Application Support/RetroHub/userdata/";
+        return ed + "userdata/";
+    }();
+#endif
     static std::atomic<bool> made{false};
     if (!made.load(std::memory_order_acquire)) {
         std::error_code ec;

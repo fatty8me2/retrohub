@@ -235,9 +235,9 @@ void stats_ui_card() {
         }
         std::time_t t = std::time(nullptr);
         std::tm lt{};
-        localtime_s(&lt, &t);
+        plat::local_tm(t, &lt);
         std::tm gm{};
-        gmtime_s(&gm, &t);
+        plat::utc_tm(t, &gm);
         int tz = (int)(std::difftime(std::mktime(&lt), std::mktime(&gm)));
         if (lt.tm_isdst > 0) tz += 3600;
         SC.st = hs::compute_stats(tot, hs::playlog_read_all(), (int64_t)t, tz);

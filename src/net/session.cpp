@@ -10,7 +10,10 @@
  *   'R' roster   [R, 0, mask]     host -> clients, bit s set = slot s reachable from the host
  *   'B' bye      [B, from]        clean end: the sender is leaving on purpose (not a failure)
  */
-#include <winsock2.h>   // WSAEventSelect (Session::set_wake_event)
+#include "plat/plat_sock.h"   // WSAEventSelect on Windows (Session::set_wake_event)
+#if !RH_WIN
+#include "plat/plat_wake.h"   // macOS: the owner polls the UDP socket together with the Waker
+#endif
 #include <chrono>
 #include <algorithm>
 #include "net_internal.h"
@@ -905,7 +908,11 @@ bool Session::await_host_verdict(uint32_t max_ms)
         in.elapsed_ms = now_ms() - t0;
         v = host_verdict(in);
         if (v != HostVerdict::Wait) break;
+#if RH_WIN
         Sleep(10);
+#else
+        plat::sleep_ms(10);
+#endif
     }
     d.verdict_done = true;
     d.verdict_left = (v == HostVerdict::HostLeft);
@@ -943,9 +950,15 @@ int Session::ping_ms(int slot) const
 }
 
 uint16_t Session::local_port() const { return impl_->udp.local_port(); }
+intptr_t Session::udp_socket() const { return impl_->udp.is_open() ? (intptr_t)impl_->udp.handle() : -1; }
 void Session::set_wake_event(void* event) {
     impl_->ws.set_wake(event);
+#if RH_WIN
     if (impl_->udp.is_open()) WSAEventSelect((SOCKET)impl_->udp.handle(), (WSAEVENT)event, event ? FD_READ : 0);
+#else
+    // macOS: the owner polls udp.handle() together with the Waker (plat::wait_readable)
+    (void)event;
+#endif
 }
 uint32_t Session::spoofed_frames() const { return impl_->spoof_dropped; }
 uint32_t Session::unproven_frames() const { return impl_->unproven_seen; }

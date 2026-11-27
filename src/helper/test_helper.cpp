@@ -1,6 +1,8 @@
 /* rh-helper tests: the pure allowlist / name / command-line rules, plus the real exe's exit codes for rejected input.
  * Usage: rh_helper_test <path to rh-helper.exe> <path to data/helpers> */
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 
 #include <cstdio>
 #include <filesystem>
@@ -13,6 +15,7 @@ static int fails = 0;
 namespace fs = std::filesystem;
 using namespace rhhelper;
 
+#if defined(_WIN32)
 static DWORD run_exit(const fs::path& exe, const std::wstring& args) {
     std::wstring cmd = L"\"" + exe.wstring() + L"\" " + args;
     STARTUPINFOW si{}; si.cb = sizeof si;
@@ -24,6 +27,7 @@ static DWORD run_exit(const fs::path& exe, const std::wstring& args) {
     CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
     return code;
 }
+#endif
 
 int main(int argc, char** argv) {
     /* allowlist: exactly the shipped names, case-sensitive */
@@ -52,6 +56,7 @@ int main(int argc, char** argv) {
     CHECK(!parse_run(L"rh-helper.exe run \x00E9vil.ps1", &n, &t));
     CHECK(parse_run(L"rh-helper.exe run ..\\n3ds_join.ps1", &n, &t) && !script_allowed(n));
 
+#if defined(_WIN32)   // rh-helper.exe is a Windows-only tool (PowerShell UI Automation scripts); there is nothing to run on macOS
     /* the real exe */
     if (argc >= 2 && fs::exists(argv[1])) {
         const fs::path exe = argv[1];
@@ -66,6 +71,7 @@ int main(int argc, char** argv) {
         CHECK(!ec && run_exit(tmp / "rh-helper.exe", L"run n3ds_join.ps1 -AzPid 1") == 4);
         fs::remove_all(tmp, ec);
     }
+#endif
     std::printf(fails ? "rh_helper_test FAILED\n" : "rh_helper_test OK\n");
     return fails ? 1 : 0;
 }
