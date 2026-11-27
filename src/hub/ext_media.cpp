@@ -231,6 +231,9 @@ int set_audio(const std::vector<unsigned long>& pids, float scalar, bool mute) {
 #else
 /* macOS: external-emulator screenshots and per-app volume are not supported yet. Callers see "nothing started" / "0 sessions changed". */
 // TODO(macOS lane 8): window capture (ScreenCaptureKit) and per-app volume for Dolphin / PCSX2 / PPSSPP / Azahar / Cemu.
+#define STB_IMAGE_WRITE_IMPLEMENTATION   // the hub's one copy of the PNG writer (wrapped_ui.cpp uses it), as in the Windows branch
+#define STBI_WRITE_NO_STDIO
+#include "../retrorun/third_party/stb_image_write.h"
 namespace extmedia {
 bool capture_start(void*, const std::string&) { return false; }
 int capture_poll(std::string*) { return 0; }
