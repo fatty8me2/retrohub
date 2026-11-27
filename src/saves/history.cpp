@@ -4,10 +4,15 @@
 #include "savestore.h"
 #include "durable_write.h"
 
+#include "plat/plat.h"
+#include "winutil.h"
+
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -119,10 +124,18 @@ bool make_snapshot(const fs::path& dir, const fs::path& battery, int64_t ts, con
 }
 
 std::string device_name() {   // UTF-8 (the history table draws it): the ANSI name turned a non-ASCII PC name into mojibake
+#if RH_WIN
     wchar_t b[MAX_COMPUTERNAME_LENGTH + 2];
     DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
     if (!GetComputerNameW(b, &n)) return "this PC";
     return S(fs::path(std::wstring(b, n)));
+#else
+    char b[256] = {};
+    if (gethostname(b, sizeof b - 1) != 0 || !b[0]) return "this PC";
+    std::string h = b;
+    size_t dot = h.find('.');
+    return dot == 0 || dot == std::string::npos ? h : h.substr(0, dot);   // "MacBook.local" -> "MacBook"
+#endif
 }
 
 }  // namespace
@@ -256,7 +269,8 @@ std::string game_history_dir(const std::string& system_short, const std::string&
     fs::path g = P(game_dir_path(system_short, game_key));
     if (g.filename().empty()) g = g.parent_path();
     std::string key = S(g.filename()), sys = S(g.parent_path().filename());
-    return hub::data_dir() + "save_history\\" + sys + "\\" + key + "\\";
+    const std::string sep(1, plat::kSep);   // a filesystem path: native separator (the sys / key components are the same strings on every platform)
+    return hub::data_dir() + "save_history" + sep + sys + sep + key + sep;
 }
 
 bool history_snapshot_game(const std::string& system_short, const std::string& game_key) {

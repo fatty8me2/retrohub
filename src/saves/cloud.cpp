@@ -1,4 +1,6 @@
-/* Cloud saves backend (see cloud.h). Windows only: WinHTTP + BCrypt. */
+/* Cloud saves backend (see cloud.h). Windows: WinHTTP + BCrypt. macOS: plat::http (NSURLSession) + plat_crypto (CommonCrypto). */
+#include "plat/plat.h"
+#include "plat/plat_crypto.h"
 #include "winutil.h"
 #include "durable_write.h"
 #include "json.h"
@@ -6,12 +8,19 @@
 #include "cloud_http.h"
 #include "miniz.h"
 
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <winhttp.h>
 #include <bcrypt.h>
+#else
+#include "plat/plat_http.h"
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -43,6 +52,7 @@ str to_hex(const unsigned char* d, size_t n) {
     return o;
 }
 
+#if RH_WIN
 class Sha {
 public:
     explicit Sha(const str* hmac_key = nullptr) {
@@ -61,6 +71,22 @@ private:
     BCRYPT_ALG_HANDLE alg_ = nullptr;
     BCRYPT_HASH_HANDLE h_ = nullptr;
 };
+#else
+/* SHA-256, or HMAC-SHA-256 when a key is given: same digest bytes as BCrypt. */
+class Sha {
+public:
+    explicit Sha(const str* hmac_key = nullptr) : h_(plat::HashAlg::Sha256) { if (hmac_key) { hmac_ = true; key_ = *hmac_key; } }
+    void update(const void* d, size_t n) { if (hmac_) msg_.append((const char*)d, n); else h_.update(d, n); }
+    str hex() {
+        str raw = hmac_ ? plat::hmac(plat::HashAlg::Sha256, key_, msg_) : h_.finish();
+        return raw.size() == 32 ? plat::hex(raw) : str();
+    }
+private:
+    plat::Hasher h_;
+    bool hmac_ = false;
+    str key_, msg_;
+};
+#endif
 
 str sha_file(const fs::path& p) {
     std::ifstream f(p, std::ios::binary);
@@ -81,7 +107,9 @@ str str_of(const JV& o, const char* k) {   // strings and numbers (raw text), el
 long long num_of(const JV& o, const char* k) { return o.i64(k, 0); }
 
 /* ----------------------------------------------------------------- http */
+#if RH_WIN
 std::wstring W(const std::string& s) { return winutil::to_wide(s); }
+#endif
 
 str url_enc(const str& s) {
     str o; char b[4];
@@ -118,11 +146,12 @@ struct Http {
     const CloudConfig& cfg;
     bool https = false;
     str host;
-    INTERNET_PORT port = 0;
     str base_path;
-    HINTERNET session = nullptr, conn = nullptr;
     bool ok = false;
     int tmo[4] = {8000, 8000, 30000, 30000};
+#if RH_WIN
+    INTERNET_PORT port = 0;
+    HINTERNET session = nullptr, conn = nullptr;
 
     explicit Http(const CloudConfig& c, int resolve_ms = 8000, int connect_ms = 8000, int send_ms = 30000, int recv_ms = 30000) : cfg(c) {
         URL_COMPONENTSW uc = {};
@@ -239,6 +268,97 @@ struct Http {
         finish();
         return r;
     }
+#else
+    int port = 0;
+    str authority;   // host[:port] exactly as in the configured URL
+
+    explicit Http(const CloudConfig& c, int resolve_ms = 8000, int connect_ms = 8000, int send_ms = 30000, int recv_ms = 30000) : cfg(c) {
+        const str& u = c.base_url;
+        size_t se = u.find("://");
+        if (se == str::npos) return;
+        str scheme = u.substr(0, se);
+        for (auto& ch : scheme) ch = (char)tolower((unsigned char)ch);
+        if (scheme != "http" && scheme != "https") return;
+        https = scheme == "https";
+        size_t ae = u.find_first_of("/?#", se + 3);
+        authority = u.substr(se + 3, ae == str::npos ? str::npos : ae - se - 3);
+        if (authority.empty()) return;
+        host = authority;
+        port = https ? 443 : 80;
+        size_t colon = authority.rfind(':');
+        if (colon != str::npos && authority.find(']', colon) == str::npos) {
+            host = authority.substr(0, colon);
+            port = atoi(authority.c_str() + colon + 1);
+        }
+        if (host.empty()) return;
+        base_path = ae == str::npos ? str() : u.substr(ae);
+        size_t q = base_path.find_first_of("?#");
+        if (q != str::npos) base_path.resize(q);
+        while (!base_path.empty() && base_path.back() == '/') base_path.pop_back();
+        tmo[0] = resolve_ms; tmo[1] = connect_ms; tmo[2] = send_ms; tmo[3] = recv_ms;
+        ok = true;
+    }
+
+    /* One attempt. sink != null receives the body of a 2xx reply as it arrives (a broken transfer leaves the partial data with the
+     * sink, which is what resumable downloads rely on); any other body is kept in Resp::body, capped at 8 MB. */
+    Resp once(const str& method, const str& pq, const std::vector<str>& extra, const char* body, size_t blen,
+              const str& body_sha, const std::function<bool(const char*, size_t)>& sink) {
+        Resp r;
+        auto ts = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count() + g_skew_ms.load();
+        auto xh = [&](const char* name) {
+            str pre = str(name) + ": ";
+            for (auto& e : extra) if (e.compare(0, pre.size(), pre) == 0) return e.substr(pre.size());
+            return str();
+        };
+        str clen = method == "PUT" ? std::to_string(blen) : str();
+        plat::http::Request rq;
+        rq.method = method;
+        rq.url = str(https ? "https://" : "http://") + authority + base_path + pq;
+        rq.headers.push_back({"User-Agent", "RetroHub-CloudSaves/1.0"});
+        rq.headers.push_back({"Authorization", "RHSIG uid=" + cfg.user_id + ",ts=" + std::to_string(ts) + ",sig=" +
+              cloud_sign(cfg.secret, method, base_path + pq, ts, body_sha, xh("If-Match"), xh("If-None-Match"), clen,
+                         xh("X-RH-Mtime"))});
+        if (!body_sha.empty()) rq.headers.push_back({"X-RH-Sha", body_sha});
+        for (auto& e : extra) {
+            size_t c = e.find(": ");
+            if (c == str::npos) continue;
+            rq.headers.push_back({e.substr(0, c), e.substr(c + 2)});
+        }
+        if (blen) rq.body.assign(body, blen);
+        rq.connect_timeout_ms = std::max(tmo[0], tmo[1]);
+        rq.timeout_ms = std::max(tmo[1], tmo[3]);   // same budget as the Windows watchdog: no progress for max(connect, receive)
+        plat::http::Response rs;
+        bool sink_failed = false;
+        str kept;   // non-2xx / sink-less body
+        /* on_data runs on the transport's delegate thread after the response headers were stored in rs, so rs.status is the final status. */
+        rq.on_data = [&](const char* d, size_t n) {
+            if (sink && rs.status >= 200 && rs.status < 300) {
+                if (!sink(d, n)) { sink_failed = true; return false; }
+            } else if (kept.size() < (8u << 20)) kept.append(d, std::min<size_t>(n, (8u << 20) - kept.size()));
+            return true;
+        };
+        bool done = plat::http::perform(rq, &rs);
+        r.status = rs.status;
+        if (!done) {
+            const bool to = rs.error == "timeout";
+            if (sink_failed) { r.hdr["x-partial-status"] = std::to_string(rs.status); r.status = 0; r.error = "sink failed"; return r; }
+            if (rs.status == 0) { r.error = to ? str("network timeout") : "network error " + (rs.error.empty() ? str("0") : rs.error); return r; }
+            r.hdr["x-partial-status"] = std::to_string(rs.status);   // the status arrived but the body did not
+            r.status = 0;
+            r.error = to ? "network timeout" : "read failed";
+            return r;
+        }
+        auto hv = [&](const char* lname) { auto it = rs.headers.find(lname); return it == rs.headers.end() ? str() : it->second; };
+        r.etag = hv("etag"); r.sha = hv("x-rh-sha"); r.mtime = hv("x-rh-mtime");
+        for (const char* hn : {"x-rh-sha", "x-rh-plain-sha", "x-rh-enc", "x-rh-size", "retry-after", "content-range"}) {
+            str v = hv(hn);
+            if (!v.empty()) r.hdr[hn] = v;
+        }
+        r.body = std::move(kept);
+        return r;
+    }
+#endif
 
     /* With retries on network errors, 5xx and 429. A sink retry re-issues the request, so the sink must be
      * restartable: it is told via reset() before each attempt. */
@@ -312,18 +432,45 @@ bool wanted(const str& rel, bool states) {
     return rel.size() < 7 || rel.compare(rel.size() - 7, 7, ".hubtmp") != 0;
 }
 
+#if !RH_WIN
+/* Manifests and the server speak FILETIME (100 ns since 1601) on every platform; macOS converts at the file boundary. */
+const uint64_t kEpochDiff = 116444736000000000ULL;
+bool posix_set_ft(const fs::path& p, uint64_t ft) {
+    struct timespec ts[2];
+    ts[0].tv_sec = 0; ts[0].tv_nsec = UTIME_OMIT;
+    if (ft < kEpochDiff) { ts[1].tv_sec = 0; ts[1].tv_nsec = 0; }
+    else { uint64_t d = ft - kEpochDiff; ts[1].tv_sec = (time_t)(d / 10000000ULL); ts[1].tv_nsec = (long)((d % 10000000ULL) * 100); }
+    return utimensat(AT_FDCWD, p.c_str(), ts, 0) == 0;
+}
+bool posix_get_ft(const fs::path& p, uint64_t* ft) {
+    struct stat st;
+    if (::stat(p.c_str(), &st) != 0) return false;
+    *ft = (uint64_t)st.st_mtimespec.tv_sec * 10000000ULL + (uint64_t)st.st_mtimespec.tv_nsec / 100 + kEpochDiff;
+    return true;
+}
+#endif
+
 void set_mtime(const fs::path& p, const str& mtime) {
     if (mtime.empty()) return;
     uint64_t ft = strtoull(mtime.c_str(), nullptr, 10);
     if (!ft) return;
+#if !RH_WIN
+    posix_set_ft(p, ft);
+    return;
+#else
     HANDLE h = CreateFileW(p.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return;
     FILETIME f; f.dwLowDateTime = (DWORD)ft; f.dwHighDateTime = (DWORD)(ft >> 32);
     SetFileTime(h, nullptr, nullptr, &f);
     CloseHandle(h);
+#endif
 }
 str file_mtime(const fs::path& p) {
+#if !RH_WIN
+    uint64_t ft = 0;
+    return posix_get_ft(p, &ft) ? std::to_string(ft) : str("0");
+#else
     HANDLE h = CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return "0";
@@ -331,6 +478,7 @@ str file_mtime(const fs::path& p) {
     GetFileTime(h, nullptr, nullptr, &f);
     CloseHandle(h);
     return std::to_string(((uint64_t)f.dwHighDateTime << 32) | f.dwLowDateTime);
+#endif
 }
 
 bool fetch_list(Http& http, std::vector<RemoteFile>& out, CloudStatus* stat, str* err, int* status) {
@@ -359,9 +507,16 @@ bool fetch_list(Http& http, std::vector<RemoteFile>& out, CloudStatus* stat, str
 }
 
 str stamp() {
+#if RH_WIN
     SYSTEMTIME t; GetLocalTime(&t);
     char b[32]; snprintf(b, sizeof b, "%04d%02d%02d-%02d%02d%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
     return b;
+#else
+    std::tm t = {};
+    plat::local_tm(std::time(nullptr), &t);
+    char b[32]; snprintf(b, sizeof b, "%04d%02d%02d-%02d%02d%02d", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
+    return b;
+#endif
 }
 
 /* Download one object into the mirror: resumable via <file>.hubtmp + Range, verified by sha256. */
@@ -590,6 +745,11 @@ SyncReport sync_cloud(const CloudConfig& cfg) {
 std::string sha256_hex_file(const std::string& path_utf8) { return sha_file(fs::u8path(path_utf8)); }
 
 long long file_mtime_unix(const std::string& path_utf8) {
+#if !RH_WIN
+    uint64_t ft = 0;
+    if (!posix_get_ft(fs::u8path(path_utf8), &ft)) return 0;
+    return ft >= kEpochDiff ? (long long)((ft - kEpochDiff) / 10000000ULL) : 0;
+#else
     HANDLE h = CreateFileW(fs::u8path(path_utf8).c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return 0;
@@ -599,10 +759,14 @@ long long file_mtime_unix(const std::string& path_utf8) {
     uint64_t ft = ((uint64_t)f.dwHighDateTime << 32) | f.dwLowDateTime;
     const uint64_t kEpoch = 116444736000000000ULL;
     return ft >= kEpoch ? (long long)((ft - kEpoch) / 10000000ULL) : 0;
+#endif
 }
 
 bool set_file_mtime_unix(const std::string& path_utf8, long long t) {
     if (t <= 0) return false;
+#if !RH_WIN
+    return posix_set_ft(fs::u8path(path_utf8), (uint64_t)t * 10000000ULL + kEpochDiff);
+#else
     HANDLE h = CreateFileW(fs::u8path(path_utf8).c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return false;
@@ -611,6 +775,7 @@ bool set_file_mtime_unix(const std::string& path_utf8, long long t) {
     BOOL ok = SetFileTime(h, nullptr, nullptr, &f);
     CloseHandle(h);
     return ok != 0;
+#endif
 }
 
 bool deflate_raw(const std::string& in, std::string* out) {

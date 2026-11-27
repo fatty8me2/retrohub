@@ -1,5 +1,5 @@
 /* Console test: local save history (prune / restore / undo / merge / export) and play stats aggregation. */
-#include <windows.h>
+#include "test_util.h"
 #include "history.h"
 #include "playstats.h"
 #include "savestore.h"
@@ -26,7 +26,7 @@ static std::string get(const fs::path& p) { std::ifstream i(p, std::ios::binary)
 static std::string U(const fs::path& p) { auto u = p.u8string(); return std::string(u.begin(), u.end()); }
 
 int main() {
-    fs::path root = fs::temp_directory_path() / ("rh_hist_test_" + std::to_string(GetCurrentProcessId()));
+    fs::path root = fs::temp_directory_path() / ("rh_hist_test_" + std::to_string(tu::pid()));
     fs::remove_all(root);
     fs::path bat = root / "battery", hist = root / "hist";
     std::string B = U(bat), H = U(hist);
@@ -157,7 +157,7 @@ int main() {
 
         // a key with ':' lives in a folder with '_' on disk, found by the unsanitized key
         const std::string gp = game_dir_path("n64", "n64:abc");
-        CHECK(gp.size() >= 12 && gp.substr(gp.size() - 12) == "n64\\n64_abc\\");
+        CHECK(gp.size() >= 12 && gp.substr(gp.size() - 12) == tu::N("n64\\n64_abc\\"));
         put(vault / "n64" / "n64_abc" / "playlog" / "PC-A.log", "1700002000,60\n");
         std::vector<Session> c = playlog_read_game("n64", "n64:abc");
         CHECK(c.size() == 1 && c[0].key == "n64:abc" && c[0].system == "n64" && c[0].device == "PC-A" && c[0].start == 1700002000 && c[0].secs == 60);
@@ -190,7 +190,7 @@ int main() {
         fs::path vault = root / "vault_ro";
         set_vault_dir(U(vault));
         const std::string bp = battery_dir_path("gba", "ro_game"), sp = states_dir_path("gba", "ro_game"), gp = game_dir_path("gba", "ro_game");
-        CHECK(bp == gp + "battery\\" && sp == gp + "states\\");
+        CHECK(bp == gp + "battery" + plat::kSep && sp == gp + "states" + plat::kSep);
         CHECK(!fs::exists(vault / "gba"));                       // looking at a game created nothing, not even the system folder
         CHECK(playlog_read_game("gba", "ro_game").empty());
         CHECK(history_list(game_history_dir("gba", "ro_game")).empty());

@@ -3,10 +3,7 @@
  * by `node test_saves.mjs --serve <file>` (see qa\saves_cloud.ps1); otherwise it is skipped and the test passes. */
 #include "cloud.h"
 
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
+#include "test_util.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -25,14 +22,7 @@ static int g_fail = 0, g_checks = 0;
 static void write_file(const fs::path& p, const std::string& content, int secs_ago) {
     fs::create_directories(p.parent_path());
     { std::ofstream o(p, std::ios::binary | std::ios::trunc); o << content; }
-    HANDLE h = CreateFileW(p.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    FILETIME ft; GetSystemTimeAsFileTime(&ft);
-    ULARGE_INTEGER u; u.LowPart = ft.dwLowDateTime; u.HighPart = ft.dwHighDateTime;
-    u.QuadPart -= (ULONGLONG)secs_ago * 10000000ULL;
-    ft.dwLowDateTime = u.LowPart; ft.dwHighDateTime = u.HighPart;
-    SetFileTime(h, nullptr, nullptr, &ft);
-    CloseHandle(h);
+    tu::set_mtime_ago(p, secs_ago);
 }
 static std::string read_file(const fs::path& p) {
     std::ifstream i(p, std::ios::binary);
@@ -104,7 +94,7 @@ int main() {
     std::string uidB = jget(acc, "b", "uid"), secB = jget(acc, "b", "secret");
     CHECK(!url.empty() && uidA.size() == 26 && secA.size() == 52 && uidB.size() == 26);
 
-    fs::path W = fs::temp_directory_path() / ("rh_cloud_test_" + std::to_string(GetCurrentProcessId()));
+    fs::path W = fs::temp_directory_path() / ("rh_cloud_test_" + std::to_string(tu::pid()));
     fs::remove_all(W);
     fs::path VA = W / "A" / "saves", VB = W / "B" / "saves";
     fs::path MA = W / "A" / "mirror", MB = W / "B" / "mirror";

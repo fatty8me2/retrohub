@@ -133,6 +133,10 @@ if(MSVC)
     endforeach()
     target_compile_options(chdr-lzma PRIVATE /W0)
     target_compile_options(zstd PRIVATE /W0)
+else()
+    foreach(t chdr-static miniz)   # same symbol renaming with clang (-include), or binaries linking hubminiz too get duplicate symbols
+        target_compile_options(${t} PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/src/common/third_party/chdr_miniz_rename.h)
+    endforeach()
 endif()
 
 add_subdirectory(src/common)

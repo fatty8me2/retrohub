@@ -20,11 +20,20 @@
 #include "cheat_store.h"
 #include "state_tombstones.h"
 
+#include "plat/plat.h"
+#include "plat/plat_crypto.h"
+#include "durable_write.h"
+
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <bcrypt.h>
+#else
+#include <cerrno>
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -109,6 +118,7 @@ bool read_all(const fs::path& p, str* out) {
     *out = s.str();
     return true;
 }
+#if RH_WIN
 /* Why the last write_atomic on this thread failed (a Win32 error), so a pull can say "file in use" or "disk full" instead of a vague failure. */
 thread_local DWORD g_write_err = 0;
 /* Crash-safe replace: the bytes go to a temp file that is flushed to disk, then ONE MoveFileExW swaps it in (write-through). On any failure the
@@ -156,6 +166,59 @@ str random_hex(int n) {
     for (int i = 0; i < n; i++) o += h[b[(size_t)i] & 15];
     return o;
 }
+#else
+/* macOS: errno is mapped onto the Win32 codes the callers (and the "file-locked" / "access-denied" / "disk-full" outcomes) speak. */
+typedef unsigned long DWORD;
+constexpr DWORD ERROR_ACCESS_DENIED = 5, ERROR_SHARING_VIOLATION = 32, ERROR_LOCK_VIOLATION = 33, ERROR_HANDLE_DISK_FULL = 39, ERROR_DISK_FULL = 112;
+thread_local DWORD g_write_err = 0;
+DWORD win_err_of_errno(int e) {
+    switch (e) {
+        case EBUSY: case ETXTBSY: case EAGAIN: return ERROR_SHARING_VIOLATION;
+        case EACCES: case EPERM: case EROFS: return ERROR_ACCESS_DENIED;
+        case ENOSPC: case EDQUOT: return ERROR_DISK_FULL;
+        default: return 31;   // ERROR_GEN_FAILURE
+    }
+}
+/* Crash-safe replace: the bytes go to a temp file, durable::commit_replace flushes it (F_FULLFSYNC) and renames it over the destination.
+ * On any failure the old file is left exactly as it was and the temp file is removed. */
+bool write_atomic(const fs::path& dst, const str& data) {
+    g_write_err = 0;
+    std::error_code ec;
+    fs::create_directories(dst.parent_path(), ec);
+    fs::path tmp = dst;
+    tmp += ".hubtmp";
+    FILE* f = std::fopen(tmp.c_str(), "wb");
+    if (!f) { g_write_err = win_err_of_errno(errno); return false; }
+    bool ok = data.empty() || std::fwrite(data.data(), 1, data.size(), f) == data.size();
+    if (!ok) g_write_err = win_err_of_errno(errno);
+    if (std::fclose(f) != 0 && ok) { ok = false; g_write_err = win_err_of_errno(errno); }
+    if (ok && !durable::commit_replace(winutil::to_wide(tmp.string()), winutil::to_wide(dst.string()))) { g_write_err = win_err_of_errno(errno); ok = false; }
+    if (!ok) { std::error_code e2; fs::remove(tmp, e2); }
+    return ok;
+}
+str stamp() {
+    std::tm t = {};
+    plat::local_tm(std::time(nullptr), &t);
+    char b[32]; snprintf(b, sizeof b, "%04d%02d%02d-%02d%02d%02d", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
+    return b;
+}
+str computer_name() {
+    char b[256] = {};
+    if (gethostname(b, sizeof b - 1) != 0 || !b[0]) return "This PC";
+    str h = b;
+    size_t dot = h.find('.');
+    return dot == 0 || dot == str::npos ? h : h.substr(0, dot);   // "MacBook.local" -> "MacBook"
+}
+str random_hex(int n) {
+    static const char* h = "0123456789abcdef";
+    std::vector<unsigned char> b((size_t)n);
+    if (!plat::random_bytes(b.data(), b.size()))
+        for (int i = 0; i < n; i++) b[(size_t)i] = (unsigned char)(plat::now_us() >> (i % 8));
+    str o;
+    for (int i = 0; i < n; i++) o += h[b[(size_t)i] & 15];
+    return o;
+}
+#endif
 
 /* ------------------------------------------------------------------ network outcome */
 struct Outcome {
@@ -245,7 +308,7 @@ std::shared_ptr<std::timed_mutex> game_lock(const str& gkey) {
 
 str data_dir_s() {
     str d = E.data_dir.empty() ? hub::data_dir() : E.data_dir;
-    if (!d.empty() && d.back() != '\\' && d.back() != '/') d += '\\';
+    if (!d.empty() && d.back() != '\\' && d.back() != '/') d += plat::kSep;
     return d;
 }
 str state_path() { return data_dir_s() + "cloud-state.json"; }
@@ -316,7 +379,7 @@ void switch_account_locked(const str& uid, const str& secret) {
     E.uid = uid;
     E.secret = secret;
     str v = vault_dir();
-    E.base_path = v + ".sync\\cloud-" + uid.substr(0, 8) + ".json";
+    E.base_path = v + ".sync" + plat::kSep + "cloud-" + uid.substr(0, 8) + ".json";
     bool had = E.base.load(E.base_path);
     E.base_loaded = true;
     if (!had) {   // new account on this PC: restore mode, cloud first
@@ -1811,7 +1874,11 @@ std::string sync_failure_text(int status, const std::string& code) {
     if (code == "backup-failed") return "Waiting: could not make a safety copy.";
     if (code == "merge-failed") return "Waiting: could not combine the saves. Nothing was changed.";
     if (code == "file-locked") return "Another program is using the save file. Will try again soon.";
+#if RH_WIN
     if (code == "access-denied") return "Windows would not allow writing the file.";
+#else
+    if (code == "access-denied") return "macOS would not allow writing the file.";
+#endif
     if (code == "disk-full") return "This PC is out of disk space. Will try again soon.";
     if (code == "write-failed") return "Could not write the save on this PC.";
     if (status == 0 && code == "deadline") return "Still syncing. Will finish next time.";
