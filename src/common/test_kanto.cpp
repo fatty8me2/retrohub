@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "plat/plat.h"
 #include "kanto.h"
 #include "miniz.h"
 #include "winutil.h"
@@ -213,7 +214,9 @@ int main() {
     CHECK(!kanto::is_kanto_runtime_exe("C:\\Program Files\\mGBA\\mGBA.exe") && !kanto::is_kanto_runtime_exe("C:\\Program Files\\nodejs\\node.exe"));
     CHECK(kanto::is_non_ascii("C:\\Users\\J\xc3\xb6rg") && !kanto::is_non_ascii("C:\\Users\\Jorg"));
     CHECK(kanto::launcher_cmdline(lo).find("--verbose") != std::string::npos);
+#if RH_WIN   // the launcher (kanto.h's Windows section) is Windows-only for now
     CHECK(kanto::is_under_temp(fs::temp_directory_path().string() + "\\x\\y") && !kanto::is_under_temp("C:\\Windows\\System32"));
+#endif
 
     /* package identity: patch.json build id, zip == folder, newest build wins, folder wins ties */
     {

@@ -1,6 +1,6 @@
 // Console test for Nintendo Switch / Switch 2 identification (src/common/nx.h): PFS0 / XCI / NRO / NPDM parsers on synthetic headers, file front
 // ends, loose exefs dumps through scan_library, the cache round trip (nx2) and that other systems are untouched. No network, no emulator, no keys.
-#include <windows.h>
+#include "../common/plat/plat.h"
 #include "library.h"
 #include "nx.h"
 #include "dump_check.h"

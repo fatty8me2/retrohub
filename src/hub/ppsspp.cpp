@@ -1,9 +1,12 @@
 #include "ppsspp.h"
 
+#include "plat/plat.h"
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#endif
 
 #include <filesystem>
 #include <fstream>
@@ -20,16 +23,29 @@ namespace hubemu {
 namespace fs = std::filesystem;
 
 static fs::path P(const std::string& s) { return fs::u8path(s); }
+#if RH_WIN
 static std::string join(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
     return (a.back() == '\\' || a.back() == '/') ? a + b : a + "\\" + b;
 }
+#else
+/* macOS: relative parts in this file are written with '\\' (Windows layout); every join turns them into '/'. */
+static std::string join(const std::string& a, const std::string& b0) {
+    std::string b = b0;
+    for (char& c : b) if (c == '\\') c = '/';
+    if (a.empty()) return b;
+    return a.back() == '/' ? a + b : a + "/" + b;
+}
+#endif
 static std::string read_text(const std::string& p) {
     std::ifstream f(P(p), std::ios::binary);
     return f ? std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()) : std::string();
 }
 static bool write_text(const std::string& p, const std::string& t) { return hubcfg::write_utf8(p, t); }   // durable: flush + one atomic replace; skipped when unchanged
 
+/* Windows: PPSSPP is portable while no installed.txt sits beside the exe, memstick = <install>\\memstick. macOS: PPSSPP's own default is
+ * ~/Library/Application Support/PPSSPP; the portable memstick beside the install is kept (a memstick_dir.txt / --memstick style override);
+ * macOS path: unverified. TODO(macOS lane 7): confirm how the macOS build picks the memstick and the UI keys (ppsspp_state_keys are Windows VKs). */
 std::string ppsspp_system_dir(const std::string& d) { return join(d, "memstick\\PSP\\SYSTEM"); }
 
 std::string ppsspp_ini_defaults(const std::string& in) {
@@ -71,7 +87,11 @@ std::string ppsspp_binding(const hubctl::Term& t, int slot) {
     return axis_binding(slot, t.idx, t.idx >= 4 ? 1 : t.sign);
 }
 
+#if RH_WIN
 std::vector<int> ppsspp_state_keys(bool save) { return {save ? (int)VK_F2 : (int)VK_F4}; }
+#else
+std::vector<int> ppsspp_state_keys(bool save) { return {save ? 0x78 /*kVK_F2*/ : 0x76 /*kVK_F4*/}; }   // macOS virtual key codes (plat::proc::send_key); PPSSPP's F2 / F4 accelerators
+#endif
 
 static std::string first_binding(const hubctl::Profile& prof, const std::string& control, int slot) {
     auto it = prof.buttons.find(control);

@@ -1,11 +1,17 @@
 #include "hookshot_build.h"
 
+#include "../common/plat/plat.h"
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <bcrypt.h>
 #include <tlhelp32.h>
+#else
+#include "../common/plat/plat_crypto.h"
+#include "../common/plat/plat_proc.h"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -24,7 +30,9 @@
 #include "../common/games.h"
 #include "../common/library.h"
 #include "../common/winutil.h"
+#if RH_WIN
 #include "emu_http.h"
+#endif
 #include "hookshot.h"
 #include "miniz.h"
 
@@ -74,7 +82,11 @@ static std::string stamp_for_folder() {
     char b[32];
     std::time_t t = std::time(nullptr);
     std::tm tm{};
+#if RH_WIN
     localtime_s(&tm, &t);
+#else
+    plat::local_tm(t, &tm);
+#endif
     std::strftime(b, sizeof b, "%Y%m%d-%H%M%S", &tm);
     return b;
 }
@@ -110,6 +122,7 @@ std::string to_base64(const std::vector<uint8_t>& d) {
     return s;
 }
 
+#if RH_WIN
 namespace {
 struct Hasher {
     BCRYPT_ALG_HANDLE alg = nullptr;
@@ -141,6 +154,21 @@ struct Hasher {
     }
 };
 }   // namespace
+#else
+namespace {
+struct Hasher {   // plat::Hasher (CommonCrypto)
+    plat::Hasher h;
+    bool ok;
+    explicit Hasher(HashAlg a) : h(a == HashAlg::Sha256 ? plat::HashAlg::Sha256 : plat::HashAlg::Sha512), ok(h.ok()) {}
+    bool add(const void* p, size_t n) { h.update(p, n); return true; }
+    bool finish(std::vector<uint8_t>* out) {
+        const std::string raw = h.finish();
+        out->assign(raw.begin(), raw.end());
+        return !raw.empty();
+    }
+};
+}   // namespace
+#endif
 
 bool hash_data(HashAlg a, const void* data, size_t n, std::vector<uint8_t>* out) {
     Hasher h(a);
@@ -512,6 +540,23 @@ bool remove_staging_keeping_saves(const std::string& staging_s, const std::strin
     return true;
 }
 
+#if !RH_WIN
+bool exe_running_from(const std::string& exe_path) {   // macOS: same exact-path rule, through plat::proc (proc_pidpath)
+    std::error_code ec;
+    std::string want = S(fs::weakly_canonical(P(exe_path), ec));
+    if (ec || want.empty()) want = exe_path;
+    const std::string name = S(P(exe_path).filename());
+    for (int pid : plat::proc::pids_by_exe_name(name)) {
+        const std::string got_raw = plat::proc::pid_exe_path(pid);
+        if (got_raw.empty()) return true;   // cannot tell: assume it is ours (the safe side)
+        std::error_code e2;
+        std::string got = S(fs::weakly_canonical(P(got_raw), e2));
+        if (e2) got = got_raw;
+        if (lower(got) == lower(want)) return true;
+    }
+    return false;
+}
+#else
 bool exe_running_from(const std::string& exe_path) {
     std::error_code ec;
     std::wstring want = fs::weakly_canonical(P(exe_path), ec).wstring();
@@ -539,7 +584,9 @@ bool exe_running_from(const std::string& exe_path) {
     CloseHandle(snap);
     return found;
 }
+#endif
 
+#if RH_WIN   // everything below this line (process runner, game monitor, kit, requirements, build pipeline) is the Windows-only build of Hookshot
 /* ======================================================================================================================== */
 /* running programs                                                                                                         */
 /* ======================================================================================================================== */
@@ -1726,5 +1773,51 @@ BuildStatus build_status() {
     }
     return s;
 }
+
+
+#else   // !RH_WIN
+/* ======================================================================================================================== */
+/* macOS: the Hookshot build is not supported yet.                                                                          */
+/* TODO(macOS lane 7): the Windows pipeline downloads Python / LLVM / FFmpeg for Windows, needs Visual Studio's C++ tools +        */
+/* a Windows SDK and runs make_game.py (see docs in lane-6b report); decide what a macOS build would use.                    */
+/* ======================================================================================================================== */
+
+namespace {
+const char* const kNoMac = "Building Hookshot is not supported on macOS yet.";
+struct G { std::mutex mu; BuildStatus st; Requirements req; };
+G& g() { static G* inst = new G; return *inst; }
+}   // namespace
+
+int run_command(const std::string&, const std::vector<std::string>&, const std::string&, const std::atomic<bool>*, const std::atomic<bool>*,
+                const std::function<void(const std::string&)>&, std::string* err) {
+    if (err) *err = kNoMac;
+    return -1;
+}
+void set_game_running_probe(std::function<bool()>) {}
+bool kit_prepare(const KitIO&, std::string* err) { if (err) *err = kNoMac; return false; }
+uint64_t kit_size_bytes() { return 0; }
+void kit_size_async() {}
+int64_t kit_size_cached() { return 0; }
+bool kit_busy() { return false; }
+bool remove_kit(std::string* err) { if (err) *err = kNoMac; return false; }
+void remove_kit_async() {}
+Requirements check_requirements(const hub::GameEntry& e) {
+    Requirements r;
+    r.checked = true;
+    r.game_path = e.path;
+    r.problem = kNoMac;
+    r.fix_hint = "Hookshot can only be built on Windows for now.";
+    return r;
+}
+Requirements requirements_cached() { std::lock_guard<std::mutex> lk(g().mu); return g().req; }
+bool requirements_busy() { return false; }
+void refresh_requirements_async(const hub::GameEntry& e) { Requirements r = check_requirements(e); std::lock_guard<std::mutex> lk(g().mu); g().req = std::move(r); }
+bool start_build(const hub::GameEntry&, const std::string&, std::string* err, Flavor) { if (err) *err = kNoMac; return false; }
+void cancel_build() {}
+bool build_running() { return false; }
+bool swap_in_progress() { return false; }
+BuildStatus build_status() { std::lock_guard<std::mutex> lk(g().mu); return g().st; }
+
+#endif   // RH_WIN
 
 }   // namespace hookshot

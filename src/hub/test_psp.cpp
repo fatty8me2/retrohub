@@ -3,7 +3,7 @@
 // mapping and the PPSSPP config writers. No network, no emulator.
 // Usage: hub_psp_test                    what ctest runs
 //        hub_psp_test --download <dir>   also downloads + verifies + unpacks the pinned PPSSPP into <dir> (network; never started)
-#include <windows.h>
+#include "../common/plat/plat.h"
 #include "emulators.h"
 #include "library.h"
 #include "logic.h"
@@ -340,8 +340,10 @@ static void test_scan(const fs::path& d) {
 static void test_emulator_and_saves(const fs::path& d) {
     using namespace hubemu;
     const Release& r = release(Kind::Ppsspp);
+#if RH_WIN   // the Windows download pin (the macOS pin is lane 7's)
     CHECK(std::string(r.version) == "1.20.4" && std::wstring(r.host) == L"www.ppsspp.org" && std::wstring(r.path) == L"/files/1_20_4/ppsspp_win.zip");
     CHECK(std::string(r.sha256) == "a60f04ebdb0b5f1655422bd7f88349a46999b17ad5115d6ddb290c3934bd5163" && r.size == 27658759ull && std::wstring(r.exe) == L"PPSSPPWindows64.exe");
+#endif
     CHECK(kind_for(System::PSP) == Kind::Ppsspp && std::string(name(Kind::Ppsspp)) == "PPSSPP");
     CHECK(fs::path(managed_dir(Kind::Ppsspp, U8(d / "root"))).filename() == "ppsspp");
     CHECK(find(Kind::Ppsspp, "", "", U8(d / "none")).exe.empty());   // never reuses a user's own PPSSPP
@@ -384,8 +386,16 @@ static void test_config(const fs::path& d) {
     CHECK(l.find("FullScreen = False") != std::string::npos && l.find("InternalResolution = 4") != std::string::npos && l.find("FullScreen = True") == std::string::npos);
     CHECK(l.find("FirstRun = False") != std::string::npos);   // a later write keeps the rest
 
+#if RH_WIN
     CHECK(ppsspp_args("C:\\g\\a b.iso", true) == "--fullscreen \"C:\\g\\a b.iso\"" && ppsspp_args("x.iso", false) == "--windowed \"x.iso\"");
+#else
+    CHECK(ppsspp_args("/g/a b.iso", true) == "--fullscreen '/g/a b.iso'" && ppsspp_args("x.iso", false) == "--windowed 'x.iso'");   // POSIX single-quoting on macOS
+#endif
+#if RH_WIN
     CHECK(ppsspp_state_keys(true) == std::vector<int>{VK_F2} && ppsspp_state_keys(false) == std::vector<int>{VK_F4});
+#else
+    CHECK(ppsspp_state_keys(true) == std::vector<int>{0x78} && ppsspp_state_keys(false) == std::vector<int>{0x76});   // kVK_F2 / kVK_F4
+#endif
 
     hubctl::Profile p = hubctl::default_profile("psp");
     CHECK(p.system == "psp" && hubctl::is_system("psp") && p.name == "default-psp");
@@ -444,7 +454,7 @@ int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--fixture") {   // QA: a synthetic PSP image (valid PARAM.SFO, no game data) for qa/psp_play.ps1
         return write_file(argv[2], make_psp_iso(umd_sfo("ULUS10041", "RetroHub Synthetic PSP Game"))) ? 0 : 1;
     }
-    fs::path d = fs::temp_directory_path() / ("hub_psp_test_" + std::to_string((unsigned long long)GetCurrentProcessId()));
+    fs::path d = fs::temp_directory_path() / ("hub_psp_test_" + std::to_string((unsigned long long)plat::current_pid()));
     fs::create_directories(d);
     setvbuf(stdout, nullptr, _IONBF, 0);
     try {

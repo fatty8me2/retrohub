@@ -1,10 +1,17 @@
 #include "lichii.h"
 /* Lichii config / keys / firmware / profile (lichii.h). Pure text transforms + small file helpers; unit-tested by test_switch.cpp. */
 
+#include "plat/plat.h"
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/sysctl.h>
+#include <pwd.h>
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -27,10 +34,20 @@ namespace fs = std::filesystem;
 
 static fs::path P(const std::string& s) { return fs::u8path(s); }
 static std::string S(const fs::path& p) { auto u = p.u8string(); return std::string(u.begin(), u.end()); }
+#if RH_WIN
 static std::string join(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
     return (a.back() == '\\' || a.back() == '/') ? a + b : a + "\\" + b;
 }
+#else
+/* macOS: the relative parts in this file are written with '\\' (Windows layout); every join turns them into '/'. */
+static std::string join(const std::string& a, const std::string& b0) {
+    std::string b = b0;
+    for (char& c : b) if (c == '\\') c = '/';
+    if (a.empty()) return b;
+    return a.back() == '/' ? a + b : a + "/" + b;
+}
+#endif
 static std::string read_text(const std::string& p) {
     std::ifstream f(P(p), std::ios::binary);
     return f ? std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()) : std::string();
@@ -45,7 +62,26 @@ static bool ends_with(const std::string& s, const char* suf) {
     return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
 }
 
-std::string lichii_user_dir(const std::string& install_dir) { return join(install_dir, "user"); }
+/* THE one place that decides where Lichii's `user` data lives (every path in lichii.cpp / nx_runner.cpp / hookshot.cpp goes through it).
+ * Windows: <install>\\user (portable folder beside lichii.exe). macOS: an .app bundle is read-only, so when the install dir is (or holds) a
+ * *.app the emulator's own macOS data dir is used; a plain folder (tests, a build unpacked by RetroHub) keeps the portable <install>/user.
+ * TODO(macOS lane 7): confirm the layout of the real Lichii / Fritchii macOS build and whether it honours a portable `user` folder. */
+std::string lichii_user_dir(const std::string& install_dir) {
+#if RH_WIN
+    return join(install_dir, "user");
+#else
+    bool in_bundle = install_dir.find(".app/") != std::string::npos || (install_dir.size() > 4 && install_dir.compare(install_dir.size() - 4, 4, ".app") == 0);
+    if (!in_bundle) {
+        std::error_code ec;
+        for (fs::directory_iterator it(P(install_dir), ec), end; !ec && it != end; it.increment(ec))
+            if (it->path().extension() == ".app") { in_bundle = true; break; }
+    }
+    if (!in_bundle) return join(install_dir, "user");
+    const char* home = std::getenv("HOME");
+    if (!home || !*home) { struct passwd* pw = getpwuid(getuid()); home = pw ? pw->pw_dir : ""; }
+    return join(join(home, "Library/Application Support"), "lichii");   // macOS path: unverified (Eden uses ~/Library/Application Support/eden)
+#endif
+}
 
 static std::string keys_dir(const std::string& install) { return join(lichii_user_dir(install), "keys"); }
 static std::string registered_dir(const std::string& install) { return join(lichii_user_dir(install), "nand\\system\\Contents\\registered"); }
@@ -193,7 +229,7 @@ static bool safe_zip_name(const std::string& n) {
 static std::string unzip_nca(const std::string& archive, const std::string& dest) {
     mz_zip_archive za;
     std::memset(&za, 0, sizeof za);
-    FILE* zf = _wfopen(P(archive).wstring().c_str(), L"rb");
+    FILE* zf = plat::fopen_path(P(archive), "rb");
     if (!zf) return "cannot open the firmware zip";
     if (!mz_zip_reader_init_cfile(&za, zf, 0, 0)) { std::fclose(zf); return "that is not a valid zip"; }
     std::string err;
@@ -212,7 +248,7 @@ static std::string unzip_nca(const std::string& archive, const std::string& dest
         fs::path target = P(dest) / fs::u8path(name);
         std::error_code ec;
         fs::create_directories(target.parent_path(), ec);
-        FILE* out = _wfopen(target.wstring().c_str(), L"wb");
+        FILE* out = plat::fopen_path(target, "wb");
         if (!out) { err = "cannot write " + name; break; }
         bool r = mz_zip_reader_extract_to_cfile(&za, i, out, 0) != 0;
         bool flushed = std::fflush(out) == 0;
@@ -639,6 +675,9 @@ bool lichii_ini_player0(const std::string& ini, std::string* guid, int* port) {
 XinputId lichii_xinput_id(int slot) {
     XinputId r;
     if (slot < 0 || slot > 3) return r;
+#if !RH_WIN
+    return r;   // no XInput on macOS: no pad is ever "present" (SDL3 uses its own drivers there; TODO(macOS lane 7): pad guids for Lichii on macOS)
+#else
     struct CapsEx { BYTE type, sub; WORD flags; BYTE gamepad[12]; BYTE vibration[4]; WORD vendor, product, version, unk1; DWORD unk2; };
     typedef DWORD(WINAPI * GetCaps)(DWORD, DWORD, void*);
     typedef DWORD(WINAPI * GetCapsEx)(DWORD, DWORD, DWORD, CapsEx*);
@@ -660,6 +699,7 @@ XinputId lichii_xinput_id(int slot) {
         if (r.product == 0 && (e.flags & 0x0002 /*XINPUT_CAPS_WIRELESS*/)) { r.vendor = 0x045e; r.product = 0x028e; }   // wireless 360 pad
     }
     return r;
+#endif
 }
 
 bool lichii_xinput_pad(const XinputId ids[4], int slot, std::string* guid, int* port) {
@@ -824,9 +864,15 @@ std::vector<std::pair<std::string, std::string>> lichii_env(const hub::gs::Value
 }
 
 uint64_t physical_ram_bytes() {
+#if RH_WIN
     MEMORYSTATUSEX ms{};
     ms.dwLength = sizeof ms;
     return GlobalMemoryStatusEx(&ms) ? (uint64_t)ms.ullTotalPhys : 0;
+#else
+    uint64_t mem = 0;
+    size_t len = sizeof mem;
+    return sysctlbyname("hw.memsize", &mem, &len, nullptr, 0) == 0 ? mem : 0;
+#endif
 }
 
 }  // namespace hubemu

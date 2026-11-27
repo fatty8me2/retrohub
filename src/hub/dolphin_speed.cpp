@@ -1,7 +1,7 @@
 #include "dolphin_speed.h"
 #include "dolphin_speed_logic.h"
 #include "dsu_server.h"
-#include <windows.h>
+#include "../common/plat/plat.h"
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -50,13 +50,13 @@ void dolphin_speed_send(const std::vector<int>& vks, std::function<void(int)> do
     for (int sc : vks) keys.push_back(hubds::key_from_scan(sc));
     std::thread([keys, done_cb]() {
         int waited = 0;
-        while (!dolphin_speed_connected() && waited < 4000) { Sleep(50); waited += 50; }
+        while (!dolphin_speed_connected() && waited < 4000) { plat::sleep_ms(50); waited += 50; }
         if (!dolphin_speed_connected()) { g_busy = false; if (done_cb) done_cb(-1); return; }
-        Sleep(60);   // the client re-registers once a second; the stream is already flowing
+        plat::sleep_ms(60);   // the client re-registers once a second; the stream is already flowing
         int done = 0;
         for (const hubds::Step& st : hubds::press_steps(keys)) {
             set_buttons(st.buttons);
-            Sleep((DWORD)st.ms);
+            plat::sleep_ms((unsigned)st.ms);
             if (st.buttons) ++done;
         }
         set_buttons(0);

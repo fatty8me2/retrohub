@@ -1,7 +1,7 @@
 // Console test for Hookshot and Longshot (src/hub/hookshot.cpp): supports(), flavors, ready(), the build stamp, decide() / use_for() with the
 // switch.runner setting, and the save session (vault <-> the flavor's user\ folder). Temp dirs only. The save session runs against hookshot::user_dir() under the test exe's own
 // userdata folder (never the real RetroHub data), which this test wipes before and after.
-#include <windows.h>
+#include "../common/plat/plat.h"
 #include "emulators.h"
 #include "games.h"
 #include "game_settings.h"
@@ -60,7 +60,7 @@ static void make_build(const fs::path& d, bool exe, bool vk, bool sdl, bool romf
 }
 
 int main() {
-    const fs::path tmp = fs::temp_directory_path() / ("hs_test_" + std::to_string(GetCurrentProcessId()));
+    const fs::path tmp = fs::temp_directory_path() / ("hs_test_" + std::to_string(plat::current_pid()));
     std::error_code ec;
     fs::remove_all(tmp, ec);
     fs::create_directories(tmp);

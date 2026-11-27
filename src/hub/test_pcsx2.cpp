@@ -3,7 +3,7 @@
 // Usage: hub_ps2_test                    offline unit checks (what ctest runs)
 //        hub_ps2_test --download <dir>   also download + verify + install PCSX2 into <dir> (network; never launched), then
 //                                        run prepare_pcsx2 on it and read the config back.
-#include <windows.h>
+#include "../common/plat/plat.h"
 #include "emulators.h"
 #include "library.h"
 #include "logic.h"
@@ -372,7 +372,11 @@ static void test_config(const fs::path& d) {
     v["ps2.renderer"] = "dx12";
     CHECK(hubui::ini_get(pcsx2_ini_launch("", bios, "x", v), "EmuCore/GS", "Renderer", "") == "15");
 
+#if RH_WIN
     CHECK(pcsx2_args("D:\\g\\a b.iso", true) == "-batch -nogui -fullscreen -- \"D:\\g\\a b.iso\"");
+#else
+    CHECK(pcsx2_args("/g/a b.iso", true) == "-batch -nogui -fullscreen -- '/g/a b.iso'");   // winutil::quote_arg is POSIX single-quoting on macOS
+#endif
     CHECK(pcsx2_args("D:\\g\\a.iso", false).find("-nofullscreen") != std::string::npos);
 
     // prepare on a scratch install dir
@@ -394,8 +398,10 @@ static void test_config(const fs::path& d) {
 static void test_emulator_table(const fs::path& d) {
     using namespace hubemu;
     const Release& r = release(Kind::Pcsx2);
+#if RH_WIN   // the Windows download pin (the macOS pin is lane 7's)
     CHECK(std::string(r.sha256).size() == 64 && r.size > 20000000 && std::string(r.version) == "2.8.2");
     CHECK(std::wstring(r.exe) == L"pcsx2-qt.exe" && std::wstring(r.host) == L"github.com");
+#endif
     CHECK(kind_for(System::PS2) == Kind::Pcsx2 && std::string(name(Kind::Pcsx2)) == "PCSX2");
     std::string md = managed_dir(Kind::Pcsx2, U8(d));
     CHECK(fs::path(md).filename() == "pcsx2");
@@ -459,7 +465,7 @@ static void test_buzz() {
 }
 
 int main(int argc, char** argv) {
-    fs::path d = fs::temp_directory_path() / ("hub_ps2_test_" + std::to_string((unsigned long long)GetCurrentProcessId()));
+    fs::path d = fs::temp_directory_path() / ("hub_ps2_test_" + std::to_string((unsigned long long)plat::current_pid()));
     fs::create_directories(d);
     setvbuf(stdout, nullptr, _IONBF, 0);
     try {

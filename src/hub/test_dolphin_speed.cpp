@@ -2,8 +2,7 @@
 #include "dolphin_speed_logic.h"
 #include "dolphin_speed.h"
 #include "dsu_server.h"
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "../common/plat/plat_sock.h"
 #include <atomic>
 #include <cmath>
 #include <chrono>
@@ -43,10 +42,17 @@ int main() {
     /* loopback: a DSU client registers, 3 increase presses come out as exactly 3 rising edges of Options and none of Share */
     CHECK(!dolphin_speed_running());
     CHECK(dolphin_speed_start() && dolphin_speed_running() && dolphin_speed_start());
+#if RH_WIN
     WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
     SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons((u_short)hubds::active_port()); inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
     DWORD to = 20; setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&to, sizeof to);
+#else
+    plat::sock_init();
+    int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons((uint16_t)hubds::active_port()); inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+    timeval to{}; to.tv_usec = 20 * 1000; setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof to);
+#endif
     auto reg = dsu::build_data_request(0xC11E, hubds::kSlot);
     sendto(s, (const char*)reg.data(), (int)reg.size(), 0, (sockaddr*)&a, sizeof a);
 
@@ -76,7 +82,7 @@ int main() {
         }
         if (done != -99) break;
     }
-    Sleep(100);
+    plat::sleep_ms(100);
     CHECK(started);
     CHECK(done == 3);
     CHECK(rises_opt == 3);
@@ -85,7 +91,7 @@ int main() {
     std::printf("loopback: done=%d options_edges=%d share_edges=%d frames=%d\n", done.load(), rises_opt, rises_share, frames);
 
     /* with nothing registered a burst reports -1 only after the wait; with the server stopped it reports -1 immediately */
-    closesocket(s);
+    plat::sock_close(s);
     dolphin_speed_stop();
     CHECK(!dolphin_speed_running());
     std::atomic<int> d2{-99};

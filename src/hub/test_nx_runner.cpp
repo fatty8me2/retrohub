@@ -2,7 +2,10 @@
 // Temp folders only; nothing is launched, nothing touches the real data dir or %LOCALAPPDATA%\RetroHub (the backup root is a temp folder too).
 #include "nx_runner.h"
 
+#include "../common/plat/plat.h"
+#if RH_WIN
 #include <windows.h>
+#endif
 
 #include <atomic>
 #include <cstdlib>
@@ -518,12 +521,14 @@ int main() {
         wr(fs::u8path(t_dst), "my own older cache", 600);
         p4 = shader_seed_plan(U8(t.lichii), U8(t.fritchii), kTid);
         CHECK(p4.size() == 1);
+#if RH_WIN
         HANDLE h = CreateFileW(fs::u8path(t_dst).wstring().c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);   // held open: the rename cannot replace it
         CHECK(h != INVALID_HANDLE_VALUE);
         const std::string e4 = shader_seed_run(p4, nullptr);
         CHECK(!e4.empty());
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
         CHECK(rd(fs::u8path(t_dst)) == "my own older cache" && !fs::exists(fs::u8path(t_dst + ".retrohub-part")));
+#endif   // macOS has no mandatory file locks: an open file never blocks a rename, so there is no failing replace to provoke
         CHECK(shader_seed_run(p4, nullptr).empty() && rd(fs::u8path(t_dst)) == std::string(1000, 'a'));   // released: the same plan now replaces it
     }
 
@@ -649,7 +654,11 @@ int main() {
         // no backup root at all (LOCALAPPDATA unset and none given): the same, nothing written
         NxSaveSync noroot = f.req(Kind::Fritchii);
         noroot.backup_root.clear();
+#if RH_WIN
         _putenv_s("LOCALAPPDATA", "");
+#else
+        plat::set_env("HOME", "");   // default_save_backup_root() reads HOME on macOS
+#endif
         r = nx_sync_saves_before_launch(noroot);
         CHECK(!r.ok && !fs::exists(vault_save(f.battery) / "slot.sav") && rd(save_dir(f.fritchii) / "slot.sav") == "fritchii-old");
     }
