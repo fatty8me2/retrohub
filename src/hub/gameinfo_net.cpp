@@ -9,11 +9,16 @@
 #include <mutex>
 #include <thread>
 
+#include "plat/plat.h"
+#if RH_WIN
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 #include <winhttp.h>
+#else
+#include "plat/plat_http.h"
+#endif
 
 #include "hub_version.h"
 
@@ -24,6 +29,7 @@ std::mutex g_mu;
 std::string g_fixture_dir;
 bool g_fixture_set = false;
 
+#if RH_WIN
 std::wstring widen(const std::string& s) {
     if (s.empty()) return std::wstring();
     int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
@@ -31,6 +37,7 @@ std::wstring widen(const std::string& s) {
     MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
     return w;
 }
+#endif
 }  // namespace
 
 void set_fixture_dir(const std::string& dir) {
@@ -61,6 +68,50 @@ std::string user_agent() {
 }
 
 namespace {
+#if !RH_WIN
+/* macOS: NSURLSession through plat::http (same spacing / Retry-After rules via netgate). */
+bool http_request(const char* method, const std::string& url, const std::string& ctype, const std::string& post, std::string* body, int* status) {
+    *status = 0;
+    body->clear();
+    const size_t ss = url.find("://");
+    if (ss == std::string::npos) return false;
+    const size_t he = url.find_first_of("/?#", ss + 3);
+    std::string host_u8 = url.substr(ss + 3, he == std::string::npos ? std::string::npos : he - ss - 3);
+    if (const size_t at = host_u8.rfind('@'); at != std::string::npos) host_u8.erase(0, at + 1);
+    if (const size_t colon = host_u8.rfind(':'); colon != std::string::npos && host_u8.find(']') == std::string::npos) host_u8.erase(colon);
+    if (!netgate::acquire(host_u8)) return false;
+    plat::http::Request rq;
+    rq.method = method;
+    rq.url = url;
+    rq.headers = {{"User-Agent", user_agent()}, {"Accept", "application/json"}, {"Api-User-Agent", "RetroHub (https://github.com/fatty8me2/retrohub)"}};
+    if (!ctype.empty()) rq.headers.push_back({"Content-Type", ctype});
+    rq.body = post;
+    rq.connect_timeout_ms = 5000;
+    rq.timeout_ms = 15000;
+    size_t total = 0;
+    bool too_big = false;
+    rq.on_data = [&](const char* d, size_t n) {
+        if (total + n > (24u << 20)) { too_big = true; return false; }   // the GameCube database zip is ~10 MB; API answers are far smaller
+        body->append(d, n);
+        total += n;
+        return true;
+    };
+    plat::http::Response rs;
+    const bool ok = plat::http::perform(rq, &rs) && !too_big;
+    if (ok) {
+        *status = rs.status;
+        if (rs.status == 429 || rs.status == 503) {
+            int secs = 120;
+            auto it = rs.headers.find("retry-after");
+            if (it != rs.headers.end() && std::atoi(it->second.c_str()) > 0) secs = std::atoi(it->second.c_str());
+            netgate::block(host_u8, secs);
+        }
+    } else {
+        body->clear();
+    }
+    return ok;
+}
+#else
 bool http_request(const wchar_t* method, const std::string& url, const std::string& ctype, const std::string& post, std::string* body, int* status) {
     *status = 0;
     body->clear();
@@ -123,12 +174,20 @@ bool http_request(const wchar_t* method, const std::string& url, const std::stri
     if (!ok) *status = 0;
     return ok;
 }
+#endif
 }  // namespace
 
+#if RH_WIN
 bool http_get(const std::string& url, std::string* body, int* status) { return http_request(L"GET", url, "", "", body, status); }
 bool http_post(const std::string& url, const std::string& content_type, const std::string& post_body, std::string* body, int* status) {
     return http_request(L"POST", url, content_type, post_body, body, status);
 }
+#else
+bool http_get(const std::string& url, std::string* body, int* status) { return http_request("GET", url, "", "", body, status); }
+bool http_post(const std::string& url, const std::string& content_type, const std::string& post_body, std::string* body, int* status) {
+    return http_request("POST", url, content_type, post_body, body, status);
+}
+#endif
 
 bool fetch(const std::string& url, std::string* body, int* status) {
     std::string dir = fixture_dir();

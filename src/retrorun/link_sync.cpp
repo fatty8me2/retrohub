@@ -1,6 +1,6 @@
 #include "link_sync.h"
 
-#include <windows.h>
+#include "plat/plat.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -147,7 +147,7 @@ bool run_link_exchange(hubnet::Session& s, int my_slot, uint32_t slot_mask, cons
         if (ex.finished(now)) break;
         if (s.failed()) { if (err) *err = "netplay failed during link save exchange"; return false; }
         if (now - t0 > timeout_ms) { if (err) *err = "timed out exchanging link saves"; return false; }
-        Sleep(2);
+        plat::sleep_ms(2);
     }
     if (out_blobs) {
         out_blobs->assign(8, {});

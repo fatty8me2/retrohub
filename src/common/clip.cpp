@@ -1,5 +1,7 @@
 #include "clip.h"
 
+#include "plat/plat.h"
+#if RH_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -9,6 +11,7 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <wrl/client.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -23,7 +26,9 @@
 
 namespace clip {
 
+#if RH_WIN
 using Microsoft::WRL::ComPtr;
+#endif
 
 int sample_every(double src_fps, int target_fps) {
     if (src_fps <= 0 || target_fps <= 0) return 3;
@@ -115,6 +120,7 @@ double Ring::seconds() const { return snapshot().seconds(); }
 
 namespace {
 
+#if RH_WIN
 struct MfScope {
     bool com = false, mf = false;
     MfScope() {
@@ -130,6 +136,7 @@ std::string hr_str(const char* what, HRESULT hr) {
     std::snprintf(b, sizeof b, "%s failed (0x%08lX)", what, (unsigned long)hr);
     return b;
 }
+#endif
 
 void to_mem(void* ctx, void* data, int size) { static_cast<std::string*>(ctx)->append((const char*)data, (size_t)size); }
 
@@ -151,7 +158,7 @@ bool write_thumb(const Snapshot& s, const std::string& path) {
         }
     std::string jpg;
     if (!stbi_write_jpg_to_func(to_mem, &jpg, s.w, s.h, 3, rgb.data(), 85)) return false;
-    FILE* fh = _wfopen(std::filesystem::u8path(path).c_str(), L"wb");
+    FILE* fh = plat::fopen_path(std::filesystem::u8path(path), "wb");
     if (!fh) return false;
     fwrite(jpg.data(), 1, jpg.size(), fh);
     fclose(fh);
@@ -160,6 +167,17 @@ bool write_thumb(const Snapshot& s, const std::string& path) {
 
 }  // namespace
 
+#if !RH_WIN
+/* macOS: the MP4 encoder / verifier (Media Foundation on Windows) is not ported yet (lane 8, VideoToolbox). Explicit failure, no fake success. */
+bool write_mp4(const Snapshot&, const std::string&, std::string* err) {
+    if (err) *err = "clip saving is not supported on this platform yet";
+    return false;
+}
+bool probe_mp4(const std::string&, Info*, std::string* err) {
+    if (err) *err = "clip verification is not supported on this platform yet";
+    return false;
+}
+#else
 bool write_mp4(const Snapshot& snap, const std::string& path, std::string* err) {
     auto fail = [&](const std::string& m) { if (err) *err = m; return false; };
     if (snap.frames.empty() || snap.w < 2 || snap.h < 2) return fail("nothing recorded yet");
@@ -288,12 +306,13 @@ bool probe_mp4(const std::string& path, Info* out, std::string* err) {
     if (info.frames == 0) return fail("no frames decoded");
     return true;
 }
+#endif
 
 /* ---- recorder ---- */
 
 std::string clip_name(std::time_t t) {
     std::tm tm{};
-    localtime_s(&tm, &t);
+    plat::local_tm(t, &tm);
     char b[40];
     std::strftime(b, sizeof b, "%Y%m%d-%H%M%S.mp4", &tm);
     return b;

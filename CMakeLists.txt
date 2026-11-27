@@ -134,11 +134,21 @@ add_test(NAME hublibrary_test COMMAND hublibrary_test)
 add_test(NAME hubkanto_test COMMAND hubkanto_test)                       # Kanto Together: package, install, rom pick, output parsing
 add_test(NAME hubkantopad_test COMMAND hubkantopad_test)               # Kanto Together mGBA gamepad config writer
 add_test(NAME nes_snes_test COMMAND nes_snes_test)                 # NES/SNES headers, scan, cheats, profiles, settings
-add_test(NAME runner_speed_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/speed_headless.ps1)   # retrorun --headless --realtime: quick-menu speed steps 0.25x..Max, 1x restore, rapid changes, input off (skips without retrorun)
-set_tests_properties(runner_speed_headless PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)   # wall-clock fps ratios: serial; exits 77 (skipped: machine too busy) when the 1x windows never steady
-add_test(NAME nes_snes_smoke COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/nes_snes_synctest.ps1)   # Nestopia + Snes9x headless run, .srm write, rollback SyncTest (skips without the cores)
-add_test(NAME gb_gba_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/gb_gba_synctest.ps1)   # Gambatte/SameBoy/mGBA headless run, .srm write, rollback SyncTest on generated homebrew ROMs (skips without the cores)
-set_tests_properties(gb_gba_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME runner_speed_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/speed_headless.ps1)   # retrorun --headless --realtime: quick-menu speed steps 0.25x..Max, 1x restore, rapid changes, input off (skips without retrorun)
+endif()
+if(WIN32)
+  set_tests_properties(runner_speed_headless PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)   # wall-clock fps ratios: serial; exits 77 (skipped: machine too busy) when the 1x windows never steady
+endif()
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME nes_snes_smoke COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/nes_snes_synctest.ps1)   # Nestopia + Snes9x headless run, .srm write, rollback SyncTest (skips without the cores)
+endif()
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME gb_gba_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/gb_gba_synctest.ps1)   # Gambatte/SameBoy/mGBA headless run, .srm write, rollback SyncTest on generated homebrew ROMs (skips without the cores)
+endif()
+if(WIN32)
+  set_tests_properties(gb_gba_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
+endif()
 add_test(NAME findgames_test COMMAND findgames_test)                   # Find my games: collapse/rank + scratch-tree scan
 add_test(NAME hub_friend_games_test COMMAND hub_friend_games_test)   # greyed-out friend games: identity, ghosts, badge text, publish hash/debounce
 add_test(NAME hub_gamepack_test COMMAND hub_gamepack_test)           # GamePack: Drive listing HTML parse, entity decode, safe names (no network)
@@ -154,8 +164,12 @@ add_test(NAME hub_launch_text_test COMMAND hub_launch_text_test)   # double-laun
 add_test(NAME ps1_test COMMAND ps1_test)                                 # PlayStation: serials, catalog, synthetic discs, BIOS discovery (scratch dirs)
 add_test(NAME cheats_db_test COMMAND cheats_db_test)
 add_test(NAME psarchive_test COMMAND psarchive_test)                       # PS1/PS2 disc archives: identify by name/DB, truncated, extract+confirm (scratch dirs)
-add_test(NAME archives_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/archives_headless.ps1)   # GBA .zip, NES/SNES/N64 .7z, PS1 cue/bin .zip unpacked + retrorun --headless
-set_tests_properties(archives_headless PROPERTIES SKIP_RETURN_CODE 77)
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME archives_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/archives_headless.ps1)   # GBA .zip, NES/SNES/N64 .7z, PS1 cue/bin .zip unpacked + retrorun --headless
+endif()
+if(WIN32)
+  set_tests_properties(archives_headless PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 add_test(NAME verify_test COMMAND verify_test ${CMAKE_SOURCE_DIR}/data/known_dumps.bin)   # L3: known-dump list parse, z64/iNES/SNES normalization, hash cache, runner
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
@@ -170,8 +184,12 @@ add_test(NAME hubgamesettings_test COMMAND hubgamesettings_test)
 add_test(NAME hubdolphincheats_test COMMAND hubdolphincheats_test)   # GameCube cheats: gecko/ar_gc + Dolphin GameSettings ini writer
 add_test(NAME hubcheatstore_test COMMAND hubcheatstore_test)   # cheat choices: persistence/merge/custom codes/online rules/save backup
 add_test(NAME hubcontrols_test COMMAND hubcontrols_test)             # controller profiles: defaults == old hardcoded maps
-add_test(NAME live_controls_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/live_controls.ps1 -Root ${CMAKE_SOURCE_DIR})   # reload_controls: a rewritten profile changes the mapped mask of a running headless retrorun
-set_tests_properties(live_controls_headless PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME live_controls_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/live_controls.ps1 -Root ${CMAKE_SOURCE_DIR})   # reload_controls: a rewritten profile changes the mapped mask of a running headless retrorun
+endif()
+if(WIN32)
+  set_tests_properties(live_controls_headless PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+endif()
 add_test(NAME retrorun_ds_test COMMAND retrorun_ds_test)
 add_test(NAME retrorun_fx_test COMMAND retrorun_fx_test)
 add_test(NAME retrorun_dslink_test COMMAND retrorun_dslink_test)
@@ -180,8 +198,12 @@ add_test(NAME retrorun_rollback_test COMMAND retrorun_rollback_test)
 add_test(NAME retrorun_port_plan_test COMMAND retrorun_port_plan_test)   # per-system port devices, 4-pad adapter rules, offline player count
 add_test(NAME retrorun_slot2_test COMMAND retrorun_slot2_test)   # Wave 3 X3: DS Slot-2 refusal rules, subsystem pick, save copy-back, backup pruning
 add_test(NAME hub_palpark_test COMMAND hub_palpark_test)   # Wave 3 X3: Pal Park rows, choice order, save matching, args, stored choice
-add_test(NAME palpark_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/palpark_headless.ps1 -Root ${CMAKE_SOURCE_DIR})   # retrorun --slot2-* flags parsed offline, refused with --net / --ds-link
-set_tests_properties(palpark_headless PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME palpark_headless COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/palpark_headless.ps1 -Root ${CMAKE_SOURCE_DIR})   # retrorun --slot2-* flags parsed offline, refused with --net / --ds-link
+endif()
+if(WIN32)
+  set_tests_properties(palpark_headless PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+endif()
 add_test(NAME retrorun_rewind_test COMMAND retrorun_rewind_test)   # rewind ring size/limits, rewind->replay hashes, run-ahead == normal shifted (fake core)
 add_test(NAME retrorun_savewrite_test COMMAND retrorun_savewrite_test)   # save writes: one attempt in game, flushed + retried at exit while the old save is held
 add_test(NAME clip_test COMMAND clip_test)   # frame ring caps + MP4 encode and decode round trip (Media Foundation, no window)
@@ -189,10 +211,18 @@ add_test(NAME retrorun_rollback_stall_test COMMAND retrorun_rollback_stall_test)
 add_test(NAME retrorun_dropin_test COMMAND retrorun_dropin_test)   # drop-in: admit frame, joiner takeover, 2-4 peers, old peer refusal, crashed joiner
 add_test(NAME retrorun_joinid_test COMMAND retrorun_joinid_test)   # join fingerprint game id: zip vs unpacked, NES/SNES/N64 headers, disc sheets + serials
 add_test(NAME retrorun_resync_test COMMAND retrorun_resync_test)   # desync recovery: host state transfer, 2-4 peers, loss, give-up after 3
-add_test(NAME ps1_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_synctest.ps1)   # Beetle PSX rollback SyncTest on homebrew discs (skips without the core / python)
-set_tests_properties(ps1_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "RETROHUB_QA=1")
-add_test(NAME ps1_discs COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_discs.ps1)   # 2-disc homebrew .m3u: libretro disk-control swap + rollback SyncTest with swap events
-set_tests_properties(ps1_discs PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME ps1_synctest COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_synctest.ps1)   # Beetle PSX rollback SyncTest on homebrew discs (skips without the core / python)
+endif()
+if(WIN32)
+  set_tests_properties(ps1_synctest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "RETROHUB_QA=1")
+endif()
+if(WIN32)   # PowerShell script: bash port pending on macOS
+  add_test(NAME ps1_discs COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/qa/ps1_discs.ps1)   # 2-disc homebrew .m3u: libretro disk-control swap + rollback SyncTest with swap events
+endif()
+if(WIN32)
+  set_tests_properties(ps1_discs PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "RETROHUB_QA=1")
+endif()
 add_test(NAME hubhistory_test COMMAND hubhistory_test)
 add_test(NAME hubsaves_test COMMAND hubsaves_test)
 add_test(NAME hubsaves_cloud_test COMMAND hubsaves_cloud_test)   # e2e part runs only with RETROHUB_TEST_SAVES_URL (qa\saves_cloud.ps1)

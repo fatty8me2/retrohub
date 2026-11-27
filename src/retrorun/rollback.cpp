@@ -2,7 +2,7 @@
 
 #include "dropin.h"   // first_sample(): where a hand-off begins (shared with the N64 lockstep drop-in)
 
-#include <windows.h>
+#include "plat/plat.h"
 
 #include <algorithm>
 #include <cmath>
@@ -28,11 +28,7 @@ uint64_t hash_bytes(const void* data, size_t bytes) {
 }
 
 static double qpc_us() {
-    static double inv = 0;
-    if (inv == 0) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); inv = 1e6 / (double)f.QuadPart; }
-    LARGE_INTEGER t;
-    QueryPerformanceCounter(&t);
-    return (double)t.QuadPart * inv;
+    return (double)plat::now_us();
 }
 
 static const uint64_t kFnvBasis = 0xCBF29CE484222325ull;
@@ -418,7 +414,7 @@ bool Engine::start_barrier(uint32_t timeout_ms) {
         std::vector<uint8_t> m;
         while (net_.recv(&from, &m)) if (!m.empty() && from >= 0 && from < 8) on_packet(from, m);
         if (sim_.idle) sim_.idle();
-        Sleep(2);
+        plat::sleep_ms(2);
     }
     // Make sure the others see our ready too.
     uint8_t r[3] = {kPktReady, (uint8_t)cfg_.my_slot, cfg_.caps};
@@ -814,7 +810,7 @@ bool Engine::finish(uint32_t timeout_ms) {
         if (conf && acked && rb_to_ < 0) { ok = true; break; }
         if (net_.now_ms() - t0 > timeout_ms || desync_) break;
         if (sim_.idle) sim_.idle();
-        Sleep(1);
+        plat::sleep_ms(1);
     }
     advance_confirmed();
     say_bye();
@@ -823,7 +819,7 @@ bool Engine::finish(uint32_t timeout_ms) {
 
 void Engine::say_bye() {
     uint8_t bye[2] = {kPktBye, (uint8_t)cfg_.my_slot};
-    for (int i = 0; i < 3; i++) { net_.send(-1, bye, 2); if (net_.pump) net_.pump(); Sleep(10); }
+    for (int i = 0; i < 3; i++) { net_.send(-1, bye, 2); if (net_.pump) net_.pump(); plat::sleep_ms(10); }
 }
 
 /* ---- drop-in: a friend takes an empty port of the running game ----
