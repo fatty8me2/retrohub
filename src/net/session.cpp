@@ -950,6 +950,7 @@ int Session::ping_ms(int slot) const
 }
 
 uint16_t Session::local_port() const { return impl_->udp.local_port(); }
+intptr_t Session::udp_socket() const { return impl_->udp.is_open() ? (intptr_t)impl_->udp.handle() : -1; }
 void Session::set_wake_event(void* event) {
     impl_->ws.set_wake(event);
 #if RH_WIN

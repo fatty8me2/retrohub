@@ -110,10 +110,8 @@ struct Runner::Impl {
     WSAEVENT wake = WSA_INVALID_EVENT;
     void watch(SOCKET s) { if (wake != WSA_INVALID_EVENT && s != INVALID_SOCKET) WSAEventSelect(s, wake, FD_READ); }
 #else
-    /* macOS: a plat::Waker (signalled by Session for relay frames) plus poll() on the local sockets. hubnet::Session has no public
-     * accessor for its UDP socket fd (src/net is not ours), so direct UDP frames cannot wake the poll: the wait is capped at 1 ms
-     * (up to ~1 ms extra latency on direct frames; relay frames and local Dolphin/Azahar datagrams still wake it at once).
-     * TODO(macOS lane 2): expose Session::udp_fd() and add it to the poll set, then raise the cap to 5 ms like Windows. */
+    /* macOS: a plat::Waker (signalled by Session for relay frames) plus poll() on the local sockets and the Session's UDP socket,
+     * so any data wakes the loop at once; the 5 ms timeout only paces keepalives / timeouts, as on Windows. */
     plat::Waker* wake = nullptr;
     void watch(SOCKET) {}
 #endif
@@ -125,8 +123,9 @@ struct Runner::Impl {
             std::vector<int> fds;
             { std::lock_guard<std::recursive_mutex> g(mu);
               if (guest_sock != INVALID_SOCKET) fds.push_back((int)guest_sock);
-              for (auto& kv : host_sock) fds.push_back((int)kv.second); }
-            plat::wait_readable(*wake, fds, 1);
+              for (auto& kv : host_sock) fds.push_back((int)kv.second);
+              if (sess.udp_socket() >= 0) fds.push_back((int)sess.udp_socket()); }
+            plat::wait_readable(*wake, fds, 5);
         }
         return;
 #endif
