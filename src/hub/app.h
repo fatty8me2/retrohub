@@ -13,10 +13,13 @@
 #include "imgui_impl_sdlrenderer2.h"
 #include "imgui_internal.h"
 
+#include "plat/plat.h"
+#if RH_WIN
 #include <windows.h>
 #include <shobjidl.h>
 #include <winhttp.h>
 #include <shellapi.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -135,11 +138,34 @@ struct ChatLine {
     std::map<std::string, std::string> rx;  // reactor name -> reaction code (common/profile.h)
 };
 
+/* Native handles the UI state holds (docs/MACOS.md). On Windows they are the Win32 types, unchanged. On macOS:
+ * - NativeWindow: the hub's NSWindow* (from SDL_GetWindowWMInfo), or another app's window id; never dereferenced in shared code.
+ * - ProcHandle: the running game / emulator process. Shared code only tests and clears it (`if (A.proc)`, `A.proc != nullptr`,
+ *   `A.proc = nullptr`); waiting, exit codes and killing go through hubproc (proc_spawn.h), which reads the pid / group here. */
+#if RH_WIN
+using NativeWindow = HWND;
+using ProcHandle = HANDLE;
+#else
+using NativeWindow = void*;
+struct ProcHandle {
+    int pid = 0;
+    int pgid = 0;                 // process group (== pid when started in its own group, the job-object equivalent)
+    uint64_t start_time_us = 0;   // pairs with pid to detect pid reuse
+    ProcHandle() = default;
+    ProcHandle(std::nullptr_t) {}
+    explicit operator bool() const { return pid > 0; }
+    bool operator==(std::nullptr_t) const { return pid <= 0; }
+    bool operator!=(std::nullptr_t) const { return pid > 0; }
+    bool operator==(const ProcHandle& o) const { return pid == o.pid && start_time_us == o.start_time_us; }
+    bool operator!=(const ProcHandle& o) const { return !(*this == o); }
+};
+#endif
+
 /* The game currently running as a child process. */
 struct RunInfo {
     std::string key, system_short, title;
     uint64_t start_unix = 0;
-    ULONGLONG start_tick = 0;
+    unsigned long long start_tick = 0;   // GetTickCount64 / plat::tick_ms
     bool track = true;      // record play time / touch the save vault (false for the native Smash port)
     bool online = false;
     bool room = false;                  // started by the room's launch message (host-synced session): ends when the host leaves
@@ -197,7 +223,7 @@ struct VaultRow { hubui::VaultMeta m; };
 
 struct App {
     SDL_Window* win = nullptr;
-    HWND hwnd = nullptr;
+    NativeWindow hwnd = nullptr;
     hubui::Settings st;
     std::string settings_path;
     bool dirty = false;
@@ -312,8 +338,8 @@ struct App {
     bool chat_scroll = false;
 
     // child process
-    HANDLE proc = nullptr;
-    HANDLE job_h = nullptr;     // job object holding an external emulator and anything it starts (3DS / Wii U)
+    ProcHandle proc = nullptr;
+    ProcHandle job_h = nullptr;     // job object holding an external emulator and anything it starts (3DS / Wii U)
     std::string proc_title;
 
     // ui
@@ -418,7 +444,7 @@ struct ShotDriver {
     bool update = false;                  // HUB_SHOT_UPDATE: also draw the update prompt
     double secs = 4.0;                    // HUB_SHOT_SECS
     std::vector<ImGuiKey> keys;           // HUB_SHOT_KEYS
-    ULONGLONG t0 = 0;
+    unsigned long long t0 = 0;
     double el = 0;                        // seconds since start (set by pre_frame)
     float wx = 0, wy = 0, wn = 0;         // HUB_SHOT_WHEEL=x,y,notches (notches > 0 scrolls right/down)
     bool wheel = false;
@@ -500,8 +526,8 @@ bool file_exists(const std::string& p);
 std::string dir_of(const std::string& p);
 std::string file_name(const std::string& p);
 bool picker_focus_ok();   // a file / folder dialog may open only while the hub window has input focus (headless: always); never over a game
-std::string pick_path(HWND owner, bool folder, const wchar_t* filter_name, const wchar_t* filter_spec);
-std::string pick_save_path(HWND owner, const wchar_t* default_name, const wchar_t* filter_name,
+std::string pick_path(NativeWindow owner, bool folder, const wchar_t* filter_name, const wchar_t* filter_spec);
+std::string pick_save_path(NativeWindow owner, const wchar_t* default_name, const wchar_t* filter_name,
                                   const wchar_t* filter_spec, const wchar_t* default_ext);
 bool dir_exists(const std::string& p);
 std::string read_text_file(const std::string& p);
