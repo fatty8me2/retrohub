@@ -6,6 +6,10 @@
 #include <cstring>
 #include <string>
 
+#include "plat/plat.h"
+#if !RH_WIN
+#include <unistd.h>
+#endif
 #include "gb_cart.h"
 #include "launch_guard_logic.h"
 #include "launch_logic.h"
@@ -39,14 +43,24 @@ int main() {
         CHECK(!has(t, "\\\""));          // the quotes in the title were dropped, none escaped
         CHECK(has(t, "Zelda Link"));
         CHECK(save_stem_arg("").empty());
+#if RH_WIN
         CHECK(save_stem_arg("My Game (USA)") == " --save-stem \"My Game (USA)\"");
         CHECK(save_stem_arg("Game") == " --save-stem \"Game\"");   // always quoted
+#else   // macOS: winutil::quote_arg is POSIX single-quote quoting (the runner command line is split like a shell's)
+        CHECK(save_stem_arg("My Game (USA)") == " --save-stem 'My Game (USA)'");
+        CHECK(save_stem_arg("Game") == " --save-stem 'Game'");   // always quoted
+#endif
     }
 
     // ---- n64run base line ----
     {
+#if RH_WIN
         std::string a = n64_base_args("C:\\roms\\My Game.z64", "", "C:\\v\\n64\\k", "My Game");
         CHECK(a.rfind("--rom \"C:\\roms\\My Game.z64\" --game unknown --save-dir ", 0) == 0);   // path with a space stays one argument
+#else
+        std::string a = n64_base_args("/roms/My Game.z64", "", "/v/n64/k", "My Game");
+        CHECK(a.rfind("--rom '/roms/My Game.z64' --game unknown --save-dir ", 0) == 0);   // path with a space stays one argument
+#endif
         CHECK(has(a, " --title "));
         CHECK(has(n64_base_args("r.z64", "smash64", "d", "t"), " --game smash64 "));
         CHECK(n64_wants_result_file("remix") && n64_wants_result_file("smash64"));
@@ -55,8 +69,13 @@ int main() {
 
     // ---- retrorun base line ----
     {
+#if RH_WIN
         std::string a = retro_base_args("C:\\c\\mgba_libretro.dll", "C:\\r\\a b.gba", "gba", "C:\\v\\b", "C:\\v\\s", " --resume", "A B", "inner");
         CHECK(a.rfind("--core \"C:\\c\\mgba_libretro.dll\" --rom \"C:\\r\\a b.gba\" --system gba --save-dir ", 0) == 0);
+#else
+        std::string a = retro_base_args("/c/mgba_libretro.dylib", "/r/a b.gba", "gba", "/v/b", "/v/s", " --resume", "A B", "inner");
+        CHECK(a.rfind("--core '/c/mgba_libretro.dylib' --rom '/r/a b.gba' --system gba --save-dir ", 0) == 0);
+#endif
         size_t st = a.find(" --state-dir "), rs = a.find(" --resume"), ti = a.find(" --title "), ss = a.find(" --save-stem ");
         CHECK(st != std::string::npos && rs != std::string::npos && ti != std::string::npos && ss != std::string::npos);
         CHECK(st < rs && rs < ti && ti < ss);   // the order the runner and the resume stripping rely on
@@ -73,7 +92,11 @@ int main() {
         CHECK(b == retro_base_args("c.dll", "r.gb", "gb", "b", "s", "", "T", ""));   // nothing else touched
         CHECK(erase_resume_arg("--core x") == "--core x");   // no resume: unchanged
         // n64: resume needs a state dir, added once, never twice
+#if RH_WIN
         CHECK(ensure_state_dir_for_resume("--rom r --resume", "C:\\s t") == "--rom r --resume --state-dir \"C:\\s t\"");
+#else
+        CHECK(ensure_state_dir_for_resume("--rom r --resume", "/s t") == "--rom r --resume --state-dir '/s t'");
+#endif
         CHECK(ensure_state_dir_for_resume("--rom r", "C:\\s") == "--rom r");   // no resume: no state dir
         CHECK(ensure_state_dir_for_resume("--rom r --resume --state-dir x", "C:\\s") == "--rom r --resume --state-dir x");
     }
@@ -96,6 +119,7 @@ int main() {
     CHECK(gbcart::online_gb_core("sameboy", true) == "sameboy" && gbcart::online_gb_core("sameboy", false) == "sameboy");
     {
         uint8_t ct = 0;
+#if RH_WIN
         CHECK(!gbcart::read_cart_type(L"C:/no/such/game.gb", &ct));
         CHECK(!gbcart::read_cart_type(L"C:/x/game.zip", &ct));
         const wchar_t* tmp = _wgetenv(L"TEMP");
@@ -107,6 +131,19 @@ int main() {
             CHECK(gbcart::read_cart_type(p, &ct) && ct == 0x10);
             _wremove(p.c_str());
         } else CHECK(false);
+#else   // macOS: the UTF-8 overload of read_cart_type
+        CHECK(!gbcart::read_cart_type(std::string("/no/such/game.gb"), &ct));
+        CHECK(!gbcart::read_cart_type(std::string("/x/game.zip"), &ct));
+        const char* tmp = std::getenv("TMPDIR");
+        std::string p = std::string(tmp && *tmp ? tmp : "/tmp") + "/gbcart_test_" + std::to_string((long)getpid()) + ".gb";
+        FILE* f = std::fopen(p.c_str(), "wb");
+        if (f) {
+            unsigned char h[0x150] = {0}; h[0x147] = 0x10;
+            std::fwrite(h, 1, sizeof h, f); std::fclose(f);
+            CHECK(gbcart::read_cart_type(p, &ct) && ct == 0x10);
+            std::remove(p.c_str());
+        } else CHECK(false);
+#endif
     }
 
     // ---- Wii U pad combo: only while RetroHub or this session's own game is in front ----

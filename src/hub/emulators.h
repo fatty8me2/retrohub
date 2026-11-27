@@ -19,6 +19,12 @@
 
 namespace hubemu {
 
+#if !defined(_WIN32)
+/* macOS stand-ins for the Windows error codes of InstallTestHooks::write_fault (the same plain-English cases in emulators.cpp's disk_problem_plain). */
+constexpr unsigned long ERROR_DISK_FULL = 28 /* ENOSPC */, ERROR_HANDLE_DISK_FULL = 0xFFFF0001ul, ERROR_SHARING_VIOLATION = 16 /* EBUSY */,
+                        ERROR_LOCK_VIOLATION = 0xFFFF0002ul, ERROR_ACCESS_DENIED = 13 /* EACCES */;
+#endif
+
 enum class Kind { Azahar, Cemu, Dolphin, Pcsx2, Lrps2, Ppsspp, Lichii, Fritchii };   // Ppsspp: PlayStation Portable (ppsspp.h); Lichii: Switch / Switch 2 (lichii.h); Fritchii: Frizti's Ocarina-of-Time fork of Lichii (same exe name, folder layout, config and save layout; opt-in via switch.runner, nx_runner.h)
 //   // Pcsx2: PlayStation 2 (pcsx2.h); Lrps2: the libretro PS2 core for online rooms (a DLL for retrorun, not an exe)
 

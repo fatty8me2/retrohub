@@ -4,6 +4,8 @@
 
 namespace hubproc {
 
+#if RH_WIN
+
 bool creation_time(HANDLE process, unsigned long long* out) {
     FILETIME c, x, k, u;
     if (!process || !GetProcessTimes(process, &c, &x, &k, &u)) return false;
@@ -56,5 +58,32 @@ bool spawn(const std::wstring& exe, std::wstring cmdline, const std::wstring& cw
     CloseHandle(pi.hThread);
     return true;
 }
+
+#else
+
+bool creation_time(int pid, uint64_t* out) {
+    const uint64_t t = plat::proc::pid_start_time_us(pid);
+    if (!t) return false;
+    *out = t;
+    return true;
+}
+
+bool spawn(const plat::proc::SpawnOptions& opt, const std::function<void(const Spawned&)>& after_spawn, Spawned* out) {
+    *out = Spawned();
+    std::string why;
+    if (!plat::proc::spawn(opt, &out->child, &why)) {
+        out->error = 1;
+        out->error_text = why.empty() ? "could not start the process" : why;
+        return false;
+    }
+    out->created = out->child.start_time_us;
+    if (!out->created) creation_time(out->child.pid, &out->created);
+    if (after_spawn) {
+        try { after_spawn(*out); } catch (...) {}   // a failing observer must not end the player's game (same as the Windows path)
+    }
+    return true;
+}
+
+#endif
 
 } // namespace hubproc

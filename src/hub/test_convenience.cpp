@@ -7,8 +7,7 @@
 #include "nettest.h"
 #include "palette_logic.h"
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "plat/plat_sock.h"
 
 #include "miniz.h"
 
@@ -87,9 +86,9 @@ static void test_diag() {
     fs::remove_all(root);
 }
 
-static void fake_stun(SOCKET s, std::atomic<bool>* stop) {
+static void fake_stun(plat::socket_t s, std::atomic<bool>* stop) {
     while (!*stop) {
-        uint8_t buf[64]; sockaddr_in from; int fl = sizeof from;
+        uint8_t buf[64]; sockaddr_in from; plat::socklen fl = sizeof from;
         int n = recvfrom(s, (char*)buf, sizeof buf, 0, (sockaddr*)&from, &fl);
         if (n < 20) continue;
         uint8_t r[32] = {0x01, 0x01, 0, 12, 0x21, 0x12, 0xA4, 0x42};
@@ -113,14 +112,18 @@ static void test_nettest() {
     CHECK(verdict(a, none).v == Verdict::Direct);
     CHECK(std::string(ping_text(-1)) == "Lobby unreachable" && std::string(ping_text(20)) == "Lobby ping: good");
 
-    WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
-    SOCKET srv[2]; int ports[2]; std::atomic<bool> stop{false}; std::thread th[2];
+    plat::sock_init();
+    plat::socket_t srv[2]; int ports[2]; std::atomic<bool> stop{false}; std::thread th[2];
     for (int i = 0; i < 2; ++i) {
         srv[i] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         sockaddr_in sa; std::memset(&sa, 0, sizeof sa); sa.sin_family = AF_INET; sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         bind(srv[i], (sockaddr*)&sa, sizeof sa);
-        int l = sizeof sa; getsockname(srv[i], (sockaddr*)&sa, &l); ports[i] = ntohs(sa.sin_port);
+        plat::socklen l = sizeof sa; getsockname(srv[i], (sockaddr*)&sa, &l); ports[i] = ntohs(sa.sin_port);
+#if RH_WIN
         DWORD t = 200; setsockopt(srv[i], SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof t);
+#else
+        timeval t{0, 200 * 1000}; setsockopt(srv[i], SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof t);
+#endif
         th[i] = std::thread(fake_stun, srv[i], &stop);
     }
     std::string s1 = "127.0.0.1:" + std::to_string(ports[0]), s2 = "127.0.0.1:" + std::to_string(ports[1]);
@@ -129,8 +132,10 @@ static void test_nettest() {
     Report dead = run_test("127.0.0.1:9", "127.0.0.1:9", "");
     CHECK(!dead.a.ok && dead.verdict.v == Verdict::Blocked);
     stop = true;
-    for (int i = 0; i < 2; ++i) { th[i].join(); closesocket(srv[i]); }
+    for (int i = 0; i < 2; ++i) { th[i].join(); plat::sock_close(srv[i]); }
+#if RH_WIN
     WSACleanup();
+#endif
 }
 
 static void test_glyph() {

@@ -2,6 +2,9 @@
 //   find/install emulator -> unpack zip -> write config -> save copy-in -> spawn (job object) -> wait -> save copy-back.
 // Usage: hub_emu_live <game file> [--fullscreen] [--seconds N] [--shots <dir>] [--pads N]   (--pads: GameCube: pretend N XInput pads, 0 = none)
 // Set RETROHUB_NO_EXISTING_EMU=1 to ignore any Cemu install outside RetroHub's own data dir.
+// macOS: the same flow on plat::proc (posix_spawn into its own process group = the job-object counterpart; windows via CGWindowList; --esc needs the
+// Accessibility permission, --shots is not supported). Emulator installs are "not available on macOS yet" until lane 7 adds the macOS pins.
+#include "plat/plat.h"
 #include "winutil.h"
 #include "emulators.h"
 #include "games.h"
@@ -9,25 +12,58 @@
 #include "savestore.h"
 #include "logic.h"
 
+#if RH_WIN
 #include <windows.h>
+#else
+#include "plat/plat_proc.h"
+#endif
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
 
-static std::wstring W(const std::string& s) { return winutil::to_wide(s); }
 static std::string slurp(const std::string& p) {
-    std::ifstream f(W(p), std::ios::binary);
+    std::ifstream f(std::filesystem::u8path(p), std::ios::binary);
     std::stringstream ss;
     ss << f.rdbuf();
     return ss.str();
 }
 static void spit(const std::string& p, const std::string& t) {
-    std::ofstream f(W(p), std::ios::binary | std::ios::trunc);
+    std::ofstream f(std::filesystem::u8path(p), std::ios::binary | std::ios::trunc);
     f << t;
 }
+static const std::string SEP(1, plat::kSep);   // "\\" on Windows, "/" on macOS
+static unsigned long long now_ticks() {
+#if RH_WIN
+    return GetTickCount64();
+#else
+    return plat::tick_ms();
+#endif
+}
+#if !RH_WIN
+/* The argument string the launch helpers build is POSIX-quoted on macOS (winutil::quote_arg): split it back into argv. */
+static std::vector<std::string> split_args(const std::string& a) {
+    std::vector<std::string> v;
+    std::string cur;
+    bool have = false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        const char c = a[i];
+        if (c == '\'') {
+            have = true;
+            for (++i; i < a.size() && a[i] != '\''; ++i) cur += a[i];
+        } else if (c == ' ') {
+            if (have) { v.push_back(cur); cur.clear(); have = false; }
+        } else { cur += c; have = true; }
+    }
+    if (have) v.push_back(cur);
+    return v;
+}
+#endif
+#if RH_WIN
+static std::wstring W(const std::string& s) { return winutil::to_wide(s); }
 
 static std::vector<DWORD> job_pids(HANDLE job) {
     std::vector<DWORD> out;
@@ -70,8 +106,12 @@ static void save_bmp(const std::string& path, HWND h) {
     ReleaseDC(nullptr, sc);
 }
 
+#endif   // RH_WIN (job_pids, window enumeration, bitmap capture)
+
 int main(int argc, char** argv) {
+#if RH_WIN
     SetConsoleOutputCP(CP_UTF8);
+#endif
     std::string game_path, shots;
     bool fs = false, esc = false;
     int fake_pads = -1;
@@ -89,8 +129,8 @@ int main(int argc, char** argv) {
     if (!hub::identify_game(game_path, &e)) { std::printf("not a recognized game: %s\n", game_path.c_str()); return 2; }
     std::printf("game: %s key=%s system=%s issue='%s'\n", e.title.c_str(), e.key.c_str(), hub::system_short(e.system), e.issue.c_str());
     hubemu::Kind kind = hubemu::kind_for(e.system);
-    ULONGLONG t0 = GetTickCount64();
-    auto stamp = [&]() { return (double)(GetTickCount64() - t0) / 1000.0; };
+    unsigned long long t0 = now_ticks();
+    auto stamp = [&]() { return (double)(now_ticks() - t0) / 1000.0; };
 
     if (e.issue == "extract" && hub::extracted_3ds_path(e).empty()) {   // any archived image (3DS, GameCube, Wii U, PS2...): the same unpack the hub does on Play
         std::printf("[%.1fs] would ask to unpack into %s (%llu bytes)\n", stamp(), hub::extract_3ds_dir(e).c_str(),
@@ -127,15 +167,15 @@ int main(int argc, char** argv) {
     } else hubemu::prepare_cemu_managed(inst.dir);
     // test-only: mute the emulator
     if (kind == hubemu::Kind::Dolphin) {
-        std::string ini = inst.dir + "\\User\\Config\\Dolphin.ini";
+        std::string ini = inst.dir + SEP + "User" + SEP + "Config" + SEP + "Dolphin.ini";
         spit(ini, hubui::ini_set(slurp(ini), "DSP", "Volume", "0"));
     } else if (kind == hubemu::Kind::Azahar) {
-        std::string ini = inst.dir + "\\user\\config\\qt-config.ini";
+        std::string ini = inst.dir + SEP + "user" + SEP + "config" + SEP + "qt-config.ini";
         std::string t = slurp(ini);
         if (t.find("[Audio]") == std::string::npos) t += "\n[Audio]\nvolume\\default=false\nvolume=0\n";
         spit(ini, t);
     } else {
-        std::string x = inst.dir + "\\portable\\settings.xml";
+        std::string x = inst.dir + SEP + "portable" + SEP + "settings.xml";
         std::string t = slurp(x);
         if (t.find("<Audio>") == std::string::npos) {
             size_t p = t.rfind("</content>");
@@ -146,13 +186,57 @@ int main(int argc, char** argv) {
 
     std::string game = (e.issue == "extract") ? hub::extracted_3ds_path(e) : e.path;
     std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs)
-                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI")
+                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + SEP + "GCI")
                                                        : hubemu::cemu_args(game, fs);
     std::string battery = hub::saves::battery_dir(hub::system_short(e.system), e.key);
     hubemu::SaveSession sess = hubemu::begin_session(e, inst, battery, "");
     std::printf("[%.1fs] begin_session active=%d err='%s' battery=%s\n", stamp(), (int)sess.active, sess.error.c_str(), battery.c_str());
     std::printf("cmd: %s %s\n", inst.exe.c_str(), args.c_str());
 
+#if !RH_WIN
+    {   /* macOS: posix_spawn into its own process group (kill_tree = the job object), then the same watch / close / report steps */
+        plat::proc::SpawnOptions so;
+        so.exe = inst.exe;
+        so.args = split_args(args);
+        so.cwd = inst.dir;
+        so.own_group = true;
+        plat::proc::Child ch;
+        std::string serr;
+        if (!plat::proc::spawn(so, &ch, &serr)) { std::printf("spawn failed: %s\n", serr.c_str()); hubemu::end_session(sess); return 7; }
+        const unsigned long long ls = now_ticks();
+        std::printf("[%.1fs] launched pid %d (group %d)\n", stamp(), ch.pid, ch.pgid);
+        bool saw_window = false, warned_keys = false, warned_shots = false;
+        for (int sec = 0; sec < seconds; ++sec) {
+            plat::sleep_ms(1000);
+            if (!plat::proc::running(ch)) { std::printf("[%.1fs] emulator exited early (code?)\n", stamp()); break; }
+            if (!saw_window && plat::proc::pid_has_window(ch.pid)) { saw_window = true; std::printf("[%.1fs] first visible window after %.1fs\n", stamp(), (now_ticks() - ls) / 1000.0); }
+            if (!shots.empty() && sec % 10 == 9 && !warned_shots) { warned_shots = true; std::printf("--shots is not supported on macOS (needs the Screen Recording permission); skipped\n"); }
+        }
+        if (esc && plat::proc::running(ch)) {
+            if (!plat::proc::accessibility_trusted(false)) {
+                if (!warned_keys) { warned_keys = true; std::printf("--esc: Accessibility permission is not granted to this program; no key was sent\n"); }
+            } else {
+                plat::proc::send_key(ch.pid, 0x35 /* kVK_Escape */, 0);
+                std::printf("[%.1fs] sent Escape to pid %d\n", stamp(), ch.pid);
+                bool gone = false;
+                for (int i = 0; i < 12 && !gone; ++i) { plat::sleep_ms(500); gone = !plat::proc::running(ch); }
+                std::printf("[%.1fs] after Escape: emulator %s\n", stamp(), gone ? "EXITED" : "still running (Escape not delivered)");
+            }
+        }
+        bool graceful = !plat::proc::running(ch);
+        if (!graceful) {
+            plat::proc::kill_pid(ch.pid, false);   // SIGTERM to the emulator (the close request)
+            std::printf("[%.1fs] sent SIGTERM to pid %d\n", stamp(), ch.pid);
+            int code = 0;
+            graceful = plat::proc::wait(ch, 20000, &code);
+        }
+        if (!graceful) { std::printf("not exited after 20s: killing the process group (our own processes)\n"); plat::proc::kill_tree(ch); }
+        std::printf("[%.1fs] group empty, graceful=%d\n", stamp(), (int)graceful);
+        hubemu::end_session(sess);
+        std::printf("[%.1fs] end_session err='%s' summary='%s'\n", stamp(), sess.error.c_str(), sess.summary.c_str());
+        return 0;
+    }
+#else
     std::wstring cmd = L"\"" + W(inst.exe) + L"\" " + W(args);
     std::vector<wchar_t> buf(cmd.begin(), cmd.end());
     buf.push_back(0);
@@ -236,4 +320,5 @@ int main(int argc, char** argv) {
     hubemu::end_session(sess);
     std::printf("[%.1fs] end_session err='%s' summary='%s'\n", stamp(), sess.error.c_str(), sess.summary.c_str());
     return 0;
+#endif
 }

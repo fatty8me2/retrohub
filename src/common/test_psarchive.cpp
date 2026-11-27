@@ -1,7 +1,10 @@
 /* PlayStation disc archives (.7z / .rar): identification without extraction (serial in name, Redump title databases for PS1 and PS2, folder
  * hint as a tie break), a misplaced PS2 game, truncated archives, extraction with SYSTEM.CNF confirmation. Synthetic archives made with
  * Windows' bsdtar in a scratch dir. No emulator, no network. */
+#include "plat/plat.h"
+#if RH_WIN
 #include <windows.h>
+#endif
 
 #include <cstdint>
 #include <cstdio>
@@ -84,10 +87,17 @@ static std::vector<uint8_t> to_raw2352(const std::vector<uint8_t>& iso) {
 /* A 7z with the given members of `dir` (bsdtar writes 7z). */
 static void make_7z(const fs::path& out, const fs::path& dir, const std::vector<std::string>& members) {
     fs::create_directories(out.parent_path());
+#if RH_WIN
     std::wstring cmd = L"\"\"" + std::wstring(_wgetenv(L"SystemRoot")) + L"\\System32\\tar.exe\" --format 7zip -cf \"" + out.wstring() + L"\" -C \"" + dir.wstring() + L"\"";
     for (const auto& m : members) cmd += L" \"" + fs::path(m).wstring() + L"\"";
     cmd += L"\"";
     _wsystem(cmd.c_str());
+#else   // macOS: /usr/bin/tar is bsdtar too
+    std::string cmd = "/usr/bin/tar --format 7zip -cf '" + out.string() + "' -C '" + dir.string() + "'";
+    for (const auto& m : members) cmd += " '" + m + "'";
+    cmd += " >/dev/null 2>&1";
+    if (std::system(cmd.c_str()) != 0) std::printf("note: tar could not write %s\n", out.string().c_str());
+#endif
 }
 
 static const GameEntry* by_path(const std::vector<GameEntry>& v, const fs::path& p) {
@@ -119,7 +129,7 @@ int main() {
     }
 
     /* ---- scratch library ---- */
-    fs::path root = fs::temp_directory_path() / L"psarchive_test_scratch";
+    fs::path root = fs::temp_directory_path() / "psarchive_test_scratch";
     std::error_code ec;
     fs::remove_all(root, ec);
     library_set_data_dir((root / "data").u8string());

@@ -11,8 +11,11 @@
 #include "miniz.h"
 #include "wiiu_meta.h"
 
+#include "plat/plat.h"
+#if RH_WIN
 #include <process.h>
 #include <windows.h>
+#endif
 
 #include <cstdint>
 #include <cstdio>
@@ -21,7 +24,15 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#if RH_WIN
 #include <xinput.h>
+#else
+#include <unistd.h>
+static int _getpid() { return (int)getpid(); }
+/* the XInput button bits (the documented contract of cemu_toggle_combo) */
+static const int VK_CONTROL = 0x11, VK_TAB = 0x09;
+static const unsigned XINPUT_GAMEPAD_BACK = 0x0020, XINPUT_GAMEPAD_RIGHT_SHOULDER = 0x0200, XINPUT_GAMEPAD_START = 0x0010, XINPUT_GAMEPAD_Y = 0x8000;
+#endif
 
 using namespace hub;
 namespace fs = std::filesystem;
