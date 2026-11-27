@@ -1,6 +1,6 @@
 #include "lockstep.h"
 
-#include <windows.h>
+#include "plat/plat.h"
 
 #include <algorithm>
 #include <cstdarg>
@@ -198,7 +198,7 @@ bool Lockstep::start_barrier(uint32_t timeout_ms) {
         if (now - t0 > timeout_ms) return false;
         if (hooks_.idle) hooks_.idle();
         if (stop_) return false;   // the hub's Quit arrived while we waited for the other players
-        Sleep(5);
+        plat::sleep_ms(5);
     }
 }
 
@@ -484,7 +484,7 @@ bool Lockstep::rs_host_barrier(uint32_t n) {
         }
         if (now - last_send >= 50) { send_packet(); last_send = now; }
         if (now - rs_t0_ > 60000 || (!rs_snd_.active() && now - rs_t0_ > 12000)) { rs_fail("timeout"); return true; }
-        Sleep(1);
+        plat::sleep_ms(1);
     }
 }
 
@@ -505,7 +505,7 @@ bool Lockstep::rs_guest_barrier(uint32_t n) {
         if (now - last_status >= 250) { rs_send(0, rs_.ack_msg()); last_status = now; }   // status poll: the host answers Abort if it gave up (a lost Abort cannot strand us)
         if (now - last_send >= 50) { send_packet(); last_send = now; }
         if (now - rs_t0_ > 45000) { rs_fail("timeout"); abort_with("resync: the state never arrived"); return false; }
-        Sleep(1);
+        plat::sleep_ms(1);
     }
     const rb::xfer::Meta mt = rs_rcv_.meta();
     const std::vector<uint8_t>& st = rs_rcv_.payload();
@@ -583,7 +583,7 @@ void Lockstep::finish_spectators() {
             pump();
             spec_service();
             if (spec_host_->all_acked(spec_mask()) && hubnet::now_ms() - t0 > 300) break;
-            Sleep(5);
+            plat::sleep_ms(5);
         }
         if (hooks_.log) { char b[120]; std::snprintf(b, sizeof b, "spectate: served %u samples; spectator hashes ok %u, different %u", spec_host_->total(), spec_host_->hashes_ok(), spec_host_->hashes_bad()); hooks_.log(b); }
     }
@@ -599,7 +599,7 @@ void Lockstep::finish() {
         send_packet();           // the input window first, so a partner still needing our last samples gets them
         net_->send(-1, bye, 6);
         uint32_t t0 = hubnet::now_ms();
-        while (hubnet::now_ms() - t0 < 25) { pump(); Sleep(2); }
+        while (hubnet::now_ms() - t0 < 25) { pump(); plat::sleep_ms(2); }
     }
     finish_spectators();
 }
@@ -663,7 +663,7 @@ uint32_t Lockstep::spec_get_keys(int port) {
                 abort_with("Connection lost (spectating: no data from the host for 10 s)");
                 return 0;
             }
-            Sleep(1);
+            plat::sleep_ms(1);
         }
     }
     for (int p = 0; p < kPorts; p++) spec_cur_.v[p] = core_.port_present(p) ? spec_cli_.get(n, p) : 0;
@@ -764,7 +764,7 @@ uint32_t Lockstep::get_keys(int port) {
         for (uint32_t t0 = hubnet::now_ms(); !ok && hooks_.resync_save && hubnet::now_ms() - t0 < 3000 && !lost_ && !stop_;) {   // a spectator snapshot is still being written: its worker finishes on its own
             if (hooks_.idle) hooks_.idle();
             pump();
-            Sleep(5);
+            plat::sleep_ms(5);
             ok = hooks_.resync_save(&rs_job_);
         }
         if (!ok) rs_fail("the core refused to save");
@@ -773,7 +773,7 @@ uint32_t Lockstep::get_keys(int port) {
     if (net_ && opt_.my_slot == 1 && n > 0) {   // QA: periodic hiccup on slot 1 ("period_samples,ms"), RETROHUB_QA=1 only
         static int per = -1, ms = 0;
         if (per < 0) { per = 0; const char* e = std::getenv("RETROHUB_QA") ? std::getenv("N64RUN_QA_STALL") : nullptr; if (e) std::sscanf(e, "%d,%d", &per, &ms); }
-        if (per > 0 && n % (uint32_t)per == 0) Sleep((DWORD)ms);
+        if (per > 0 && n % (uint32_t)per == 0) plat::sleep_ms((unsigned)ms);
     }
     uint32_t btn[kPorts] = {0, 0, 0, 0}, ax[kPorts] = {0, 0, 0, 0};
     for (int i = 0; i < n_local_; i++) {
@@ -806,7 +806,7 @@ uint32_t Lockstep::get_keys(int port) {
                 return 0;
             }
             if (now - last_send >= 50) { send_packet(); last_send = now; }   // heal lost packets while stalled
-            Sleep(1);
+            plat::sleep_ms(1);
         }
         stall_this = hubnet::now_ms() - t0;
         if (stall_this > longest_stall_) longest_stall_ = stall_this;
@@ -879,7 +879,7 @@ bool negotiate_delay(hubnet::Session& s, const DelayNegotiation& dn, const std::
             int from; std::vector<uint8_t> m;
             while (s.recv(&from, &m)) {}
             if (idle) idle();
-            Sleep(5);
+            plat::sleep_ms(5);
         }
         s.set_ping_interval(500);
         std::vector<double> rtts;
@@ -917,7 +917,7 @@ bool negotiate_delay(hubnet::Session& s, const DelayNegotiation& dn, const std::
             }
             if (now - t0 > dn.timeout_ms) { say("input delay auto: clients did not acknowledge D"); return false; }
             if (idle) idle();
-            Sleep(5);
+            plat::sleep_ms(5);
         }
         *out_delay = d;
         return true;
@@ -946,7 +946,7 @@ bool negotiate_delay(hubnet::Session& s, const DelayNegotiation& dn, const std::
         if (d >= 0 && (host_moved_on || now - got_at > 5000)) break;
         if (now - t0 > dn.timeout_ms) { say("input delay auto: host never sent D"); return false; }
         if (idle) idle();
-        Sleep(5);
+        plat::sleep_ms(5);
     }
     say("input delay auto: host chose D=%d", d);
     if (dn.fixed_delay >= 0 && dn.fixed_delay != d) say("input delay: ignoring local --delay %d, using host's D=%d", dn.fixed_delay, d);
@@ -998,7 +998,7 @@ CheatSync exchange_cheat_hash(hubnet::Session& s, int my_slot, uint32_t slot_mas
         }
         if (now - t0 > timeout_ms) { if (log) log("cheats: not every peer answered the cheat-list check in time"); return CheatSync::Timeout; }
         if (idle) idle();
-        Sleep(5);
+        plat::sleep_ms(5);
     }
 }
 
@@ -1128,7 +1128,7 @@ void Lockstep::di_barrier(uint32_t n) {
         if (net_->failed()) { abort_with("Connection lost during a drop-in"); return; }
         if (dj_ctl_.timed_out(now)) { di_abort("not every player acknowledged the Admit in time"); break; }
         if (now - last_send >= 50) { send_packet(); last_send = now; }
-        Sleep(1);
+        plat::sleep_ms(1);
     }
     dj_barrier_ms_ += hubnet::now_ms() - t0;
     if (dj_barrier_ms_ > 20 && hooks_.log) hooks_.log("dropin: the join sample waited " + std::to_string(dj_barrier_ms_) + " ms for the acks");

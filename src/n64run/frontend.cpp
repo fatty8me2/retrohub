@@ -11,8 +11,11 @@
  */
 #include "winutil.h"
 #include "net_probe.h"
+#include "plat/plat.h"
+#if RH_WIN
 #include <windows.h>
 #include <shellapi.h>
+#endif
 
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -66,7 +69,14 @@
 #include "match_result.h"
 #include "osd_gl.h"
 #include "remix_data.h"
+#if RH_WIN
 #include <GL/gl.h>
+#else
+#ifndef GL_SILENCE_DEPRECATION
+#define GL_SILENCE_DEPRECATION 1   // macOS: OpenGL is deprecated but works (4.1 core)
+#endif
+#include <OpenGL/gl3.h>
+#endif
 #include <deque>
 #include <set>
 #include <ctime>
@@ -315,7 +325,7 @@ static void clip_poll_done() {
 
 // ---------------------------------------------------------------- emulator
 struct Core {
-    HMODULE dll = nullptr;
+    plat::LibHandle dll = nullptr;
     ptr_CoreStartup Startup = nullptr;
     ptr_CoreShutdown Shutdown = nullptr;
     ptr_CoreAttachPlugin Attach = nullptr;
@@ -427,7 +437,7 @@ static void cheats_tick() {
         g_cheats_first_done = true;
         return;
     }
-    unsigned long long now = GetTickCount64();
+    unsigned long long now = plat::tick_ms();
     if (now < g_cheats_next_poll) return;
     g_cheats_next_poll = now + 500;
     if (!g_cheats_watch.changed()) return;
@@ -462,7 +472,7 @@ static long long g_ctl_acked = 0;                  // highest seq acked so far
 static runctl::InputGate g_in_gate;   // hub quick menu open => neutral local input
 static CtlJob g_job;
 static std::atomic<int> g_ctl_save_done{-1}, g_ctl_load_done{-1};   // runners-M3: the core's SAVECOMPLETE / LOADCOMPLETE for the running state job (-1 not yet, 0 failed, 1 ok)
-static const ULONGLONG g_boot_tick = GetTickCount64();                 // process start: a state card's "played" is this session, not machine uptime
+static const unsigned long long g_boot_tick = plat::tick_ms();                 // process start: a state card's "played" is this session, not machine uptime
 static std::string g_ctl_state_dir, g_ctl_shot_dir, g_ctl_key, g_ctl_shot_tmp;
 static bool g_ctl_online = false;
 static std::set<std::string> g_ctl_shot_seen;
@@ -537,7 +547,7 @@ static void auto_save_now() {
     std::string f = runctl::state_file(g_auto_dir, runctl::kAutoSlot);
     if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) return;
     runctl::Sidecar sc;
-    sc.game_key = g_key_for_auto; sc.time = (long long)std::time(nullptr); sc.playtime = (long long)(GetTickCount64() / 1000);
+    sc.game_key = g_key_for_auto; sc.time = (long long)std::time(nullptr); sc.playtime = (long long)(plat::tick_ms() / 1000);
     runctl::write_text_atomic(runctl::sidecar_file(g_auto_dir, runctl::kAutoSlot), runctl::make_sidecar(sc));
 }
 static void auto_tick() {
@@ -546,11 +556,11 @@ static void auto_tick() {
         g_load_state_path.clear();
         if (g_core.DoCommand(M64CMD_STATE_LOAD, 1, const_cast<char*>(f.c_str())) != M64ERR_SUCCESS) logf_("n64run", "load-state: the core refused %s", f.c_str());
         else logf_("n64run", "load-state: restoring %s", f.c_str());
-        g_next_autosave = GetTickCount64() + 30000;
+        g_next_autosave = plat::tick_ms() + 30000;
     }
     if (g_stop_at_vi && g_vi >= g_stop_at_vi) { g_stop_at_vi = 0; g_core.DoCommand(M64CMD_STOP, 0, nullptr); return; }
     if (!g_auto_dir.empty() && !g_stop_at_vi && g_vi > 600) {
-        unsigned long long now = GetTickCount64();
+        unsigned long long now = plat::tick_ms();
         if (now >= g_next_autosave) { g_next_autosave = now + 30000; auto_save_now(); }
     }
 }
@@ -597,7 +607,7 @@ static std::mutex g_save_mx;
 static SaveJob g_save;
 static uint32_t g_job_seq = 0;
 /* join stall measurement (emulation thread): lead-poll gaps while a snapshot is being prepared vs the usual gap */
-static LARGE_INTEGER g_qpf{}, g_last_poll{};
+static int64_t g_qpf = 0, g_last_poll = 0;
 static double g_gap_base_ms = 0, g_gap_join_ms = 0;
 static int g_gap_n = 0;
 /* spectator */
@@ -632,8 +642,7 @@ static void state_cb(void*, m64p_core_param p, int v) {
         std::string path;
         uint32_t id;
         { std::lock_guard<std::mutex> lk(g_save_mx); if (!g_save.busy) return; path = g_save.path; id = g_save.id; }
-        LARGE_INTEGER t0, t1, f;
-        QueryPerformanceCounter(&t0);
+        const int64_t t0 = plat::perf_counter();
         std::vector<uint8_t> data;
         if (v) {
             if (FILE* fp = std::fopen(path.c_str(), "rb")) {
@@ -647,11 +656,10 @@ static void state_cb(void*, m64p_core_param p, int v) {
         uint64_t h = data.empty() ? 0 : fnv64(data.data(), data.size());
         std::error_code ec;
         fs::remove(fs::path(path), ec);
-        QueryPerformanceCounter(&t1);
-        QueryPerformanceFrequency(&f);
+        const int64_t t1 = plat::perf_counter(), f = plat::perf_freq();
         std::lock_guard<std::mutex> lk(g_save_mx);
         g_save.done_id = id; g_save.data = std::move(data); g_save.hash = h;
-        g_save.work_ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)f.QuadPart;
+        g_save.work_ms = (double)(t1 - t0) * 1000.0 / (double)f;
         g_save.busy = false;
     }
     else if (p == M64CORE_STATE_LOADCOMPLETE && g_run.lockstep && g_run.lockstep->resync_waiting()) {   // desync recovery (guest)
@@ -685,11 +693,10 @@ static void host_poll(uint32_t n) {
     spectate::Host* H = g_run.lockstep->spectate_host();
     if (!H) return;
     {   // poll-to-poll time = the players' pace. While a snapshot is being saved its worst gap is the join stall.
-        LARGE_INTEGER t;
-        QueryPerformanceCounter(&t);
-        if (!g_qpf.QuadPart) QueryPerformanceFrequency(&g_qpf);
-        if (g_last_poll.QuadPart) {
-            double ms = (double)(t.QuadPart - g_last_poll.QuadPart) * 1000.0 / (double)g_qpf.QuadPart;
+        const int64_t t = plat::perf_counter();
+        if (!g_qpf) g_qpf = plat::perf_freq();
+        if (g_last_poll) {
+            double ms = (double)(t - g_last_poll) * 1000.0 / (double)g_qpf;
             if (g_snap && !g_snap->sending) g_gap_join_ms = std::max(g_gap_join_ms, ms);
             else if (!g_snap && ms < 1000) { g_gap_base_ms = (g_gap_base_ms * g_gap_n + ms) / (g_gap_n + 1); if (g_gap_n < 600) g_gap_n++; }
         }
@@ -721,7 +728,7 @@ static void host_poll(uint32_t n) {
         {
             std::lock_guard<std::mutex> lk(g_save_mx);
             g_save.id = x->job = ++g_job_seq;
-            g_save.path = path = g_dir + "\\live_" + std::to_string(g_job_seq) + ".st";
+            g_save.path = path = g_dir + plat::kSep + "live_" + std::to_string(g_job_seq) + ".st";
             g_save.busy = true;
         }
         if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(path.c_str())) != M64ERR_SUCCESS) {
@@ -834,7 +841,7 @@ static bool resync_save(uint32_t* job) {
         std::lock_guard<std::mutex> lk(g_save_mx);
         if (g_save.busy) return false;
         g_save.id = *job = ++g_job_seq;
-        g_save.path = path = g_dir + "\\resync_" + std::to_string(g_job_seq) + ".st";
+        g_save.path = path = g_dir + plat::kSep + "resync_" + std::to_string(g_job_seq) + ".st";
         g_save.busy = true;
     }
     if (g_core.DoCommand(M64CMD_STATE_SAVE, 1, const_cast<char*>(path.c_str())) != M64ERR_SUCCESS) {
@@ -854,7 +861,7 @@ static int resync_fetch(uint32_t job, std::vector<uint8_t>* data, uint64_t* hash
 }
 static bool resync_load(const std::vector<uint8_t>& st, uint64_t hash) {
     if (fnv64(st.data(), st.size()) != hash) return false;
-    std::string path = g_dir + "\\resync_in.st";
+    std::string path = g_dir + plat::kSep + "resync_in.st";
     FILE* f = std::fopen(path.c_str(), "wb");
     bool ok = f && std::fwrite(st.data(), 1, st.size(), f) == st.size();
     if (f) std::fclose(f);
@@ -955,7 +962,7 @@ static bool spectator_join(n64run::Lockstep& ls, int my_slot, bool legacy_host, 
                 const rb::xfer::Meta& mt = rcv.meta();
                 const std::vector<uint8_t>& st = rcv.payload();
                 bool ok = st.size() == mt.raw && fnv64(st.data(), st.size()) == mt.hash;
-                std::string path = g_dir + "\\live_in.st";
+                std::string path = g_dir + plat::kSep + "live_in.st";
                 if (ok) {
                     FILE* f = std::fopen(path.c_str(), "wb");
                     ok = f && std::fwrite(st.data(), 1, st.size(), f) == st.size();
@@ -978,7 +985,7 @@ static bool spectator_join(n64run::Lockstep& ls, int my_slot, bool legacy_host, 
             if (jc.download_stuck(now, dl_progress)) { logf_("spectate", "the live state stopped arriving"); return false; }
         }
         if (g_sess->failed() || now - last_rx > 15000) { logf_("spectate", "connection lost while joining as a spectator"); return false; }
-        Sleep(1);
+        plat::sleep_ms(1);
     }
 }
 }  // namespace live
@@ -1028,7 +1035,7 @@ static std::string corner_text_locked() {
 }
 static void corner_refresh() {
     std::lock_guard<std::mutex> lk(g_corner_mx);
-    g_corners.expire(GetTickCount64());
+    g_corners.expire(plat::tick_ms());
     const std::string t = corner_text_locked();
     for (int c = 0; c < n64run::CornerBoard::kCorners; c++) {   // one OSD slot per corner; the pause label rides in the top-right one
         std::string ct = g_corners.text(c);
@@ -1095,7 +1102,7 @@ static void pause_loop() {
     while (g_paused && !g_quit_requested.load()) {
         ctl_idle();
         if (g_pause_poll) g_pause_poll();
-        Sleep(10);
+        plat::sleep_ms(10);
     }
     g_paused = false;
     logf_("control", "resumed at VI %lld", g_vi);
@@ -1182,12 +1189,12 @@ static void ctl_dispatch(const runctl::Command& c, bool vi_ctx) {
         }
         case runctl::Cmd::OsdMsg: osd::push(c.text); ctl_ack(c.seq, true, "shown"); break;
         case runctl::Cmd::OsdCorner: {
-            { std::lock_guard<std::mutex> lk(g_corner_mx); g_corners.set(c.slot, c.text, c.value, GetTickCount64()); g_corner_live = true; }
+            { std::lock_guard<std::mutex> lk(g_corner_mx); g_corners.set(c.slot, c.text, c.value, plat::tick_ms()); g_corner_live = true; }
             corner_refresh();
             ctl_ack(c.seq, true, c.text.empty() ? "cleared" : "shown");
             break;
         }
-        case runctl::Cmd::Input: g_in_gate.set(c.value != 0, GetTickCount64()); ctl_ack(c.seq, true, c.value ? "input on" : "input off"); break;
+        case runctl::Cmd::Input: g_in_gate.set(c.value != 0, plat::tick_ms()); ctl_ack(c.seq, true, c.value ? "input on" : "input off"); break;
         case runctl::Cmd::Pause:
             if (c.value) {
                 if (g_paused || g_pause_at_vi) { ctl_ack(c.seq, true, "paused"); break; }
@@ -1266,7 +1273,7 @@ static void ctl_tick() {
             case CtlJob::SaveShot:
                 if (ctl_grab_end(g_job.thumb, runctl::kThumbWidth, &failed) || vi > g_job.start_vi + 300) {
                     runctl::Sidecar sc;
-                    sc.game_key = g_ctl_key; sc.time = (long long)std::time(nullptr); sc.playtime = (long long)((GetTickCount64() - g_boot_tick) / 1000);
+                    sc.game_key = g_ctl_key; sc.time = (long long)std::time(nullptr); sc.playtime = (long long)((plat::tick_ms() - g_boot_tick) / 1000);
                     runctl::write_text_atomic(runctl::sidecar_file(g_ctl_state_dir, g_job.slot), runctl::make_sidecar(sc));
                     ctl_finish(true, "saved slot " + std::to_string(g_job.slot));
                 }
@@ -1284,7 +1291,7 @@ static void ctl_tick() {
         }
     } else {   // the core's own F12 hotkey drops screenshots into the scratch folder: file them into the vault
         static unsigned long long next_sweep = 0;
-        unsigned long long now = GetTickCount64();
+        unsigned long long now = plat::tick_ms();
         if (!g_headless_mode && !g_ctl_shot_tmp.empty() && !g_ctl_shot_dir.empty() && now >= next_sweep) {
             next_sweep = now + 700;
             for (auto& n : list_dir(g_ctl_shot_tmp)) {
@@ -1305,7 +1312,7 @@ static void ctl_tick() {
         return;
     }
     runctl::Command c;
-    if (g_ctl.poll(GetTickCount64(), &c)) ctl_dispatch(c, true);   // polled even while a job runs: a Quit must not wait for a screenshot
+    if (g_ctl.poll(plat::tick_ms(), &c)) ctl_dispatch(c, true);   // polled even while a job runs: a Quit must not wait for a screenshot
 }
 
 /* hooks.idle: every blocking wait of the lockstep (and the pause loop) comes through here. */
@@ -1314,7 +1321,7 @@ static void ctl_idle() {
     corner_tick();
     if (!g_ctl.enabled()) return;
     runctl::Command c;
-    if (g_ctl.poll(GetTickCount64(), &c)) ctl_dispatch(c, false);
+    if (g_ctl.poll(plat::tick_ms(), &c)) ctl_dispatch(c, false);
 }
 
 static void headless_frame_cb(unsigned int) {
@@ -1336,7 +1343,7 @@ static void headless_frame_cb(unsigned int) {
             std::string s = q;
             const size_t bar = s.find('|');
             osd::push(s.substr(0, bar), osd::Kind::Good, 3600.0);
-            if (bar != std::string::npos) { std::lock_guard<std::mutex> lk(g_corner_mx); g_corners.set(1, s.substr(bar + 1), 0, GetTickCount64()); g_corner_live = true; }
+            if (bar != std::string::npos) { std::lock_guard<std::mutex> lk(g_corner_mx); g_corners.set(1, s.substr(bar + 1), 0, plat::tick_ms()); g_corner_live = true; }
             corner_refresh();
         }
     }
@@ -1344,7 +1351,12 @@ static void headless_frame_cb(unsigned int) {
     if (g_clip_want.exchange(false)) clip_request_save();
     if (!g_headless_mode && g_clips.enabled() && (g_vi % 3) == 0) {   // windowed: read the game window back at ~20 fps (best effort; see docs/RUNNER_CTL.md)
         GLint vp[4] = {0, 0, 0, 0};
-        if (wglGetCurrentContext()) {
+        #if RH_WIN
+        const bool have_gl = wglGetCurrentContext() != nullptr;
+#else
+        const bool have_gl = SDL_GL_GetCurrentContext() != nullptr;
+#endif
+        if (have_gl) {
             glGetIntegerv(GL_VIEWPORT, vp);
             int w = vp[2], h = vp[3];
             if (w >= 64 && h >= 64 && w <= 4096 && h <= 4096) {
@@ -1380,44 +1392,61 @@ static void headless_frame_cb(unsigned int) {
 
 static bool file_exists(const std::string& p) { std::error_code ec; return fs::exists(fs::u8path(p), ec); }
 
+/* mupen64plus library file names: the official Windows build ships mupen64plus.dll + mupen64plus-<kind>-<name>.dll; on macOS the core
+ * is libmupen64plus.dylib and plugins are mupen64plus-<kind>-<name>.dylib (same as the upstream Makefiles for OSX). */
+#if RH_WIN
+#define M64_CORE_LIB "mupen64plus.dll"
+#define M64_PLUGIN(kind_name) "mupen64plus-" kind_name ".dll"
+#else
+#define M64_CORE_LIB "libmupen64plus.dylib"
+#define M64_PLUGIN(kind_name) "mupen64plus-" kind_name ".dylib"
+#endif
+
 static std::string find_emu_dir(const std::string& requested) {
     std::vector<std::string> cands;
     if (!requested.empty()) cands.push_back(requested);
     std::string ed = hub::exe_dir();
     cands.push_back(ed + "emu");
-    cands.push_back(ed + "..\\..\\deps\\emu");
-    cands.push_back(ed + "..\\..\\..\\deps\\emu");
+    cands.push_back(ed + ".." + plat::kSep + ".." + plat::kSep + "deps" + plat::kSep + "emu");
+    cands.push_back(ed + ".." + plat::kSep + ".." + plat::kSep + ".." + plat::kSep + "deps" + plat::kSep + "emu");
     for (auto& c : cands) {
         fs::path p = fs::absolute(fs::u8path(c)).lexically_normal();   // c is UTF-8 (exe_dir): fs::path(c) would read it as ANSI
-        if (file_exists((p / "mupen64plus.dll").u8string())) return p.u8string();
+        if (file_exists((p / M64_CORE_LIB).u8string())) return p.u8string();
     }
     return "";
 }
 
-template <class T> static bool sym(HMODULE m, const char* name, T* out) {
-    *out = reinterpret_cast<T>(GetProcAddress(m, name));
+template <class T> static bool sym(plat::LibHandle m, const char* name, T* out) {
+    *out = reinterpret_cast<T>(plat::lib_sym(m, name));
     if (!*out) logf_("n64run", "missing export %s", name);
     return *out != nullptr;
 }
 
-static HMODULE load_dll(const std::string& dir, const char* name) {
-    std::string p = dir + "\\" + name;
-    HMODULE m = LoadLibraryExA(p.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+static plat::LibHandle load_dll(const std::string& dir, const char* name) {
+    std::string p = dir + plat::kSep + name;
+#if RH_WIN
+    plat::LibHandle m = LoadLibraryExA(p.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!m) logf_("n64run", "cannot load %s (error %lu)", p.c_str(), GetLastError());
+#else
+    plat::LibHandle m = plat::lib_open(p);
+    if (!m) { const char* de = dlerror(); logf_("n64run", "cannot load %s (%s)", p.c_str(), de ? de : "unknown error"); }
+#endif
     return m;
 }
+
+
 
 static void cfg_int(m64p_handle h, const char* k, int v) { g_core.SetParam(h, k, M64TYPE_INT, &v); }
 static void cfg_bool(m64p_handle h, const char* k, int v) { g_core.SetParam(h, k, M64TYPE_BOOL, &v); }
 static void cfg_str(m64p_handle h, const char* k, const std::string& v) { g_core.SetParam(h, k, M64TYPE_STRING, v.c_str()); }
 
 static std::string with_sep(std::string s) {
-    if (!s.empty() && s.back() != '\\' && s.back() != '/') s += '\\';
+    if (!s.empty() && s.back() != '\\' && s.back() != '/') s += plat::kSep;
     return s;
 }
 
 struct PluginDll {
-    HMODULE h = nullptr;
+    plat::LibHandle h = nullptr;
     ptr_PluginStartup startup = nullptr;
 };
 
@@ -1427,6 +1456,7 @@ struct PluginDll {
  * retitle it later, so the watcher re-checks every 2 s until emulation ends. */
 static std::atomic<bool> g_title_stop{false};
 
+#if RH_WIN   // the caption / tips card go through Win32; on macOS the GL OSD (osd_gl.cpp) is the only on-window text (see docs/MACOS.md)
 static BOOL CALLBACK find_game_window(HWND hwnd, LPARAM lp) {
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
@@ -1499,6 +1529,7 @@ static std::wstring wide_title_arg(const std::string& fallback_utf8) {
     }
     return out;
 }
+#endif  // RH_WIN
 
 static bool start_plugin(PluginDll& p, const std::string& emu_dir, const char* file, const char* ctx) {
     p.h = load_dll(emu_dir, file);
@@ -1519,7 +1550,7 @@ int main(int argc, char** argv) {
     {
         std::error_code ec;
         fs::create_directories(hub::data_dir() + "logs", ec);
-        g_logf = std::fopen((hub::data_dir() + "logs\\n64run.log").c_str(), "w");
+        g_logf = std::fopen((hub::data_dir() + "logs" + std::string(1, plat::kSep) + "n64run.log").c_str(), "w");
     }
     logf_("n64run", "starting; rom=%s game=%s net=%s", args.rom.c_str(), args.game.c_str(), args.net.empty() ? "(offline)" : args.net.c_str());
     osd_gl_set_logger([](const char* l) { logline("osd-gl", l); });
@@ -1560,7 +1591,7 @@ int main(int argc, char** argv) {
     /* QA only (RETROHUB_QA=1 N64RUN_QA_AUDIO=1): headless peers with the real audio plugin on SDL's silent "dummy" driver,
      * so the plugin's buffer / sync behaviour is exercised without any sound. */
     const bool qa_audio = args.headless && args.realtime && std::getenv("RETROHUB_QA") && std::getenv("N64RUN_QA_AUDIO");
-    if (qa_audio) _putenv("SDL_AUDIODRIVER=dummy");
+    if (qa_audio) plat::set_env("SDL_AUDIODRIVER", "dummy");
     const bool want_audio = !args.headless || qa_audio;
     const bool delay_auto = args.delay < 0;   // no explicit --delay: negotiate, then adapt during play
 
@@ -1626,24 +1657,26 @@ int main(int argc, char** argv) {
     else if (online) {
         auto t = std::chrono::system_clock::now().time_since_epoch().count();
         // Throwaway, outside the save vault (the vault is synced; netplay sessions must never reach it).
-        save_dir = hub::data_dir() + "netplay\\n64\\" + args.game + "-" + std::to_string((long long)t);
-    } else save_dir = hub::data_dir() + "saves\\" + args.game;
+        save_dir = hub::data_dir() + "netplay" + plat::kSep + "n64" + plat::kSep + args.game + "-" + std::to_string((long long)t);
+    } else save_dir = hub::data_dir() + "saves" + plat::kSep + args.game;
     fs::create_directories(save_dir, ec);
     if (online) {
         size_t entries = 0;
         for (auto& e : fs::directory_iterator(save_dir, ec)) { (void)e; entries++; }
         if (entries) logf_("n64run", "WARNING: online save dir %s is not empty; peers may start from different saves", save_dir.c_str());
     }
-    std::string cfg_dir = hub::data_dir() + "n64cfg\\" + std::to_string(GetCurrentProcessId());
+    std::string cfg_dir = hub::data_dir() + "n64cfg" + plat::kSep + std::to_string(plat::current_pid());
     fs::remove_all(cfg_dir, ec);
     fs::create_directories(cfg_dir, ec);
 
     // ---- load emulator
     std::string emu_dir = find_emu_dir(args.emu_dir);
-    if (emu_dir.empty()) { logf_("n64run", "cannot find emu\\mupen64plus.dll (looked next to the exe, ..\\..\\deps\\emu; use --emu-dir)"); return 3; }
+    if (emu_dir.empty()) { logf_("n64run", "cannot find emu%c%s (looked next to the exe, ..%c..%cdeps%cemu; use --emu-dir)", plat::kSep, M64_CORE_LIB, plat::kSep, plat::kSep, plat::kSep); return 3; }
     logf_("n64run", "emu dir: %s", emu_dir.c_str());
+#if RH_WIN
     SetDllDirectoryA(emu_dir.c_str());
-    g_core.dll = load_dll(emu_dir, "mupen64plus.dll");
+#endif
+    g_core.dll = load_dll(emu_dir, M64_CORE_LIB);
     if (!g_core.dll) return 3;
     bool ok = sym(g_core.dll, "CoreStartup", &g_core.Startup) && sym(g_core.dll, "CoreShutdown", &g_core.Shutdown) &&
               sym(g_core.dll, "CoreAttachPlugin", &g_core.Attach) && sym(g_core.dll, "CoreDetachPlugin", &g_core.Detach) &&
@@ -1669,8 +1702,8 @@ int main(int argc, char** argv) {
     if (g_run.tpak) {   // the core asks for the Game Boy cartridge and its save through the media loader (the strings are freed by the core)
         static m64p_media_loader ml;
         ml = m64p_media_loader{};
-        ml.get_gb_cart_rom = [](void*, int c) -> char* { return c == 0 ? _strdup(g_run.tpak_rom.c_str()) : nullptr; };
-        ml.get_gb_cart_ram = [](void*, int c) -> char* { return c == 0 && !g_run.tpak_save.empty() ? _strdup(g_run.tpak_save.c_str()) : nullptr; };
+        ml.get_gb_cart_rom = [](void*, int c) -> char* { return c == 0 ? plat::strdup_c(g_run.tpak_rom.c_str()) : nullptr; };
+        ml.get_gb_cart_ram = [](void*, int c) -> char* { return c == 0 && !g_run.tpak_save.empty() ? plat::strdup_c(g_run.tpak_save.c_str()) : nullptr; };
         if (g_core.DoCommand(M64CMD_SET_MEDIA_LOADER, (int)sizeof ml, &ml) != M64ERR_SUCCESS) { g_run.tpak = false; logf_("n64run", "Transfer Pak: this emulator core has no media loader; not attached"); }
     }
 
@@ -1688,7 +1721,7 @@ int main(int argc, char** argv) {
     cfg_str(core_cfg, "SaveSRAMPath", with_sep(save_dir));
     cfg_str(core_cfg, "SaveStatePath", with_sep(save_dir));
     if (!args.control.empty() && !args.headless) {   // windowed screenshots: the core writes into a scratch folder, ctl_tick moves them
-        std::string st = save_dir + "\\screenshots_tmp";
+        std::string st = save_dir + plat::kSep + "screenshots_tmp";
         fs::create_directories(st, ec);
         cfg_str(core_cfg, "ScreenshotPath", with_sep(st));
     }
@@ -1758,7 +1791,7 @@ int main(int argc, char** argv) {
                 if (st != last) { logf_("n64run", "netplay: %s", st.c_str()); last = st; }
                 ctl_idle();   // the hub's Quit is served while we wait for the other players too
                 if (g_quit_requested.load()) break;
-                Sleep(10);
+                plat::sleep_ms(10);
             }
             if (g_quit_requested.load()) {
                 logf_("n64run", "the hub asked to quit while we connected");
@@ -1884,15 +1917,15 @@ int main(int argc, char** argv) {
         m64p_handle gh = nullptr;
         if (g_core.OpenSection("Video-GLideN64", &gh) == M64ERR_SUCCESS) cfg_int(gh, "RDRAMImageDitheringMode", 0);
     }
-    if (!start_plugin(gfx, emu_dir, "mupen64plus-video-GLideN64.dll", "Video") ||
-        (want_audio && !start_plugin(aud, emu_dir, "mupen64plus-audio-sdl.dll", "Audio")) ||
-        !start_plugin(rsp, emu_dir, "mupen64plus-rsp-hle.dll", "RSP")) {
+    if (!start_plugin(gfx, emu_dir, M64_PLUGIN("video-GLideN64"), "Video") ||
+        (want_audio && !start_plugin(aud, emu_dir, M64_PLUGIN("audio-sdl"), "Audio")) ||
+        !start_plugin(rsp, emu_dir, M64_PLUGIN("rsp-hle"), "RSP")) {
         g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr);
         g_core.Shutdown();
         return 3;
     }
     if (PluginStartup(g_core.dll, const_cast<char*>("Input"), m64p_debug_cb) != M64ERR_SUCCESS) return 3;
-    HMODULE self = GetModuleHandle(nullptr);
+    plat::LibHandle self = plat::lib_self();
     if (g_core.Attach(M64PLUGIN_GFX, gfx.h) != M64ERR_SUCCESS || (want_audio && g_core.Attach(M64PLUGIN_AUDIO, aud.h) != M64ERR_SUCCESS) ||
         g_core.Attach(M64PLUGIN_INPUT, self) != M64ERR_SUCCESS || g_core.Attach(M64PLUGIN_RSP, rsp.h) != M64ERR_SUCCESS) {
         logf_("n64run", "CoreAttachPlugin failed");
@@ -1942,8 +1975,8 @@ int main(int argc, char** argv) {
                 return test_input.read(idx);
             };
         } else {
-            hk.update_local = [&] { input.update(); { bool cc = input.clip_held(); unsigned long long tn = GetTickCount64(); if (cc && !g_clip_prev && tn >= g_clip_cool) { g_clip_cool = tn + 3000; g_clip_want = true; } g_clip_prev = cc; } g_in_gate.note_view_y(input.view_y_held(), GetTickCount64()); n64_apply_start_volume(); n64_boost_tick(input.boost_held() && !online); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held): leaving"); g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
-            hk.read_local = [&](int idx) -> uint32_t { return g_in_gate.suppressed(GetTickCount64()) ? 0u : input.read(idx); };   // hub menu open: neutral, lockstep still sends the frame
+            hk.update_local = [&] { input.update(); { bool cc = input.clip_held(); unsigned long long tn = plat::tick_ms(); if (cc && !g_clip_prev && tn >= g_clip_cool) { g_clip_cool = tn + 3000; g_clip_want = true; } g_clip_prev = cc; } g_in_gate.note_view_y(input.view_y_held(), plat::tick_ms()); n64_apply_start_volume(); n64_boost_tick(input.boost_held() && !online); if (input.exit_requested()) { logf_("n64run", "exit combo (Back+Start held): leaving"); g_core.DoCommand(M64CMD_STOP, 0, nullptr); } };
+            hk.read_local = [&](int idx) -> uint32_t { return g_in_gate.suppressed(plat::tick_ms()) ? 0u : input.read(idx); };   // hub menu open: neutral, lockstep still sends the frame
         }
         hk.idle = [] { ctl_idle(); };   // every blocking wait of the lockstep serves the hub's control file too (Quit during a stall)
         if (!test_input.active())
@@ -2020,34 +2053,40 @@ int main(int argc, char** argv) {
 
         logf_("n64run", "executing");
         std::thread title_thread;
+#if RH_WIN
         std::wstring wtitle = args.headless ? std::wstring() : wide_title_arg(args.title);
         if (!wtitle.empty()) {
             g_title_stop = false;
             title_thread = std::thread(title_watch, wtitle);
         }
+#endif
         g_headless_mode = args.headless;
         if (!args.shot_dir.empty()) g_clips.set_dir(args.shot_dir);
         if (const char* e = std::getenv("N64RUN_CLIPS"); e && e[0] == '0') g_clips.set_enabled(false);
         else if (args.headless && !args.shot_dir.empty())
             headless_set_frame_sink([](const uint8_t* px, int w, int h) { g_clips.offer(px, w, h, w * 4, 20.0, false, false); }, 3);
         g_key_for_auto = args.game_key;
-        if (!online && !args.state_dir.empty() && !g_match) { g_auto_dir = args.state_dir; g_next_autosave = GetTickCount64() + 30000; }
+        if (!online && !args.state_dir.empty() && !g_match) { g_auto_dir = args.state_dir; g_next_autosave = plat::tick_ms() + 30000; }
         if (!online && !args.load_state.empty()) g_load_state_path = args.load_state;
         else if (!online && args.resume && !args.state_dir.empty() && !g_match) {   // hub auto-resume (same rules as retrorun --resume; the hub decides whether to pass it)
             std::error_code rec;
             const std::string af = runctl::state_file(args.state_dir, runctl::kAutoSlot);
             if (fs::is_regular_file(fs::path(af), rec)) g_load_state_path = af;
         }
-        if (!args.control.empty() && !args.headless) g_ctl_shot_tmp = save_dir + "\\screenshots_tmp";
+        if (!args.control.empty() && !args.headless) g_ctl_shot_tmp = save_dir + plat::kSep + "screenshots_tmp";
         g_realtime = args.realtime;
         if (args.headless || g_match || online || !g_gs.empty() || !g_cheats_path.empty() || !args.control.empty() || !g_auto_dir.empty() || !g_load_state_path.empty() || !g_result_file.empty()) g_core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(&headless_frame_cb));
         /* Boot watchdog: a game that never reads a controller within 90 s is stuck in its own boot code (seen with a
          * bad Pokemon Stadium dump: it spins in a `bal .` loop at 0x80000198). Say so instead of hanging silently. */
         std::thread([] {
-            for (int i = 0; i < 90 * 10; i++) { Sleep(100); if (g_run.lockstep && g_run.lockstep->samples_done() > 0) return; if (g_stop_watchdog) return; }
+            for (int i = 0; i < 90 * 10; i++) { plat::sleep_ms(100); if (g_run.lockstep && g_run.lockstep->samples_done() > 0) return; if (g_stop_watchdog) return; }
             logf_("n64run", "ERROR: the game made no controller poll in 90 s - it is stuck in its boot code (bad or modified ROM dump?). Exiting.");
             std::fflush(nullptr);
+#if RH_WIN
             ExitProcess(4);
+#else
+            _exit(4);
+#endif
         }).detach();
         if (g_quit_requested.load()) { logf_("n64run", "the hub asked to quit before the game started"); e = M64ERR_SUCCESS; }
         else {

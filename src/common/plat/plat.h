@@ -21,6 +21,8 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <string>
@@ -148,6 +150,65 @@ inline void lib_close(LibHandle h) {
     FreeLibrary((HMODULE)h);
 #else
     dlclose(h);
+#endif
+}
+
+/* ---- added by the n64run port (macOS lane 5) ---- */
+
+/* Milliseconds since an arbitrary start (GetTickCount64 on Windows, monotonic clock on macOS). Only differences are meaningful. */
+inline unsigned long long tick_ms() {
+#if RH_WIN
+    return (unsigned long long)GetTickCount64();
+#else
+    return (unsigned long long)now_ms();
+#endif
+}
+
+/* High-resolution counter (QueryPerformanceCounter / nanosecond monotonic clock) and its frequency in ticks per second. */
+inline int64_t perf_counter() {
+#if RH_WIN
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return (int64_t)t.QuadPart;
+#else
+    return (int64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
+}
+inline int64_t perf_freq() {
+#if RH_WIN
+    LARGE_INTEGER f;
+    QueryPerformanceFrequency(&f);
+    return (int64_t)f.QuadPart;
+#else
+    return 1000000000;
+#endif
+}
+
+/* Handle of the running executable as a dynamic library (GetModuleHandle(NULL) / dlopen(NULL)): used to attach an input plugin
+ * whose entry points are exported by the executable itself (n64run). The executable must export them (see PLUGIN_EXPORT). */
+inline LibHandle lib_self() {
+#if RH_WIN
+    return (LibHandle)GetModuleHandleW(nullptr);
+#else
+    return dlopen(nullptr, RTLD_NOW);
+#endif
+}
+
+/* Set an environment variable for this process (_putenv_s / setenv). */
+inline void set_env(const char* name, const char* value) {
+#if RH_WIN
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+/* malloc'ed copy of a C string (the caller, or a C library such as the mupen64plus core, free()s it). */
+inline char* strdup_c(const char* s) {
+#if RH_WIN
+    return _strdup(s);
+#else
+    return ::strdup(s);
 #endif
 }
 

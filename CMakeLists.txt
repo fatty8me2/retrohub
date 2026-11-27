@@ -72,6 +72,50 @@ FetchContent_Populate(m64p_core)
 add_library(m64p_api INTERFACE)
 target_include_directories(m64p_api INTERFACE ${m64p_core_SOURCE_DIR}/src/api)
 
+# macOS: build libmupen64plus.dylib from the fetched 2.6.0 source (docs/MACOS.md, "N64 on macOS"). Same file list as
+# projects/unix/Makefile with OS=OSX, CPU=ARM64: NO_ASM (the 2.6.0 Makefile disables assembly on Apple Silicon, so there is no
+# dynarec: R4300Emulator=2 falls back to the cached interpreter), no on-screen display (M64P_OSD needs OGLFT + FreeType; RetroHub draws
+# its own OSD), no netplay. Needs libpng for screenshots (brew install libpng); without it the target is skipped.
+# The plugins (video / audio / rsp) are NOT built here: see the doc.
+if(APPLE)
+    find_package(PNG QUIET)
+    find_package(ZLIB QUIET)
+    if(PNG_FOUND AND ZLIB_FOUND)
+        set(_m "${m64p_core_SOURCE_DIR}/src")
+        set(_m64p_srcs
+            api/callbacks.c api/common.c api/config.c api/debugger.c api/frontend.c api/vidext.c
+            backends/api/video_capture_backend.c backends/plugins_compat/audio_plugin_compat.c backends/plugins_compat/input_plugin_compat.c
+            backends/clock_ctime_plus_delta.c backends/dummy_video_capture.c backends/file_storage.c
+            device/cart/cart.c device/cart/af_rtc.c device/cart/cart_rom.c device/cart/eeprom.c device/cart/flashram.c device/cart/is_viewer.c device/cart/sram.c
+            device/controllers/game_controller.c device/controllers/vru_controller.c device/controllers/paks/biopak.c device/controllers/paks/mempak.c
+            device/controllers/paks/rumblepak.c device/controllers/paks/transferpak.c
+            device/dd/dd_controller.c device/dd/disk.c device/device.c device/gb/gb_cart.c device/gb/mbc3_rtc.c device/gb/m64282fp.c
+            device/memory/memory.c device/pif/bootrom_hle.c device/pif/cic.c device/pif/n64_cic_nus_6105.c device/pif/pif.c
+            device/r4300/cached_interp.c device/r4300/cp0.c device/r4300/cp1.c device/r4300/cp2.c device/r4300/idec.c device/r4300/interrupt.c
+            device/r4300/pure_interp.c device/r4300/r4300_core.c device/r4300/tlb.c
+            device/rcp/ai/ai_controller.c device/rcp/mi/mi_controller.c device/rcp/pi/pi_controller.c device/rcp/rdp/fb.c device/rcp/rdp/rdp_core.c
+            device/rcp/ri/ri_controller.c device/rcp/rsp/rsp_core.c device/rcp/si/si_controller.c device/rcp/vi/vi_controller.c device/rdram/rdram.c
+            main/main.c main/util.c main/cheat.c main/eventloop.c main/rom.c main/savestates.c main/screenshot.c main/sdl_key_converter.c main/workqueue.c
+            plugin/plugin.c plugin/dummy_video.c plugin/dummy_audio.c plugin/dummy_input.c plugin/dummy_rsp.c
+            osal/dynamiclib_unix.c osal/files_macos.c)
+        list(TRANSFORM _m64p_srcs PREPEND "${_m}/")
+        set(_sub "${m64p_core_SOURCE_DIR}/subprojects")
+        add_library(mupen64plus_core SHARED ${_m64p_srcs} ${_sub}/md5/md5.c ${_sub}/minizip/ioapi.c ${_sub}/minizip/zip.c ${_sub}/minizip/unzip.c)
+        set_target_properties(mupen64plus_core PROPERTIES OUTPUT_NAME mupen64plus PREFIX "lib" SUFFIX ".dylib"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/emu" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/emu"
+            C_VISIBILITY_PRESET hidden POSITION_INDEPENDENT_CODE ON BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "@loader_path/..")
+        target_compile_definitions(mupen64plus_core PRIVATE NO_ASM M64P_PARALLEL NOCRYPT NOUNCRYPT)
+        target_compile_options(mupen64plus_core PRIVATE -fno-strict-aliasing -w)
+        target_include_directories(mupen64plus_core PRIVATE ${_m} ${_m}/asm_defines ${_sub}/md5 ${_sub}/xxhash ${_sub}/minizip ${PNG_INCLUDE_DIRS})
+        target_link_libraries(mupen64plus_core PRIVATE SDL2::SDL2 ZLIB::ZLIB ${PNG_LIBRARIES} "-framework CoreFoundation" "-framework OpenGL")
+        # the core reads mupen64plus.ini / mupencheat.txt from the data path RetroHub gives it (= the emu dir, same as the Windows layout)
+        add_custom_command(TARGET mupen64plus_core POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${m64p_core_SOURCE_DIR}/data ${CMAKE_BINARY_DIR}/bin/emu)
+    else()
+        message(STATUS "libmupen64plus.dylib target skipped: libpng / zlib not found (brew install libpng)")
+    endif()
+endif()
+
 include(src/beetle_psx/fetch.cmake)   # pinned Beetle PSX tree + generated PS1 serial database (before hubcommon)
 # libchdr (BSD-3-Clause, github.com/rtissera/libchdr) pinned to commit 47d7941: reads .chd disc images (PS1/PS2) in src/common/disc_id.cpp.
 # It bundles lzma, zstd and miniz; its miniz symbols are renamed (third_party/chdr_miniz_rename.h, force-included) so they cannot

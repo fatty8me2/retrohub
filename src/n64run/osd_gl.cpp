@@ -1,8 +1,20 @@
 #include "osd_gl.h"
 
+#include "plat/plat.h"
+#if RH_WIN
 #include <windows.h>
-
 #include <GL/gl.h>
+#else
+/* macOS: OpenGL is deprecated but still ships (up to 4.1 core; there is no compatibility profile above 2.1). Everything this OSD draws
+ * is core profile (#version 330 core shaders, VAO, no fixed function), so it works on the SDL GL context as is. */
+#ifndef GL_SILENCE_DEPRECATION
+#define GL_SILENCE_DEPRECATION 1
+#endif
+#include <OpenGL/gl3.h>
+#ifndef APIENTRY
+#define APIENTRY
+#endif
+#endif
 
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -257,7 +269,11 @@ void osd_gl_render() {
         std::lock_guard<std::mutex> lk(g_mx);
         if (!g_info.enabled || g_info.failed) return;
     }
+    #if RH_WIN
     if (!SDL_GL_GetCurrentContext() && !wglGetCurrentContext()) return;
+#else
+    if (!SDL_GL_GetCurrentContext()) return;
+#endif
     // The window's drawable size: SDL knows the window the core created for the plugin; the GL viewport is the fallback.
     int ww = 0, wh = 0;
     if (SDL_Window* w = SDL_GL_GetCurrentWindow()) SDL_GL_GetDrawableSize(w, &ww, &wh);

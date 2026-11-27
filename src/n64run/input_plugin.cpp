@@ -8,7 +8,7 @@
  * (online without --share-host-save); a port is Present when somebody owns it or it is reserved for a drop-in friend. ControllerCommand carries
  * the rumble motor only; ReadController (raw mode) is never used. QA: qa\players_input_check.ps1 proves every port reaches the game. */
 
-#include <windows.h>
+#include "plat/plat.h"
 
 #include <cstdio>
 #include <cstring>
@@ -25,7 +25,12 @@
 namespace n64run { RunState g_run; }
 using namespace n64run;
 
+#if RH_WIN
 #define PLUGIN_EXPORT extern "C" __declspec(dllexport)
+#else
+/* The core finds these with dlsym on the executable's own handle (plat::lib_self); CMake links n64run with ENABLE_EXPORTS. */
+#define PLUGIN_EXPORT extern "C" __attribute__((visibility("default"), used))
+#endif
 
 static void (*s_debug_cb)(void*, int, const char*) = nullptr;
 static void* s_debug_ctx = nullptr;

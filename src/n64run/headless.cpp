@@ -2,7 +2,7 @@
 #include "start_hint.h"
 #include <cstdlib>
 
-#include <windows.h>
+#include "plat/plat.h"
 
 #include <SDL.h>
 
@@ -19,6 +19,12 @@
 #define STBI_WRITE_NO_STDIO
 #include "../retrorun/third_party/stb_image_write.h"
 
+#if RH_WIN
+#define RH_GLCALL __stdcall
+#else
+#define RH_GLCALL
+#endif
+
 namespace n64run {
 namespace {
 
@@ -34,11 +40,11 @@ std::function<void(const uint8_t*, int, int)> g_sink;
 int g_sink_every = 3;
 std::vector<uint8_t> g_shot;   // RGBA, top-down
 
-typedef void(__stdcall* PFN_ReadPixels)(int, int, int, int, unsigned, unsigned, void*);
-typedef void(__stdcall* PFN_ReadBuffer)(unsigned);
-typedef void(__stdcall* PFN_PixelStorei)(unsigned, int);
-typedef void(__stdcall* PFN_GetIntegerv)(unsigned, int*);
-typedef void(__stdcall* PFN_BindFramebuffer)(unsigned, unsigned);
+typedef void(RH_GLCALL* PFN_ReadPixels)(int, int, int, int, unsigned, unsigned, void*);
+typedef void(RH_GLCALL* PFN_ReadBuffer)(unsigned);
+typedef void(RH_GLCALL* PFN_PixelStorei)(unsigned, int);
+typedef void(RH_GLCALL* PFN_GetIntegerv)(unsigned, int*);
+typedef void(RH_GLCALL* PFN_BindFramebuffer)(unsigned, unsigned);
 
 m64p_error vx_init() {
     if (!SDL_WasInit(SDL_INIT_VIDEO) && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return M64ERR_SYSTEM_FAIL;
@@ -112,6 +118,10 @@ m64p_error vx_gl_set_attr(m64p_GLattr a, int v) {
     if (a == M64P_GL_CONTEXT_PROFILE_MASK) {
         v = v == M64P_GL_CONTEXT_PROFILE_CORE ? SDL_GL_CONTEXT_PROFILE_CORE
           : v == M64P_GL_CONTEXT_PROFILE_ES ? SDL_GL_CONTEXT_PROFILE_ES : SDL_GL_CONTEXT_PROFILE_COMPATIBILITY;
+#if RH_MAC
+        /* macOS has no compatibility profile above GL 2.1 (a 3.x/4.x context is core only): a plugin asking for "compatibility" gets core 4.1. */
+        if (v == SDL_GL_CONTEXT_PROFILE_COMPATIBILITY) v = SDL_GL_CONTEXT_PROFILE_CORE;
+#endif
     }
     return SDL_GL_SetAttribute(sa, v) == 0 ? M64ERR_SUCCESS : M64ERR_SYSTEM_FAIL;
 }
@@ -233,7 +243,7 @@ bool headless_write_screenshot(const std::string& path, int max_w) {
     std::filesystem::path fp = std::filesystem::u8path(path);
     std::error_code ec;
     if (fp.has_parent_path()) std::filesystem::create_directories(fp.parent_path(), ec);
-    FILE* fh = _wfopen(fp.c_str(), L"wb");
+    FILE* fh = plat::fopen_path(fp, "wb");
     if (!fh) return false;
     auto to_file = [](void* ctx, void* data, int size) { fwrite(data, 1, (size_t)size, (FILE*)ctx); };
     bool bmp = fp.extension() == ".bmp" || fp.extension() == ".BMP";
