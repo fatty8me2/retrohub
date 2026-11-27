@@ -2,6 +2,7 @@
 #include "qa_diskio.h"
 #include "app.h"
 
+#if RH_WIN
 #include <windows.h>
 #include <tlhelp32.h>
 
@@ -12,7 +13,9 @@
 #include <cwctype>
 #include <string>
 #include <vector>
+#endif
 
+#if RH_WIN
 namespace qadisk {
 namespace {
 
@@ -249,3 +252,21 @@ Quiet::Quiet() { ++t_quiet; }
 Quiet::~Quiet() { --t_quiet; }
 
 }  // namespace qadisk
+#else
+/* macOS: the Windows build counts the UI thread's file-system calls by patching the import tables of the loaded modules. There is no equivalent
+ * that is safe on macOS (dyld interposing would need a separate dylib), so HUB_SHOT_DISKIO is not supported: on() is always false and
+ * every hook below is a no-op. */
+// TODO(macOS lane 8): DYLD_INSERT_LIBRARIES interposer for open / stat / opendir / mkdir / unlink / rename if the desk-idle-IO check is needed on Mac.
+namespace qadisk {
+bool on() { return false; }
+void install() {}
+void frame_begin() {}
+void frame_end() {}
+void finish() {}
+void note_worker(const char*) {}
+Scope::Scope(const char*, bool) {}
+Scope::~Scope() {}
+Quiet::Quiet() {}
+Quiet::~Quiet() {}
+}  // namespace qadisk
+#endif

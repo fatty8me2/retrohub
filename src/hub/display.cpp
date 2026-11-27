@@ -1,11 +1,15 @@
 /* Window placement and monitor glue: see display.h. */
 #include "app.h"
 #include "display.h"
+#if RH_MAC
+#include "dialogs_mac.h"
+#endif
 
 namespace hubdisplay {
 
 namespace {
 
+#if RH_WIN
 Rect to_rect(const RECT& r) { return Rect{(int)r.left, (int)r.top, (int)(r.right - r.left), (int)(r.bottom - r.top)}; }
 
 BOOL CALLBACK enum_cb(HMONITOR hm, HDC, LPRECT, LPARAM lp) {
@@ -20,10 +24,11 @@ BOOL CALLBACK enum_cb(HMONITOR hm, HDC, LPRECT, LPARAM lp) {
     ((std::vector<Monitor>*)lp)->push_back(m);
     return TRUE;
 }
+#endif
 
 float g_dpi = 1.f;
 bool g_changed = false, g_display_changed = false;
-ULONGLONG g_event_ms = 0;
+unsigned long long g_event_ms = 0;
 std::string g_last_monitor_seen;
 
 bool fl_normal(Uint32 fl) { return !(fl & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)); }
@@ -40,7 +45,24 @@ const Monitor* monitor_of_window(SDL_Window* win, const std::vector<Monitor>& mo
 
 std::vector<Monitor> monitors() {
     std::vector<Monitor> v;
+#if RH_WIN
     EnumDisplayMonitors(nullptr, nullptr, enum_cb, (LPARAM)&v);
+#else
+    /* macOS: SDL's display list. Names are "DISPLAY<n>" (n = SDL index + 1) so monitor_label() and the saved win_monitor work as on Windows;
+     * SDL display 0 is the primary one (the menu-bar display); usable bounds exclude the menu bar and Dock. */
+    const int n = SDL_GetNumVideoDisplays();
+    for (int i = 0; i < n; ++i) {
+        SDL_Rect b{}, u{};
+        if (SDL_GetDisplayBounds(i, &b) != 0) continue;
+        if (SDL_GetDisplayUsableBounds(i, &u) != 0) u = b;
+        Monitor m;
+        m.name = "DISPLAY" + std::to_string(i + 1);
+        m.bounds = Rect{b.x, b.y, b.w, b.h};
+        m.work = Rect{u.x, u.y, u.w, u.h};
+        m.primary = (i == 0);
+        v.push_back(m);
+    }
+#endif
     std::stable_sort(v.begin(), v.end(), [](const Monitor& a, const Monitor& b) { return a.name < b.name; });
     return v;
 }
@@ -75,9 +97,13 @@ float dpi_scale() { return g_dpi; }
 void set_dpi_scale(float s) { g_dpi = std::max(0.5f, s); }
 
 bool os_animations_on() {
+#if RH_WIN
     BOOL on = TRUE;
     if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &on, 0)) return on != FALSE;
     return true;
+#else
+    return !mac_reduce_motion();   // System Settings > Accessibility > Display > Reduce motion (dialogs_mac.mm)
+#endif
 }
 
 Rect work_area_of(SDL_Window* win) {
@@ -99,12 +125,12 @@ void note_event(const SDL_Event& e) {
         case SDL_WINDOWEVENT_MOVED: case SDL_WINDOWEVENT_RESIZED: case SDL_WINDOWEVENT_SIZE_CHANGED:
         case SDL_WINDOWEVENT_MAXIMIZED: case SDL_WINDOWEVENT_RESTORED:
             g_changed = true;
-            g_event_ms = GetTickCount64();
+            g_event_ms = plat::tick_ms();
             break;
         case SDL_WINDOWEVENT_DISPLAY_CHANGED:
             g_display_changed = true;
             g_changed = true;
-            g_event_ms = GetTickCount64();
+            g_event_ms = plat::tick_ms();
             break;
         default: break;
     }
@@ -112,7 +138,7 @@ void note_event(const SDL_Event& e) {
 
 bool tick(SDL_Window* win, bool force, bool tv_active) {
     if (g_headless || !win || !A.st.remember_window) return false;
-    if (!force && (!g_changed || GetTickCount64() - g_event_ms < 400)) return false;   // let a drag settle first
+    if (!force && (!g_changed || plat::tick_ms() - g_event_ms < 400)) return false;   // let a drag settle first
     g_changed = false;
     if (tv_active) return false;   // the fullscreen rect is not the window
     const Uint32 fl = SDL_GetWindowFlags(win);
@@ -162,7 +188,7 @@ bool move_to_monitor(SDL_Window* win, const std::string& monitor) {
     SDL_SetWindowPosition(win, t.x, t.y);   // a maximized window stays maximized and follows to the new monitor
     if (fl & SDL_WINDOW_MAXIMIZED) SDL_MaximizeWindow(win);
     g_changed = true;
-    g_event_ms = GetTickCount64();
+    g_event_ms = plat::tick_ms();
     return true;
 }
 

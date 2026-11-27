@@ -382,12 +382,19 @@ static void shot_fake_running() {
     if (ext) v = v.substr(4);
     const hub::GameEntry* e = v == "1" ? (A.lib.empty() ? nullptr : &A.lib[0]) : find_entry(v);
     if (!e) return;
+#if RH_WIN
     A.proc = GetCurrentProcess();
+#else
+    /* The hub's own pid: it never "exits", so nothing treats the fake game as ended (launch.cpp never signals its own pid). */
+    A.proc.pid = (int)getpid();
+    A.proc.pgid = 0;
+    A.proc.start_time_us = 0;
+#endif
     A.proc_title = e->title;
     A.run = RunInfo();
     A.run.key = e->key;
     A.run.title = e->title;
-    A.run.start_tick = GetTickCount64();
+    A.run.start_tick = plat::tick_ms();
     if (!ext) { A.run.ctl_path = "fake-control.json"; A.run.controls_path = "fake-controls.json"; A.run.controls_sys = hubctl::console_key(*e); }
 }
 

@@ -37,17 +37,23 @@ std::string server_url() {
 std::string smash_exe_path() {
     if (file_exists(A.st.smash_exe)) return A.st.smash_exe;
     if (const GameInfo* g = hub::find_game("smash64")) {
-        std::string p = hub::exe_dir() + g->native_exe;
+        std::string ne = g->native_exe;
+        if (!std::string(plat::kExeSuffix).size() && ne.size() > 4 && ne.compare(ne.size() - 4, 4, ".exe") == 0) ne.erase(ne.size() - 4);   // macOS: no .exe
+        std::string p = hub::exe_dir() + ne;
         if (file_exists(p)) return p;
     }
     /* The released package ships the hub inside the Smash Classic folder. */
-    std::string here = hub::exe_dir() + "BattleShip.exe";
+    std::string here = hub::exe_dir() + "BattleShip" + plat::kExeSuffix;
     if (file_exists(here)) return here;
     return "";
 }
-std::string n64run_path() { return hub::exe_dir() + "n64run.exe"; }
+std::string n64run_path() { return hub::exe_dir() + "n64run" + plat::kExeSuffix; }
 std::string streamrun_path() {
-    std::string p = hub::exe_dir() + "streamrun.exe";
+    std::string p = hub::exe_dir() + "streamrun" + plat::kExeSuffix;
+#if RH_WIN
     return file_exists(p) ? p : find_upward("build\\Release\\streamrun.exe");
+#else
+    return file_exists(p) ? p : find_upward(std::string("build-mac") + plat::kSep + "bin" + plat::kSep + "streamrun");   // dev tree: build-mac/bin (no Release folder)
+#endif
 }
 

@@ -58,7 +58,21 @@
 #include "session_journal.h"
 #include <mutex>
 #include <thread>
+#if RH_WIN
 #include <xinput.h>
+#else
+#include <errno.h>
+#include <libproc.h>
+#include <mach/mach_time.h>
+#include <signal.h>
+#include "dialogs_mac.h"
+#include "plat/plat_proc.h"
+#endif
+
+/* Our own runner programs: ".exe" only on Windows. */
+static const std::string kRetrorunExe = std::string("retrorun") + plat::kExeSuffix;
+static const std::string kN64runExe = std::string("n64run") + plat::kExeSuffix;
+static const std::string kStreamrunExe = std::string("streamrun") + plat::kExeSuffix;
 
 hubemu::Installer EMU;   // download-on-demand job + its dialog state
 bool EMU_UPDATE_SKIP[8] = {};
@@ -69,6 +83,52 @@ hub::GameEntry NP3_game;
 bool NP3_pending = false;
 
 /* ---------- process launching ---------- */
+
+#if RH_MAC
+/* ---- macOS process helpers (file-local). ProcHandle is {pid, pgid, start_time_us}; the job object of Windows is the process group. ---- */
+static plat::proc::Child child_of(const ProcHandle& h) {
+    plat::proc::Child c;
+    c.pid = h.pid;
+    c.pgid = h.pgid;
+    c.start_time_us = h.start_time_us;
+    return c;
+}
+static bool is_own_pid(int pid) { return pid == (int)getpid(); }   // QA's fake "running game" is the hub itself: never signal it
+static std::vector<int> pgrp_pids(int pgid) {
+    std::vector<int> v;
+    if (pgid <= 1 || pgid == (int)getpgrp()) return v;   // never the hub's own group
+    pid_t buf[512];
+    const int bytes = proc_listpgrppids((pid_t)pgid, buf, (int)sizeof buf);
+    for (int i = 0; i < bytes / (int)sizeof(pid_t); ++i) if (buf[i] > 0) v.push_back((int)buf[i]);
+    return v;
+}
+static bool group_alive(int pgid) {   // the whole "job": any process left in the emulator's group
+    if (pgid <= 1 || pgid == (int)getpgrp()) return false;
+    return ::kill(-pgid, 0) == 0 || errno == EPERM;
+}
+/* POSIX-shell-like split of the argument string the launch code builds (quote() on macOS single-quotes; "..." and backslash escapes also work). No expansion. */
+static std::vector<std::string> split_args(const std::string& s) {
+    std::vector<std::string> out;
+    std::string cur;
+    bool have = false;
+    for (size_t i = 0; i < s.size(); ++i) {
+        const char c = s[i];
+        if (c == '\'') { have = true; for (++i; i < s.size() && s[i] != '\''; ++i) cur += s[i]; }
+        else if (c == '"') {
+            have = true;
+            for (++i; i < s.size() && s[i] != '"'; ++i) {
+                if (s[i] == '\\' && i + 1 < s.size() && (s[i + 1] == '"' || s[i + 1] == '\\')) ++i;
+                cur += s[i];
+            }
+        }
+        else if (c == '\\' && i + 1 < s.size()) { have = true; cur += s[++i]; }
+        else if (c == ' ' || c == '\t' || c == '\n') { if (have) { out.push_back(cur); cur.clear(); have = false; } }
+        else { have = true; cur += c; }
+    }
+    if (have) out.push_back(cur);
+    return out;
+}
+#endif
 
 static starthint::Popup g_hint;
 
@@ -86,11 +146,11 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
         A.fresh_key.clear();
     }
     if (!A.resume_key.empty()) {   // "Resume": one-shot --load-state for exactly this game on a retrorun launch (Lane 2 runners; docs/RUNNER_CTL)
-        if (A.resume_key == ri.key && (file_name(exe) == "retrorun.exe" || file_name(exe) == "n64run.exe") && !A.resume_state.empty()) args += " --load-state " + quote(A.resume_state);
+        if (A.resume_key == ri.key && (file_name(exe) == kRetrorunExe || file_name(exe) == kN64runExe) && !A.resume_state.empty()) args += " --load-state " + quote(A.resume_state);
         A.resume_key.clear();
         A.resume_state.clear();
     }
-    if (file_name(exe) == "retrorun.exe" && args.find(" --net") == std::string::npos && args.find("--net ") != 0)
+    if (file_name(exe) == kRetrorunExe && args.find(" --net") == std::string::npos && args.find("--net ") != 0)
         args += achievements_launch_args();   // RetroAchievements: offline runs only (never online/rollback/DS wireless)
     if (g_headless) {
         std::string ev;
@@ -102,34 +162,60 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     if (!hubui::launch_allowed(A.proc != nullptr, session_active(), /*system_launch=*/true)) { set_notice(hubui::launch_busy_reason(true)); return false; }   // rooms start their own game inside their own session: only A.proc refuses
     if (!file_exists(exe)) { set_notice("Cannot find " + file_name(exe) + " (" + exe + ")"); return false; }
     std::vector<std::pair<std::string, std::string>> env_all = env;   // + the instant-replay switch for n64run (set below, put back after the spawn)
-    if (file_name(exe) == "n64run.exe") for (auto& kv : hubui::n64_clips_env(A.st.n64_clips)) env_all.push_back(kv);
+    if (file_name(exe) == kN64runExe) for (auto& kv : hubui::n64_clips_env(A.st.n64_clips)) env_all.push_back(kv);
     std::vector<std::pair<std::wstring, std::wstring>> wenv;   // the child inherits these; a variable the player already had is given back with its own value afterwards, not removed
     if (!A.st.start_hint) wenv.push_back({L"RETROHUB_START_HINT", L"0"});   // retrorun / n64run read it
     for (auto& e : env_all) wenv.push_back({W(e.first), W(e.second)});
+#if RH_WIN
     std::wstring cmd = L"\"" + W(exe) + L"\" " + W(args);
+#endif
     const std::vector<hubenv::Saved> env_saved = hubenv::apply(wenv);
     const std::string exe_name = file_name(exe);
-    const bool own_runner = exe_name == "retrorun.exe" || exe_name == "n64run.exe" || exe_name == "streamrun.exe" || exe == smash_exe_path();   // our own processes that open /hub: they prove the account (strict rooms); emulators never get it
+    const bool own_runner = exe_name == kRetrorunExe || exe_name == kN64runExe || exe_name == kStreamrunExe || exe == smash_exe_path();   // our own processes that open /hub: they prove the account (strict rooms); emulators never get it
     if (own_runner) fr_ident_env(true);
     /* CREATE_NO_WINDOW: n64run / retrorun are console-subsystem programs (they log to files). Without the flag Windows gives them a
      * console, which on PCs where Windows Terminal is the default console host opens a visible terminal window over the game.
      * GUI emulators (Dolphin, PCSX2, Azahar, Cemu) ignore the flag.
      * The child starts suspended and joins its job (external emulators: follow every process it starts, so a relaunch / hand-off keeps the
      * session open) before it runs its first instruction, so nothing it spawns early can escape the job. */
-    hubproc::SpawnResult sr;
     const bool want_job = ri.after_exit != nullptr;
+#if RH_WIN
+    hubproc::SpawnResult sr;
     const bool ok = hubproc::spawn(W(exe), cmd, W(cwd), CREATE_NO_WINDOW, want_job, [](const hubproc::SpawnResult& r) {
         if (!g_journal_next) return;   // record which process this session's after-exit work waits for (still suspended: it cannot have written anything yet)
         g_journal_next->pid = r.pid;
         g_journal_next->created = r.created;
         hubjournal::update(journal_dir(), *g_journal_next);
     }, &sr);
-    const DWORD err = sr.error;
+    const unsigned long err = sr.error;
+#else
+    /* posix_spawn into its own process group (hubproc): the group is the job. The env set above is inherited. The pid is journaled right after the spawn. */
+    plat::proc::SpawnOptions so;
+    so.exe = exe;
+    so.args = split_args(args);
+    so.cwd = cwd;
+    so.own_group = true;
+    hubproc::Spawned sr;
+    const bool ok = hubproc::spawn(so, [](const hubproc::Spawned& r) {
+        if (!g_journal_next) return;
+        g_journal_next->pid = (unsigned long)r.pid();
+        g_journal_next->created = r.created;
+        hubjournal::update(journal_dir(), *g_journal_next);
+    }, &sr);
+    const unsigned long err = (unsigned long)sr.error;
+#endif
     hubenv::restore(env_saved);
     if (own_runner) fr_ident_env(false);
     if (!ok) { set_notice("Could not start " + file_name(exe) + " (error " + std::to_string(err) + ")"); return false; }
+#if RH_WIN
     if (want_job) A.job_h = sr.job;
     A.proc = sr.process;
+#else
+    A.proc.pid = sr.child.pid;
+    A.proc.pgid = sr.child.pgid;
+    A.proc.start_time_us = sr.child.start_time_us;
+    if (want_job) A.job_h = A.proc;   // the process group stands in for the job object
+#endif
     A.proc_title = ri.title;
     A.run = ri;
     A.run.controls_path.clear();
@@ -139,7 +225,7 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     A.run.cloud_started = false;
     A.run.pad_exit = ri.after_exit != nullptr || !ri.o2r_prep.empty();   // external emulators and the native Smash port; n64run / retrorun handle the combo themselves
     A.run.start_unix = unix_now();
-    A.run.start_tick = GetTickCount64();
+    A.run.start_tick = plat::tick_ms();
     g_hint = starthint::Popup();   // fresh 5 s controller-tips card for this game (external emulators; the runners draw their own)
     cloud_run_started();
     return true;
@@ -152,16 +238,18 @@ void sync_smash_prep();
 static bool any_pad_combo() {
     if (autotest_active()) {   // QA only: RETROHUB_AUTOTEST_COMBO_AFTER=<seconds> holds Back+Start virtually once the game has run that long
         static const char* after = std::getenv("RETROHUB_AUTOTEST_COMBO_AFTER");
-        if (after && A.proc && GetTickCount64() - A.run.start_tick >= (ULONGLONG)(std::atof(after) * 1000.0)) {
+        if (after && A.proc && plat::tick_ms() - A.run.start_tick >= (unsigned long long)(std::atof(after) * 1000.0)) {
             static bool logged = false;
             if (!logged) { logged = true; autotest_log("virtual exit combo (Back+Start) held"); }
             return true;
         }
     }
+#if RH_WIN
     for (DWORD i = 0; i < 4; ++i) {
         XINPUT_STATE xs{};
         if (XInputGetState(i, &xs) == ERROR_SUCCESS && hubctl::xinput_combo_down(xs.Gamepad.wButtons)) return true;
     }
+#endif
     SDL_GameControllerUpdate();
     for (auto* c : A.pads) {
         hubctl::PadState st;
@@ -171,6 +259,7 @@ static bool any_pad_combo() {
     return false;
 }
 
+#if RH_WIN
 static std::vector<DWORD> game_pids() {
     std::vector<DWORD> v;
     if (A.job_h) {
@@ -226,11 +315,47 @@ bool game_window_pid(unsigned long* pid) {
     return p != 0;
 }
 
+#else
+static std::vector<int> game_pids() {
+    std::vector<int> v;
+    if (A.job_h) v = pgrp_pids(A.job_h.pgid);
+    if (A.proc && std::find(v.begin(), v.end(), A.proc.pid) == v.end()) v.push_back(A.proc.pid);
+    return v;
+}
+/* macOS: the "window handle" of the running game is its CGWindowID (largest normal-layer on-screen window of the game's processes), cast to a pointer;
+ * 0 / nullptr when it has none. Nothing dereferences it: it is only compared and passed back to qm_describe_window(). */
+static bool game_main_window_info(unsigned* id, int* pid) {
+    long long best = 0;
+    bool found = false;
+    for (const MacWindow& w : mac_windows_of_pids(game_pids(), false)) {
+        const long long a = (long long)w.w * w.h;
+        if (w.on_screen && a > best) { best = a; *id = w.id; *pid = w.pid; found = true; }
+    }
+    return found;
+}
+static NativeWindow game_main_window() {
+    unsigned id = 0; int pid = 0;
+    return game_main_window_info(&id, &pid) ? (NativeWindow)(uintptr_t)id : nullptr;
+}
+/* Watchdog-only: does the game still own ANY normal window (a minimised one counts)? */
+static bool game_has_window() {
+    for (const MacWindow& w : mac_windows_of_pids(game_pids(), true))
+        if (w.w > 0 && w.h > 0) return true;
+    return false;
+}
+bool game_window_pid(unsigned long* pid) {
+    unsigned id = 0; int p = 0;
+    if (!game_main_window_info(&id, &p) || p <= 0) return false;
+    *pid = (unsigned long)p;
+    return true;
+}
+#endif
 static void start_hint_tick() {
     if (g_headless || !A.proc || !A.run.pad_exit || !A.st.start_hint) { g_hint.close(); return; }
     g_hint.tick(game_main_window(), false, false);
 }
 
+#if RH_WIN
 struct CloseCtx { std::vector<DWORD> pids; int n = 0; };
 static BOOL CALLBACK close_cb(HWND h, LPARAM lp) {
     auto* c = (CloseCtx*)lp;
@@ -240,6 +365,14 @@ static BOOL CALLBACK close_cb(HWND h, LPARAM lp) {
     return TRUE;
 }
 
+#else
+/* Asks one process to end the way the player would (Cmd+Q for a GUI app, SIGTERM otherwise); never the hub itself. */
+static void ask_pid_to_close(int pid) {
+    if (pid <= 0 || is_own_pid(pid)) return;
+    if (!mac_request_quit(pid)) ::kill(pid, SIGTERM);
+}
+#endif
+#if RH_WIN
 /* Reliable foreground for a USER-requested raise (View+Y open / close). The foreground lock is bypassed by attaching to the current
  * foreground thread's input queue plus the Alt-key trick; verified with GetForegroundWindow and retried briefly (<= ~200 ms). */
 static bool force_foreground(HWND target) {
@@ -292,12 +425,39 @@ void hub_menu_topmost(bool on) {
     SetWindowPos(A.hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);   // popup-guard: ok (user's View+Y menu only; cleared on close)
 }
 
+#else
+std::string qm_describe_window(void* hw) {
+    if (!hw) return "none";
+    char buf[96];
+    std::snprintf(buf, sizeof buf, "window#%lu", (unsigned long)(uintptr_t)hw);
+    return buf;
+}
+bool hub_is_foreground() { return A.win && (SDL_GetWindowFlags(A.win) & SDL_WINDOW_INPUT_FOCUS) != 0; }
+
+void focus_hub() {
+    if (!A.win || g_headless) return;
+    /* Only for the user's own View+Y / cheats pad combo during a game (qm_open_live, cheats_open_live). Never automatic. */
+    if (SDL_GetWindowFlags(A.win) & SDL_WINDOW_MINIMIZED) SDL_RestoreWindow(A.win);   // popup-guard: ok (user hotkey)
+    if (qm_is_open()) hub_menu_topmost(true);
+    SDL_RaiseWindow(A.win);   // popup-guard: ok (user hotkey)
+    plat::proc::activate_pid((int)getpid());   // popup-guard: ok (user hotkey): the app itself comes forward, not just its window
+}
+
+/* Only while the user's quick menu is open (set by focus_hub from qm_open_live, always cleared when the menu closes). */
+void hub_menu_topmost(bool on) {
+    static bool is_on = false;
+    if (!A.win || g_headless || on == is_on) return;
+    is_on = on;
+    SDL_SetWindowAlwaysOnTop(A.win, on ? SDL_TRUE : SDL_FALSE);   // popup-guard: ok (user's View+Y menu only; cleared on close)
+}
+
+#endif
 void pad_exit_watch() {
     static hubctl::ExitCombo combo;
     static bool closing = false;
-    static ULONGLONG closed_at = 0;
+    static unsigned long long closed_at = 0;
     if (!A.proc || !A.run.pad_exit || g_headless) { combo.reset(); closing = false; return; }
-    ULONGLONG now = GetTickCount64();
+    unsigned long long now = plat::tick_ms();
     if (closing) {   // emulator ignored the close for 20 s: leave it alone (never kill the user's emulator)
         if (now - closed_at > 20000) closing = false;
         return;
@@ -324,25 +484,45 @@ void lichii_hang_watch() {
     static hubhang::HangWatch watch;   // the decision lives in hang_watch_logic.h (unit-tested by hub_hangwatch_test)
     if (!A.proc) { g_hookshot_run = false; g_fritchii_run = false; }
     if (!A.proc || A.run.system_short != "switch" || g_headless || g_hookshot_run) { watch.reset(); return; }   // Hookshot has its own exit; the hang is a Lichii issue (builds 88-95; builds 125 and 130 unknown)
-    const ULONGLONG now = GetTickCount64();
+    const unsigned long long now = plat::tick_ms();
     const bool window = game_has_window();   // a minimised game still has its window (the cap must never end a minimised game)
-    ULONGLONG cpu = 0, io = 0;
+    unsigned long long cpu = 0, io = 0;
+#if RH_MAC
+    if (!window && A.proc) {   // CPU time in 100 ns units (as on Windows) and bytes read + written, from libproc; a failed read counts as 0
+        struct proc_taskinfo ti;
+        if (proc_pidinfo(A.proc.pid, PROC_PIDTASKINFO, 0, &ti, sizeof ti) == (int)sizeof ti) {
+            mach_timebase_info_data_t tb{1, 1};
+            mach_timebase_info(&tb);
+            cpu = ((ti.pti_total_user + ti.pti_total_system) * tb.numer / tb.denom) / 100;
+        }
+        rusage_info_v2 ru{};
+        if (proc_pid_rusage(A.proc.pid, RUSAGE_INFO_V2, (rusage_info_t*)&ru) == 0) io = ru.ri_diskio_bytesread + ru.ri_diskio_byteswritten;
+    }
+#else
     if (!window) {
         FILETIME c, x, k, u;   // total CPU time (100 ns units) of the game process; a failed read counts as 0
         if (GetProcessTimes(A.proc, &c, &x, &k, &u))
-            cpu = (((ULONGLONG)k.dwHighDateTime << 32) | k.dwLowDateTime) + (((ULONGLONG)u.dwHighDateTime << 32) | u.dwLowDateTime);
+            cpu = (((unsigned long long)k.dwHighDateTime << 32) | k.dwLowDateTime) + (((unsigned long long)u.dwHighDateTime << 32) | u.dwLowDateTime);
         IO_COUNTERS ic;   // bytes read + written so far (disk-bound work, e.g. Lichii's shader-cache writer (since build 130) / log compaction, uses little CPU)
         if (GetProcessIoCounters(A.proc, &ic)) io = ic.ReadTransferCount + ic.WriteTransferCount;
     }
+#endif
     if (watch.tick(now, window, cpu, io) != hubhang::Verdict::End) return;
     autotest_log("lichii: window closed 15 s ago but the process is still running (Lichii exit hang): ending its job");
+#if RH_WIN
     if (A.job_h) TerminateJobObject(A.job_h, 0);
     else TerminateProcess(A.proc, 0);
+#else
+    if (is_own_pid(A.proc.pid)) return;
+    plat::proc::kill_tree(child_of(A.job_h ? A.job_h : A.proc), 500);   // SIGTERM to the group, SIGKILL after the grace
+#endif
 }
 
+/* macOS: a CGWindowID cast to a pointer (see game_main_window), nullptr when the game has no window. */
 void* running_game_hwnd() { return g_headless ? nullptr : (void*)game_main_window(); }
-std::vector<unsigned long> running_game_pids() { std::vector<unsigned long> v; for (DWORD p : game_pids()) v.push_back(p); return v; }
+std::vector<unsigned long> running_game_pids() { std::vector<unsigned long> v; for (auto p : game_pids()) v.push_back((unsigned long)p); return v; }
 
+#if RH_WIN
 void focus_game() {
     if (g_headless) return;
     hub_menu_topmost(false);   // first: clearing it after the game is raised would put the hub back above the game
@@ -363,10 +543,38 @@ void focus_game() {
         std::fprintf(stderr, "focus_game: game did not become the foreground window\n");
 }
 
+#else
+void focus_game() {
+    if (g_headless) return;
+    hub_menu_topmost(false);   // first: clearing it after the game is raised would put the hub back above the game
+    int target = 0;
+    for (int p : game_pids()) if (!is_own_pid(p) && plat::proc::pid_has_window(p)) { target = p; break; }
+    if (!target && A.proc && !is_own_pid(A.proc.pid)) target = A.proc.pid;
+    if (!target) return;
+    if (!plat::proc::activate_pid(target))   // popup-guard: ok (raises the GAME, not the hub)
+        std::fprintf(stderr, "focus_game: game did not become the foreground app\n");
+}
+
+/* Windows virtual-key code -> macOS kVK_* (the launch code and the emulator tables speak VK). -1 = not mapped. */
+static int mac_keycode_for_vk(int vk) {
+    static const int fkeys[] = {0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F, 0x69, 0x6B, 0x71, 0x6A};   // F1..F16
+    if (vk >= 0x70 && vk <= 0x7F) return fkeys[vk - 0x70];
+    switch (vk) {
+        case 0x09: return 0x30;   // Tab
+        case 0x0D: return 0x24;   // Return
+        case 0x1B: return 0x35;   // Escape
+        case 0x20: return 0x31;   // Space
+        case 0x25: return 0x7B; case 0x26: return 0x7E; case 0x27: return 0x7C; case 0x28: return 0x7D;   // arrows
+        default: return -1;
+    }
+}
+
+#endif
 /* Wii U: Cemu's default global hotkey "toggle pad screen" is Ctrl+Tab (shown in its first-run assistant). Cemu reads it from the
  * keyboard state of its window, so the game window is brought forward and the keys are injected. */
 /* Raises the running game and presses one key chord, but only while a game window is the foreground window (re-checked before every key-down;
  * releases always go out). Returns how many keys were pressed. Shared by the Wii U pad-screen toggle and the PSP state keys. */
+#if RH_WIN
 static int send_game_chord(const std::vector<int>& keys) {
     /* UI frame thread: never wait for another key burst (a Dolphin speed burst can run for seconds), skip this press instead. */
     std::unique_lock<std::mutex> burst(hubinput::synth_input_mutex(), std::try_to_lock);
@@ -385,6 +593,36 @@ static int send_game_chord(const std::vector<int>& keys) {
     });
 }
 
+#else
+static int send_game_chord(const std::vector<int>& keys) {
+    /* UI frame thread: never wait for another key burst, skip this press instead. */
+    std::unique_lock<std::mutex> burst(hubinput::synth_input_mutex(), std::try_to_lock);
+    if (!burst.owns_lock()) { autotest_log("chord skipped: another key burst is running"); return 0; }
+    if (!plat::proc::accessibility_trusted(false)) {   // CGEvent posting needs the Accessibility permission
+        plat::proc::accessibility_trusted(true);
+        set_notice("To send keys to the game, allow RetroHub in System Settings > Privacy & Security > Accessibility.", 12.0);
+        return 0;
+    }
+    focus_game();
+    const std::vector<int> pids = game_pids();
+    int game_pid = 0;
+    for (int p : pids) if (!is_own_pid(p) && plat::proc::pid_has_window(p)) { game_pid = p; break; }
+    if (!game_pid) return 0;
+    auto game_fg = [&]() {   // re-checked before every key-down; releases always go out
+        const int fg = mac_frontmost_pid();
+        for (int p : pids) if (p == fg) return !qm_is_open();
+        return false;
+    };
+    unsigned mods = 0;
+    return hubqm::run_key_chord(keys, game_fg, [&](int k, bool up) {
+        unsigned bit = k == 0x10 ? 1u : k == 0x11 ? 2u : k == 0x12 ? 4u : (k == 0x5B || k == 0x5C) ? 8u : 0u;   // Shift, Control, Alt (Option), Win (Command)
+        if (bit) { if (up) mods &= ~bit; else mods |= bit; return; }
+        const int kc = mac_keycode_for_vk(k);
+        if (!up && kc >= 0) plat::proc::send_key(game_pid, kc, mods);   // down + up in one event pair
+    });
+}
+
+#endif
 void wiiu_toggle_gamepad_screen() {
     if (g_headless || !A.proc) return;
     if (autotest_active()) { autotest_log("wiiu: toggle pad screen hotkey (not injected: QA runs on a hidden desktop, injected keys would reach the user's)"); return; }
@@ -407,6 +645,7 @@ void ppsspp_send_state(bool save) {
  * After the menu closes and focus_game() ran, wait (up to 3 s) until a game window is the foreground window, then press each key.
  * Keys are only ever sent while the game is foreground, so they cannot reach another app. Runs off the UI thread (70 presses at
  * 8x take a few seconds). Nothing is raised or shown here. */
+#if RH_WIN
 void dolphin_send_speed_keys(const std::vector<int>& vks, std::function<void(int)> done_cb) {
     if (g_headless || !A.proc || vks.empty()) { if (done_cb) done_cb(-1); return; }
     if (autotest_active()) { autotest_log("dolphin: speed hotkeys (" + std::to_string(vks.size()) + ") not injected: QA runs on a hidden desktop"); if (done_cb) done_cb(-1); return; }
@@ -437,14 +676,24 @@ void dolphin_send_speed_keys(const std::vector<int>& vks, std::function<void(int
     }).detach();
 }
 
+#else
+void dolphin_send_speed_keys(const std::vector<int>& vks, std::function<void(int)> done_cb) {
+    // TODO(macOS lane 7b): Dolphin's speed hotkeys on macOS (its HotkeysNew.ini bindings and key codes) are defined with the Dolphin macOS pin; until then no key is sent.
+    (void)vks;
+    qm_log("speed burst: not supported on macOS yet, not sent");
+    if (done_cb) done_cb(-1);
+}
+
+#endif
 /* View (Back) + right bumper while a Wii U game runs, held 250 ms (hubctl::pad_screen_combo_down per pad; Start, Y, LT, RT must not be held). One toggle per hold. */
 void wiiu_pad_watch() {
     static hubctl::PadScreenCombo combo;
-    static ULONGLONG qa_until = 0;
+    static unsigned long long qa_until = 0;
     bool down = false;
     if (A.proc && !g_headless && A.run.system_short == "wiiu") {
-        static ULONGLONG next_probe[4] = {0, 0, 0, 0};   // an empty XInput slot is slow to ask: look again at most every 2 s
-        const ULONGLONG now_tick = GetTickCount64();
+#if RH_WIN
+        static unsigned long long next_probe[4] = {0, 0, 0, 0};   // an empty XInput slot is slow to ask: look again at most every 2 s
+        const unsigned long long now_tick = plat::tick_ms();
         for (DWORD i = 0; i < 4; ++i) {   // Xbox pads, read directly (works while the game window has the focus)
             if (now_tick < next_probe[i]) continue;
             XINPUT_STATE xs{};
@@ -453,6 +702,7 @@ void wiiu_pad_watch() {
             if (r == ERROR_SUCCESS &&
                 hubctl::pad_screen_combo_down(hubctl::pad_from_xinput(xs.Gamepad.wButtons, xs.Gamepad.bLeftTrigger, xs.Gamepad.bRightTrigger))) down = true;
         }
+#endif
         SDL_GameControllerUpdate();   // SDL pad state must not depend on the main loop having pumped events
         for (auto* c : A.pads) {   // SDL pads
             hubctl::PadState st;
@@ -461,32 +711,44 @@ void wiiu_pad_watch() {
         }
         if (autotest_active()) if (const char* after = std::getenv("RETROHUB_AUTOTEST_PADSWAP_AFTER")) {   // QA only: hold the combo for 400 ms after N seconds
             static bool fired = false;
-            if (!fired && GetTickCount64() - A.run.start_tick >= (ULONGLONG)(std::atof(after) * 1000.0)) { fired = true; qa_until = GetTickCount64() + 400; }
-            if (GetTickCount64() < qa_until) down = true;
+            if (!fired && plat::tick_ms() - A.run.start_tick >= (unsigned long long)(std::atof(after) * 1000.0)) { fired = true; qa_until = plat::tick_ms() + 400; }
+            if (plat::tick_ms() < qa_until) down = true;
         }
     }
-    if (combo.update(down, (long long)GetTickCount64())) {
+    if (combo.update(down, (long long)plat::tick_ms())) {
         /* The pad is read whichever window has focus: act only when RetroHub or this session's own game is in front, never pull Cemu
          * over another game the player switched to (QA's hidden desktop has no meaningful foreground window, so it is exempt). */
+#if RH_WIN
         DWORD fg = 0;
         GetWindowThreadProcessId(GetForegroundWindow(), &fg);
+#else
+        const unsigned long fg = (unsigned long)mac_frontmost_pid();
+#endif
         std::vector<unsigned long> gp;
-        for (DWORD p : game_pids()) gp.push_back(p);
-        if (autotest_active() || hubui::pad_combo_may_act(fg, GetCurrentProcessId(), gp)) wiiu_toggle_gamepad_screen();
+        for (auto p : game_pids()) gp.push_back((unsigned long)p);
+        if (autotest_active() || hubui::pad_combo_may_act(fg, plat::current_pid(), gp)) wiiu_toggle_gamepad_screen();
     }
 }
 
 void request_game_close() {
     if (A.run.pad_exit_fn) { A.run.pad_exit_fn(); return; }
+#if RH_WIN
     CloseCtx c;
     c.pids = game_pids();
     EnumWindows(close_cb, (LPARAM)&c);
+#else
+    for (int p : game_pids()) ask_pid_to_close(p);
+#endif
 }
 
 void close_pid_windows(unsigned long pid) {
+#if RH_WIN
     CloseCtx c;
     c.pids.push_back((DWORD)pid);
     EnumWindows(close_cb, (LPARAM)&c);
+#else
+    ask_pid_to_close((int)pid);
+#endif
 }
 
 void poll_process() {
@@ -497,6 +759,7 @@ void poll_process() {
     wiiu_pad_watch();
     lichii_hang_watch();
     if (!A.proc) return;
+#if RH_WIN
     if (WaitForSingleObject(A.proc, 0) != WAIT_OBJECT_0) return;
     if (A.job_h) {   // the emulator may have handed the game to a child: wait until the whole job is gone
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION ji{};
@@ -506,10 +769,29 @@ void poll_process() {
     }
     DWORD code = 0;
     GetExitCodeProcess(A.proc, &code);
-    const uint64_t secs = (GetTickCount64() - A.run.start_tick) / 1000;   // the game's own time: measured before the after-exit work (save copy-back) below
+    const uint64_t secs = (plat::tick_ms() - A.run.start_tick) / 1000;   // the game's own time: measured before the after-exit work (save copy-back) below
     const DWORD proc_id = GetProcessId(A.proc);
     CloseHandle(A.proc);
     A.proc = nullptr;
+#else
+    /* macOS: the leader's exit (plat::proc::wait reaps it and remembers the code), then every process left in its group, like the job object. */
+    static int s_waited_pid = 0, s_exit = 0;
+    if (s_waited_pid != A.proc.pid) {
+        int c = 0;
+        if (!plat::proc::wait(child_of(A.proc), 0, &c)) return;
+        s_waited_pid = A.proc.pid;
+        s_exit = c;
+    }
+    if (A.job_h) {
+        if (group_alive(A.job_h.pgid)) return;
+        A.job_h = nullptr;
+    }
+    const unsigned long code = (unsigned long)s_exit;
+    const uint64_t secs = (plat::tick_ms() - A.run.start_tick) / 1000;   // the game's own time: measured before the after-exit work (save copy-back) below
+    const unsigned long proc_id = (unsigned long)A.proc.pid;
+    s_waited_pid = 0;
+    A.proc = nullptr;
+#endif
     hub::rom_cache_pin(nullptr);   // its unpacked copy may be trimmed again
     /* no focus_hub() here: the game just closed, the hub must not jump in front of whatever the user does next */
     sync_smash_prep();
@@ -548,10 +830,10 @@ void poll_process() {
 
 /* Core DLL: <exe>\cores\ (packaged) or <Hub>\deps\cores\ (dev). */
 std::string find_core(const std::string& name) {
-    std::string f = name + "_libretro.dll";
-    std::string p = hub::exe_dir() + "cores\\" + f;
+    std::string f = name + "_libretro" + plat::kLibSuffix;
+    std::string p = hub::exe_dir() + "cores" + plat::kSep + f;
     if (file_exists(p)) return p;
-    return find_upward("deps\\cores\\" + f);
+    return find_upward(std::string("deps") + plat::kSep + "cores" + plat::kSep + f);
 }
 std::string quote(const std::string& s) { return winutil::quote_arg(s); }
 
@@ -811,7 +1093,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         { hubctl::Profile pg = controls_profile("gc", e.key); hubemu::prepare_dolphin(inst.dir, dolphin_pads_for(pg), pg); }
         real_boot_dolphin_apply(inst.dir, real_boot_plan(e));   // GameCube IPL startup (this launch only)
         if (!ri.online && !ri.room) gba_link_apply_dolphin(e, inst.dir);   // Wave 3 X2: integrated GBA per port (offline only; GC netplay never comes through here, the guard is belt and braces)
-        cheats_apply_dolphin(e, inst.dir +"\\User", false, true, nullptr);   // enabled cheats -> GameSettings\<GAMEID>.ini (stale RetroHub entries removed)
+        cheats_apply_dolphin(e, inst.dir + plat::kSep + "User", false, true, nullptr);   // enabled cheats -> GameSettings\<GAMEID>.ini (stale RetroHub entries removed)
         if (autotest_active() && std::getenv("RETROHUB_AUTOTEST_GCPAD_INI")) {   // QA only: scripted pad (constant/timer expressions) instead of the user's mapping
             std::error_code ec;
             std::filesystem::copy_file(std::getenv("RETROHUB_AUTOTEST_GCPAD_INI"), std::filesystem::path(inst.dir) / "User" / "Config" / "GCPadNew.ini", std::filesystem::copy_options::overwrite_existing, ec);
@@ -862,7 +1144,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     std::string cemu_user;   // Cemu's user data folder (portable\ / beside settings.xml / %APPDATA%\Cemu)
     if (kind == hubemu::Kind::Cemu) {
         const std::string ad_s = winutil::getenv_utf8("APPDATA"); const char* ad = ad_s.empty() ? nullptr : ad_s.c_str();
-        cemu_user = inst.managed ? inst.dir + "\\portable" : hubemu::cemu_user_data_dir(inst.dir, ad ? ad : "");
+        cemu_user = inst.managed ? inst.dir + plat::kSep + "portable" : hubemu::cemu_user_data_dir(inst.dir, ad ? ad : "");
         if (inst.managed) hubemu::apply_game_settings(kind, inst.dir, gsv);
         else if (!hubemu::prepare_cemu_own_settings(cemu_user, gsv)) autotest_log("cemu: settings.xml of the own install left untouched (missing or no backup possible)");
         autotest_log("cemu: user data " + cemu_user + " title " + hub::hex16(wiiu_tid));
@@ -889,7 +1171,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
         for (char& ch : ext) ch = (char)std::tolower((unsigned char)ch);
         if (ext == ".nup") {
             auto rp = gsv.find("switch.repair_damaged");
-            const hub::nuprepair::Ensure er = hub::nuprepair::ensure(game, inst.dir + "\\user", rp == gsv.end() || rp->second != "off", hub::data_dir() + "nup-repair");   // (the "healthy copy" record lives in RetroHub's own data folder, never the emulator's)
+            const hub::nuprepair::Ensure er = hub::nuprepair::ensure(game, inst.dir + plat::kSep + "user", rp == gsv.end() || rp->second != "off", hub::data_dir() + "nup-repair");   // (the "healthy copy" record lives in RetroHub's own data folder, never the emulator's)
             autotest_log(er.summary);
         }
     }
@@ -921,7 +1203,7 @@ void launch_external(const hub::GameEntry& e, const RunInfo& ri, const std::stri
     const bool journaled = sess->active || kind == hubemu::Kind::Cemu;
     if (journaled) hubjournal::begin(jdir, *jr);
     std::string args = kind == hubemu::Kind::Azahar ? hubemu::azahar_args(game, fs, mp_arg)
-                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + "\\GCI", hub::gs::volume_of(gsv))
+                       : kind == hubemu::Kind::Dolphin ? hubemu::dolphin_args(game, fs, hubemu::dolphin_card_root(inst.dir, e.key) + plat::kSep + "GCI", hub::gs::volume_of(gsv))
                        : kind == hubemu::Kind::Pcsx2 ? hubemu::pcsx2_args(game, fs)
                        : kind == hubemu::Kind::Ppsspp ? hubemu::ppsspp_args(game, fs)
                        : hubemu::is_nx(kind) ? hubemu::lichii_args(game, fs)
@@ -990,6 +1272,18 @@ void unzip_play_request(const hub::GameEntry& e) {
     }
 }
 
+#if RH_MAC
+void flash_taskbar() {
+    if (!A.win || g_headless || game_active()) return;   // a bounce is still a popup: nothing while a game runs
+    mac_bounce_dock();   // one Dock bounce until the player looks at RetroHub; never takes focus
+}
+
+void add_game_shortcut(const hub::GameEntry& e) {
+    (void)e;
+    // TODO(macOS lane 9): a Desktop alias / .app launcher that runs `RetroHub --play <key>` (retrohub:// URL scheme exists).
+    set_notice("Desktop shortcuts are not available on macOS yet.");
+}
+#else
 void flash_taskbar() {
     if (!A.hwnd || g_headless || game_active()) return;   // a flash is still a popup: nothing while a game runs
     FLASHWINFO fi{};
@@ -1029,6 +1323,7 @@ void add_game_shortcut(const hub::GameEntry& e) {
     if (shell_write_game_shortcut(lnk, winutil::exe_path_w(), key, W(e.title), icon)) set_toast("Added " + e.title + " to your desktop.");
     else set_notice("Could not create the shortcut.");
 }
+#endif
 
 /* saves-F1 / Wave 3 R1 (resume_logic.h, resume_more.cpp): " --resume" only when the resume point is not older than the newest save,
  * or the player chose it; the older-save choice is asked once at Play (resume_choice_gate). */
@@ -1120,8 +1415,13 @@ void play_entry(const hub::GameEntry& e_in) {
             args += qm_args(ri, e, true);
             args += resume_arg(e, battery, states, tp_on);   // Wave 3 R1: n64run --resume loads <state-dir>/auto.state (offline only)
             args = hubui::ensure_state_dir_for_resume(args, states);
-            if (!file_exists(hub::exe_dir() + "emu\\mupen64plus.dll")) {
-                std::string emu = find_upward("deps\\emu\\mupen64plus.dll");
+#if RH_WIN
+            const std::string m64_lib = "mupen64plus.dll";
+#else
+            const std::string m64_lib = "libmupen64plus.dylib";
+#endif
+            if (!file_exists(hub::exe_dir() + "emu" + plat::kSep + m64_lib)) {
+                std::string emu = find_upward(std::string("deps") + plat::kSep + "emu" + plat::kSep + m64_lib);
                 if (!emu.empty()) args += " --emu-dir " + quote(no_slash(dir_of(emu)));
             }
             spawn(n64run_path(), args, hub::exe_dir(), {}, ri);
@@ -1144,7 +1444,7 @@ void play_entry(const hub::GameEntry& e_in) {
             }
             args += cheats_launch_args(e, false, true, nullptr);
             args += qm_args(ri, e, false);
-            spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+            spawn(hub::exe_dir() + kRetrorunExe, args, hub::exe_dir(), {}, ri);
             break;
         }
         case hub::System::NES:
@@ -1156,7 +1456,7 @@ void play_entry(const hub::GameEntry& e_in) {
             args += " --max-local " + std::to_string(hubcaps::runner_local_seats(e.system, hub::find_game(e.catalog_id)));   // seats of this game: retrorun never boots an adapter for a 1-2 player game
             args += cheats_launch_args(e, false, true, nullptr);
             args += qm_args(ri, e, false);
-            spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+            spawn(hub::exe_dir() + kRetrorunExe, args, hub::exe_dir(), {}, ri);
             break;
         }
         case hub::System::NDS: {   // melonDS DS core; no --resume (a stale auto state could overwrite a save synced from another PC)
@@ -1168,7 +1468,7 @@ void play_entry(const hub::GameEntry& e_in) {
             args += cheats_launch_args(e, false, true, nullptr);
             args += palpark_launch_args(e);   // Wave 3 X3: GBA game in Slot-2 (offline)
             args += qm_args(ri, e, false);
-            spawn(hub::exe_dir() + "retrorun.exe", args, hub::exe_dir(), {}, ri);
+            spawn(hub::exe_dir() + kRetrorunExe, args, hub::exe_dir(), {}, ri);
             break;
         }
         case hub::System::PS1:   // Beetle PSX through retrorun; no --resume (the memory card is the save)

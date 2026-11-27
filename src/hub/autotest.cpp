@@ -26,13 +26,14 @@ void autotest_log(const std::string& line) {
     if (!autotest_active()) return;
     static std::string path = hub::data_dir() + "autotest.log";
     std::ofstream f = u8file::open_out(path, std::ios::app | std::ios::binary);
-    static ULONGLONG t0 = GetTickCount64();
+    static unsigned long long t0 = plat::tick_ms();
     char ts[24];
-    std::snprintf(ts, sizeof ts, "[%6.1fs] ", (double)(GetTickCount64() - t0) / 1000.0);
+    std::snprintf(ts, sizeof ts, "[%6.1fs] ", (double)(plat::tick_ms() - t0) / 1000.0);
     f << ts << line << "\n";
 }
 
 void online_log(const std::string& line) {
+#if RH_WIN
     static std::string dir = hub::data_dir() + "logs\\";
     static std::string path = dir + "online.log";
     CreateDirectoryW(durable::utf8_to_wide(dir).c_str(), nullptr);
@@ -42,6 +43,18 @@ void online_log(const std::string& line) {
     SYSTEMTIME st; GetLocalTime(&st);
     char ts[40];
     std::snprintf(ts, sizeof ts, "%04d-%02d-%02d %02d:%02d:%02d ", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+#else
+    static std::string dir = hub::data_dir() + "logs/";
+    static std::string path = dir + "online.log";
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(dir), ec);
+    const auto sz = std::filesystem::file_size(std::filesystem::path(path), ec);   // rotate at ~1 MB like Windows
+    if (!ec && sz > 1000000) std::filesystem::rename(std::filesystem::path(path), std::filesystem::path(path + ".1"), ec);
+    std::tm lt{};
+    plat::local_tm(std::time(nullptr), &lt);
+    char ts[40];
+    std::snprintf(ts, sizeof ts, "%04d-%02d-%02d %02d:%02d:%02d ", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min, lt.tm_sec);
+#endif
     { std::ofstream f = u8file::open_out(path, std::ios::app | std::ios::binary); f << ts << line << "\n"; }
     autotest_log(line);
 }
@@ -52,8 +65,8 @@ void autotest_tick() {
     static std::string seen_status;
     static double t0 = 0;
     static std::string role = env("RETROHUB_AUTOTEST");
-    static ULONGLONG started = GetTickCount64();
-    ULONGLONG now = GetTickCount64();
+    static unsigned long long started = plat::tick_ms();
+    unsigned long long now = plat::tick_ms();
     (void)t0;
     if (GCO.active) {   // mirror the Dolphin driver's status lines into our log
         std::string st = gcnp::read_status(GCO.run);
@@ -67,15 +80,15 @@ void autotest_tick() {
         }
     }
     {   // remote-play QA: RETROHUB_AUTOTEST_LEAVE_AFTER=<s> (guest leaves the room N s after its viewer started), RETROHUB_AUTOTEST_QUIT_AFTER=<s> (host closes Cemu)
-        static ULONGLONG proc_since = 0; static bool acted = false, was = false;
+        static unsigned long long proc_since = 0; static bool acted = false, was = false;
         if (A.proc && A.run.room) { if (!proc_since) proc_since = now; } else proc_since = 0;
         if (A.proc) was = true;
         else if (was) { was = false; autotest_log(std::string("game process ended; in room=") + (A.in_room ? "yes" : "no") + " connected=" + (room_connected() ? "yes" : "no")); }
         if (proc_since && !acted) {
             const char* la = env("RETROHUB_AUTOTEST_LEAVE_AFTER");
             const char* qa = env("RETROHUB_AUTOTEST_QUIT_AFTER");
-            if (la && role != "host" && now - proc_since >= (ULONGLONG)(std::atof(la) * 1000.0)) { acted = true; autotest_log("leaving the room (guest)"); leave_room(); }
-            if (qa && role == "host" && now - proc_since >= (ULONGLONG)(std::atof(qa) * 1000.0)) { acted = true; autotest_log("closing the game (host)"); request_game_close(); }
+            if (la && role != "host" && now - proc_since >= (unsigned long long)(std::atof(la) * 1000.0)) { acted = true; autotest_log("leaving the room (guest)"); leave_room(); }
+            if (qa && role == "host" && now - proc_since >= (unsigned long long)(std::atof(qa) * 1000.0)) { acted = true; autotest_log("closing the game (host)"); request_game_close(); }
         }
     }
     if (role == "play") {   // single-player: press the same code path as the Play button for RETROHUB_AUTOTEST_GAME

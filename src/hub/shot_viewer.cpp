@@ -1,6 +1,13 @@
 #include "app.h"
 
+#if RH_WIN
 #include <shellapi.h>
+#else
+#include <strings.h>
+#define _stricmp strcasecmp   // file-local: this file compares file-name extensions case-insensitively
+#include "dialogs_mac.h"
+#include "plat/plat_proc.h"
+#endif
 
 #include "prefs.h"
 #include "savestore.h"
@@ -69,6 +76,10 @@ bool load_rgba(const std::string& path, std::vector<unsigned char>* px, int* w, 
 }  // namespace
 
 /* Windows clipboard, CF_DIB: BITMAPINFOHEADER + bottom-up BGR(A) rows. */
+#if RH_MAC
+/* macOS: NSPasteboard (dialogs_mac.mm) takes the picture straight from the file. */
+bool shot_copy_to_clipboard(const std::string& path) { return mac_copy_image_file_to_clipboard(path); }
+#else
 bool shot_copy_to_clipboard(const std::string& path) {
     std::vector<unsigned char> rgba; int w = 0, h = 0;
     if (!load_rgba(path, &rgba, &w, &h) || w <= 0 || h <= 0) return false;
@@ -98,6 +109,7 @@ bool shot_copy_to_clipboard(const std::string& path) {
     if (!ok) GlobalFree(mem);   // on success the clipboard owns it
     return ok;
 }
+#endif
 
 /* Set the game's cover to this picture (customize_ui.cpp custom_set_cover: copies it into the vault so it syncs). */
 bool shot_set_cover(const std::string& game_key, const std::string& path) {
@@ -111,7 +123,12 @@ hubui::FriendPicker g_pick;
 std::string g_pick_path;
 }  // namespace
 bool shot_send_to_friend(const std::string& path) {
-    if (path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".mp4") == 0) {
+#if RH_WIN
+    const bool is_mp4 = path.size() > 4 && _stricmp(path.c_str() + path.size() - 4, ".mp4") == 0;
+#else
+    const bool is_mp4 = path.size() > 4 && strcasecmp(path.c_str() + path.size() - 4, ".mp4") == 0;
+#endif
+    if (is_mp4) {
         push_toast("Only pictures can be sent to friends, not clips.", COL_BAD, 5.0);
         return false;
     }
@@ -266,7 +283,11 @@ static bool shot_viewer_draw_inner() {
         }
         { std::string st = hubui::attach_send_status(); if (!st.empty()) ImGui::TextDisabled("%s", st.c_str()); }
         if (ui::button(is_clip ? "Play clip" : "Open in viewer", bsz, is_clip, true, is_clip ? ui::Icon::Play : ui::Icon::None))
+#if RH_WIN
             ShellExecuteW(nullptr, L"open", std::filesystem::u8path(path).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+            plat::proc::open_path(path);   // Preview / QuickTime Player (the default app)
+#endif
         if (ui::button("Delete", bsz)) { V.confirm_delete = true; V.focus_first = true; }
         if (ui::button("Close", bsz)) { ImGui::EndChild(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return false; }
         ImGui::Dummy(ImVec2(0, sp(1.f)));

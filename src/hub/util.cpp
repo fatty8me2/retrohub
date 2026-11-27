@@ -3,6 +3,10 @@
 #include "app.h"
 #include "console_names.h"
 #include "input_gate.h"
+#if RH_MAC
+#include "dialogs_mac.h"
+#include <sys/stat.h>
+#endif
 
 /* ============================ helpers ============================ */
 
@@ -11,15 +15,28 @@ std::wstring W(const std::string& s) { return winutil::to_wide(s); }
 std::string U(const std::wstring& s) { return winutil::to_utf8(s); }
 bool file_exists(const std::string& p) {
     if (p.empty()) return false;
+#if RH_MAC
+    struct stat st;
+    return ::stat(p.c_str(), &st) == 0 && !S_ISDIR(st.st_mode);
+#else
     DWORD a = GetFileAttributesW(W(p).c_str());
     return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+#endif
 }
 std::string dir_of(const std::string& p) {
+#if RH_MAC
+    size_t i = p.find_last_of('/');   // a backslash is an ordinary file-name character on macOS
+#else
     size_t i = p.find_last_of("/\\");
+#endif
     return i == std::string::npos ? std::string(".") : p.substr(0, i + 1);
 }
 std::string file_name(const std::string& p) {
+#if RH_MAC
+    size_t i = p.find_last_of('/');
+#else
     size_t i = p.find_last_of("/\\");
+#endif
     return i == std::string::npos ? p : p.substr(i + 1);
 }
 
@@ -28,10 +45,15 @@ bool picker_focus_ok() {
 }
 
 /* IFileOpenDialog: folder or file picker. Returns "" on cancel (also when the hub lacks focus: a game owns the screen). */
-std::string pick_path(HWND owner, bool folder, const wchar_t* filter_name, const wchar_t* filter_spec) {
+std::string pick_path(NativeWindow owner, bool folder, const wchar_t* filter_name, const wchar_t* filter_spec) {
     std::string result;
     if (g_headless) return result;   // screenshot / QA run: never open a real Windows dialog (it is a visible window)
     if (!picker_focus_ok()) return result;
+#if RH_MAC
+    (void)owner; (void)filter_name;   // NSOpenPanel is app-modal; the filter name has no Cocoa equivalent
+    HangWatchdogPause wd_pause_mac;   // modal file dialog: not a hang
+    return mac_pick_path(folder, filter_spec ? U(filter_spec) : std::string());
+#else
     IFileOpenDialog* dlg = nullptr;
     if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return result;
     DWORD opts = 0;
@@ -56,14 +78,21 @@ std::string pick_path(HWND owner, bool folder, const wchar_t* filter_name, const
     }
     dlg->Release();
     return result;
+#endif
 }
 
 /* IFileSaveDialog. Returns "" on cancel. */
-std::string pick_save_path(HWND owner, const wchar_t* default_name, const wchar_t* filter_name,
+std::string pick_save_path(NativeWindow owner, const wchar_t* default_name, const wchar_t* filter_name,
                                   const wchar_t* filter_spec, const wchar_t* default_ext) {
     std::string result;
     if (g_headless) return result;   // screenshot / QA run: never open a real Windows dialog (it is a visible window)
     if (!picker_focus_ok()) return result;
+#if RH_MAC
+    (void)owner; (void)filter_name;
+    HangWatchdogPause wd_pause_mac;   // modal file dialog: not a hang
+    return mac_pick_save_path(default_name ? U(default_name) : std::string(), filter_spec ? U(filter_spec) : std::string(),
+                              default_ext ? U(default_ext) : std::string());
+#else
     IFileSaveDialog* dlg = nullptr;
     if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return result;
     DWORD opts = 0;
@@ -87,27 +116,46 @@ std::string pick_save_path(HWND owner, const wchar_t* default_name, const wchar_
     }
     dlg->Release();
     return result;
+#endif
 }
 
 bool dir_exists(const std::string& p) {
     if (p.empty()) return false;
+#if RH_MAC
+    struct stat st;
+    return ::stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+#else
     DWORD a = GetFileAttributesW(W(p).c_str());
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+#endif
 }
 std::string read_text_file(const std::string& p) {
+#if RH_MAC
+    std::ifstream f(p, std::ios::binary);
+#else
     std::ifstream f(W(p), std::ios::binary);
+#endif
     std::stringstream ss;
     ss << f.rdbuf();
     return ss.str();
 }
 void make_dirs(const std::string& p) {
+#if RH_MAC
+    std::error_code ec;
+    if (!p.empty()) std::filesystem::create_directories(std::filesystem::path(p), ec);
+#else
     std::wstring w = W(p);
     for (size_t i = 3; i < w.size(); ++i)
         if (w[i] == L'\\' || w[i] == L'/') CreateDirectoryW(w.substr(0, i).c_str(), nullptr);
     CreateDirectoryW(w.c_str(), nullptr);
+#endif
 }
 std::string with_slash(std::string p) {
+#if RH_MAC
+    if (!p.empty() && p.back() != '/') p += '/';
+#else
     if (!p.empty() && p.back() != '\\' && p.back() != '/') p += '\\';
+#endif
     return p;
 }
 /* Look for <rel> under exe_dir, then under up to 6 parent directories (dev builds: Hub\deps\...). */
@@ -115,7 +163,11 @@ std::string find_upward(const std::string& rel) {
     std::string base = hub::exe_dir();
     for (int i = 0; i < 7; ++i) {
         std::string c = base + rel;
+#if RH_MAC
+        if (file_exists(c) || dir_exists(c)) return c;
+#else
         if (GetFileAttributesW(W(c).c_str()) != INVALID_FILE_ATTRIBUTES) return c;
+#endif
         std::string t = base;
         while (!t.empty() && (t.back() == '\\' || t.back() == '/')) t.pop_back();
         size_t k = t.find_last_of("/\\");
@@ -125,12 +177,28 @@ std::string find_upward(const std::string& rel) {
     return "";
 }
 std::string env_var(const wchar_t* name) {
+#if RH_MAC
+    return winutil::getenv_utf8(U(name).c_str());
+#else
     wchar_t buf[MAX_PATH * 2];
     DWORD n = GetEnvironmentVariableW(name, buf, MAX_PATH * 2);
     return (n > 0 && n < MAX_PATH * 2) ? U(buf) : "";
+#endif
 }
 /* Number of files below dir (recursive) and their total size. */
 void count_files(const std::string& dir, int* files, uint64_t* bytes) {
+#if RH_MAC
+    std::error_code ec;
+    std::filesystem::recursive_directory_iterator it(std::filesystem::path(dir), std::filesystem::directory_options::skip_permission_denied, ec), end;
+    for (; !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        if (!it->is_regular_file(e2)) continue;
+        ++*files;
+        const auto sz = it->file_size(e2);
+        if (!e2) *bytes += (uint64_t)sz;
+    }
+    return;
+#else
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW(W(with_slash(dir) + "*").c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return;
@@ -141,8 +209,17 @@ void count_files(const std::string& dir, int* files, uint64_t* bytes) {
         else { ++*files; *bytes += ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow; }
     } while (FindNextFileW(h, &fd));
     FindClose(h);
+#endif
 }
 void remove_tree(const std::string& dir) {
+#if RH_MAC
+    /* Same contract as the Windows walk: empties dir (files and sub-folders) but keeps dir itself. */
+    std::error_code ec;
+    std::vector<std::filesystem::path> kids;
+    for (std::filesystem::directory_iterator it(std::filesystem::path(dir), ec), end; !ec && it != end; it.increment(ec)) kids.push_back(it->path());
+    for (const auto& k : kids) { std::error_code e2; std::filesystem::remove_all(k, e2); }
+    return;
+#else
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW(W(with_slash(dir) + "*").c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return;
@@ -154,15 +231,16 @@ void remove_tree(const std::string& dir) {
         else DeleteFileW(W(p).c_str());
     } while (FindNextFileW(h, &fd));
     FindClose(h);
+#endif
 }
 std::string fmt_time(uint64_t unix_s) {
     if (!unix_s) return "never";
     time_t t = (time_t)unix_s;
     tm lt{};
-    localtime_s(&lt, &t);
+    plat::local_tm(t, &lt);
     time_t now = time(nullptr);
     tm nt{};
-    localtime_s(&nt, &now);
+    plat::local_tm(now, &nt);
     char b[48];
     if (lt.tm_year == nt.tm_year && lt.tm_yday == nt.tm_yday) std::strftime(b, sizeof b, "Today %H:%M", &lt);
     else std::strftime(b, sizeof b, "%Y-%m-%d %H:%M", &lt);
@@ -174,8 +252,8 @@ std::string fmt_ago(uint64_t unix_s) {
     if (!unix_s) return "never";
     time_t t = (time_t)unix_s, now = time(nullptr);
     tm lt{}, nt{};
-    localtime_s(&lt, &t);
-    localtime_s(&nt, &now);
+    plat::local_tm(t, &lt);
+    plat::local_tm(now, &nt);
     int days = (int)((now - t) / 86400);
     if (lt.tm_year == nt.tm_year && lt.tm_yday == nt.tm_yday) return fmt_time(unix_s);
     if (days <= 1) return "Yesterday";

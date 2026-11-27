@@ -27,8 +27,8 @@ void icon_refresh_tick() {
     }
     const std::string cur = HUB_VERSION_STR;
     if (!hubicon::refresh_due(g_recorded, cur)) { g_state = 2; return; }
-    static const double t0 = (double)GetTickCount64() / 1000.0;
-    if ((double)GetTickCount64() / 1000.0 - t0 < 15.0) return;   // let the start-up work finish first
+    static const double t0 = (double)plat::tick_ms() / 1000.0;
+    if ((double)plat::tick_ms() / 1000.0 - t0 < 15.0) return;   // let the start-up work finish first
     if (game_active() || session_active()) return;               // never while a game runs: try again when it is over
     g_state = 1;
     const std::string path = record_path();
