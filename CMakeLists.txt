@@ -32,6 +32,9 @@ string(STRIP "${HUB_VERSION}" HUB_VERSION)
 if (MSVC)
     add_compile_options(/W3 /permissive- /utf-8 /MP)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
+    # MSVC 14.52+ turns C++/WinRT's <experimental/coroutine> (C++17, used by toast_win / ext_media / capture) into an error.
+    # Silencing keeps the current build; moving those files to C++20 <coroutine> is the lasting fix.
+    add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
 endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
@@ -343,7 +346,9 @@ add_test(NAME hub_pad_name_test COMMAND hub_pad_name_test)         # Controllers
 add_test(NAME hubchallenge_test COMMAND hubchallenge_test)   # Plan 4 p4-social: challenge cards, leaderboard, rules, attach helpers (pure)
 add_test(NAME hub_tpak_test COMMAND hub_tpak_test)             # Plan 4 W3 X1: Transfer Pak matching, save file, backups, args
 add_test(NAME hub_hack_test COMMAND hub_hack_test)             # Plan 4: ROM hack keys, base finder, hack.json
+if(WIN32)
 add_test(NAME rh_helper_test COMMAND rh_helper_test $<TARGET_FILE:rh-helper> ${CMAKE_SOURCE_DIR}/data/helpers)   # rh-helper: script allowlist, path rejection, command-line split, exit codes
+endif()
 add_test(NAME hub_popup_guard_test COMMAND hub_popup_guard_test)   # never pop up over a game: guard logic + lint of every raise/show/MessageBox/synthetic-input site in src/hub and src/common
 add_test(NAME hub_display_test COMMAND hub_display_test)            # window placement (monitor gone / off screen / maximized), UI scale, reduce-motion default
 add_test(NAME hub_font_size_test COMMAND hub_font_size_test)            # "Larger small text" font pixel sizes

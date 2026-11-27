@@ -1536,7 +1536,7 @@ static bool start_plugin(PluginDll& p, const std::string& emu_dir, const char* f
     if (!p.h) return false;
     if (!sym(p.h, "PluginStartup", &p.startup)) return false;
     // First arg is the CORE library handle: plugins resolve the core's Config* API from it.
-    m64p_error e = p.startup(g_core.dll, const_cast<char*>(ctx), m64p_debug_cb);
+    m64p_error e = p.startup((m64p_dynlib_handle)g_core.dll, const_cast<char*>(ctx), m64p_debug_cb);
     if (e != M64ERR_SUCCESS) { logf_("n64run", "%s PluginStartup failed (%d)", file, (int)e); return false; }
     return true;
 }
@@ -1924,10 +1924,10 @@ int main(int argc, char** argv) {
         g_core.Shutdown();
         return 3;
     }
-    if (PluginStartup(g_core.dll, const_cast<char*>("Input"), m64p_debug_cb) != M64ERR_SUCCESS) return 3;
+    if (PluginStartup((m64p_dynlib_handle)g_core.dll, const_cast<char*>("Input"), m64p_debug_cb) != M64ERR_SUCCESS) return 3;
     plat::LibHandle self = plat::lib_self();
-    if (g_core.Attach(M64PLUGIN_GFX, gfx.h) != M64ERR_SUCCESS || (want_audio && g_core.Attach(M64PLUGIN_AUDIO, aud.h) != M64ERR_SUCCESS) ||
-        g_core.Attach(M64PLUGIN_INPUT, self) != M64ERR_SUCCESS || g_core.Attach(M64PLUGIN_RSP, rsp.h) != M64ERR_SUCCESS) {
+    if (g_core.Attach(M64PLUGIN_GFX, (m64p_dynlib_handle)gfx.h) != M64ERR_SUCCESS || (want_audio && g_core.Attach(M64PLUGIN_AUDIO, (m64p_dynlib_handle)aud.h) != M64ERR_SUCCESS) ||
+        g_core.Attach(M64PLUGIN_INPUT, (m64p_dynlib_handle)self) != M64ERR_SUCCESS || g_core.Attach(M64PLUGIN_RSP, (m64p_dynlib_handle)rsp.h) != M64ERR_SUCCESS) {
         logf_("n64run", "CoreAttachPlugin failed");
         g_core.DoCommand(M64CMD_ROM_CLOSE, 0, nullptr);
         g_core.Shutdown();

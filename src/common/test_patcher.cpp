@@ -1188,9 +1188,9 @@ static void test_inspect_and_limits() {
 
 /* Paths in the file tests: wide strings and backslashes on Windows (as before), UTF-8 strings and '/' elsewhere. */
 #if RH_WIN
-using TStr = TStr;
+using TStr = std::wstring;
 #define TT(x) L##x
-#define PS PS TT("")
+#define PS L"\\"
 #else
 using TStr = std::string;
 #define TT(x) x
@@ -1201,7 +1201,7 @@ static TStr g_dir;     // scratch folder: spaces and non-ASCII on purpose
 #if RH_WIN
 static std::string u8(const TStr& w) { return winutil::to_utf8(w); }
 static bool exists(const TStr& p) { return GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES; }
-static void del(const TStr& p) { del(p); }
+static void del(const TStr& p) { DeleteFileW(p.c_str()); }
 #else
 static std::string u8(const TStr& w) { return w; }
 static bool exists(const TStr& p) { std::error_code ec; return std::filesystem::exists(std::filesystem::path(p), ec); }

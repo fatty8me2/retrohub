@@ -521,6 +521,7 @@ add_executable(hub_palpark_test test_palpark.cpp)
 target_include_directories(hub_palpark_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hub_palpark_test PRIVATE hubcommon hubbase)
 
+if(WIN32)   # rh-helper runs the bundled PowerShell UI Automation scripts: Windows only (macOS drives emulators through plat::proc)
 # ---- rh-helper.exe: the only thing that starts the bundled UI Automation scripts (data/helpers/*.ps1). RetroHub.exe holds no script
 # text and no script-interpreter command line; it launches `rh-helper.exe run <script> <args>` (src/helper). Console exe, no new deps.
 add_executable(rh-helper ../helper/main.cpp ../helper/rh_helper.rc)
@@ -541,6 +542,7 @@ endforeach()
 add_executable(rh_helper_test ../helper/test_helper.cpp)
 target_include_directories(rh_helper_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../helper)
 target_compile_features(rh_helper_test PRIVATE cxx_std_17)
+endif()
 
 add_executable(hub_hookshot_saves_qa test_hookshot_saves.cpp hookshot.cpp emulators.cpp lichii.cpp)
 target_include_directories(hub_hookshot_saves_qa PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
