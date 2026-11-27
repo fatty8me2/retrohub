@@ -1,6 +1,11 @@
 #include "app.h"
 #include "gb_cart.h"
 #include "winutil.h"
+#if RH_WIN
+#define LO_CART_PATH(p) winutil::to_wide(p)
+#else
+#define LO_CART_PATH(p) (p)   // the UTF-8 overload
+#endif
 #include "friends_ui.h"
 #include "party_ui.h"
 #include "profile.h"
@@ -228,7 +233,7 @@ void host_launch_selected() {
                 std::string room_gb_core = A.st.gb_core;   /* Gambatte cannot keep a cartridge clock in step between PCs: such a game uses SameBoy online (guests follow the launch message) */
                 if ((rg->system == hub::System::GB || rg->system == hub::System::GBC) && !hub::link_cable_game(rg->catalog_id) && room_gb_core == "gambatte") {
                     uint8_t ct = 0;
-                    if (gbcart::read_cart_type(winutil::to_wide(rg->path), &ct) && gbcart::gb_cart_has_clock(ct)) {
+                    if (gbcart::read_cart_type(LO_CART_PATH(rg->path), &ct) && gbcart::gb_cart_has_clock(ct)) {
                         room_gb_core = gbcart::online_gb_core(room_gb_core, true);
                         set_notice(rg->title + " keeps its own clock, which Gambatte can't keep in step between PCs, so this online game uses SameBoy.", 10.0);
                     }

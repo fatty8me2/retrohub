@@ -1,6 +1,11 @@
 #include "challenge_ui.h"
 
 #include "app.h"
+#if RH_WIN
+#define HUB_BS "\\"
+#else
+#define HUB_BS "/"
+#endif
 #include "attach_xfer.h"
 #include "games.h"
 #include "tex_cache_logic.h"
@@ -27,7 +32,7 @@ using namespace hub::challenge;
 namespace fs = std::filesystem;
 
 int64_t now_ms() { return (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
-int64_t tick_ms() { return (int64_t)GetTickCount64(); }
+int64_t tick_ms() { return (int64_t)plat::tick_ms(); }
 fs::path u8(const std::string& s) { return fs::u8path(s); }
 std::string data() { return hub::data_dir(); }
 std::string scratch(const std::string& name) { return scratch_path(data(), name); }
@@ -146,7 +151,7 @@ int64_t file_stamp(const std::string& p) {
     return ec ? -1 : (int64_t)t.time_since_epoch().count();
 }
 void copy_file(const std::string& a, const std::string& b) { std::error_code ec; fs::copy_file(u8(a), u8(b), fs::copy_options::overwrite_existing, ec); }
-std::string slot_file(int slot, const char* ext) { return trim_end_sep(S.state_dir) + "\\slot" + std::to_string(slot) + ext; }
+std::string slot_file(int slot, const char* ext) { return trim_end_sep(S.state_dir) + "" HUB_BS "slot" + std::to_string(slot) + ext; }
 
 void send_fail(const std::string& why) {
     S.v.error = why;

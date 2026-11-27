@@ -5,7 +5,9 @@
 #include "qm_pad.h"
 
 #include <SDL.h>
+#if RH_WIN
 #include <Xinput.h>
+#endif   // macOS: SDL_GameController only (SDL owns the controllers there)
 
 namespace {
 SDL_JoystickID g_only = -1;   // >= 0: read only this joystick (qm_e2e)
@@ -17,6 +19,7 @@ bool wanted(SDL_GameController* c) {
     if (g_only < 0) return true;
     return SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(c)) == g_only;
 }
+#if RH_WIN
 uint32_t from_xinput(WORD b, BYTE lt, BYTE rt, SHORT lx, SHORT ly) {
     uint32_t m = 0;
     auto set = [&](bool on, int bit) { if (on) m |= 1u << bit; };
@@ -42,6 +45,7 @@ uint32_t from_xinput(WORD b, BYTE lt, BYTE rt, SHORT lx, SHORT ly) {
     set(lx > 16000, qmpad::kStickRight);
     return m;
 }
+#endif
 }  // namespace
 
 void qm_pad_restrict(int only_instance, bool no_xinput) { g_only = only_instance; g_no_xinput = no_xinput; }
@@ -62,6 +66,7 @@ std::vector<uint32_t> qm_pad_each() {
         if (lx > 16000) m |= 1u << qmpad::kStickRight;
         v.push_back(m);
     }
+#if RH_WIN
     if (!g_no_xinput && !g_headless) {
         for (DWORD i = 0; i < 4; ++i) {
             XINPUT_STATE xs{};
@@ -69,6 +74,7 @@ std::vector<uint32_t> qm_pad_each() {
             v.push_back(from_xinput(xs.Gamepad.wButtons, xs.Gamepad.bLeftTrigger, xs.Gamepad.bRightTrigger, xs.Gamepad.sThumbLX, xs.Gamepad.sThumbLY));
         }
     }
+#endif
     return v;
 }
 
@@ -79,6 +85,9 @@ uint32_t qm_pad_raw() {
 }
 
 uint32_t qm_keyboard_held_async() {
+#if !RH_WIN
+    return 0;   // TODO(macOS lane 7): no GetAsyncKeyState; the menu's keyboard navigation (qm_keyboard_nav_bits) still works while RetroHub has focus
+#else
     if (g_headless) return 0;
     auto k = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
     uint32_t m = 0;
@@ -89,6 +98,7 @@ uint32_t qm_keyboard_held_async() {
     if (k(VK_RETURN) || k(VK_SPACE)) m |= hubqm::NB_A;
     if (k(VK_ESCAPE) || k(VK_BACK)) m |= hubqm::NB_B;
     return m;
+#endif
 }
 
 void qm_pad_event(const SDL_Event& e) {

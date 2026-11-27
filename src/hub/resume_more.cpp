@@ -1,5 +1,14 @@
 /* Plan 4 Wave 3 R1 "Resume more" (see resume_more.h, resume_logic.h, docs/SAVES.md). */
+#if !defined(_WIN32)
+#include <unistd.h>
+#include <sys/stat.h>
+#endif
 #include "app.h"
+#if RH_WIN
+#define HUB_BS "\\"
+#else
+#define HUB_BS "/"
+#endif
 #include "page_cache.h"
 #include "wave3_hooks.h"
 #include "resume_logic.h"
@@ -20,12 +29,18 @@ using namespace hubui;
 
 /* ---------- files ---------- */
 long long file_time(const std::string& path) {
+#if !RH_WIN
+    struct stat st{};
+    if (::stat(path.c_str(), &st) != 0) return 0;
+    return (long long)st.st_mtimespec.tv_sec;
+#else
     WIN32_FILE_ATTRIBUTE_DATA fa{};
     if (!GetFileAttributesExW(W(path).c_str(), GetFileExInfoStandard, &fa)) return 0;
     ULARGE_INTEGER u;
     u.LowPart = fa.ftLastWriteTime.dwLowDateTime;
     u.HighPart = fa.ftLastWriteTime.dwHighDateTime;
     return (long long)(u.QuadPart / 10000000ULL) - 11644473600LL;
+#endif
 }
 
 std::string no_sep(std::string s) {
@@ -46,10 +61,16 @@ bool read_all_text(const std::string& p, std::string* out) {
 
 /* ---------- this PC ---------- */
 std::string pc_name() {
+#if !RH_WIN
+    char hn[256] = {};
+    if (gethostname(hn, sizeof hn - 1) != 0 || !*hn) return "this PC";
+    return hn;
+#else
     wchar_t buf[MAX_COMPUTERNAME_LENGTH + 2] = {};
     DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
     if (!GetComputerNameW(buf, &n)) return "this PC";
     return U(std::wstring(buf, n));
+#endif
 }
 
 /* A random id kept in the data folder: it names the PC that wrote a resume point. Never synced, never leaves the PC. */
@@ -64,7 +85,7 @@ std::string pc_id() {
     }
     std::random_device rd;
     char b[40];
-    std::snprintf(b, sizeof b, "%08x%08x", (unsigned)rd(), (unsigned)(rd() ^ GetTickCount()));
+    std::snprintf(b, sizeof b, "%08x%08x", (unsigned)rd(), (unsigned)(rd() ^ (uint32_t)plat::tick_ms()));
     id = b;
     std::ofstream f(fs::u8path(path), std::ios::binary | std::ios::trunc);
     if (f) f << id;
@@ -74,7 +95,7 @@ std::string pc_id() {
 /* ---------- which systems, what the sidecar says ---------- */
 /* resumes(sys): resume_logic.h */
 
-std::string sidecar_path(const std::string& states) { return states + "\\auto.resume.json"; }
+std::string sidecar_path(const std::string& states) { return states + "" HUB_BS "auto.resume.json"; }
 
 struct Facts {
     std::string sys, key, battery, states;

@@ -9,6 +9,11 @@
  * events -> cheats_pad_watch (View+Y) -> qm_pad -> MenuInput / MenuNav -> the drawn rows), and checks the menu state; a per-frame
  * watchdog fails any close that the scenario did not ask for. Results: stdout and <HUB_SCREENSHOT stem>-qm-e2e.log. */
 #include "app.h"
+#if RH_WIN
+#define HUB_BS "\\"
+#else
+#define HUB_BS "/"
+#endif
 #include "qm_pad.h"
 
 #include <SDL.h>
@@ -372,7 +377,7 @@ void build() {
         s.steps.push_back(expect("profile saves while a runner is active enqueue reload_controls", [](const QmE2EState&, std::string* w) {
             namespace fs = std::filesystem;
             /* A scratch store: the real controls.json (userdata / vault) is never read or written, so a crashed run cannot change real bindings. */
-            const std::string dd = (fs::temp_directory_path() / "rh_live_e2e_store").string() + "\\", vd;
+            const std::string dd = (fs::temp_directory_path() / "rh_live_e2e_store").string() + "" HUB_BS "", vd;
             std::error_code mk;
             fs::remove_all(dd, mk);
             fs::create_directories(dd, mk);
@@ -389,7 +394,13 @@ void build() {
             need(count() == n0, "queued without a game");
             // a built-in runner plays a retro game
             hubctl::write_profile_file(tmp, hubctl::resolve(hubctl::Store(), "retro"));
+            
+#if RH_WIN
             A.proc = GetCurrentProcess();
+#else
+            A.proc.pid = (int)getpid(); A.proc.pgid = A.proc.pid;   // the test's own process stands in for a running game
+#endif
+            
             A.run = RunInfo();
             A.run.key = "qa-live-game";
             A.run.ctl_path = "qa-control.json";

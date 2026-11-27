@@ -1,4 +1,15 @@
 #include "app.h"
+#if !RH_WIN
+#include "proc_spawn.h"
+#endif
+/* Ends our online child process at once (leaving the room). */
+static void lobby_terminate(ProcHandle p) {
+#if RH_WIN
+    TerminateProcess(p, 0);
+#else
+    if (p) plat::proc::kill_pid(p.pid, true);
+#endif
+}
 #include "friends_ui.h"
 #include "party_ui.h"
 #include "profile.h"
@@ -31,9 +42,9 @@ std::vector<hubnet::Member> room_members() {
 /* Room latency, measured only while the room page is open and no game runs, every 8 s: one tiny broadcast per member (the others answer).
  * Server cost is a handful of WebSocket messages per room per minute and nothing per frame. */
 void room_ping_tick() {
-    static ULONGLONG last = 0;
+    static unsigned long long last = 0;
     if (g_fake_room || !A.lobby.connected() || A.proc || A.page != Page::Online || A.lobby.members().size() < 2) return;
-    ULONGLONG t = GetTickCount64();
+    unsigned long long t = plat::tick_ms();
     if (t - last < 8000) return;
     last = t;
     const char* fr = std::getenv("HUBNET_FORCE_RELAY");
@@ -107,7 +118,7 @@ void leave_room() {
     online_cancel_pending();
     /* Leaving the room ends our online game too: Smash's lobby is part of this room, so its player has to leave with us.
      * (Only our own online child process; emulator sessions are not touched.) */
-    if (A.proc && A.run.online && !A.run.after_exit) { if (A.run.remote_play) rplay_quit_current_guest(); else TerminateProcess(A.proc, 0); }
+    if (A.proc && A.run.online && !A.run.after_exit) { if (A.run.remote_play) rplay_quit_current_guest(); else lobby_terminate(A.proc); }
     kt_leave_room();
     group_left_room();
     party_on_leave_room();   // the room's party (or vote) ends with the room
@@ -394,10 +405,10 @@ void lobby_tick() {
                 online_cancel_pending();
                 /* OF-M8: a runner this launch already started would wait for the host's session for a minute; close it (only a young one:
                  * a game that has been running for a while is not this launch). */
-                const ULONGLONG now = GetTickCount64();
+                const unsigned long long now = plat::tick_ms();
                 if (A.proc && A.run.room && A.run.online && !A.run.remote_play && now - A.run.start_tick < 90000) request_game_close();
                 /* The host's launch_online may already have said why (host_abort) and host_launch_selected then adds a generic one: show one notice. */
-                static ULONGLONG last_abort = 0;
+                static unsigned long long last_abort = 0;
                 static bool last_had_reason = false;
                 const bool again = last_abort && now - last_abort < 3000 && (last_had_reason || j.str("reason").empty());
                 if (!again) set_notice("The host couldn't start the game" + (j.str("reason").empty() ? std::string(".") : ": " + hublaunch::local_text_of_wire(j.str("reason"))), 10.0);   // (an older wording on the wire reads as today's)
@@ -426,7 +437,7 @@ void lobby_tick() {
             A.lobby.send_msg("{\"kind\":\"rpong\",\"to\":" + std::to_string(from) + ",\"t\":" + std::to_string((long long)j.num("t", 0)) + "}");
         } else if (kind == "rpong") {
             if ((int)j.num("to", -1) == room_my_slot()) {
-                long long rtt = (long long)(uint32_t)(GetTickCount64() & 0xFFFFFFFFu) - (long long)j.num("t", 0);
+                long long rtt = (long long)(uint32_t)(plat::tick_ms() & 0xFFFFFFFFu) - (long long)j.num("t", 0);
                 if (rtt < 0) rtt += 4294967296LL;
                 if (rtt >= 0 && rtt < 10000) { A.pings.add(from, (int)rtt); A.ping_at[from] = wall_ms(); }
             }
@@ -528,7 +539,7 @@ unsigned long gc_netplay_dolphin_pid() {
     static unsigned long cached_pid = 0, cached_for = 0;
     static unsigned long long cached_at = 0;
     if (!GCO.active || !GCO.run.dolphin_pid) { cached_pid = cached_for = 0; return 0ul; }
-    const unsigned long long now = GetTickCount64();
+    const unsigned long long now = plat::tick_ms();
     if (cached_for != (unsigned long)GCO.run.dolphin_pid || now - cached_at >= 250) {
         cached_for = (unsigned long)GCO.run.dolphin_pid;
         cached_pid = gc_process_alive() ? cached_for : 0ul;

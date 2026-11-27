@@ -17,7 +17,11 @@
 #include "notice_logic.h"
 
 #include <algorithm>
+#if !RH_WIN
+#include "plat/plat_proc.h"
+#else
 #include <shellapi.h>
+#endif
 
 FriendsUi FR;
 static std::set<std::string> g_fake_queued;   // screenshot aid: fake lines that show the "Waiting to send" tag
@@ -377,7 +381,7 @@ static void fr_cover_frame(ImDrawList* dl, ImVec2 c, float r, const std::string&
 std::string fr_time(long long ms) {
     time_t t = (time_t)(ms / 1000);
     tm lt{};
-    localtime_s(&lt, &t);
+    plat::local_tm(t, &lt);
     char b[16];
     std::snprintf(b, sizeof b, "%02d:%02d", lt.tm_hour, lt.tm_min);
     return b;
@@ -385,7 +389,7 @@ std::string fr_time(long long ms) {
 int fr_day(long long ms) {
     time_t t = (time_t)(ms / 1000);
     tm lt{};
-    localtime_s(&lt, &t);
+    plat::local_tm(t, &lt);
     return lt.tm_year * 400 + lt.tm_yday;
 }
 std::string fr_day_label(long long ms) {
@@ -394,7 +398,7 @@ std::string fr_day_label(long long ms) {
     if (d == today - 1) return "Yesterday";
     time_t t = (time_t)(ms / 1000);
     tm lt{};
-    localtime_s(&lt, &t);
+    plat::local_tm(t, &lt);
     char b[32];
     std::strftime(b, sizeof b, "%b %d", &lt);
     return b;
@@ -695,9 +699,15 @@ std::string fr_lobby_ident_msg(bool nopair) {
 /* Proof of the account for the game-room sockets (net/ident_env.h): the hub's own forwarders get it in-process, our runners through the inherited
  * environment, set only around their CreateProcess. Never on a command line, never logged, bound to our server_url(). */
 void fr_ident_env(bool on) {
+#if RH_WIN
     if (!on) { SetEnvironmentVariableW(L"RETROHUB_IDENT", nullptr); return; }
     if (FR.fake || !FR.started || FR.cli.my_uid().empty() || FR.cli.my_secret().empty()) return;
     SetEnvironmentVariableW(L"RETROHUB_IDENT", winutil::to_wide(hubnet::ident_env_value(server_url(), FR.cli.my_uid(), FR.cli.my_secret())).c_str());
+#else
+    if (!on) { unsetenv("RETROHUB_IDENT"); return; }
+    if (FR.fake || !FR.started || FR.cli.my_uid().empty() || FR.cli.my_secret().empty()) return;
+    plat::set_env("RETROHUB_IDENT", hubnet::ident_env_value(server_url(), FR.cli.my_uid(), FR.cli.my_secret()).c_str());
+#endif
 }
 static void fr_publish_process_ident() {
     static std::string last_uid, last_secret;
@@ -2026,7 +2036,11 @@ static void fr_queued_tag(const hubnet::Message& m, float aw) {
     ImGui::PopID();
 }
 static void fr_open_file(const std::string& path) {
+#if RH_WIN
     ShellExecuteW(nullptr, L"open", std::filesystem::u8path(path).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+    plat::proc::open_path(path);
+#endif
 }
 /* One attachment line as a card. Pictures download themselves the first time they are drawn; a hack downloads when "Add this hack" is pressed. */
 static void fr_attach_card(const hubnet::Message& m, int idx, float aw, ImDrawList* cdl) {

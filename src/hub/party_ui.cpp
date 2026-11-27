@@ -32,8 +32,8 @@ struct Runtime {
     std::string my_vote, my_vote_what;        // my pick in the open poll (instant feedback; the tally comes from the host)
     int my_vote_round = -1;
     hubui::results::Watcher watch;
-    ULONGLONG watch_run = 0, watch_next = 0;
-    ULONGLONG round_t0 = 0, consumed_tick = 0, inter_at = 0, member_next = 0, poll_all_at = 0, ack_next = 0, corner_next = 0, corner_sent = 0;
+    unsigned long long watch_run = 0, watch_next = 0;
+    unsigned long long round_t0 = 0, consumed_tick = 0, inter_at = 0, member_next = 0, poll_all_at = 0, ack_next = 0, corner_next = 0, corner_sent = 0;
     pl::Closer closer;
     pl::AckInfo ack;
     std::string corner_text;
@@ -48,14 +48,14 @@ struct Runtime {
     partyui::CouchSetup couch;
     std::map<int, std::string> couch_names;
     bool couch_launching = false;
-    ULONGLONG couch_launch_at = 0;
+    unsigned long long couch_launch_at = 0;
     // QA driver (RETROHUB_AUTOTEST_PARTY)
     int qa_stage = 0;
-    ULONGLONG qa_t = 0, qa_next = 0, qa_vote_t = 0;
+    unsigned long long qa_t = 0, qa_next = 0, qa_vote_t = 0;
     std::string qa_logged, qa_why;
 } R;
 
-constexpr ULONGLONG kWatchMs = 250;   // the finished-match file is stat'ed about 4 times a second, not every frame
+constexpr unsigned long long kWatchMs = 250;   // the finished-match file is stat'ed about 4 times a second, not every frame
 
 bool in_room_live() { return A.in_room && room_connected(); }
 
@@ -137,7 +137,7 @@ long long send_osd_corner(const std::string& text, int corner, int keep_secs) {
 }
 
 /* Start the "round over" sequence for the game running on this PC. */
-void start_closer(ULONGLONG now) {
+void start_closer(unsigned long long now) {
     if (!party_game_running()) return;
     pl::Closer::Plan plan;
     plan.has_ctl = !A.run.ctl_path.empty();
@@ -150,7 +150,7 @@ void start_closer(ULONGLONG now) {
     autotest_log("party: closing the game (" + std::string(plan.has_ctl ? "osd + quit" : "window close") + "): " + plan.msg + " | " + plan.corner);
 }
 
-void run_closer(ULONGLONG now) {
+void run_closer(unsigned long long now) {
     if (!R.closer.active()) return;
     if (!party_game_running()) { R.closer.finish(); return; }
     if (now >= R.ack_next) { R.ack = read_ack(); R.ack_next = now + 100; }
@@ -165,7 +165,7 @@ void run_closer(ULONGLONG now) {
 }
 
 /* The running round's countdown in the game's corner, and a toast at 5 min / 1 min / 30 s for runners that do not know OsdCorner. */
-void run_timer_corner(ULONGLONG now) {
+void run_timer_corner(unsigned long long now) {
     const pl::State& s = R.st;
     if (s.phase != pl::Phase::Playing || s.round_secs <= 0 || R.closer.active() || !party_game_running() || A.run.ctl_path.empty()) return;
     if (now - R.round_t0 < 5000 || now < R.corner_next) return;   // the runner ignores commands written before it started polling
@@ -208,7 +208,7 @@ void on_match(const std::string& text, const hubui::results::RoundResult& r) {
     }
 }
 
-void watch_results(ULONGLONG now) {
+void watch_results(unsigned long long now) {
     const bool live = A.proc && !A.run.result_file.empty();
     if (!live) {
         if (!R.watch.path().empty()) R.watch.reset("");
@@ -250,7 +250,7 @@ void save_history(const pl::State& s) {
     pl::save_night(n, hub::data_dir(), hub::saves::vault_dir());
 }
 
-void react(ULONGLONG now) {
+void react(unsigned long long now) {
     const pl::State& s = R.st;
     const pl::State& p = R.seen;
     if (s.rev == p.rev && s.seed == p.seed) return;
@@ -299,7 +299,7 @@ void react(ULONGLONG now) {
 
 /* ------------------------------------------------------------------ the host's duties */
 
-void membership(ULONGLONG now) {
+void membership(unsigned long long now) {
     if (now < R.member_next) return;
     R.member_next = now + 500;
     const std::map<int, std::string> m = roster_map();
@@ -313,7 +313,7 @@ void membership(ULONGLONG now) {
     else if (!first && R.st.phase != pl::Phase::Off) broadcast();   // someone joined: they get the State (older RetroHubs ignore it)
 }
 
-void detect_round_start(ULONGLONG now) {
+void detect_round_start(unsigned long long now) {
     (void)now;
     if (R.st.phase != pl::Phase::Intermission || R.st.cur.empty() || !A.proc || A.run.start_tick == R.consumed_tick) return;
     const bool room_game = !R.st.couch && A.run.room && A.run.online;
@@ -324,12 +324,12 @@ void detect_round_start(ULONGLONG now) {
     commit(pl::next_round(R.st, seat_slots()));
 }
 
-void check_timer(ULONGLONG now) {
+void check_timer(unsigned long long now) {
     if (R.st.phase != pl::Phase::Playing || R.st.round_secs <= 0) return;
-    if (now - R.round_t0 >= (ULONGLONG)R.st.round_secs * 1000) commit(pl::on_round_end(R.st, "timer"));
+    if (now - R.round_t0 >= (unsigned long long)R.st.round_secs * 1000) commit(pl::on_round_end(R.st, "timer"));
 }
 
-void auto_polls(ULONGLONG now) {
+void auto_polls(unsigned long long now) {
     if (R.st.poll.empty() || R.st.couch) { R.poll_all_at = 0; return; }
     if (!pl::all_voted(R.st, seat_slots())) { R.poll_all_at = 0; return; }
     if (!R.poll_all_at) R.poll_all_at = now;
@@ -342,13 +342,13 @@ void auto_polls(ULONGLONG now) {
     }
 }
 
-void maybe_done(ULONGLONG now) {
+void maybe_done(unsigned long long now) {
     if (R.st.phase != pl::Phase::Intermission || R.st.round < 1 || R.st.round < R.st.rounds || !R.st.poll.empty() || A.proc) return;
     if (now - R.inter_at < 1500) return;
     commit(pl::next_round(R.st));
 }
 
-void host_tick(ULONGLONG now) {
+void host_tick(unsigned long long now) {
     if (!R.st.couch) membership(now);
     detect_round_start(now);
     check_timer(now);
@@ -430,7 +430,7 @@ std::string title_of(const std::string& id) {
 
 int secs_left() {
     if (R.st.phase != pl::Phase::Playing || R.st.round_secs <= 0) return -1;
-    const long long used = (long long)((GetTickCount64() - R.round_t0) / 1000);
+    const long long used = (long long)((plat::tick_ms() - R.round_t0) / 1000);
     return (int)std::max<long long>(0, R.st.round_secs - used);
 }
 
@@ -560,7 +560,7 @@ void launch_next_round() {
         hub::GameEntry copy = *g;
         A.sel_game = copy.key;
         R.couch_launching = true;
-        R.couch_launch_at = GetTickCount64();
+        R.couch_launch_at = plat::tick_ms();
         R.ov = false;
         play_entry(copy);   // may still be waiting (cloud gate / unpack): detect_round_start picks the process up when it appears
         return;
@@ -701,7 +701,7 @@ void party_on_session_end() {
 }
 
 void party_tick() {
-    const ULONGLONG now = GetTickCount64();
+    const unsigned long long now = plat::tick_ms();
     watch_results(now);
     partyui_qa_drive(now);
     if (!R.have) return;
@@ -853,7 +853,7 @@ void party_shot_init() {
         A.in_room = true;
         A.code = "K7M2QX";
         A.page = Page::Online;
-        if (!std::getenv("HUB_SHOT_ROOM_N")) _putenv_s("HUB_SHOT_ROOM_N", "4");
+        if (!std::getenv("HUB_SHOT_ROOM_N")) plat::set_env("HUB_SHOT_ROOM_N", "4");
         for (int s = 1; s < 4; ++s) A.ready[s] = true;   // everyone is ready: the host's Start button is live
         if (guest) A.my_ready = true;
     } else {
@@ -916,7 +916,7 @@ void party_shot_init() {
     R.st = s;
     R.seen = s;
     R.have = !strip_off;
-    R.round_t0 = GetTickCount64() - 95000;   // a minute and a half into the round
+    R.round_t0 = plat::tick_ms() - 95000;   // a minute and a half into the round
     if (mode == "standings" || mode == "winner" || mode == "vote" || mode == "podium" || mode == "tie" || mode == "couchround") R.ov = true;
     if (mode == "tie") {
         R.reel.on = true;

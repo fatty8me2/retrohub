@@ -3,12 +3,19 @@
  * question appears now, with RetroHub in front, and never over a first online game. Triggered from the setup wizard or the button here. */
 #include "convenience.h"
 #include "nettest.h"
+#if !RH_WIN
+#include "plat/plat_proc.h"
+#define LO_EXE_NAME "retrorun"
+#else
+#define LO_EXE_NAME "retrorun.exe"
+#endif
 
 namespace {
 
 hubnt::Job JOB;
 bool job_started = false;
 
+#if RH_WIN
 struct Probe {
     HANDLE h[2] = {nullptr, nullptr};
     bool running = false;
@@ -27,6 +34,24 @@ HANDLE spawn_probe(const std::string& exe) {
     CloseHandle(pi.hThread);
     return pi.hProcess;
 }
+#else
+struct Probe {
+    plat::proc::Child h[2];   // pid 0 = not started / finished
+    bool running = false;
+} PR;
+
+plat::proc::Child spawn_probe(const std::string& exe) {
+    plat::proc::Child c;
+    if (!file_exists(exe)) return c;
+    plat::proc::SpawnOptions o;
+    o.exe = exe;
+    o.args = {"--net-probe"};
+    o.activate = false;
+    std::string err;
+    if (!plat::proc::spawn(o, &c, &err)) return plat::proc::Child();
+    return c;
+}
+#endif
 
 }  // namespace
 
@@ -36,8 +61,12 @@ void netprobe_start() {
     if (PR.running) return;
     if (g_headless) { A.st.net_probe_done = true; return; }   // screenshot / test runs never trigger a firewall prompt
     PR.h[0] = spawn_probe(n64run_path());
-    PR.h[1] = spawn_probe(hub::exe_dir() + "retrorun.exe");
+    PR.h[1] = spawn_probe(hub::exe_dir() + LO_EXE_NAME);
+#if RH_WIN
     PR.running = PR.h[0] || PR.h[1];
+#else
+    PR.running = PR.h[0].valid() || PR.h[1].valid();
+#endif
     if (!PR.running) { A.st.net_probe_done = true; mark_dirty(); }
 }
 
@@ -45,9 +74,15 @@ void netprobe_tick() {
     if (!PR.running) return;
     bool any = false;
     for (auto& h : PR.h) {
+#if RH_WIN
         if (!h) continue;
         if (WaitForSingleObject(h, 0) == WAIT_TIMEOUT) any = true;
         else { CloseHandle(h); h = nullptr; }
+#else
+        if (!h.valid()) continue;
+        if (plat::proc::running(h)) any = true;
+        else h = plat::proc::Child();
+#endif
     }
     if (!any) { PR.running = false; A.st.net_probe_done = true; mark_dirty(); }
 }
@@ -74,7 +109,13 @@ void nettest_settings_ui() {
     }
     ImGui::Dummy(ImVec2(0, sp(0.5f)));
     ImGui::BeginDisabled(PR.running);
+#if RH_WIN
     if (button(PR.running ? "Waiting for Windows..." : "Allow online play in Windows Firewall", ImVec2(0, 0))) netprobe_start();
     ImGui::EndDisabled();
     text_wrapped_disabled("Windows asks once per program. Doing it here means the question never appears over a game. Choose Allow.");
+#else
+    if (button(PR.running ? "Waiting for macOS..." : "Allow online play in the macOS firewall", ImVec2(0, 0))) netprobe_start();
+    ImGui::EndDisabled();
+    text_wrapped_disabled("If the macOS firewall is on, it asks once per program. Doing it here means the question never appears over a game. Choose Allow.");
+#endif
 }

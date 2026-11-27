@@ -28,7 +28,7 @@ bool g_setup_close = false;     // a control inside the setup modal wants it gon
 bool g_stand_want = false;      // open the standings popup (Playing: the overlay only shows between rounds)
 bool g_menu_want = false;       // open the strip's menu
 bool g_setup_after_on = false;  // "Set up a party night...": open the setup modal as soon as the party is in the Lobby phase
-ULONGLONG g_setup_after_on_t0 = 0;
+unsigned long long g_setup_after_on_t0 = 0;
 ImVec2 g_menu_anchor(0, 0);
 float g_menu_pivot_x = 0.f;
 
@@ -685,7 +685,7 @@ void party_room_panel(float width) {
             dl->AddText(ImVec2(p1.x + sp(1.25f), st.o.y + (st.h - ImGui::GetFontSize()) * 0.5f), ui::TEXT3, "Game night, or a quick vote on what to play next");
         }
         if (menu_begin()) {
-            if (ImGui::MenuItem("Set up a party night...", nullptr, false, idle)) { partyui::turn_on(); g_setup_after_on = true; g_setup_after_on_t0 = GetTickCount64(); }
+            if (ImGui::MenuItem("Set up a party night...", nullptr, false, idle)) { partyui::turn_on(); g_setup_after_on = true; g_setup_after_on_t0 = plat::tick_ms(); }
             if (ImGui::MenuItem("Vote for the next game", nullptr, false, idle)) partyui::open_next_vote();
             ImGui::EndPopup();
         }
@@ -926,7 +926,7 @@ void setup_modal() {
     if (g_setup_want) { g_setup_want = false; g_setup_close = false; if (s.phase == pl::Phase::Lobby) g_setup_open = true; }
     if (g_setup_after_on) {   // "Set up a party night...": the Lobby State arrives a moment after turn_on() (a broadcast); give up after a few seconds
         if (s.phase == pl::Phase::Lobby) { g_setup_after_on = false; g_setup_open = true; }
-        else if (GetTickCount64() - g_setup_after_on_t0 > 4000) g_setup_after_on = false;
+        else if (plat::tick_ms() - g_setup_after_on_t0 > 4000) g_setup_after_on = false;
     }
     const bool host = partyui::is_host();
     if (!ui::dialog_begin("##partysetup", host ? "Party night" : "The plan", &g_setup_open, ui::DialogSize::Large, party_dialog_opts())) return;   // B / Esc: close
