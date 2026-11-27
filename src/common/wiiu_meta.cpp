@@ -1,3 +1,4 @@
+#include "plat/plat.h"
 #include "wiiu_meta.h"
 
 #include <algorithm>
@@ -33,7 +34,9 @@ std::string lower(std::string s) { for (char& c : s) if (c >= 'A' && c <= 'Z') c
 
 std::string hex8(uint32_t v) { char b[16]; std::snprintf(b, sizeof b, "%08x", v); return b; }
 
-std::string with_sep(std::string s) { if (!s.empty() && s.back() != '\\' && s.back() != '/') s += '\\'; return s; }
+/* Windows-style relative literal in the platform's separator ('\\\\' on Windows: unchanged). */
+static std::string N(const char* lit) { std::string r(lit); if (plat::kSep != '\\') for (char& c : r) if (c == '\\') c = plat::kSep; return r; }
+std::string with_sep(std::string s) { if (!s.empty() && s.back() != '\\' && s.back() != '/') s += plat::kSep; return s; }   // '\\' on Windows
 
 void utf8_append(std::string& o, uint32_t cp) {
     if (cp < 0x80) o += char(cp);
@@ -329,12 +332,12 @@ int parse_app_xml_version(const std::string& xml) {
 WiiuAddons wiiu_installed_addons(uint64_t base, const std::string& mlc, const FsProbe& fs) {
     WiiuAddons a;
     if (!base || mlc.empty() || !fs.dir_exists) return a;
-    std::string low = hex8(uint32_t(base & 0xFFFFFFFFu)), root = with_sep(mlc) + "usr\\title\\";
+    std::string low = hex8(uint32_t(base & 0xFFFFFFFFu)), root = with_sep(mlc) + N("usr\\title\\");
     auto probe = [&](const char* hi, bool* have, int* ver) {
-        std::string d = root + hi + "\\" + low;
+        std::string d = root + hi + N("\\") + low;
         if (!fs.dir_exists(d)) return;
         *have = true;
-        if (fs.read_text) *ver = parse_app_xml_version(fs.read_text(d + "\\code\\app.xml"));
+        if (fs.read_text) *ver = parse_app_xml_version(fs.read_text(d + N("\\code\\app.xml")));
     };
     probe("0005000e", &a.update, &a.update_version);
     probe("0005000c", &a.dlc, &a.dlc_version);
