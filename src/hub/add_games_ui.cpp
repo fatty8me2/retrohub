@@ -5,7 +5,9 @@
 #include "hack_ui.h"
 #include "ui_sheet.h"
 
+#if RH_WIN
 #include <shlobj.h>
+#endif
 
 /* ---------- "Add games": upload your own ROMs into RetroHub ----------
  * Entry points: the Add games tile (Home), the banner (All Games), the "+ Add games" header button, and drag-and-drop of
@@ -29,6 +31,12 @@ struct AddGames {
 AddGames AG;
 
 std::string documents_dir() {
+#if !RH_WIN
+    {
+        const char* home = std::getenv("HOME");
+        return std::string(home && *home ? home : "") + "/Documents";
+    }
+#else
     PWSTR p = nullptr;
     std::string out;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &p)) && p) out = U(p);
@@ -38,6 +46,7 @@ std::string documents_dir() {
         out = std::string(up ? up : "C:") + "\\Documents";
     }
     return out;
+#endif
 }
 
 /* Multi-select file dialog for every supported format. */
@@ -45,6 +54,16 @@ std::vector<std::string> pick_game_files() {
     std::vector<std::string> out;
     if (g_headless) return out;   // screenshot / QA run: never open a real Windows dialog (it is a visible window)
     if (!picker_focus_ok()) return out;
+#if !RH_WIN
+    {   // TODO(macOS lane 7c): one file per click (pick_path is single-select); a multi-select NSOpenPanel can replace this later
+        std::wstring spec;
+        for (const std::string& e : ag::supported_exts()) spec += (spec.empty() ? L"*" : L";*") + W(e);
+        HangWatchdogPause wd_pause;
+        std::string f = pick_path(A.hwnd, false, L"Game files", spec.c_str());
+        if (!f.empty()) out.push_back(f);
+        return out;
+    }
+#else
     IFileOpenDialog* dlg = nullptr;
     if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return out;
     DWORD opts = 0;
@@ -73,11 +92,17 @@ std::vector<std::string> pick_game_files() {
     }
     dlg->Release();
     return out;
+#endif
 }
 
 bool is_dir(const std::string& p) {
+#if RH_WIN
     DWORD a = GetFileAttributesW(W(p).c_str());
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    std::error_code ec;
+    return std::filesystem::is_directory(std::filesystem::u8path(p), ec);
+#endif
 }
 
 bool add_folder_in_place(const std::string& p) {

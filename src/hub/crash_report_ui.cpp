@@ -1,4 +1,5 @@
 #include "app.h"
+#include "plat/plat_proc.h"
 #include "crash_report.h"
 #include "crash_report_ui.h"
 #include "hub_log.h"
@@ -65,7 +66,11 @@ void draw_crash_report_note() {
         return ImGui::Button(label);
     };
     if (row_button("Open report folder") && !g_headless)
+#if RH_WIN
         ShellExecuteW(nullptr, L"open", W(g_found.dir_utf8).c_str(), nullptr, nullptr, SW_SHOWNORMAL);   // only from a button click
+#else
+        plat::proc::reveal_in_finder(g_found.dir_utf8);   // only from a button click
+#endif
     if (row_button("Copy report")) SDL_SetClipboardText(crashrep::read_report(g_found.path_utf8).c_str());
     if (row_button("Dismiss")) dismiss = true;
     if (dismiss) {

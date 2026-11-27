@@ -14,7 +14,10 @@
 #include "wrapped_logic.h"
 #include "attach_xfer.h"
 #include "friend_pick_ui.h"
+#include "plat/plat_proc.h"
+#if RH_WIN
 #include <shellapi.h>
+#endif
 
 namespace {
 
@@ -45,8 +48,8 @@ hubui::FriendPicker g_wpick;
 int local_tz() {
     std::time_t t = std::time(nullptr);
     std::tm lt{}, gm{};
-    localtime_s(&lt, &t);
-    gmtime_s(&gm, &t);
+    plat::local_tm(t, &lt);
+    plat::utc_tm(t, &gm);
     int tz = (int)std::difftime(std::mktime(&lt), std::mktime(&gm));
     if (lt.tm_isdst > 0) tz += 3600;
     return tz;
@@ -370,13 +373,13 @@ std::string save_image(const wr::Data& d, const std::string& player, std::string
     if (d.empty() || d.top.empty()) { *err = "There is nothing to save for this period yet."; return std::string(); }
     const std::string& key = d.top[0].key;
     const std::string sys = hub::system_short(hub::console_system(d.top[0].system));   // vault folder is keyed by the real system
-    const std::string dir = no_slash(hs::game_dir(sys, key)) + "\\shots";
+    const std::string dir = no_slash(hs::game_dir(sys, key)) + plat::kSep + "shots";
     make_dirs(dir);
-    const std::string path = dir + "\\" + wr::image_file_name(d.range);
+    const std::string path = dir + plat::kSep + wr::image_file_name(d.range);
     int w = 0, h = 0;
     std::vector<unsigned char> rgb;
     if (!render_sheet(d, player, &w, &h, &rgb)) { *err = "Could not draw the picture."; return std::string(); }
-    FILE* f = _wfopen(std::filesystem::u8path(path).c_str(), L"wb");
+    FILE* f = plat::fopen_path(std::filesystem::u8path(path), "wb");
     if (!f) { *err = "Could not write " + path; return std::string(); }
     const int ok = stbi_write_png_to_func(to_file, f, w, h, 3, rgb.data(), w * 3);
     std::fclose(f);
@@ -411,9 +414,14 @@ void share_action(int what, const std::string& player) {   // 0 copy, 1 send, 2 
         WS.status_ok = true;
         WS.status = "Saved to " + path;
     } else {   // only on this click
+#if RH_WIN
         HINSTANCE r = ShellExecuteW(nullptr, L"open", L"explorer.exe", (L"/select,\"" + std::filesystem::u8path(path).wstring() + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
         WS.status_ok = (INT_PTR)r > 32;
         WS.status = WS.status_ok ? "Opened the folder: " + path : "Windows could not open the folder. The picture is saved at " + path;
+#else
+        WS.status_ok = plat::proc::reveal_in_finder(path);
+        WS.status = WS.status_ok ? "Shown in Finder: " + path : "macOS could not open Finder. The picture is saved at " + path;
+#endif
     }
 }
 
@@ -534,7 +542,7 @@ void wrapped_ui_modal() {
         ImGui::SameLine(0, sp(1.f));
         if (button("Send to a friend", ImVec2(0, bh), false, has)) share_action(1, player);
         ImGui::SameLine(0, sp(1.f));
-        if (button("Open folder", ImVec2(0, bh), false, has)) share_action(2, player);
+        if (button(RH_WIN ? "Open folder" : "Show in Finder", ImVec2(0, bh), false, has)) share_action(2, player);
         if (g_wpick.draw("Send to friends##wrappedpick") && !WS.send_path.empty()) {
             const std::string fname = std::filesystem::u8path(WS.send_path).filename().u8string();
             hubui::attach_send_start(WS.send_path, "shot", fname, g_wpick.chosen(), "Sent my RetroHub Wrapped");

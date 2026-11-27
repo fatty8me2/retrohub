@@ -1,4 +1,5 @@
 #include "app.h"
+#include "plat/plat_proc.h"
 #include "progress_ui.h"
 #include "libview_ui.h"
 #include "hack_ui.h"
@@ -161,7 +162,11 @@ std::string size_text(uint64_t b) {
 }
 
 void open_in_explorer(const std::string& dir) {
+#if RH_WIN
     ShellExecuteW(nullptr, L"open", W(dir).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+    plat::proc::open_path(dir);
+#endif
 }
 
 /* ---------- cover art lookups ---------- */

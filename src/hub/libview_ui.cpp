@@ -12,6 +12,10 @@
 #define STBI_NO_HDR
 #include "third_party/stb_image.h"
 #include "app.h"
+#if !RH_WIN
+#include <strings.h>
+#define _stricmp strcasecmp
+#endif
 #include "cases_logic.h"
 #include "cases_audit.h"
 #include "cases_stage.h"
@@ -1243,12 +1247,12 @@ void lib_body(float bar_h) {
     else if (lay == LibLayout::Cases) {
         static const bool perf = g_headless && std::getenv("HUB_SHOT_CASES_PERF") != nullptr;   // QA: CPU time of the carousel per frame (shot trace "cases-perf")
         static double acc = 0; static int frames = 0;
-        LARGE_INTEGER t0, t1, fq;
-        if (perf) QueryPerformanceCounter(&t0);
+        int64_t t0 = 0, t1 = 0, fq = 0;
+        if (perf) t0 = plat::perf_counter();
         draw_cases(D);
         if (perf) {
-            QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
-            acc += (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)fq.QuadPart;
+            t1 = plat::perf_counter(); fq = plat::perf_freq();
+            acc += (double)(t1 - t0) * 1000.0 / (double)fq;
             if (++frames == 20) { shot_trace("cases-perf", "avg_ms=" + std::to_string(acc / frames) + " games=" + std::to_string(D.flat.size())); acc = 0; frames = 0; }
         }
     }

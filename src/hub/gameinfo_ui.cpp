@@ -1,4 +1,5 @@
 #include "app.h"
+#include "plat/plat_proc.h"
 #include "art.h"
 #include "gameinfo.h"
 #include "gameinfo_queue.h"
@@ -238,7 +239,11 @@ ImU32 score_color(const std::string& label, const std::string& value) {
 
 void open_url(const std::string& url) {
     if (url.rfind("https://", 0) != 0) return;
+#if RH_WIN
     ShellExecuteW(nullptr, L"open", std::filesystem::u8path(url).wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+    plat::proc::open_url(url);
+#endif
 }
 
 /* "Label  value" cell, value cut to the column width. */

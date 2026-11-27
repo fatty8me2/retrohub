@@ -692,7 +692,7 @@ void controls_live_push() {
     const bool have = hubctl::read_profile_file(A.run.controls_path, &cur) && cur.system == next.system;
     if (!hubctlive::needs_reload(have, cur, next)) return;
     bool wrote = false;
-    for (int i = 0; i < 5 && !(wrote = hubctl::write_profile_file(A.run.controls_path, next)); ++i) Sleep(40);   // the runner may be reading the file right now
+    for (int i = 0; i < 5 && !(wrote = hubctl::write_profile_file(A.run.controls_path, next)); ++i) plat::sleep_ms(40);   // the runner may be reading the file right now
     if (!wrote) {   // never fail silently: the next launch regenerates the file from the saved store anyway
         push_toast("Could not update the running game's controls. They apply the next time you start it.", COL_WARN, 6.0);
         return;

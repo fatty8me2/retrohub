@@ -21,7 +21,7 @@ struct MissingAsk {
     std::string key, name, why;
 } MISS;
 
-ULONGLONG g_lichii_once_at = 0;   // set with it: the choice expires after 20 s, so a launch that stopped at a prompt cannot leak into a later Play
+unsigned long long g_lichii_once_at = 0;   // set with it: the choice expires after 20 s, so a launch that stopped at a prompt cannot leak into a later Play
 std::string g_lichii_once;   // game key: the next launch_external for it skips Hookshot ("Play with Lichii this time")
 
 }  // namespace
@@ -37,7 +37,7 @@ void hookshot_missing_ask_shot(int flavor) { MISS.open = true; MISS.focused = fa
 
 /* Starts the game with Lichii for this one launch (the "Plays with" choice stays as it is). */
 static void play_with_lichii_once(const std::string& key) {
-    if (const hub::GameEntry* g = find_entry(key)) { hub::GameEntry copy = *g; g_lichii_once = copy.key; g_lichii_once_at = GetTickCount64(); play_entry(copy); if (A.cloud_gate.phase == CloudGate::Idle && !A.job.running) g_lichii_once.clear(); }   // cleared whatever play_entry did (it can return early), unless the launch was deferred (cloud check / save sync re-enters play_entry; the 20 s expiry covers that)
+    if (const hub::GameEntry* g = find_entry(key)) { hub::GameEntry copy = *g; g_lichii_once = copy.key; g_lichii_once_at = plat::tick_ms(); play_entry(copy); if (A.cloud_gate.phase == CloudGate::Idle && !A.job.running) g_lichii_once.clear(); }   // cleared whatever play_entry did (it can return early), unless the launch was deferred (cloud check / save sync re-enters play_entry; the 20 s expiry covers that)
 }
 
 static void draw_missing_dialog() {
@@ -68,12 +68,12 @@ void hookshot_lichii_once_clear() { g_lichii_once.clear(); }
 /* Every frame: while the cloud check for the launch is really pending (it can take longer than 20 s), the one-shot stays fresh, so the launch
  * that follows does not come back to the prompt. Once the check is over the 20 s run again. */
 static void lichii_once_tick() {
-    if (!g_lichii_once.empty() && A.cloud_gate.phase != CloudGate::Idle) g_lichii_once_at = GetTickCount64();
+    if (!g_lichii_once.empty() && A.cloud_gate.phase != CloudGate::Idle) g_lichii_once_at = plat::tick_ms();
 }
 
 bool hookshot_lichii_once_consume(const std::string& key) {
     if (g_lichii_once.empty() || g_lichii_once != key) return false;
-    const bool fresh = GetTickCount64() - g_lichii_once_at < 20000;
+    const bool fresh = plat::tick_ms() - g_lichii_once_at < 20000;
     g_lichii_once.clear();
     return fresh;
 }
@@ -92,7 +92,12 @@ void draw_hookshot_run_dialogs() {
     ui::dialog_buttons();
     if (!ASK.focused) { ImGui::SetKeyboardFocusHere(0); ASK.focused = true; }   // a pad lands on the first button
     if (button("Get it from the Microsoft Store", ImVec2(300 * S, 44 * S), true)) {
+#if RH_WIN
         if (!g_headless) ShellExecuteW(nullptr, L"open", L"ms-windows-store://pdp/?ProductId=9MVZQVXJBQ9V", nullptr, nullptr, SW_SHOWNORMAL);
+#else
+        // TODO(macOS lane 7c): there is no Microsoft Store on macOS; the Hookshot decoder install is not supported there yet.
+        (void)0;
+#endif
         ASK.open = false;   // the next Play looks for the decoder again
     }
     if (button("Play with Lichii this time", ImVec2(300 * S, 44 * S))) { ASK.open = false; play_with_lichii_once(ASK.key); }

@@ -2,6 +2,7 @@
 #include "hookshot.h"
 #include "hookshot_build.h"
 #include "app.h"
+#include "plat/plat_proc.h"
 #include "winutil.h"
 
 /* The native-version card (game page > About). Contract: hookshot_build.h (the builds) and hookshot.h (what is built, and decide()).
@@ -79,7 +80,7 @@ std::string date_text(int64_t unix_t) {
     if (unix_t <= 0) return std::string();
     std::time_t t = (std::time_t)unix_t;
     std::tm tm{};
-    localtime_s(&tm, &t);
+    plat::local_tm(t, &tm);
     char b[48];
     std::strftime(b, sizeof b, "%b %d, %Y", &tm);
     return b;
@@ -223,13 +224,21 @@ View make_view(const hub::GameEntry& e) {
 
 void open_url(const std::string& url) {
     if (g_headless) return;
+#if RH_WIN
     ShellExecuteW(nullptr, L"open", winutil::to_wide(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+    plat::proc::open_url(url);
+#endif
 }
 
 void open_log(const std::string& path) {
     if (g_headless || path.empty()) return;
+#if RH_WIN
     const std::wstring arg = L"\"" + winutil::to_wide(path) + L"\"";
     ShellExecuteW(nullptr, L"open", L"notepad.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
+#else
+    plat::proc::open_path(path);   // default text app
+#endif
 }
 
 void wrapped(const std::string& s, ImU32 col) {

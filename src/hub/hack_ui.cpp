@@ -119,7 +119,7 @@ void start_build() {
     AD.done = false;
     AD.cancel = false;
     AD.prog = 0;
-    AD.tmp_dir = data_root() + "\\rom-cache\\hacks\\_new-" + std::to_string((unsigned long long)GetTickCount64());
+    AD.tmp_dir = data_root() + plat::kSep + "rom-cache" + plat::kSep + "hacks" + plat::kSep + "_new-" + std::to_string((unsigned long long)plat::tick_ms());
     AD.tmp_out = AD.tmp_dir + "\\" + hk::patched_name(AD.base.system, AD.base.path);
     AD.th = std::thread([]() {
         AD.br = hk::build_patched(AD.base.path, AD.prep, AD.patch, AD.tmp_out, [](double p) { AD.prog = p; return !AD.cancel.load(); });
