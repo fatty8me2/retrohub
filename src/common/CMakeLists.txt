@@ -5,9 +5,16 @@ target_sources(hubbase PRIVATE plat/plat_crypto.cpp)   # docs/MACOS.md: hashes /
 target_link_libraries(hubbase PUBLIC bcrypt)
 if(APPLE)
     target_link_libraries(hubbase PUBLIC "-framework Security" "-framework CoreFoundation")
+    target_sources(hubbase PRIVATE plat/plat_http_mac.mm)   # HTTP + WebSocket client on NSURLSession
+    set_source_files_properties(plat/plat_http_mac.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+    target_link_libraries(hubbase PUBLIC "-framework Foundation")
 endif()
 add_executable(plat_crypto_test plat/test_plat_crypto.cpp)
 target_link_libraries(plat_crypto_test PRIVATE hubbase)
+if(APPLE)
+    add_executable(plat_http_test plat/test_plat_http.cpp)
+    target_link_libraries(plat_http_test PRIVATE hubbase)
+endif()
 target_include_directories(hubbase PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(hubbase PUBLIC cxx_std_17)
 

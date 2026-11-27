@@ -22,6 +22,9 @@ tests green: push the branch and check the Windows CI run (`.github/workflows/ci
   `plat::fseek64` / `plat::ftell64` (replace `_fseeki64` / `_ftelli64`), `plat::local_tm` / `plat::utc_tm` (localtime_s / gmtime_s).
 - `src/common/plat/plat_crypto.h` (in hubbase): `plat::Hasher` / `plat::hash` / `plat::hmac` (MD5, SHA-1, SHA-256, SHA-512),
   `plat::random_bytes`, `plat::hex`. BCrypt on Windows, CommonCrypto on macOS. Replacing a BCrypt hash sequence with it is fine.
+- `src/common/plat/plat_http.h` (macOS only, NSURLSession): `plat::http::perform` (blocking request, optional streaming /
+  progress) and `plat::ws::Socket`. Every WinHTTP user keeps its Windows code under `#if RH_WIN` and calls this on macOS.
+  Never hand-roll TLS.
 - `src/common/plat/plat_sock.h`: include it instead of `<winsock2.h>`; `plat::socket_t`, `kBadSocket`, `sock_init`, `sock_close`,
   `sock_error`, `sock_would_block`, `sock_set_nonblocking`, `udp_ignore_connreset`, `sock_setopt`, `sock_poll`.
 - Windows behaviour stays byte-identical: same API calls, same paths, same file names. Put Windows-only code under `#if RH_WIN`

@@ -111,6 +111,9 @@ enable_testing()
 
 add_test(NAME json_test COMMAND json_test)
 add_test(NAME plat_crypto_test COMMAND plat_crypto_test)   # plat_crypto: MD5/SHA-1/SHA-256/SHA-512, HMAC, random (known vectors)
+if(APPLE)
+    add_test(NAME plat_http_test COMMAND plat_http_test)   # plat_http: NSURLSession HTTP + WebSocket against a loopback server
+endif()
 add_test(NAME runner_ctl_test COMMAND runner_ctl_test)   # hub<->runner control file, ack, slot/shot paths
 add_test(NAME cheevos_test COMMAND cheevos_test)   # RetroAchievements: config/cache, hardcore rules, mocked login + rc_client session (no network, no RA account)
 add_test(NAME osd_test COMMAND osd_test)   # OSD toast queue + font renderer
