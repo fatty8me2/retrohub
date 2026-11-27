@@ -11,7 +11,7 @@
 #include <winhttp.h>
 #else
 #include "plat/plat_http.h"
-#include <CommonCrypto/CommonCryptor.h>
+#include <CommonCrypto/CommonCryptor.h>   // kCCSuccess
 #include <CommonCrypto/CommonKeyDerivation.h>
 #endif
 
@@ -172,92 +172,18 @@ bool derive_key(const std::string& code, const uint8_t* salt, uint8_t key[32])
            kCCSuccess;
 }
 
-/* AES-256-GCM (NIST SP 800-38D, 96-bit IV) built on single-block AES (CommonCrypto has no public GCM): CTR for the data,
- * GHASH over AAD + ciphertext for the tag. Same bytes as BCrypt's GCM. */
-struct Block { uint64_t hi, lo; };
-
-bool aes_block(const uint8_t key[32], const uint8_t in[16], uint8_t out[16])
-{
-    size_t moved = 0;
-    return CCCrypt(kCCEncrypt, kCCAlgorithmAES, kCCOptionECBMode, key, 32, nullptr, in, 16, out, 16, &moved) == kCCSuccess &&
-           moved == 16;
-}
-
-Block load_block(const uint8_t* p)
-{
-    Block b{0, 0};
-    for (int i = 0; i < 8; ++i) { b.hi = (b.hi << 8) | p[i]; b.lo = (b.lo << 8) | p[8 + i]; }
-    return b;
-}
-
-void store_block(Block b, uint8_t* p)
-{
-    for (int i = 7; i >= 0; --i) { p[i] = (uint8_t)b.hi; b.hi >>= 8; p[8 + i] = (uint8_t)b.lo; b.lo >>= 8; }
-}
-
-Block gf_mul(Block x, Block h)   // x * h in GF(2^128), GCM bit order
-{
-    Block z{0, 0}, v = h;
-    for (int i = 0; i < 128; ++i) {
-        bool bit = i < 64 ? ((x.hi >> (63 - i)) & 1) : ((x.lo >> (127 - i)) & 1);
-        if (bit) { z.hi ^= v.hi; z.lo ^= v.lo; }
-        bool lsb = v.lo & 1;
-        v.lo = (v.lo >> 1) | (v.hi << 63);
-        v.hi >>= 1;
-        if (lsb) v.hi ^= 0xE100000000000000ULL;
-    }
-    return z;
-}
-
-Block ghash_update(Block y, Block h, const uint8_t* d, size_t n)   // zero-pads the last partial block
-{
-    for (size_t i = 0; i < n; i += 16) {
-        uint8_t blk[16] = {0};
-        std::memcpy(blk, d + i, std::min<size_t>(16, n - i));
-        Block b = load_block(blk);
-        y.hi ^= b.hi; y.lo ^= b.lo;
-        y = gf_mul(y, h);
-    }
-    return y;
-}
-
+/* AES-256-GCM through CryptoKit (plat::aes_gcm_*); same envelope bytes as BCrypt's GCM: data = ciphertext (tag separate). */
 bool aes_gcm(bool encrypt, const uint8_t key[32], const uint8_t iv[kIvLen], std::vector<uint8_t>& data, uint8_t tag[kTagLen])
 {
-    uint8_t zero[16] = {0}, hb[16];
-    if (!aes_block(key, zero, hb)) return false;
-    Block h = load_block(hb);
-
-    uint8_t j0[16] = {0};
-    std::memcpy(j0, iv, kIvLen);
-    j0[15] = 1;
-    uint8_t ctr[16];
-    std::memcpy(ctr, j0, 16);
-    std::vector<uint8_t> out(data.size());
-    for (size_t i = 0; i < data.size(); i += 16) {
-        for (int k = 15; k >= 12; --k) if (++ctr[k]) break;   // inc32
-        uint8_t ks[16];
-        if (!aes_block(key, ctr, ks)) return false;
-        for (size_t k = 0; k < 16 && i + k < data.size(); ++k) out[i + k] = data[i + k] ^ ks[k];
-    }
-    const std::vector<uint8_t>& ct = encrypt ? out : data;
-    Block y{0, 0};
-    y = ghash_update(y, h, (const uint8_t*)kAad, sizeof kAad - 1);
-    y = ghash_update(y, h, ct.data(), ct.size());
-    Block lens{(uint64_t)(sizeof kAad - 1) * 8, (uint64_t)ct.size() * 8};
-    y.hi ^= lens.hi; y.lo ^= lens.lo;
-    y = gf_mul(y, h);
-    uint8_t s[16], ej0[16], t[16];
-    store_block(y, s);
-    if (!aes_block(key, j0, ej0)) return false;
-    for (int k = 0; k < 16; ++k) t[k] = s[k] ^ ej0[k];
+    std::string k((const char*)key, 32), n((const char*)iv, kIvLen), aad(kAad, sizeof kAad - 1);
+    std::string in((const char*)data.data(), data.size()), out, t;
     if (encrypt) {
-        std::memcpy(tag, t, kTagLen);
+        if (!plat::aes_gcm_seal(k, n, aad, in, &out, &t) || t.size() != kTagLen) return false;
+        std::memcpy(tag, t.data(), kTagLen);
     } else {
-        unsigned diff = 0;
-        for (size_t k = 0; k < kTagLen; ++k) diff |= (unsigned)(t[k] ^ tag[k]);
-        if (diff) return false;
+        if (!plat::aes_gcm_open(k, n, aad, in, std::string((const char*)tag, kTagLen), &out)) return false;
     }
-    data = out;
+    data.assign(out.begin(), out.end());
     return true;
 }
 

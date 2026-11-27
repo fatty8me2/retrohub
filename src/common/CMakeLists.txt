@@ -5,7 +5,7 @@ target_sources(hubbase PRIVATE plat/plat_crypto.cpp)   # docs/MACOS.md: hashes /
 target_link_libraries(hubbase PUBLIC bcrypt)
 if(APPLE)
     target_link_libraries(hubbase PUBLIC "-framework Security" "-framework CoreFoundation")
-    target_sources(hubbase PRIVATE plat/plat_http_mac.mm)   # HTTP + WebSocket client on NSURLSession
+    target_sources(hubbase PRIVATE plat/plat_http_mac.mm plat/plat_crypto_gcm_mac.swift)   # NSURLSession HTTP + WebSocket; CryptoKit AES-GCM (CommonCrypto has no public GCM)
     set_source_files_properties(plat/plat_http_mac.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
     target_link_libraries(hubbase PUBLIC "-framework Foundation")
 endif()

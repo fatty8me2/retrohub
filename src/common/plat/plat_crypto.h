@@ -40,4 +40,13 @@ bool random_bytes(void* buf, size_t len);
 
 std::string hex(const std::string& raw);   // lowercase
 
+#if defined(__APPLE__)
+/* AES-GCM (key 16/24/32 bytes, 12-byte nonce, 16-byte tag) through CryptoKit (plat_crypto_gcm_mac.swift). On Windows the
+ * callers keep using BCrypt directly. aes_gcm_open returns false on any authentication failure and leaves *plain empty. */
+bool aes_gcm_seal(const std::string& key, const std::string& nonce12, const std::string& aad, const std::string& plain,
+                  std::string* cipher, std::string* tag16);
+bool aes_gcm_open(const std::string& key, const std::string& nonce12, const std::string& aad, const std::string& cipher,
+                  const std::string& tag16, std::string* plain);
+#endif
+
 } // namespace plat

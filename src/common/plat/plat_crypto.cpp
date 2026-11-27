@@ -169,4 +169,39 @@ std::string hex(const std::string& raw) {
     return s;
 }
 
+#if defined(__APPLE__)
+extern "C" {
+int32_t rh_aes_gcm_seal(const void* key, size_t keyLen, const void* nonce, size_t nonceLen, const void* aad, size_t aadLen,
+                        const void* plain, size_t plainLen, void* cipherOut, void* tagOut);
+int32_t rh_aes_gcm_open(const void* key, size_t keyLen, const void* nonce, size_t nonceLen, const void* aad, size_t aadLen,
+                        const void* cipher, size_t cipherLen, const void* tag, size_t tagLen, void* plainOut);
+}
+
+bool aes_gcm_seal(const std::string& key, const std::string& nonce12, const std::string& aad, const std::string& plain,
+                  std::string* cipher, std::string* tag16) {
+    if (!cipher || !tag16) return false;
+    cipher->clear();
+    tag16->clear();
+    std::string c(plain.size(), '\0'), t(16, '\0');
+    if (rh_aes_gcm_seal(key.data(), key.size(), nonce12.data(), nonce12.size(), aad.data(), aad.size(), plain.data(),
+                        plain.size(), c.empty() ? nullptr : &c[0], &t[0]) != 0)
+        return false;
+    *cipher = std::move(c);
+    *tag16 = std::move(t);
+    return true;
+}
+
+bool aes_gcm_open(const std::string& key, const std::string& nonce12, const std::string& aad, const std::string& cipher,
+                  const std::string& tag16, std::string* plain) {
+    if (!plain) return false;
+    plain->clear();
+    std::string p(cipher.size(), '\0');
+    if (rh_aes_gcm_open(key.data(), key.size(), nonce12.data(), nonce12.size(), aad.data(), aad.size(), cipher.data(),
+                        cipher.size(), tag16.data(), tag16.size(), p.empty() ? nullptr : &p[0]) != 0)
+        return false;
+    *plain = std::move(p);
+    return true;
+}
+#endif
+
 } // namespace plat

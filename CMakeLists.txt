@@ -11,6 +11,8 @@ if (APPLE)
     set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "" FORCE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "" FORCE)
     enable_language(OBJCXX)
+    set(CMAKE_Swift_COMPILER_TARGET arm64-apple-macos14.0)   # CMake does not pass the deployment target to swiftc itself
+    enable_language(Swift)   # CryptoKit AES-GCM shim (src/common/plat/plat_crypto_gcm_mac.swift)
 elseif (NOT WIN32)
     message(FATAL_ERROR "RetroHub builds on Windows (x64) and macOS (arm64) only")
 endif()
