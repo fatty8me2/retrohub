@@ -1,11 +1,12 @@
 #include "log.h"
 
+#include "plat/plat.h"
+
 #include <cstdarg>
+#include <chrono>
 #include <cstdio>
 #include <mutex>
 #include <string>
-
-#include <windows.h>
 
 namespace {
 std::mutex g_mutex;
@@ -30,12 +31,21 @@ void net_log(const char* fmt, ...)
     if (n == 0 || buf[n - 1] != '\n') buf[n++] = '\n';
     buf[n] = 0;
 
+    char line[1100];
+#if RH_WIN
     SYSTEMTIME t;
     GetLocalTime(&t);
-    char line[1100];
     snprintf(line, sizeof(line), "%02d:%02d:%02d.%03d [net] %s", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds, buf);
 
     OutputDebugStringA(line);
+#else
+    const auto wall = std::chrono::system_clock::now();
+    const std::time_t tt = std::chrono::system_clock::to_time_t(wall);
+    const int ms = (int)(std::chrono::duration_cast<std::chrono::milliseconds>(wall.time_since_epoch()).count() % 1000);
+    std::tm tmv = {};
+    plat::local_tm(tt, &tmv);
+    snprintf(line, sizeof(line), "%02d:%02d:%02d.%03d [net] %s", tmv.tm_hour, tmv.tm_min, tmv.tm_sec, ms, buf);
+#endif
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_path.empty()) {
         if (FILE* f = fopen(g_path.c_str(), "ab")) {

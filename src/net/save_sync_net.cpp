@@ -1,5 +1,5 @@
 /* Drives the save-sync state machine over a started, ready hubnet::Session. */
-#include <windows.h>
+#include "plat/plat.h"
 
 #include <vector>
 
@@ -26,7 +26,7 @@ bool run_save_sync(hubnet::Session& s, int my_slot, uint32_t slot_mask, const st
             if (snd.failed()) { if (err) *err = snd.error(); return false; }
             if (snd.finished()) return true;
             if (s.failed()) { if (err) *err = "netplay failed during save sync"; return false; }
-            Sleep(2);
+            plat::sleep_ms(2);
         }
     }
 
@@ -40,7 +40,7 @@ bool run_save_sync(hubnet::Session& s, int my_slot, uint32_t slot_mask, const st
         if (rcv.finished()) return true;
         if (s.failed()) { if (err) *err = "netplay failed during save sync"; return false; }
         if (hubnet::now_ms() - t0 > timeout_ms) { if (err) *err = "timed out waiting for the host's saves"; return false; }
-        Sleep(2);
+        plat::sleep_ms(2);
     }
 }
 

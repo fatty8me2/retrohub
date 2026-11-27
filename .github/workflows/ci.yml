@@ -44,7 +44,7 @@ jobs:
           }
 
       - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+        run: cmake -S . -B build -A x64   # newest Visual Studio on the runner (VS 2026 locally, see CLAUDE.md)
 
       - name: Build (Release)
         run: cmake --build build --config Release --parallel 4
