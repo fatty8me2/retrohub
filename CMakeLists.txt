@@ -10,7 +10,7 @@ if (APPLE)
     # macOS port: Apple Silicon only (docs/MACOS.md).
     set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "" FORCE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "" FORCE)
-    enable_language(OBJCXX)
+    enable_language(OBJC OBJCXX)   # OBJC too: SDL2's .m files would otherwise be built as Objective-C++
     set(CMAKE_Swift_COMPILER_TARGET arm64-apple-macos14.0)   # CMake does not pass the deployment target to swiftc itself
     enable_language(Swift)   # CryptoKit AES-GCM shim (src/common/plat/plat_crypto_gcm_mac.swift)
 elseif (NOT WIN32)
