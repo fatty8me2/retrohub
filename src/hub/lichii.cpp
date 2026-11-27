@@ -63,23 +63,24 @@ static bool ends_with(const std::string& s, const char* suf) {
 }
 
 /* THE one place that decides where Lichii's `user` data lives (every path in lichii.cpp / nx_runner.cpp / hookshot.cpp goes through it).
- * Windows: <install>\\user (portable folder beside lichii.exe). macOS: an .app bundle is read-only, so when the install dir is (or holds) a
- * *.app the emulator's own macOS data dir is used; a plain folder (tests, a build unpacked by RetroHub) keeps the portable <install>/user.
- * TODO(macOS lane 7): confirm the layout of the real Lichii / Fritchii macOS build and whether it honours a portable `user` folder. */
+ * Windows: <install>\\user (portable folder beside lichii.exe). macOS: <install>/user, a folder BESIDE the .app (never inside it: writing into a signed bundle
+ * breaks its seal), so an install_dir that is (or lies inside) a *.app maps to the folder that holds the bundle. RetroHub starts lichii with that folder as the working
+ * directory (hubemu::mac_launch_extra), which is where Eden's portable mode looks for `user`.
+ * macOS: partly verified from the lichii build-177 binary's strings: it has the "user" folder name and the XDG_DATA_HOME / ".local/share" fallback (no
+ * "Application Support" string at all, so the old guess ~/Library/Application Support/lichii was wrong; the player's own folder would be ~/.local/share/<eden|lichii>),
+ * but which of the two wins is Eden's path_util logic (a cwd-relative `user` folder is the portable marker there): UNVERIFIED by running it. */
 std::string lichii_user_dir(const std::string& install_dir) {
 #if RH_WIN
     return join(install_dir, "user");
 #else
-    bool in_bundle = install_dir.find(".app/") != std::string::npos || (install_dir.size() > 4 && install_dir.compare(install_dir.size() - 4, 4, ".app") == 0);
-    if (!in_bundle) {
-        std::error_code ec;
-        for (fs::directory_iterator it(P(install_dir), ec), end; !ec && it != end; it.increment(ec))
-            if (it->path().extension() == ".app") { in_bundle = true; break; }
+    std::string base = install_dir;
+    const size_t app = base.find(".app/");
+    if (app != std::string::npos) base.resize(app + 4);
+    if (base.size() > 4 && base.compare(base.size() - 4, 4, ".app") == 0) {   // the bundle itself (or something inside it): its parent folder holds `user`
+        const size_t slash = base.rfind('/');
+        base = slash == std::string::npos ? std::string(".") : slash == 0 ? std::string("/") : base.substr(0, slash);
     }
-    if (!in_bundle) return join(install_dir, "user");
-    const char* home = std::getenv("HOME");
-    if (!home || !*home) { struct passwd* pw = getpwuid(getuid()); home = pw ? pw->pw_dir : ""; }
-    return join(join(home, "Library/Application Support"), "lichii");   // macOS path: unverified (Eden uses ~/Library/Application Support/eden)
+    return join(base, "user");
 #endif
 }
 

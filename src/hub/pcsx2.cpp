@@ -369,9 +369,11 @@ std::string pcsx2_ini_launch(const std::string& in, const Bios& bios, const std:
 
 std::string pcsx2_card_rel(const std::string& key) { return "RetroHub/" + pcsx2_safe_key(key) + "/Mcd001.ps2"; }
 
-/* Where PCSX2's data folder (inis\\, memcards\\, ...) is. Windows and macOS: <install>, made portable by portable.ini (emulators.cpp writes it; the vault sync
- * root is the same folder). macOS: PCSX2's non-portable default is ~/Library/Application Support/PCSX2 and it also has a portable mode, but where its
- * portable.ini must sit relative to PCSX2.app is unverified (macOS path: unverified). TODO(macOS lane 7): confirm with the real macOS build. */
+/* Where PCSX2's data folder (inis\\, memcards\\, ...) is. Windows: <install>, made portable by portable.ini (emulators.cpp writes it; the vault sync root is the same
+ * folder). macOS: the same folder <install> BESIDE the .app (never inside the signed bundle), handed to PCSX2 with `-datapath <install>` (hubemu::mac_launch_extra).
+ * Verified from the PCSX2 2.8.2 macOS binary's strings: it prints "-datapath <path>: Specify the directory to be used for all application data" and
+ * "-portable: ... store data in local PCSX2 path" (not used: that path is the program folder inside the bundle), and its non-portable default is
+ * "Library/Application Support/PCSX2". The portable.ini written beside the .app is harmless and unused on macOS. */
 static std::string pcsx2_data_dir(const std::string& install_dir) { return install_dir; }
 
 std::string prepare_pcsx2(const std::string& install_dir, const Ps2Pads& pads, const hubctl::Profile& prof, const Bios& bios,

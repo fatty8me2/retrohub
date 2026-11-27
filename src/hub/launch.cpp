@@ -195,6 +195,23 @@ bool spawn(const std::string& exe, const std::string& args_in, const std::string
     so.args = split_args(args);
     so.cwd = cwd;
     so.own_group = true;
+    /* A RetroHub-managed emulator: point it at its own data folder inside the install (the .app is signed, so nothing is written into the bundle);
+     * see hubemu::mac_launch_extra. Cemu is x86_64 only: refuse without Rosetta 2, whoever installed it. */
+    for (hubemu::Kind k : {hubemu::Kind::Azahar, hubemu::Kind::Cemu, hubemu::Kind::Dolphin, hubemu::Kind::Pcsx2, hubemu::Kind::Ppsspp,
+                           hubemu::Kind::Lichii, hubemu::Kind::Fritchii}) {
+        const std::string dir = hubemu::managed_dir(k);
+        const std::string under = plat::join(dir, "");   // "<root>/dolphin/": never matches a sibling such as "<root>/dolphin-old"
+        if (dir.empty() || exe.compare(0, under.size(), under) != 0) continue;
+        const hubemu::MacLaunchExtra x = hubemu::mac_launch_extra(k, dir);
+        if (!x.cwd.empty()) so.cwd = x.cwd;
+        so.args.insert(so.args.begin(), x.args.begin(), x.args.end());
+        so.env_set.insert(so.env_set.end(), x.env.begin(), x.env.end());
+        break;
+    }
+    if (exe.find("/Cemu.app/") != std::string::npos) {
+        std::string why;
+        if (!hubemu::cemu_rosetta_ok(&why)) { hubenv::restore(env_saved); if (own_runner) fr_ident_env(false); set_notice(why); return false; }
+    }
     hubproc::Spawned sr;
     const bool ok = hubproc::spawn(so, [](const hubproc::Spawned& r) {
         if (!g_journal_next) return;

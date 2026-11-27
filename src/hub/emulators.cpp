@@ -123,6 +123,17 @@ static std::string join(const std::string& a, const std::string& b0) {
 }
 #endif
 
+/* PSP save root = <memstick>/PSP. Windows: <install>\\memstick\\PSP (PPSSPP is portable). macOS: <install>/config/ppsspp/PSP, the folder PPSSPP is pointed at with
+ * XDG_CONFIG_HOME=<install>/config (see ppsspp_system_dir in ppsspp.cpp and mac_launch_extra; unverified there). Kept here too because not every target that compiles
+ * emulators.cpp links ppsspp.cpp. */
+static std::string psp_memstick_root(const std::string& install_dir) {
+#if RH_WIN
+    return join(install_dir, "memstick\\PSP");
+#else
+    return join(install_dir, "config/ppsspp/PSP");
+#endif
+}
+
 const char* name(Kind k) { return k == Kind::Azahar ? "Azahar" : k == Kind::Cemu ? "Cemu" : k == Kind::Pcsx2 ? "PCSX2" : k == Kind::Lrps2 ? "PS2 online core" : k == Kind::Ppsspp ? "PPSSPP" : k == Kind::Lichii ? "Lichii" : k == Kind::Fritchii ? "Fritchii" : "Dolphin"; }
 Kind kind_for(hub::System s) { return s == hub::System::WiiU ? Kind::Cemu : s == hub::System::GC ? Kind::Dolphin : s == hub::System::PS2 ? Kind::Pcsx2 : s == hub::System::PSP ? Kind::Ppsspp : s == hub::System::Switch ? Kind::Lichii : Kind::Azahar; }
 
@@ -185,24 +196,38 @@ static const char* const kSha256 = "3b359e27ef2eed69a1ce620e65d051f4c533613fb688
 
 #if !RH_WIN
 /* ======================================================================================================================================================
- * macOS PIN TABLE (lane 7). The Windows pins below are Windows builds and are never used on macOS. Every kind here is a PLACEHOLDER (sha256 all zeros =
- * release_is_placeholder(), so install / upgrade refuse with "not available on macOS yet" and nothing is downloaded). To publish a macOS build, fill in the
- * kind's row: version, host, path, exact size, SHA-256 of the archive (a .zip: the install code unpacks zips with miniz; a .7z / .tar.xz needs lane 7 to add an
- * unpacker for it) and `exe` = the path of the executable INSIDE the archive, relative to the install folder (<data>/emulators/<name>/), normally
- * "<App>.app/Contents/MacOS/<binary>" (the find_file_below search matches that relative path, so a bundle at the archive root or one folder down works).
- * The exe names below are the expected ones, not verified against a real archive.
- * TODO(macOS lane 7): real pins for Azahar, Cemu, Dolphin, PCSX2, PPSSPP, Lichii (official macOS arm64 build), Fritchii (from source), the LRPS2 core (.dylib).
+ * macOS PIN TABLE (lane 7). The Windows pins below are Windows builds and are never used on macOS. Each row: version, host, path, exact size, SHA-256 of the
+ * archive (checked before anything is unpacked) and `exe` = the path of the executable INSIDE the archive relative to the install folder
+ * (<data>/emulators/<name>/), "<App>.app/Contents/MacOS/<binary>" (find_file_below matches that relative path, so a bundle at the archive root or one folder down
+ * works). Archive kinds the installer unpacks: .zip (miniz), .tar.xz (/usr/bin/tar) and .dmg (hdiutil attach + ditto of the top-level .app, see dmg_extract_to).
+ * Every file below was downloaded once, hashed and listed (never run) on 2026-11-27, and its executable's name checked against the archive listing.
+ * Only the LRPS2 core (.dylib) and Fritchii (build from source) are still placeholders: they need a mirrored / self-built asset.
  * ====================================================================================================================================================== */
 static const Release& release_mac(Kind k) {
     static const char* const kNone = "0000000000000000000000000000000000000000000000000000000000000000";
-    static const Release az = {"", L"", L"", 0, kNone, L"Azahar.app/Contents/MacOS/azahar", "GPL-3.0"};
-    static const Release ce = {"", L"", L"", 0, kNone, L"Cemu.app/Contents/MacOS/Cemu", "MPL-2.0"};
-    static const Release dol = {"", L"", L"", 0, kNone, L"Dolphin.app/Contents/MacOS/Dolphin", "GPL-2.0+"};
-    static const Release ps = {"", L"", L"", 0, kNone, L"PCSX2.app/Contents/MacOS/PCSX2", "GPL-3.0+"};
+    /* Azahar 2126.2 (GPL-3.0), github.com/azahar-emu/azahar, azahar-macos-arm64 zip (Azahar.app one folder down, plus a scripting/ folder); arm64 only. The SHA-256 is GitHub's published asset digest. */
+    static const Release az = {"2126.2", L"github.com", L"/azahar-emu/azahar/releases/download/2126.2/azahar-macos-arm64-2126.2.zip",
+                               99740365ull, "c24dec2bd5111b7d79513d686c5aece6612cdbf9737b2e6ea99cfc426f1d4aef", L"azahar-macos-arm64-2126.2/Azahar.app/Contents/MacOS/azahar", "GPL-3.0"};
+    /* Cemu 2.6 (MPL-2.0), github.com/cemu-project/Cemu, cemu-2.6-macos-12-x64.dmg: an x86_64 build only (it needs Rosetta 2 on Apple Silicon, see cemu_rosetta_ok) and unsigned.
+     * GitHub lists no digest for it, so the SHA-256 was computed from the official v2.6 asset (trust on first use, like the Windows pin). The .app also holds an update.sh
+     * (Cemu's own updater script) that RetroHub never runs. */
+    static const Release ce = {"2.6", L"github.com", L"/cemu-project/Cemu/releases/download/v2.6/cemu-2.6-macos-12-x64.dmg",
+                               36588188ull, "698c4b298f94983e4d6c30e9687ba8ff05094dd3930837c5104cddc0b0a49e4e", L"Cemu.app/Contents/MacOS/Cemu", "MPL-2.0"};
+    /* Dolphin 2509 (GPL-2.0+), the official universal (arm64 + x86_64) dmg from dl.dolphin-emu.org, notarized; the SHA-256 was computed from that file (no digest is published). */
+    static const Release dol = {"2509", L"dl.dolphin-emu.org", L"/releases/2509/dolphin-2509-universal.dmg",
+                                43276379ull, "14b7bd96ead242db4020acd991aae84ee83c3df65de9b09f2e79c8d531bf9780", L"Dolphin.app/Contents/MacOS/Dolphin", "GPL-2.0+"};
+    /* PCSX2 v2.8.2 (GPL-3.0+), github.com/PCSX2/pcsx2, pcsx2-v2.8.2-macos-Qt.tar.xz (the bundle is PCSX2-v2.8.2.app, at the archive root); the SHA-256 is GitHub's published asset digest. */
+    static const Release ps = {"2.8.2", L"github.com", L"/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-v2.8.2-macos-Qt.tar.xz",
+                               24377200ull, "3ed9eb40a33eae67134142c24255a079be444f0616ca29575a04a37981f7d426", L"PCSX2-v2.8.2.app/Contents/MacOS/PCSX2", "GPL-3.0+"};
     static const Release lr = {"", L"", L"", 0, kNone, L"pcsx2_libretro.dylib", "GPL-3.0"};
-    static const Release pp = {"", L"", L"", 0, kNone, L"PPSSPPSDL.app/Contents/MacOS/PPSSPPSDL", "GPL-2.0+"};
-    static const Release li = {"", L"", L"", 0, kNone, L"Lichii.app/Contents/MacOS/lichii", "GPL-3.0"};
-    static const Release fr = {"", L"", L"", 0, kNone, L"Fritchii.app/Contents/MacOS/fritchii", "GPL-3.0"};
+    /* PPSSPP v1.20.4 (GPL-2.0+), the official macOS dmg from ppsspp.org (universal, notarized); ppsspp.org publishes no digest, so the SHA-256 was computed from that file (trust on first use). */
+    static const Release pp = {"1.20.4", L"www.ppsspp.org", L"/files/1_20_4/PPSSPP_macOS.dmg",
+                               37090805ull, "bad86fc544a2c2fc5795d6a5832a8925d6db43e5789fe507f742305aaa357e17", L"PPSSPPSDL.app/Contents/MacOS/PPSSPPSDL", "GPL-2.0+"};
+    /* Lichii build 177 (GPL-3.0), github.com/zortos293/Lichii tag build-177 (the same build as the Windows pin), lichii-macos-arm64.zip: lichii.app (lower case) at the archive root with
+     * eden-cli and nx2_switches.txt beside the executable inside the bundle; arm64 only, NOT notarized. The SHA-256 is GitHub's published asset digest. */
+    static const Release li = {"build 177", L"github.com", L"/zortos293/Lichii/releases/download/build-177/lichii-macos-arm64.zip",
+                               80007273ull, "6504170d1530ebe42fe150724f44af20579f24f8336b87379155e1b7c19b775b", L"lichii.app/Contents/MacOS/lichii", "GPL-3.0"};
+    static const Release fr = {"", L"", L"", 0, kNone, L"Fritchii.app/Contents/MacOS/fritchii", "GPL-3.0"};   // TODO: Fritchii has no macOS build yet (built from source)
     return k == Kind::Azahar ? az : k == Kind::Cemu ? ce : k == Kind::Pcsx2 ? ps : k == Kind::Lrps2 ? lr : k == Kind::Ppsspp ? pp : k == Kind::Lichii ? li : k == Kind::Fritchii ? fr : dol;
 }
 #endif
@@ -1034,6 +1059,29 @@ static bool run_tar(const std::vector<std::string>& args, const std::string& std
     return true;
 }
 
+/* A symbolic link entry of an app bundle ("Frameworks/X.framework/Current -> A") is fine when its target is relative and never climbs out of the archive's top
+ * folder: `entry` is the link's own path from the name listing, `target` what `tar -tv` printed after " -> ". */
+static bool tar_link_stays_inside(const std::string& entry, const std::string& target) {
+    if (target.empty() || target[0] == '/' || target[0] == '\\' || target.find(':') != std::string::npos) return false;
+    int depth = 0;   // folders between the archive root and the link's own folder
+    {
+        std::string e = entry;
+        while (e.size() >= 2 && e[0] == '.' && e[1] == '/') e.erase(0, 2);
+        while (!e.empty() && e.back() == '/') e.pop_back();
+        for (size_t i = 0; i < e.size(); ++i) if (e[i] == '/') ++depth;
+    }
+    size_t p = 0;
+    while (p <= target.size()) {
+        const size_t q = target.find('/', p);
+        const std::string part = target.substr(p, q == std::string::npos ? std::string::npos : q - p);
+        if (part == "..") { if (--depth < 0) return false; }
+        else if (!part.empty() && part != ".") ++depth;
+        if (q == std::string::npos) break;
+        p = q + 1;
+    }
+    return true;
+}
+
 static bool untar_to(const std::string& archive, const std::string& dest, const std::string& list_tmp, std::string* err) {
     const std::string err_tmp = list_tmp + ".err";
     struct Cleanup { std::string f, g; ~Cleanup() { std::error_code ec; fs::remove(P(f), ec); fs::remove(P(g), ec); } } cleanup{list_tmp, err_tmp};
@@ -1042,27 +1090,165 @@ static bool untar_to(const std::string& archive, const std::string& dest, const 
     if (!run_tar({"-tf", archive}, list_tmp, err_tmp, err)) return false;
     std::istringstream ls(read_text(list_tmp));
     std::string line;
-    int n = 0;
+    std::vector<std::string> names;
     while (std::getline(ls, line)) {
         while (!line.empty() && (line.back() == 13 || line.back() == 10)) line.pop_back();
         if (line.empty()) continue;
         if (!safe_zip_name(line)) { *err = "unsafe path in the download: " + line; return false; }
-        ++n;
+        names.push_back(line);
     }
-    if (n == 0) { *err = "the download is empty"; return false; }
+    if (names.empty()) { *err = "the download is empty"; return false; }
     fs::remove(P(list_tmp), ec0);
     if (!run_tar({"-tvf", archive}, list_tmp, err_tmp, err)) return false;
     std::istringstream vs(read_text(list_tmp));
-    int m = 0;
+    size_t m = 0;
     while (std::getline(vs, line)) {
-        if (line.empty() || line[0] == 13) continue;
-        if ((line[0] != '-' && line[0] != 'd') || line.find(" link to ") != std::string::npos) { *err = "the download contains a link entry: " + line.substr(0, 80); return false; }
+        while (!line.empty() && (line.back() == 13 || line.back() == 10)) line.pop_back();
+        if (line.empty()) continue;
+        if (line.find(" link to ") != std::string::npos) { *err = "the download contains a hard link entry: " + line.substr(0, 80); return false; }   // (a hard link can point anywhere)
+        if (line[0] == 'l') {   // a symbolic link: only a relative one that stays inside the staging folder
+            const size_t arrow = line.rfind(" -> ");
+            if (arrow == std::string::npos || m >= names.size() || !tar_link_stays_inside(names[m], line.substr(arrow + 4))) { *err = "the download contains a link that leaves its folder: " + line.substr(0, 80); return false; }
+        } else if (line[0] != '-' && line[0] != 'd') { *err = "the download contains an entry that is not a file, folder or link: " + line.substr(0, 80); return false; }
         ++m;
     }
-    if (m != n) { *err = "the download listing is inconsistent"; return false; }
-    return run_tar({"-xf", archive, "-C", dest}, "", err_tmp, err);   // (-x never follows a link out of -C: the listing above had none)
+    if (m != names.size()) { *err = "the download listing is inconsistent"; return false; }
+    return run_tar({"-xf", archive, "-C", dest}, "", err_tmp, err);   // (bsdtar's -x refuses to write through a link out of -C)
 }
 #endif
+
+#if !RH_WIN
+/* ---- macOS: .dmg archives, the quarantine flag, Rosetta ---- */
+static bool ends_with_ci(const std::string& s, const char* suf) {
+    const size_t n = std::strlen(suf);
+    return s.size() >= n && strcasecmp(s.c_str() + s.size() - n, suf) == 0;
+}
+
+/* Runs a system tool by its absolute path (never the search path), output to a file, never shell-parsed. */
+static bool run_tool(const char* exe, const std::vector<std::string>& args, const std::string& stderr_file, int timeout_ms, int* code_out) {
+    plat::proc::SpawnOptions o;
+    o.exe = exe;
+    o.args = args;
+    o.stdout_path = "/dev/null";
+    o.stderr_path = stderr_file.empty() ? "/dev/null" : stderr_file;
+    o.own_group = true;
+    plat::proc::Child c;
+    std::string why;
+    int code = 127;
+    if (!plat::proc::spawn(o, &c, &why)) { emu_log(std::string(exe) + " could not start: " + why); if (code_out) *code_out = code; return false; }
+    if (!plat::proc::wait(c, timeout_ms, &code)) { plat::proc::kill_tree(c); code = 124; }
+    if (code_out) *code_out = code;
+    return code == 0;
+}
+
+/* A .dmg: `hdiutil attach` mounts it read-only on a fresh mount point of ours (-nobrowse -noautoopen: Finder never shows or opens it), every top-level *.app is copied
+ * into `dest` with /usr/bin/ditto (keeps the code signature, symbolic links and extended attributes), and the volume is detached again on every path out (a second try
+ * with -force). Nothing on the image is ever run. */
+static bool dmg_extract_to(const std::string& archive, const std::string& dest, const std::string& work_dir, std::string* err) {
+    static std::atomic<unsigned> seq{0};
+    const std::string mnt = join(work_dir, "mnt-" + std::to_string((unsigned long long)plat::tick_ms()) + "-" + std::to_string(seq++));
+    const std::string err_tmp = join(work_dir, "hdiutil-err.txt");
+    std::error_code ec;
+    fs::remove(P(err_tmp), ec);
+    make_dirs(mnt);
+    struct Mount {
+        std::string mnt, err_tmp;
+        bool attached = false;
+        ~Mount() {
+            if (attached) {
+                int code = 0;
+                if (!run_tool("/usr/bin/hdiutil", {"detach", "-quiet", mnt}, "", 120000, &code)) {
+                    plat::sleep_ms(1000);
+                    run_tool("/usr/bin/hdiutil", {"detach", "-quiet", "-force", mnt}, "", 120000, &code);
+                }
+            }
+            std::error_code e;
+            fs::remove(P(mnt), e);   // (rmdir only: never a recursive delete near a mounted volume)
+            fs::remove(P(err_tmp), e);
+        }
+    } mount{mnt, err_tmp};
+    int code = 0;
+    if (!run_tool("/usr/bin/hdiutil", {"attach", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mnt, archive}, err_tmp, 10 * 60 * 1000, &code)) {
+        mount.attached = (code == 124);   // a timed-out attach may still have mounted
+        const std::string w = last_line_of(read_text(err_tmp));
+        emu_log("hdiutil attach exit " + std::to_string(code) + (w.empty() ? "" : ": " + w));
+        *err = "could not open the disk image (hdiutil exit " + std::to_string(code) + (w.empty() ? "" : ": " + w) + ")";
+        return false;
+    }
+    mount.attached = true;
+    int apps = 0;
+    for (fs::directory_iterator it(P(mnt), ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string n = S(it->path().filename());
+        std::error_code e2;
+        if (!ends_with_ci(n, ".app") || it->is_symlink(e2) || !it->is_directory(e2)) continue;
+        if (!safe_zip_name(n) || n.find('/') != std::string::npos) { *err = "unsafe name in the disk image: " + n; return false; }
+        if (!run_tool("/usr/bin/ditto", {join(mnt, n), join(dest, n)}, err_tmp, 10 * 60 * 1000, &code)) {
+            const std::string w = last_line_of(read_text(err_tmp));
+            emu_log("ditto exit " + std::to_string(code) + (w.empty() ? "" : ": " + w));
+            *err = "could not copy " + n + " out of the disk image (ditto exit " + std::to_string(code) + (w.empty() ? "" : ": " + w) + ")";
+            return false;
+        }
+        ++apps;
+    }
+    if (apps == 0) { *err = "the disk image holds no application"; return false; }
+    return true;
+}
+
+/* The archive kind decides the unpacker: .dmg (macOS only), .7z / .tar.xz / .tar.gz (bsdtar) or .zip (miniz). */
+static bool unpack_archive(const std::string& archive, const std::string& stage, const std::string& root, std::string* err) {
+    if (ends_with_ci(archive, ".dmg")) return dmg_extract_to(archive, stage, join(root, "_downloads"), err);
+    if (ends_with_ci(archive, ".7z") || ends_with_ci(archive, ".tar.xz") || ends_with_ci(archive, ".tar.gz")) return untar_to(archive, stage, join(root, "_downloads\\list.txt"), err);
+    return unzip_to(archive, stage, err);
+}
+
+/* A downloaded .app may carry the quarantine flag (a browser download; the NSURLSession download RetroHub uses does not set it). Removed from every top-level bundle
+ * of the install, so Gatekeeper does not block the first start of a bundle RetroHub verified against its pinned hash. Best effort: a failure is only logged. */
+static void clear_quarantine(const std::string& dir) {
+    std::error_code ec;
+    for (fs::directory_iterator it(P(dir), ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string n = S(it->path().filename());
+        std::error_code e2;
+        if (!ends_with_ci(n, ".app") || it->is_symlink(e2) || !it->is_directory(e2)) continue;
+        int code = 0;
+        if (!run_tool("/usr/bin/xattr", {"-dr", "com.apple.quarantine", S(it->path())}, "", 120000, &code)) emu_log("xattr exit " + std::to_string(code) + " on " + n);
+    }
+}
+#endif
+
+/* Cemu's macOS build is x86_64 only: on an Apple Silicon Mac it runs under Rosetta 2, which macOS does not install by default. RetroHub never installs it for the
+ * player: this only tells whether it is there (the runtime file, or `arch -x86_64 /usr/bin/true` succeeding). On Windows and on an Intel Mac it is always fine. */
+MacLaunchExtra mac_launch_extra(Kind k, const std::string& install_dir) {
+    MacLaunchExtra x;
+#if !RH_WIN
+    switch (k) {
+    case Kind::Dolphin: x.env.push_back({"DOLPHIN_EMU_USERPATH", join(install_dir, "User")}); break;
+    case Kind::Pcsx2: x.args = {"-datapath", install_dir}; break;
+    case Kind::Ppsspp: x.env.push_back({"XDG_CONFIG_HOME", join(install_dir, "config")}); break;   // unverified, see ppsspp_system_dir
+    case Kind::Azahar: case Kind::Lichii: case Kind::Fritchii: x.cwd = install_dir; break;
+    default: break;
+    }
+#else
+    (void)k; (void)install_dir;
+#endif
+    return x;
+}
+
+bool rosetta_present() {
+#if RH_WIN || !defined(__arm64__)
+    return true;
+#else
+    if (g_test_hooks && g_test_hooks->rosetta >= 0) return g_test_hooks->rosetta != 0;
+    std::error_code ec;
+    if (fs::exists(P("/Library/Apple/usr/share/rosetta/rosetta"), ec)) return true;
+    int code = 1;
+    return run_tool("/usr/bin/arch", {"-x86_64", "/usr/bin/true"}, "", 30000, &code);
+#endif
+}
+bool cemu_rosetta_ok(std::string* msg) {
+    if (rosetta_present()) return true;
+    if (msg) *msg = "Cemu on this Mac needs Rosetta 2 (the Wii U emulator is built for Intel Macs). Install it once with:  softwareupdate --install-rosetta  (in Terminal), then try again";
+    return false;
+}
 
 static bool running_from(const std::string& exe);   // (below)
 static bool exe_is_running(const std::string& exe) {
@@ -1264,6 +1450,7 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
 #else
     /* TODO(macOS lane 7): a macOS pin for every kind (release_mac). Until then nothing is downloaded: never a Windows build. */
     if (release_is_placeholder(k)) { *err = std::string(name(k)) + " is not available on macOS yet"; return false; }
+    if (k == Kind::Cemu && !(g_test_hooks && g_test_hooks->release && g_test_hooks->kind == k && g_test_hooks->rosetta < 0) && !cemu_rosetta_ok(err)) return false;   // nothing is downloaded for a Cemu that could not start
 #endif
     const bool complete = file_exists(exe) && file_exists(join(dir, "retrohub-install.txt"));   // (marker is written last)
     if (complete && (!upgradable(k) || (installed_sha(dir) == rel.sha256 && update_leftovers(k, dir).empty()))) return true;
@@ -1338,8 +1525,12 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     }
     if (ok) {
         setp(2);
+#if RH_WIN
         ok = (archive.size() > 3 && archive.compare(archive.size() - 3, 3, ".7z") == 0) ? untar_to(archive, stage, join(root, "_downloads\\list.txt"), err)
                                                                                          : unzip_to(archive, stage, err);
+#else
+        ok = unpack_archive(archive, stage, root, err);
+#endif
     }
     if (ok) {
         setp(3);
@@ -1363,13 +1554,20 @@ static bool install_core(Kind k, const std::string& root, std::string* err, std:
     }
     const bool swapped = ok && upgrading;   // from here a failure must put the old build back
     if (ok && k == Kind::Pcsx2) ok = write_text(join(dir, "portable.ini"), "");   // portable mode: all data beside the exe, a user's own PCSX2 is never touched
-    if (ok && k == Kind::Ppsspp) { std::error_code ec2; fs::remove(P(join(dir, "installed.txt")), ec2); make_dirs(join(dir, "memstick")); }   // no installed.txt = portable: PPSSPP keeps everything in <dir>\memstick
+#if RH_WIN
+    if (ok && k == Kind::Ppsspp) { std::error_code ec2; fs::remove(P(join(dir, "installed.txt")), ec2); make_dirs(join(dir, "memstick")); }
+#endif   // no installed.txt = portable: PPSSPP keeps everything in <dir>\memstick
     if (ok && is_nx(k)) {   // (Lichii and Fritchii) a `user` folder beside lichii.exe = portable (a player's own %APPDATA%\eden is never touched); the bundled VC++ installer is not needed to play. The delete below is kept for older zips (~116 MB of .pdb files, vc_redist); current zips contain none of them, so it is a no-op. a build 130 nxformat.dll is gone too: an upgrade moves every old program file aside, and build 177 links nxformat statically
         make_dirs(join(dir, "user"));
         std::error_code ec2;
         for (const char* f : {"lichii.pdb", "eden-cli.pdb", "vc_redist.x64.exe", "lichii-updater.exe"}) fs::remove(P(join(dir, f)), ec2);   // lichii-updater.exe (build 125+) is Lichii's own self-updater: RetroHub is the only updater
     }
-    if (ok && k == Kind::Dolphin) ok = write_text(join(dir, "portable.txt"), "");   // Dolphin keeps its User folder beside the exe
+#if !RH_WIN
+    if (ok) clear_quarantine(dir);   // (macOS) no com.apple.quarantine on the installed bundles
+#endif
+#if RH_WIN
+    if (ok && k == Kind::Dolphin) ok = write_text(join(dir, "portable.txt"), "");
+#endif   // Dolphin keeps its User folder beside the exe
     if (ok) ok = write_text(join(dir, "retrohub-install.txt"), std::string(name(k)) + " " + rel.version + "\nsha256 " + rel.sha256 + "\n");   // the marker is last
     if (!ok) {
         if (swapped) { if (!restore_old(dir, keep, true)) *err += " (the old files could not all be put back; RetroHub will retry at the next start)"; }
@@ -1902,6 +2100,10 @@ void prepare_cemu_managed(const std::string& install_dir, const hubctl::Profile&
     write_cemu_profiles(join(portable, "controllerProfiles"), prof, pads, false);
 }
 
+/* Cemu user folder. Windows: <exe dir>\\portable, or a settings.xml beside the exe, else <appdata>\\Cemu. macOS: the Cemu 2.6 x86_64 binary has the "portable" and
+ * "mlc" / "-m,--mlc" names but no "Application Support" string (it uses wxStandardPaths, so the player's own folder is believed to be ~/Library/Application Support/Cemu);
+ * where a portable folder must sit relative to Cemu.app is UNVERIFIED, so RetroHub's own managed folder <install>/portable (beside the .app, never inside it) may be
+ * ignored by Cemu and its settings then land in the player's own folder. */
 std::string cemu_user_data_dir(const std::string& exe_dir, const std::string& appdata) {
     std::string ed = exe_dir;
     while (!ed.empty() && (ed.back() == '\\' || ed.back() == '/')) ed.pop_back();
@@ -2252,7 +2454,9 @@ static std::string dolphin_sel(const DolphinPads& p) {
 void prepare_dolphin(const std::string& install_dir, const DolphinPads& pads, const hubctl::Profile& prof) {
     std::string cfg = join(install_dir, "User\\Config");
     make_dirs(cfg);
+#if RH_WIN
     if (!file_exists(join(install_dir, "portable.txt"))) write_text(join(install_dir, "portable.txt"), "");
+#endif   // (macOS: portable.txt would have to sit inside the signed .app; Dolphin is pointed at <install>/User by DOLPHIN_EMU_USERPATH instead, see mac_launch_extra)
     /* Written once (marker), so settings changed later in Dolphin's own dialogs or by hand are kept: Dolphin.ini defaults,
      * GFX.ini defaults and the pad mappings. The pad mappings are rewritten when the RetroHub profile changed. */
     std::string ini = join(cfg, "Dolphin.ini"), gfx = join(cfg, "GFX.ini"), pad = join(cfg, "GCPadNew.ini");
@@ -3012,7 +3216,7 @@ SaveSession begin_session(const hub::GameEntry& e, const Install& inst, const st
         if (inst.dir.empty()) return s;
         s.psp_disc_id = hub::psp::disc_id_from_key(e.key);
         if (s.psp_disc_id.empty()) return s;   // homebrew without a DISC_ID: its save folders cannot be told apart
-        s.emu_root = join(inst.dir, "memstick\\PSP");   // <install>/memstick/PSP/SAVEDATA/<ID>... <-> <vault>/psp/<key>/battery/SAVEDATA/<ID>...
+        s.emu_root = psp_memstick_root(inst.dir);   // <install>/memstick/PSP/SAVEDATA/<ID>... <-> <vault>/psp/<key>/battery/SAVEDATA/<ID>...
         std::vector<std::string> seen;
         for (const std::string& base : {join(s.emu_root, "SAVEDATA"), join(battery, "SAVEDATA")})
             for (const auto& f : hub::subdirs_modified_since(base, 0))

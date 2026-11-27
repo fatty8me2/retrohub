@@ -6,6 +6,7 @@
 #include "emu_saves.h"
 #include "emulators.h"
 #include "ppsspp.h"
+#include "lichii.h"
 #include "games.h"
 #include "library.h"
 #include "logic.h"
@@ -740,7 +741,11 @@ static void test_prepare_and_find(const fs::path& dir) {
     hubemu::DolphinPads none, two;
     two.xinput[1] = true;
     hubemu::prepare_dolphin(dd.u8string(), none);
+#if RH_WIN
     CHECK(fs::exists(dd / "portable.txt") && fs::exists(dd / "User" / "Config" / "GCPadNew.ini"));
+#else   // macOS: no portable.txt (it would have to sit inside the signed .app); DOLPHIN_EMU_USERPATH points Dolphin at <install>/User
+    CHECK(!fs::exists(dd / "portable.txt") && fs::exists(dd / "User" / "Config" / "GCPadNew.ini"));
+#endif
     write_text(dd / "User" / "Config" / "GCPadNew.ini", "[GCPad1]\nButtons/A = custom\n");
     std::string di = read_text(dd / "User" / "Config" / "Dolphin.ini");
     write_text(dd / "User" / "Config" / "Dolphin.ini", hubui::ini_set(di, "Interface", "ConfirmStop", "True"));
@@ -1141,8 +1146,8 @@ static void test_ppsspp_pin_and_config(const fs::path& d) {
     CHECK(std::string(r.version) == "1.20.4" && r.size == 27658759ull && std::string(r.sha256).size() == 64);
     CHECK(std::string(r.sha256) == "a60f04ebdb0b5f1655422bd7f88349a46999b17ad5115d6ddb290c3934bd5163");
     CHECK(std::wstring(r.host) == L"www.ppsspp.org" && std::wstring(r.exe) == L"PPSSPPWindows64.exe");
-#else   // macOS: the pin table is a placeholder until lane 7 (never a Windows download)
-    CHECK(release_is_placeholder(Kind::Ppsspp) && std::wstring(r.exe) == L"PPSSPPSDL.app/Contents/MacOS/PPSSPPSDL" && std::wstring(r.host).empty());
+#else   // macOS: the official PPSSPP 1.20.4 dmg (details: test_mac_pins_and_archives)
+    CHECK(!release_is_placeholder(Kind::Ppsspp) && std::wstring(r.exe) == L"PPSSPPSDL.app/Contents/MacOS/PPSSPPSDL" && std::wstring(r.host) == L"www.ppsspp.org" && std::string(r.version) == "1.20.4");
 #endif
     CHECK(kind_for(hub::System::PSP) == Kind::Ppsspp && std::string(name(Kind::Ppsspp)) == "PPSSPP");
     CHECK(fs::path(managed_dir(Kind::Ppsspp, (d / "root").u8string())).filename() == "ppsspp");
@@ -1523,8 +1528,8 @@ static void test_fritchii_install(const fs::path& root) {
         CHECK(std::wstring(r.host) == L"github.com" && std::wstring(r.path) == L"/fatty8me2/Fritchii/releases/download/retrohub-fritchii-v5.8.4/Fritchii-v5.8.4-RetroHub-windows-x64.zip");
         CHECK(r.size == 66372119ull && std::string(r.sha256) == "3b359e27ef2eed69a1ce620e65d051f4c533613fb688ec2ea1692035108f6523");
     }
-#else   // macOS: every kind is a placeholder (nothing downloaded) until lane 7 adds the macOS pins
-    CHECK(std::string(hubemu::release(K).license) == "GPL-3.0" && hubemu::release_is_placeholder(K) && hubemu::release_is_placeholder(hubemu::Kind::Lichii));
+#else   // macOS: Lichii has a real pin, Fritchii (built from source) is still a placeholder: nothing is downloaded for it
+    CHECK(std::string(hubemu::release(K).license) == "GPL-3.0" && hubemu::release_is_placeholder(K) && !hubemu::release_is_placeholder(hubemu::Kind::Lichii));
     {
         std::string perr;
         CHECK(!hubemu::install_blocking(K, root.u8string(), &perr, nullptr) && perr.find("not available on macOS yet") != std::string::npos);   // never a Windows zip
@@ -1970,6 +1975,140 @@ static void test_repair_keeps_userdata(const fs::path& root) {
     fs::remove_all(root, ec);
 }
 
+#if !RH_WIN
+/* ---- macOS: the pin table, .dmg / .tar.xz installs (a synthetic image built here with hdiutil / tar: nothing from the network, nothing run), Rosetta for Cemu ---- */
+static int sh(const std::string& cmd) { return std::system((cmd + " >/dev/null 2>&1").c_str()); }
+static std::string shq(const fs::path& p) { return "'" + p.string() + "'"; }
+
+static void test_mac_pins_and_archives(const fs::path& root) {
+    using hubemu::Kind;
+    struct Pin { Kind k; const char* ver; const wchar_t* host; const wchar_t* path; uint64_t size; const char* sha; const wchar_t* exe; };
+    const Pin pins[] = {
+        {Kind::Dolphin, "2509", L"dl.dolphin-emu.org", L"/releases/2509/dolphin-2509-universal.dmg", 43276379ull, "14b7bd96ead242db4020acd991aae84ee83c3df65de9b09f2e79c8d531bf9780", L"Dolphin.app/Contents/MacOS/Dolphin"},
+        {Kind::Ppsspp, "1.20.4", L"www.ppsspp.org", L"/files/1_20_4/PPSSPP_macOS.dmg", 37090805ull, "bad86fc544a2c2fc5795d6a5832a8925d6db43e5789fe507f742305aaa357e17", L"PPSSPPSDL.app/Contents/MacOS/PPSSPPSDL"},
+        {Kind::Cemu, "2.6", L"github.com", L"/cemu-project/Cemu/releases/download/v2.6/cemu-2.6-macos-12-x64.dmg", 36588188ull, "698c4b298f94983e4d6c30e9687ba8ff05094dd3930837c5104cddc0b0a49e4e", L"Cemu.app/Contents/MacOS/Cemu"},
+        {Kind::Azahar, "2126.2", L"github.com", L"/azahar-emu/azahar/releases/download/2126.2/azahar-macos-arm64-2126.2.zip", 99740365ull, "c24dec2bd5111b7d79513d686c5aece6612cdbf9737b2e6ea99cfc426f1d4aef", L"azahar-macos-arm64-2126.2/Azahar.app/Contents/MacOS/azahar"},
+        {Kind::Pcsx2, "2.8.2", L"github.com", L"/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-v2.8.2-macos-Qt.tar.xz", 24377200ull, "3ed9eb40a33eae67134142c24255a079be444f0616ca29575a04a37981f7d426", L"PCSX2-v2.8.2.app/Contents/MacOS/PCSX2"},
+        {Kind::Lichii, "build 177", L"github.com", L"/zortos293/Lichii/releases/download/build-177/lichii-macos-arm64.zip", 80007273ull, "6504170d1530ebe42fe150724f44af20579f24f8336b87379155e1b7c19b775b", L"lichii.app/Contents/MacOS/lichii"},
+    };
+    for (const Pin& p : pins) {
+        const hubemu::Release& r = hubemu::release(p.k);
+        CHECK(!hubemu::release_is_placeholder(p.k) && std::string(r.version) == p.ver && std::wstring(r.host) == p.host && std::wstring(r.path) == p.path);
+        CHECK(r.size == p.size && std::string(r.sha256) == p.sha && std::wstring(r.exe) == p.exe);
+    }
+    CHECK(hubemu::release_is_placeholder(Kind::Lrps2) && hubemu::release_is_placeholder(Kind::Fritchii));   // still need a mirrored / self-built asset
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+    // a synthetic app bundle: an executable, a relative symbolic link, a data file
+    const fs::path src = root / "src";
+    write_text(src / "Fake.app" / "Contents" / "MacOS" / "fake", "#!/bin/sh\nexit 0\n");
+    fs::permissions(src / "Fake.app" / "Contents" / "MacOS" / "fake", fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
+    write_text(src / "Fake.app" / "Contents" / "Resources" / "data.txt", "DATA");
+    fs::create_symlink("../Resources/data.txt", src / "Fake.app" / "Contents" / "MacOS" / "link.txt", ec);
+    write_text(src / "readme.txt", "not an app: never copied");
+
+    auto run_install = [&](Kind k, const fs::path& archive, const wchar_t* path, const wchar_t* exe, const fs::path& inst_root, std::string* err) {
+        const std::string sha = hubemu::sha256_file(archive.u8string());
+        const std::string ver = "t1";
+        hubemu::Release rel = {ver.c_str(), L"example.invalid", path, fs::file_size(archive, ec), sha.c_str(), exe, "GPL-3.0"};
+        hubemu::InstallTestHooks hk;
+        hk.kind = k;
+        hk.release = &rel;
+        hk.fetch = [&](const hubemu::Release&, const std::string& out, std::string*) { std::error_code e2; fs::copy_file(archive, fs::u8path(out), fs::copy_options::overwrite_existing, e2); return !e2; };
+        hk.running = [](const std::string&) { return false; };
+        hubemu::set_install_test_hooks(&hk);
+        const bool ok = hubemu::install_blocking(k, inst_root.u8string(), err, nullptr);
+        hubemu::set_install_test_hooks(nullptr);
+        return ok;
+    };
+    auto check_installed = [&](Kind k, const fs::path& inst_root) {
+        const fs::path dir = fs::u8path(hubemu::managed_dir(k, inst_root.u8string()));
+        const fs::path app = dir / "Fake.app" / "Contents";
+        CHECK(fs::exists(app / "MacOS" / "fake") && (fs::status(app / "MacOS" / "fake").permissions() & fs::perms::owner_exec) != fs::perms::none);
+        CHECK(fs::is_symlink(app / "MacOS" / "link.txt") && read_text(app / "MacOS" / "link.txt") == "DATA");   // links survive as links
+        CHECK(fs::exists(dir / "retrohub-install.txt") && !fs::exists(dir / "_extract") && !fs::exists(dir / "readme.txt"));
+    };
+
+    // .tar.xz (PCSX2's kind of archive): /usr/bin/tar
+    {
+        const fs::path txz = root / "Fake.tar.xz";
+        if (sh("/usr/bin/tar -cJf " + shq(txz) + " -C " + shq(src) + " Fake.app") != 0) { std::printf("SKIP tar.xz install test: tar -cJ failed\n"); }
+        else {
+            std::string err;
+            CHECK(run_install(Kind::Pcsx2, txz, L"/test/Fake.tar.xz", L"Fake.app/Contents/MacOS/fake", root / "r_txz", &err));
+            if (!err.empty()) std::printf("tar.xz install: %s\n", err.c_str());
+            check_installed(Kind::Pcsx2, root / "r_txz");
+        }
+    }
+    // a tar.xz whose link climbs out of the archive is refused before anything is unpacked
+    {
+        const fs::path evil = root / "evil";
+        write_text(evil / "Evil.app" / "Contents" / "MacOS" / "evil", "x");
+        std::error_code e4;
+        fs::create_symlink("../../../../escape", evil / "Evil.app" / "Contents" / "MacOS" / "out", e4);
+        const fs::path etxz = root / "Evil.tar.xz";
+        if (!e4 && sh("/usr/bin/tar -cJf " + shq(etxz) + " -C " + shq(evil) + " Evil.app") == 0) {
+            std::string err;
+            CHECK(!run_install(Kind::Pcsx2, etxz, L"/test/Evil.tar.xz", L"Evil.app/Contents/MacOS/evil", root / "r_evil", &err) && err.find("link") != std::string::npos);
+            CHECK(!fs::exists(root / "r_evil" / "pcsx2" / "retrohub-install.txt"));
+        }
+    }
+    // .dmg (Dolphin / PPSSPP / Cemu): hdiutil attach + ditto of the top-level .app, volume detached again
+    {
+        const fs::path dmg = root / "Fake.dmg";
+        if (sh("/usr/bin/hdiutil create -quiet -volname RHTest -srcfolder " + shq(src) + " -format UDZO -ov " + shq(dmg)) != 0 || !fs::exists(dmg)) {
+            std::printf("SKIP dmg install test: hdiutil create failed here\n");
+        } else {
+            std::string err;
+            CHECK(run_install(Kind::Dolphin, dmg, L"/test/Fake.dmg", L"Fake.app/Contents/MacOS/fake", root / "r_dmg", &err));
+            if (!err.empty()) std::printf("dmg install: %s\n", err.c_str());
+            check_installed(Kind::Dolphin, root / "r_dmg");
+            CHECK(!fs::exists(fs::u8path(hubemu::managed_dir(Kind::Dolphin, (root / "r_dmg").u8string())) / "portable.txt"));   // never beside / inside the bundle on macOS
+            // no volume is left mounted and no mount folder is left behind
+            std::error_code e3;
+            bool leftover = false;
+            for (fs::directory_iterator it(root / "r_dmg" / "_downloads", e3), end; !e3 && it != end; it.increment(e3))
+                if (it->path().filename().string().rfind("mnt-", 0) == 0) leftover = true;
+            CHECK(!leftover);
+            CHECK(sh("/sbin/mount | /usr/bin/grep -q " + shq(root / "r_dmg")) != 0);
+            // a corrupt image fails cleanly: nothing installed, nothing mounted
+            const fs::path bad = root / "Bad.dmg";
+            write_text(bad, std::string(4096, 'x'));
+            err.clear();
+            CHECK(!run_install(Kind::Ppsspp, bad, L"/test/Bad.dmg", L"Fake.app/Contents/MacOS/fake", root / "r_bad", &err) && !err.empty());
+            CHECK(!fs::exists(fs::u8path(hubemu::managed_dir(Kind::Ppsspp, (root / "r_bad").u8string())) / "retrohub-install.txt"));
+        }
+    }
+    // Cemu needs Rosetta 2 on Apple Silicon: refused with the install command, nothing downloaded
+    {
+        hubemu::InstallTestHooks hk;
+        hk.kind = Kind::Cemu;
+        hk.rosetta = 0;
+        hubemu::set_install_test_hooks(&hk);
+        std::string msg, err;
+        CHECK(!hubemu::rosetta_present() && !hubemu::cemu_rosetta_ok(&msg) && msg.find("softwareupdate --install-rosetta") != std::string::npos);
+        CHECK(!hubemu::install_blocking(Kind::Cemu, (root / "r_cemu").u8string(), &err, nullptr) && err.find("Rosetta") != std::string::npos);
+        CHECK(!fs::exists(root / "r_cemu" / "_downloads") && hubemu::find(Kind::Cemu, "", "", (root / "r_cemu").u8string()).exe.empty());
+        hk.rosetta = 1;
+        CHECK(hubemu::rosetta_present() && hubemu::cemu_rosetta_ok(nullptr));
+        hubemu::set_install_test_hooks(nullptr);
+    }
+    // the launch helper: RetroHub's own folders, never the player's
+    {
+        const std::string inst = "/data/emulators/x";
+        auto d = hubemu::mac_launch_extra(Kind::Dolphin, inst);
+        CHECK(d.env.size() == 1 && d.env[0].first == "DOLPHIN_EMU_USERPATH" && d.env[0].second == inst + "/User");
+        auto p2 = hubemu::mac_launch_extra(Kind::Pcsx2, inst);
+        CHECK(p2.args == std::vector<std::string>({"-datapath", inst}));
+        CHECK(hubemu::mac_launch_extra(Kind::Lichii, inst).cwd == inst && hubemu::mac_launch_extra(Kind::Azahar, inst).cwd == inst);
+        CHECK(hubemu::lichii_user_dir(inst + "/lichii.app/Contents/MacOS") == inst + "/user" && hubemu::lichii_user_dir(inst) == inst + "/user");   // beside the .app, never inside it
+    }
+    fs::remove_all(root, ec);
+}
+#endif
+
 int main(int argc, char** argv) {
     test_3ds_header();
     test_wiiu_formats();
@@ -1994,6 +2133,9 @@ int main(int argc, char** argv) {
     test_install_robustness(dir / "robust");
     test_cleanup_leftovers(dir / "cleanup");
     test_repair_keeps_userdata(dir / "repair");
+#if !RH_WIN
+    test_mac_pins_and_archives(dir / "macpins");
+#endif
     fs::remove_all(dir, ec);
 
     int dl_bad = 0;

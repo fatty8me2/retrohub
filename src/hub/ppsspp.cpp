@@ -43,10 +43,19 @@ static std::string read_text(const std::string& p) {
 }
 static bool write_text(const std::string& p, const std::string& t) { return hubcfg::write_utf8(p, t); }   // durable: flush + one atomic replace; skipped when unchanged
 
-/* Windows: PPSSPP is portable while no installed.txt sits beside the exe, memstick = <install>\\memstick. macOS: PPSSPP's own default is
- * ~/Library/Application Support/PPSSPP; the portable memstick beside the install is kept (a memstick_dir.txt / --memstick style override);
- * macOS path: unverified. TODO(macOS lane 7): confirm how the macOS build picks the memstick and the UI keys (ppsspp_state_keys are Windows VKs). */
-std::string ppsspp_system_dir(const std::string& d) { return join(d, "memstick\\PSP\\SYSTEM"); }
+/* Windows: PPSSPP is portable while no installed.txt sits beside the exe, memstick = <install>\\memstick. macOS: the 1.20.4 SDL build has NO installed.txt logic (the string is
+ * not in the binary, and it has no --memstick option: its options are --loglevel --log --state --escape-exit --pause-menu-exit --fullscreen --windowed --root --gamesettings
+ * --appendconfig ...), and nothing may be written inside the signed .app. RetroHub's own folder is <install>/config/ppsspp (the memstick: PSP/SYSTEM, PSP/SAVEDATA), reached by
+ * starting PPSSPP with XDG_CONFIG_HOME=<install>/config (hubemu::mac_launch_extra), which is PPSSPP's SDL/Linux rule ($XDG_CONFIG_HOME/ppsspp, else ~/.config/ppsspp).
+ * UNVERIFIED: the binary imports getenv / NSHomeDirectory / getpwuid and holds the names "PPSSPP" and "ppsspp", but short path pieces are compiled into the code, so whether the
+ * macOS build honours XDG_CONFIG_HOME (rather than ~/Library/Application Support/PPSSPP or ~/.config/ppsspp) was not confirmed by running it. */
+std::string ppsspp_system_dir(const std::string& d) {
+#if RH_WIN
+    return join(d, "memstick\\PSP\\SYSTEM");
+#else
+    return join(d, "config/ppsspp/PSP/SYSTEM");
+#endif
+}
 
 std::string ppsspp_ini_defaults(const std::string& in) {
     std::string t = in;

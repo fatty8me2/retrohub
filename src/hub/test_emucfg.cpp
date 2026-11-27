@@ -269,7 +269,11 @@ static void test_ppsspp(const fs::path& root) {
     fs::path inst = root / "psp";
     hub::gs::Values v;
     CHECK(prepare_ppsspp(u8(inst), prof, 0, v).empty());
+#if RH_WIN
     fs::path ci = inst / "memstick" / "PSP" / "SYSTEM" / "controls.ini";
+#else   // macOS: PPSSPP is pointed at <install>/config with XDG_CONFIG_HOME (ppsspp_system_dir)
+    fs::path ci = inst / "config" / "ppsspp" / "PSP" / "SYSTEM" / "controls.ini";
+#endif
     CHECK(slurp(ci) == gen);
     put(ci, user);
     CHECK(prepare_ppsspp(u8(inst), prof, 0, v).empty());

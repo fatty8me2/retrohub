@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "library.h"
@@ -47,6 +48,25 @@ struct Release {
     const char* license;
 };
 const Release& release(Kind k);
+/* macOS: Cemu is an x86_64-only build and needs Rosetta 2 on Apple Silicon. rosetta_present() is true on Windows, on an Intel Mac and when Rosetta is installed;
+ * cemu_rosetta_ok() fills *msg with a plain "install Rosetta (softwareupdate --install-rosetta)" sentence when it is not. RetroHub never installs Rosetta itself.
+ * install_core refuses Cemu with that message, and the launch path should call it before starting Cemu. */
+bool rosetta_present();
+bool cemu_rosetta_ok(std::string* msg);
+/* macOS: how a managed install is pointed at RetroHub's own data folder instead of the player's own emulator folder (the .app bundle is signed: nothing is ever written
+ * inside it). The launcher adds `args` after the program, sets `env` and starts the child in `cwd` ("" = leave it). Empty on Windows (portable files beside the exe do it).
+ *  Dolphin  : env DOLPHIN_EMU_USERPATH=<install>/User              (the variable is in the Dolphin 2509 binary's strings)
+ *  PCSX2    : args -datapath <install>                              (the option's help text is in the 2.8.2 binary's strings)
+ *  Azahar   : cwd = <install>, whose `user` folder is its portable data folder   (strings: "user", and the ~/Library/Application Support/Azahar fallback; the cwd rule is unverified)
+ *  Lichii / Fritchii : cwd = <install>, same `user` rule             (strings: "user" + XDG fallback; unverified, see lichii_user_dir)
+ *  PPSSPP   : env XDG_CONFIG_HOME=<install>/config                 (its SDL rule; NOT confirmed for the macOS build, see ppsspp_system_dir)
+ *  Cemu     : nothing (no verified switch: it keeps using its own per-user folder, see docs/EMULATORS.md) */
+struct MacLaunchExtra {
+    std::string cwd;
+    std::vector<std::string> args;
+    std::vector<std::pair<std::string, std::string>> env;
+};
+MacLaunchExtra mac_launch_extra(Kind k, const std::string& install_dir);
 
 struct Install {
     std::string exe;          // full path, "" when not installed
@@ -116,6 +136,7 @@ struct InstallTestHooks {
     std::function<bool(const Release& rel, uint64_t offset, HttpReply* out)> serve;
     std::function<unsigned long(uint64_t file_pos)> write_fault;           // a Windows error code (0 = fine) the write at that file position fails with
     std::function<bool(const std::string& dir, uint64_t* free_bytes)> free_space;   // replaces the free-space query of the download folder
+    int rosetta = -1;   // macOS (Apple Silicon): -1 = ask the system, 0 = pretend Rosetta 2 is missing, 1 = pretend it is installed
 };
 void set_install_test_hooks(const InstallTestHooks* h);
 /* Same job, synchronously (console test): returns false and fills err on failure. */

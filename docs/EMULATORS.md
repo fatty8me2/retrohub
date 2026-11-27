@@ -452,3 +452,22 @@ requests only: `gh api repos/<owner>/<repo>/releases/tags/<tag>` for GitHub host
 with User-Agent `pin-check` for the other hosts (Content-Length). It prints one line per pin (OK, SIZE MISMATCH, SHA MISMATCH, MISSING or SKIPPED(reason))
 and exits 1 if any pin is not OK or SKIPPED. A HEAD cannot verify a SHA-256, so non-GitHub lines say the hash was not checked. Hookshot's toolchain
 downloads (`hookshot_build.cpp`) are not covered. Run it after changing a pin, or whenever upstream may have moved a file.
+
+# macOS (Apple Silicon)
+
+The Windows pins are Windows builds and are never used on macOS. `release_mac()` in `src/hub/emulators.cpp` holds the macOS pins; every file was downloaded once, hashed and listed (never run). A managed install lives in `<data>/emulators/<name>/` as a `.app` bundle plus RetroHub's own folders beside it; **nothing is ever written inside a `.app`** (it would break the code signature).
+
+| Kind | Version | Archive (host) | Arch | Signing | Executable inside | User folder RetroHub uses | Status of the folder rule |
+|---|---|---|---|---|---|---|---|
+| Dolphin | 2509 | `dolphin-2509-universal.dmg` (dl.dolphin-emu.org) | universal | notarized | `Dolphin.app/Contents/MacOS/Dolphin` | `<install>/User`, via env `DOLPHIN_EMU_USERPATH` | verified from Dolphin binary strings (the variable name); precedence over portable.txt is Dolphin's source |
+| PPSSPP | 1.20.4 | `PPSSPP_macOS.dmg` (www.ppsspp.org) | universal | notarized | `PPSSPPSDL.app/Contents/MacOS/PPSSPPSDL` | `<install>/config/ppsspp` (memstick), via env `XDG_CONFIG_HOME=<install>/config` | **unverified**: no installed.txt / memstick option exists in the binary; XDG is PPSSPP's SDL rule, not confirmed for the macOS build |
+| Cemu | 2.6 | `cemu-2.6-macos-12-x64.dmg` (github.com) | x86_64 only | unsigned | `Cemu.app/Contents/MacOS/Cemu` | `<install>/portable` | **unverified**: the binary has "portable" and `-m/--mlc` but no "Application Support" string |
+| Azahar | 2126.2 | `azahar-macos-arm64-2126.2.zip` (github.com) | arm64 | see release | `azahar-macos-arm64-2126.2/Azahar.app/Contents/MacOS/azahar` | `<install>/user` (working directory = `<install>`) | partly verified: strings hold `user` and the `~/Library/Application Support/Azahar` fallback; the cwd-relative rule is Citra's, unverified |
+| PCSX2 | 2.8.2 | `pcsx2-v2.8.2-macos-Qt.tar.xz` (github.com) | arm64 + x86_64 | see release | `PCSX2-v2.8.2.app/Contents/MacOS/PCSX2` | `<install>`, via `-datapath <install>` | verified from PCSX2 binary strings (`-datapath <path>` help text; default is `Library/Application Support/PCSX2`) |
+| Lichii | build 177 | `lichii-macos-arm64.zip` (github.com) | arm64 | not notarized | `lichii.app/Contents/MacOS/lichii` (lower case) | `<install>/user` (working directory = `<install>`) | partly verified: strings hold `user` and an XDG fallback (no "Application Support"); which wins is unverified |
+| Fritchii, LRPS2 core | | none yet | | | | | still placeholders: need a self-built / mirrored asset |
+
+- Install pipeline (`install_core`): the download is verified (size + SHA-256) before anything is unpacked. `.zip` goes through miniz, `.tar.xz` through `/usr/bin/tar` (entry names checked; a symbolic link entry is accepted only if relative and inside the archive, hard links are refused), `.dmg` through `hdiutil attach -readonly -nobrowse -noautoopen -mountpoint <fresh dir>` + `/usr/bin/ditto <mount>/<X>.app <stage>/<X>.app` (keeps signatures and links) + `hdiutil detach -quiet` (retried with `-force`; also on every error path). Finder never sees the image. Nothing from an archive is executed. `com.apple.quarantine` is cleared with `xattr -dr` from the installed bundles.
+- **Cemu needs Rosetta 2** on Apple Silicon (its macOS build is x86_64 only). `hubemu::cemu_rosetta_ok()` checks `/Library/Apple/usr/share/rosetta/rosetta`, then `arch -x86_64 /usr/bin/true`; the install is refused with a message that tells the player to run `softwareupdate --install-rosetta`. RetroHub never installs Rosetta itself. The launch path should call `cemu_rosetta_ok()` before starting Cemu.
+- Launch hints for the folders above come from `hubemu::mac_launch_extra(kind, install_dir)` (working directory, extra arguments, environment); the launcher applies them when it starts the emulator.
+- Tests: `hub_emu_test` builds a synthetic `.dmg` (hdiutil) and `.tar.xz` and installs them through the real code path, checks the six pins field by field, the Rosetta refusal and the launch helper.
