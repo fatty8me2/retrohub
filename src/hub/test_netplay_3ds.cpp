@@ -9,7 +9,11 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++g_fail; } } while (0)
@@ -28,7 +32,11 @@ int main() {
         CHECK(d.find("DirectConnectWindow") != std::string::npos && d.find("param(") == 0);
         for (const char* p : {"$AzPid", "$Status", "$Nick", "$Pw", "$Addr", "$Port", "$TimeoutS"}) CHECK(d.find(p) != std::string::npos);
         const std::string c = hubhelper::run_command(rhhelper::kScriptN3dsJoin, join_driver_args(42, "s.txt", "H", "", "127.0.0.1", 1, 120));
+#ifdef _WIN32
         CHECK(c.find("rh-helper.exe") != std::string::npos && c.find(" run n3ds_join.ps1 -AzPid 42") != std::string::npos);
+#else
+        CHECK(c.find(" run n3ds_join.ps1 -AzPid 42") != std::string::npos);   // TODO(macOS lane 7): rh-helper has no macOS build
+#endif
     }
     {
         std::string c = seed_join_config("[UI]\nfirstStart=false\n", "Host_1", "127.0.0.1", 24990);
@@ -156,7 +164,13 @@ int main() {
         CHECK(!set_console_username(&none, "Bob_2"));
         /* the console config is edited by UTF-8 path: a non-ASCII install folder works, an ASCII one is unchanged */
         for (const char* folder : {"rh_np3ds_ascii", "rh_np3ds_" "Zo\xC3\xAB_\xD0\x96_\xE6\x97\xA5\xE6\x9C\xAC"}) {
-            const std::string root = (std::filesystem::temp_directory_path() / std::filesystem::u8path(std::string(folder) + "_" + std::to_string(GetCurrentProcessId()))).u8string();
+            const std::string root = (std::filesystem::temp_directory_path() / std::filesystem::u8path(std::string(folder) + "_" + std::to_string(
+#ifdef _WIN32
+    GetCurrentProcessId()
+#else
+    (long)getpid()
+#endif
+))).u8string();
             const std::string cp = console_config_path(root);
             std::error_code ec;
             std::filesystem::create_directories(std::filesystem::u8path(cp).parent_path(), ec);

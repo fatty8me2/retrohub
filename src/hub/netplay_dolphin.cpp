@@ -3,6 +3,9 @@
 #include "helper_cmd.h"
 
 #include <cctype>
+#if !defined(_WIN32)
+#include <strings.h>
+#endif
 #include <cwctype>
 #include <cstdio>
 #include <cstring>
@@ -307,9 +310,19 @@ static std::string host_card_sync_impl(const std::string& card_dir, const std::s
     const fs::path src(card_dir), root(sync_root);
 #endif
     /* Only ever wipe our own scratch folder: absolute, named host-sync, not a link, not the card itself or above it. */
+#ifdef _WIN32
     if (!root.is_absolute() || root.filename() != L"host-sync") return fail("unsafe sync folder " + sync_root);
     const std::wstring rs = root.lexically_normal().wstring() + L"\\", cs = src.lexically_normal().wstring() + L"\\";
     if (_wcsnicmp(cs.c_str(), rs.c_str(), rs.size()) == 0) return fail("sync folder contains the card");
+#else
+    if (!root.is_absolute() || root.filename() != "host-sync") return fail("unsafe sync folder " + sync_root);
+    {
+        const std::string rs = root.lexically_normal().string() + "/", cs = src.lexically_normal().string() + "/";
+        if (strncasecmp(cs.c_str(), rs.c_str(), rs.size()) == 0) return fail("sync folder contains the card");
+        std::error_code le;
+        if (fs::is_symlink(root, le)) return fail("sync folder is a link");
+    }
+#endif
 #ifdef _WIN32
     const DWORD ra = GetFileAttributesW(root.c_str());
     if (ra != INVALID_FILE_ATTRIBUTES && (ra & FILE_ATTRIBUTE_REPARSE_POINT)) return fail("sync folder is a link");
@@ -323,18 +336,32 @@ static std::string host_card_sync_impl(const std::string& card_dir, const std::s
         for (const auto& e : fs::directory_iterator(src, ec)) {
             std::error_code fe;
             if (!e.is_regular_file(fe)) continue;
+#ifdef _WIN32
             std::wstring x = e.path().extension().wstring();
             for (auto& c : x) c = (wchar_t)towlower(c);
             if (x == L".gci") gci.push_back(e.path());
+#else
+            std::string x = e.path().extension().string();
+            for (auto& c : x) c = (char)tolower((unsigned char)c);
+            if (x == ".gci") gci.push_back(e.path());
+#endif
         }
     if (ec) return fail("cannot list " + card_dir + ": " + ec.message());
     for (const char* region : {"USA", "EUR", "JAP"}) {
         const fs::path dir = root / region;
         fs::create_directories(dir, ec);
+#ifdef _WIN32
         if (ec) return fail("cannot create " + winutil::to_utf8(dir.wstring()) + ": " + ec.message());
+#else
+        if (ec) return fail("cannot create " + dir.string() + ": " + ec.message());
+#endif
         for (const fs::path& f : gci) {
             fs::copy_file(f, dir / f.filename(), fs::copy_options::overwrite_existing, ec);
+#ifdef _WIN32
             if (ec) return fail("cannot copy " + winutil::to_utf8(f.filename().wstring()) + ": " + ec.message());
+#else
+            if (ec) return fail("cannot copy " + f.filename().string() + ": " + ec.message());
+#endif
             fs::permissions(dir / f.filename(), fs::perms::owner_write, fs::perm_options::add, ec);   // a read-only save must not block the next wipe
             ec.clear();
         }
@@ -426,6 +453,17 @@ std::string read_code(const Run& r) {
     }
     return code;
 }
+#else
+/* macOS: Dolphin's NetPlay dialogs are driven on Windows by a UI Automation PowerShell script; there is no equivalent yet.
+ * TODO(macOS lane 7): Accessibility (AXUIElement) driver. Never a fake success. */
+bool start(bool, const std::string&, const std::string&, const Spec&, int, const std::string&, const std::string&, const std::string&, Run* out) {
+    if (out) out->error = "GameCube NetPlay driving is not supported on macOS yet";
+    return false;
+}
+std::string read_code(const Run&) { return ""; }
+std::string read_status(const Run&) { return ""; }
+void set_host_buffer(const Run&, int) {}
+void signal_go(const Run&) {}
 #endif
 
 } // namespace gcnp

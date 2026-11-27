@@ -1,18 +1,30 @@
 // Minimal UPnP IGD client: SSDP discovery + SOAP AddPortMapping (UDP). Best effort, ~3 s worst case.
 #include "media.h"
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "sock_compat.h"
+#if RH_WIN
 #include <windows.h>
 #include <winhttp.h>
+#else
+#include "plat/plat_http.h"
+#endif
 
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
+
+#if RH_WIN
+#define WL(x) L##x
+#else
+#define WL(x) x
+#endif
 
 namespace rplay {
 
 namespace {
 
+#if RH_WIN
 std::string http(const std::wstring& host, int port, const std::wstring& path, bool post, const std::string& body, const std::wstring& hdrs, DWORD* status)
 {
     std::string out; *status = 0;
@@ -38,15 +50,42 @@ std::string http(const std::wstring& host, int port, const std::wstring& path, b
 }
 
 std::wstring w(const std::string& s) { return std::wstring(s.begin(), s.end()); }
+#else
+using DWORD = unsigned long;
+/* GET / POST to http://host:port/path (gateway control URLs are plain HTTP on the LAN). hdrs: CRLF-separated "Name: value" lines. */
+std::string http(const std::string& host, int port, const std::string& path, bool post, const std::string& body, const std::string& hdrs, DWORD* status)
+{
+    *status = 0;
+    plat::http::Request rq;
+    rq.method = post ? "POST" : "GET";
+    rq.url = "http://" + host + ":" + std::to_string(port) + path;
+    rq.body = body;
+    rq.connect_timeout_ms = rq.timeout_ms = 1500;
+    size_t i = 0;
+    while (i < hdrs.size()) {
+        size_t e = hdrs.find("\r\n", i); if (e == std::string::npos) e = hdrs.size();
+        std::string line = hdrs.substr(i, e - i); i = e + 2;
+        size_t c = line.find(':');
+        if (c == std::string::npos) continue;
+        size_t v = c + 1; while (v < line.size() && line[v] == ' ') ++v;
+        rq.headers.push_back({line.substr(0, c), line.substr(v)});
+    }
+    plat::http::Response rs;
+    if (!plat::http::perform(rq, &rs)) return std::string();
+    *status = (DWORD)rs.status;
+    return rs.body;
+}
+const std::string& w(const std::string& s) { return s; }
+#endif
 
 } // namespace
 
 bool upnp_map_udp(uint16_t port, std::string* info)
 {
-    WSADATA wd; WSAStartup(MAKEWORD(2, 2), &wd);
+    plat::sock_init();
     SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s == INVALID_SOCKET) return false;
-    DWORD to = 1200; setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&to, sizeof to);
+    sock_rcvtimeo_ms(s, 1200);
     sockaddr_in mc = {}; mc.sin_family = AF_INET; mc.sin_port = htons(1900); inet_pton(AF_INET, "239.255.255.250", &mc.sin_addr);
     const char* st = "urn:schemas-upnp-org:device:InternetGatewayDevice:1";
     char req[512];
@@ -70,8 +109,12 @@ bool upnp_map_udp(uint16_t port, std::string* info)
     if (sl != std::string::npos) path = location.substr(sl);
     std::string host = hostport; int hp = 80;
     size_t col = hostport.find(':'); if (col != std::string::npos) { host = hostport.substr(0, col); hp = atoi(hostport.c_str() + col + 1); }
+#if RH_WIN
     DWORD status;
-    std::string desc = http(w(host), hp, w(path), false, "", L"", &status);
+#else
+    unsigned long status;
+#endif
+    std::string desc = http(w(host), hp, w(path), false, "", WL(""), &status);
     const char* svcs[] = {"urn:schemas-upnp-org:service:WANIPConnection:1", "urn:schemas-upnp-org:service:WANIPConnection:2", "urn:schemas-upnp-org:service:WANPPPConnection:1"};
     std::string svc, ctrl;
     for (const char* sv : svcs) {
@@ -87,7 +130,7 @@ bool upnp_map_udp(uint16_t port, std::string* info)
     addrinfo hints = {}, *ai = nullptr; hints.ai_family = AF_INET;
     std::string ip = "0.0.0.0";
     if (getaddrinfo(host.c_str(), nullptr, &hints, &ai) == 0 && ai) { g.sin_addr = ((sockaddr_in*)ai->ai_addr)->sin_addr; freeaddrinfo(ai); }
-    if (connect(u, (sockaddr*)&g, sizeof g) == 0) { sockaddr_in me; int ml = sizeof me; getsockname(u, (sockaddr*)&me, &ml); char b[32]; inet_ntop(AF_INET, &me.sin_addr, b, sizeof b); ip = b; }
+    if (connect(u, (sockaddr*)&g, sizeof g) == 0) { sockaddr_in me; plat::socklen ml = sizeof me; getsockname(u, (sockaddr*)&me, &ml); char b[32]; inet_ntop(AF_INET, &me.sin_addr, b, sizeof b); ip = b; }
     closesocket(u);
     char body[1200];
     snprintf(body, sizeof body,

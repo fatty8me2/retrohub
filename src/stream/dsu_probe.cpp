@@ -2,8 +2,7 @@
  * usage: dsu_probe [seconds=20] [port=26760] [logfile]
  * Lines: "t=3.1 slot=0 connected=1 b1=0x00 b2=0x40 lx=200 ly=128"  (b1/b2 = DSU button bytes, sticks 0..255), then a summary per slot. */
 #include "dsu_server.h"
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "sock_compat.h"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -13,10 +12,10 @@ int main(int argc, char** argv) {
     int secs = argc > 1 ? std::atoi(argv[1]) : 20;
     int port = argc > 2 ? std::atoi(argv[2]) : dsu::kDefaultPort;
     if (argc > 3) std::freopen(argv[3], "w", stdout);
-    WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
+    plat::sock_init();
     SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    sockaddr_in to{}; to.sin_family = AF_INET; to.sin_port = htons((u_short)port); inet_pton(AF_INET, "127.0.0.1", &to.sin_addr);
-    DWORD tmo = 50; setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tmo, sizeof tmo);
+    sockaddr_in to{}; to.sin_family = AF_INET; to.sin_port = htons((uint16_t)port); inet_pton(AF_INET, "127.0.0.1", &to.sin_addr);
+    sock_rcvtimeo_ms(s, 50);
     struct Seen { bool conn = false, ever = false, was_conn_then_off = false; unsigned long pk = 0; int b1 = -1, b2 = -1; unsigned long conn_pk = 0; };
     std::map<int, Seen> seen;
     auto t0 = std::chrono::steady_clock::now(); double last_req = -10;

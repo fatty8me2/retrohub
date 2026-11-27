@@ -2,7 +2,15 @@
 #include "winutil.h"
 #include "helper_cmd.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#define PL(x) L##x
+#define PID_STR std::to_wstring(GetCurrentProcessId())
+#else
+#include <unistd.h>
+#define PL(x) x
+#define PID_STR std::to_string((long)getpid())
+#endif
 
 #include <cstdio>
 #include <cstring>
@@ -30,20 +38,31 @@ static fs::path dolphin_gci_folder(std::string configured, const char* region_di
         const size_t n = strlen(r);
         if (configured.size() > n && configured.compare(configured.size() - n, n, r) == 0) { configured.resize(configured.size() - n); break; }
     }
+#ifdef _WIN32
     return fs::path(winutil::to_wide(configured + "/" + region_dir));
+#else
+    return fs::path(configured + "/" + region_dir);
+#endif
+}
+static std::string u8(const fs::path& p) {
+#ifdef _WIN32
+    return winutil::to_utf8(p.wstring());
+#else
+    return p.string();
+#endif
 }
 
 static void test_host_card_sync() {
-    const fs::path base = fs::temp_directory_path() / (L"rh_gcnp_sync_" + std::to_wstring(GetCurrentProcessId()) + L"_é");   // non-ASCII path
+    const fs::path base = fs::temp_directory_path() / (PL("rh_gcnp_sync_") + PID_STR + PL("_é"));   // non-ASCII path
     std::error_code ec;
     fs::remove_all(base, ec);
-    const fs::path card = base / L"card é\\GCI";
+    const fs::path card = base / PL("card é") / PL("GCI");
     put(card / "01-G4QE-MarioSoccer.gci", std::string("STRIKERS\0save", 13));
     put(card / "01-GYQE-MarioBaseball.GCI", "MSB");            // upper-case extension counts
     put(card / "notes.txt", "x");                              // not a save
     put(card / "sub" / "deep.gci", "nested");                  // only the folder itself, like Dolphin's DoFileSearch
-    const std::string card8 = winutil::to_utf8(card.wstring()), root8 = winutil::to_utf8((base / L"host-sync").wstring());
-    put(base / L"host-sync" / "USA" / "stale.gci", "old session");
+    const std::string card8 = u8(card), root8 = u8((base / PL("host-sync")));
+    put(base / PL("host-sync") / "USA" / "stale.gci", "old session");
     std::string err;
     const std::string a = host_card_sync_args(card8, root8, &err);
     CHECK(a == " -C \"Dolphin.Core.GCIFolderAPath=" + root8 + "\"");
@@ -60,18 +79,18 @@ static void test_host_card_sync() {
     CHECK(!host_card_sync_args(card8, root8, &err).empty());
     CHECK(!fs::exists(dolphin_gci_folder(root8, "USA") / "01-GYQE-MarioBaseball.GCI") && fs::exists(dolphin_gci_folder(root8, "USA") / "01-G4QE-MarioSoccer.gci"));
     /* no card folder yet (first online game): empty region folders, so host and guests both start blank */
-    const std::string none8 = winutil::to_utf8((base / L"missing").wstring());
+    const std::string none8 = u8((base / PL("missing")));
     CHECK(!host_card_sync_args(none8, root8, &err).empty());
     CHECK(fs::is_directory(dolphin_gci_folder(root8, "EUR")) && fs::is_empty(dolphin_gci_folder(root8, "EUR")));
     /* bad input: no argument (the launch then logs and goes on with the override alone) */
     err.clear();
     CHECK(host_card_sync_args("", root8, &err).empty() && !err.empty());
     /* never wipe anything but our own scratch folder */
-    err.clear(); CHECK(host_card_sync_args(card8, winutil::to_utf8(base.wstring()), &err).empty() && !err.empty());   // not named host-sync
+    err.clear(); CHECK(host_card_sync_args(card8, u8(base), &err).empty() && !err.empty());   // not named host-sync
     err.clear(); CHECK(host_card_sync_args(card8, "netplay\\gc\\host-sync", &err).empty() && !err.empty());          // relative
-    const fs::path inside = base / L"host-sync" / "card";
+    const fs::path inside = base / PL("host-sync") / "card";
     put(inside / "x.gci", "x");
-    err.clear(); CHECK(host_card_sync_args(winutil::to_utf8(inside.wstring()), root8, &err).empty() && fs::exists(inside / "x.gci"));   // root holds the card
+    err.clear(); CHECK(host_card_sync_args(u8(inside), root8, &err).empty() && fs::exists(inside / "x.gci"));   // root holds the card
     CHECK(fs::exists(card / "01-G4QE-MarioSoccer.gci"));
     /* a read-only save is copied, and does not block the next launch's wipe */
     fs::permissions(card / "01-G4QE-MarioSoccer.gci", fs::perms::owner_write, fs::perm_options::remove, ec);
@@ -169,8 +188,12 @@ int main() {
     CHECK(driver_script().size() > 1000 && driver_script().find("param(") == 0);   // the shipped file is read, not empty
     {   // the hub launches the helper exe with the allowlisted script name; no interpreter name in the hub
         const std::string c = hubhelper::run_command(rhhelper::kScriptDolphinDriver, "-Role host");
+#ifdef _WIN32
         CHECK(c.find("rh-helper.exe") != std::string::npos && c.find(" run dolphin_netplay_driver.ps1 -Role host") != std::string::npos);
         CHECK(rhhelper::script_allowed(rhhelper::kScriptDolphinDriver));
+#else
+        CHECK(c.find(" run dolphin_netplay_driver.ps1 -Role host") != std::string::npos);   // TODO(macOS lane 7): rh-helper has no macOS build
+#endif
     }
     CHECK(std::string(driver_script()).find("Start NetPlay...") != std::string::npos);
     CHECK(std::string(driver_script()).find("ClassName -eq \"MainWindow\"") != std::string::npos);   // main window found by class even when the title is "dolphin-emu"

@@ -1,7 +1,6 @@
 #include "dsu_server.h"
 #include "pad_convert.h"
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "sock_compat.h"
 #include <cstdio>
 #include <cstring>
 #include <thread>
@@ -67,9 +66,9 @@ int main() {
     /* Loopback round trip against the real server (ephemeral port). */
     DsuServer srv;
     CHECK(srv.start(0, true) && srv.port() != 0);
-    WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
+    plat::sock_init();
     SOCKET c = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    DWORD to = 1000; setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, (const char*)&to, sizeof to);
+    sock_rcvtimeo_ms(c, 1000);
     sockaddr_in sa{}; sa.sin_family = AF_INET; sa.sin_port = htons(srv.port()); sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     auto tx = [&](const std::vector<uint8_t>& b) { sendto(c, (const char*)b.data(), (int)b.size(), 0, (sockaddr*)&sa, sizeof sa); };
     auto rx = [&](std::vector<uint8_t>* out) { uint8_t buf[512]; int n = recv(c, (char*)buf, sizeof buf, 0); if (n <= 0) return false; out->assign(buf, buf + n); return true; };

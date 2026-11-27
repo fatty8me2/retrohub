@@ -85,7 +85,8 @@ std::string list_item_suffix(const Spec& s);
 /* Seconds a guest waits before connecting so NetPlay ports follow room-slot order (slot 1 = first guest). */
 int guest_connect_delay_s(int slot);
 
-#ifdef _WIN32
+/* Run/start/... exist on every platform; on macOS start() reports "not supported yet" (TODO(macOS lane 7): drive Dolphin's NetPlay
+ * dialogs with the Accessibility API instead of the Windows UI Automation driver). */
 struct Run {
     unsigned long dolphin_pid = 0;
     unsigned long driver_pid = 0;
@@ -104,6 +105,5 @@ std::string read_code(const Run& r);
 std::string read_status(const Run& r);   // whole status file
 void set_host_buffer(const Run& r, int frames);   // host: the session's ping is known only once everyone connected
 void signal_go(const Run& r);            // guest: the host's NetPlay server is listening, connect now
-#endif
 
 } // namespace gcnp
