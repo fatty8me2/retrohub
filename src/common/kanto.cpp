@@ -566,7 +566,7 @@ void write_log(const std::string& dir, const std::string& line) {
     // Same local-time string as the Windows branch (docs/MACOS.md).
     const auto wall = std::chrono::system_clock::now();
     std::time_t tt = std::chrono::system_clock::to_time_t(wall);
-    int ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(wall.time_since_epoch()).count() % 1000;
+    int ms = (int)(std::chrono::duration_cast<std::chrono::milliseconds>(wall.time_since_epoch()).count() % 1000);
     std::tm tm{};
     plat::local_tm(tt, &tm);
     std::snprintf(nm, sizeof nm, "kanto-%04d-%02d-%02d.log", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);

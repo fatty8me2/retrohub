@@ -26,6 +26,8 @@
 
 #include <set>
 #include "library_scan_info.h"
+#include "plat/plat.h"
+#include "test_platform_paths.h"
 using namespace hub;
 namespace fs = std::filesystem;
 
@@ -535,6 +537,7 @@ static void test_scan_cache_state(const fs::path& dir) {
         flush_library_state();
         const std::string before = slurp(lj);
         CHECK(before.find(k) != std::string::npos);
+#if RH_WIN
         HANDLE h = CreateFileW(lj.c_str(), GENERIC_READ, FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         CHECK(h != INVALID_HANDLE_VALUE);
         library_set_data_dir((dir / "userdata").u8string());   // the next read finds the file locked
@@ -542,6 +545,9 @@ static void test_scan_cache_state(const fs::path& dir) {
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
         flush_library_state();                                  // the lock is gone: nothing may be written over it this session
         CHECK(slurp(lj) == before);
+#else
+        /* no mandatory file locks on macOS: nothing can hold library.json unreadable, so this case has no equivalent */
+#endif
         library_set_data_dir((dir / "userdata").u8string());   // readable again
         CHECK(game_state(k).favorite && game_state(k).play_seconds == 150);
         record_play("gba:other-game", 1700003000, 60);         // and the next session records normally
@@ -569,7 +575,7 @@ static void test_parallel_zip_scan(const fs::path& dir) {
         Bytes rom = gba ? make_gba(t, code, 100 + i, 8 * 1024 * 1024) : make_gb(t, 0, (uint16_t)(0x2000 + i), 200 + i);
         mz_zip_archive z;
         std::memset(&z, 0, sizeof z);
-        FILE* zf = _wfopen((root / (std::string(nm) + ".zip")).wstring().c_str(), L"wb");   // wide: the folder name is non-ASCII
+        FILE* zf = plat::fopen_path(root / (std::string(nm) + ".zip"), "wb");   // wide: the folder name is non-ASCII
         CHECK(zf != nullptr);
         if (!zf) continue;
         std::string inner = std::string(nm) + (gba ? ".gba" : ".gb");
@@ -671,7 +677,7 @@ int main(int argc, char** argv) {
         return ok ? 0 : 1;
     }
     std::error_code ec;
-    fs::path dir = fs::temp_directory_path(ec) / ("hublibrary_test_dir_" + std::to_string(GetCurrentProcessId()));
+    fs::path dir = fs::temp_directory_path(ec) / ("hublibrary_test_dir_" + std::to_string(plat::current_pid()));
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
 
@@ -738,7 +744,7 @@ int main(int argc, char** argv) {
         CHECK(gc_serial_for_name("Totally Unknown Game (USA).7z").empty());
         CHECK(find_game_for("gc", "GXXE01", "") && find_game_for("gc", "GMSE01", "") && find_game_for("gc", "GP6E01", ""));
 
-        fs::path gdir = fs::temp_directory_path() / ("hublibrary_gc_archive_" + std::to_string(GetCurrentProcessId()));
+        fs::path gdir = fs::temp_directory_path() / ("hublibrary_gc_archive_" + std::to_string(plat::current_pid()));
         std::error_code gec;
         fs::remove_all(gdir, gec);
         fs::create_directories(gdir / "data");
@@ -754,9 +760,13 @@ int main(int argc, char** argv) {
         write_file(gdir / "src" / "Mario Kart - Double Dash!! (USA).iso", disc);
 
         auto make_7z = [&](const std::string& out, const std::string& member) {
+#if RH_WIN
             std::wstring cmd = L"\"\"" + std::wstring(_wgetenv(L"SystemRoot")) + L"\\System32\\tar.exe\" --format 7zip -cf \"" +
                                fs::u8path(out).wstring() + L"\" -C \"" + (gdir / "src").wstring() + L"\" \"" + fs::path(member).wstring() + L"\"\"";
             _wsystem(cmd.c_str());
+#else
+            tar7z(fs::u8path(out), gdir / "src", {member});
+#endif
         };
         // zip (miniz) and 7z (Windows bsdtar writes 7z too)
         mz_zip_archive gz;
@@ -838,9 +848,13 @@ int main(int argc, char** argv) {
             std::memcpy(zd.data(), "GZLE01", 6);
             write_file(ud / L"in" / L"Zelda ü.iso", zd);
             fs::path u7 = ud / L"Zelda ü.7z";
+#if RH_WIN
             std::wstring cmd = L"\"\"" + std::wstring(_wgetenv(L"SystemRoot")) + L"\\System32\\tar.exe\" --format 7zip -cf \"" + u7.wstring() +
                                L"\" -C \"" + (ud / L"in").wstring() + L"\" \"Zelda ü.iso\"\"";
             _wsystem(cmd.c_str());
+#else
+            tar7z(u7, ud / L"in", {"Zelda \xC3\xBC.iso"});   // "Zelda ü.iso" in UTF-8
+#endif
             tar_unicode_ok = fs::exists(u7);
             if (!tar_unicode_ok) std::printf("SKIP: non-ASCII 7z checks: tar.exe could not write into this folder name\n");
             if (tar_unicode_ok) {

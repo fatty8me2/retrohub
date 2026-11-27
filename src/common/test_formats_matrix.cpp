@@ -4,7 +4,11 @@
  * folder", unknown/damaged files (must be reported, never vanish) and a too-small rom-cache limit.
  * Usage: formats_matrix_test [fixture-id-substring] [--keep] [--quiet]     (exit 1 on any failed cell)
  * Scratch data in %TEMP%\formats_matrix_<pid>; 7z written by Windows' bsdtar; .rar = the 7z bytes under a .rar name (bsdtar sniffs content). */
+#include "plat/plat.h"
+#include "test_platform_paths.h"
+#if RH_WIN
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -340,7 +344,7 @@ static bool make_zip(const fs::path& out, const Members& m) {
     fs::remove(out, ec);
     mz_zip_archive z;
     std::memset(&z, 0, sizeof z);
-    FILE* f = _wfopen(out.wstring().c_str(), L"wb");
+    FILE* f = plat::fopen_path(out, "wb");
     if (!f) return false;
     if (!mz_zip_writer_init_cfile(&z, f, 0)) { std::fclose(f); return false; }
     bool ok = true;
@@ -357,6 +361,7 @@ static bool make_7z(const fs::path& out, const Members& m, const fs::path& stage
     for (const auto& e : m) write_file(stage / P8(e.first), e.second);
     fs::create_directories(out.parent_path(), ec);
     fs::remove(out, ec);
+#if RH_WIN
     std::wstring cmd = L"\"" + std::wstring(_wgetenv(L"SystemRoot")) + L"\\System32\\tar.exe\" --format 7zip -cf \"" + out.wstring() + L"\" -C \"" + stage.wstring() + L"\"";
     for (const auto& e : m) cmd += L" \"" + P8(e.first).wstring() + L"\"";
     {   /* CreateProcessW directly: cmd.exe would squeeze the Unicode names through the OEM code page */
@@ -368,6 +373,9 @@ static bool make_7z(const fs::path& out, const Members& m, const fs::path& stage
             CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
         }
     }
+#else
+    { std::vector<std::string> names; for (const auto& e : m) names.push_back(e.first); tar7z(out, stage, names); }
+#endif
     fs::remove_all(stage, ec);
     return fs::exists(out) && is_7z_file(S8(out));
 }
@@ -996,6 +1004,7 @@ static void test_misc(const fs::path& root, const fs::path& stage) {
 }
 
 /* ------------------------------------------------------------------ main */
+#if RH_WIN
 static void bad_param(const wchar_t* expr, const wchar_t* func, const wchar_t* file, unsigned line, uintptr_t) {
     std::fwprintf(stderr, L"CRT invalid parameter: %ls in %ls (%ls:%u)\n", expr ? expr : L"?", func ? func : L"?", file ? file : L"?", line);
     std::fflush(stderr);
@@ -1006,13 +1015,16 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS* ep) {
     std::fflush(stderr);
     return EXCEPTION_EXECUTE_HANDLER;
 }
+#endif
 int main(int argc, char** argv) {
+#if RH_WIN
     _set_invalid_parameter_handler(bad_param);
     SetUnhandledExceptionFilter(crash_filter);
+#endif
     std::string filter;
     bool keep = false, only_misc = false;   // --misc: just the key / title / note regressions (about a minute)
     for (int i = 1; i < argc; ++i) { std::string a = argv[i]; if (a == "--keep") keep = true; else if (a == "--misc") only_misc = true; else if (a == "--dump-keys" && i + 1 < argc) g_dump_path = argv[++i]; else if (a == "--quiet") g_quiet = true; else filter = a; }
-    fs::path root = fs::temp_directory_path() / (L"formats_matrix_" + std::to_wstring(GetCurrentProcessId()));
+    fs::path root = fs::temp_directory_path() / ("formats_matrix_" + std::to_string(plat::current_pid()));
     std::error_code ec;
     fs::remove_all(root, ec);
     library_set_data_dir(S8(root / "data"));

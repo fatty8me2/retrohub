@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <deque>
+#include <filesystem>
 #include <set>
 
 #if RH_WIN
@@ -61,6 +62,9 @@ static std::vector<std::string> split_path(const std::string& p) {
 
 static std::string join_path(const std::vector<std::string>& c, size_t n) {
     std::string s;
+#if !RH_WIN
+    if (n > 0 && !c.empty()) s += '/';   // split_path dropped the leading empty component: macOS paths are rooted at "/"
+#endif
     for (size_t i = 0; i < n && i < c.size(); ++i) { if (i) s += plat::kSep; s += c[i]; }
 #if RH_WIN
     if (n == 1 && !c.empty() && c[0].size() == 2 && c[0][1] == ':') s += '\\';   // "D:" -> "D:\"
@@ -418,16 +422,28 @@ std::vector<Root> default_roots() {
     };
     const std::string appdata = plat::join(home, "Library/Application Support");
     add(plat::join(appdata, "RetroArch/roms"), true);
-    cfg(plat::join(appdata, "Dolphin Emulator/Config/Dolphin.ini"), parse_dolphin_ini_paths);
-    cfg(plat::join(home, "Documents/Dolphin Emulator/Config/Dolphin.ini"), parse_dolphin_ini_paths);
+    /* App folder names on macOS (from memory, not verified on a Mac with each emulator installed): Dolphin keeps its user folder in
+     * ~/Library/Application Support/Dolphin ("Dolphin Emulator" is the Windows name); Cemu and Azahar use their own name under
+     * Application Support; Azahar / Citra keep qt-config.ini in a config/ subfolder. A missing file is simply skipped. */
+    cfg(plat::join(appdata, "Dolphin/Config/Dolphin.ini"), parse_dolphin_ini_paths);
     cfg(plat::join(appdata, "Cemu/settings.xml"), parse_cemu_xml_paths);
     cfg(plat::join(appdata, "Azahar/config/qt-config.ini"), parse_qt_gamedirs);
     cfg(plat::join(appdata, "Citra/config/qt-config.ini"), parse_qt_gamedirs);
 
-    {   // the volume root: game-ish folders one level down, same shortlist as the drive sweep on Windows
-        std::error_code de;
-        fs::directory_iterator dit(fs::path("/"), fs::directory_options::skip_permission_denied, de);
-        if (!de) {
+    {   // the volume roots ("/" and each mounted volume under /Volumes): game-ish folders one level down, same shortlist as the drive sweep on Windows
+        std::vector<std::string> bases{"/"};
+        {
+            std::error_code ve;
+            fs::directory_iterator vit(fs::path("/Volumes"), fs::directory_options::skip_permission_denied, ve);
+            if (!ve) for (const fs::directory_entry& v : vit) {
+                std::error_code ee;
+                if (v.is_directory(ee) && !v.is_symlink(ee)) bases.push_back(plat::join("/Volumes", v.path().filename().string()));   // the boot volume is a symlink to "/"
+            }
+        }
+        for (const std::string& base : bases) {
+            std::error_code de;
+            fs::directory_iterator dit(fs::path(base), fs::directory_options::skip_permission_denied, de);
+            if (de) continue;
             int n = 0;
             for (const fs::directory_entry& e : dit) {
                 if (++n > 2000) break;
@@ -436,7 +452,7 @@ std::vector<Root> default_roots() {
                 const std::string nm = lower(e.path().filename().string());
                 if (nm == "games" || nm == "rom" || nm == "roms" || nm == "emulation" || nm == "emulators" || nm == "retroarch" ||
                     nm == "retro games" || nm == "game roms" || nm == "retrohub games")
-                    add(plat::join("/", e.path().filename().string()), true);
+                    add(plat::join(base, e.path().filename().string()), true);
             }
         }
     }

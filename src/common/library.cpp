@@ -19,6 +19,15 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <CoreFoundation/CoreFoundation.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern char** environ;
 #endif
 
 #include <algorithm>
@@ -27,10 +36,12 @@
 #include <cwctype>
 #include <cstdio>
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <set>
@@ -63,6 +74,29 @@ fs::path utf8_path(const std::string& s) {
 #endif
 }
 std::string path_utf8(const fs::path& p) { return to_utf8(p.native()); }
+
+/* True when the volume holding `dir` is known to have less than `need` bytes free for this user. */
+bool disk_short(const fs::path& dir, uint64_t need) {
+#if RH_WIN
+    ULARGE_INTEGER free_bytes{};
+    return GetDiskFreeSpaceExW(dir.wstring().c_str(), &free_bytes, nullptr, nullptr) && free_bytes.QuadPart < need;
+#else
+    std::error_code ec;
+    const fs::space_info si = fs::space(dir, ec);
+    return !ec && si.available < need;
+#endif
+}
+
+/* fopen by path. "N" (no-inherit) is a Windows CRT mode flag: dropped on macOS. */
+FILE* fopen_p(const fs::path& p, const char* mode) {
+#if RH_WIN
+    return plat::fopen_path(p, mode);
+#else
+    std::string m;
+    for (const char* c = mode; *c; ++c) if (*c != 'N') m += *c;
+    return plat::fopen_path(p, m.c_str());
+#endif
+}
 
 std::string ascii_lower(std::string s) {
     for (auto& c : s)
@@ -930,7 +964,7 @@ size_t zip_prefix_cb(void* user, mz_uint64 /*ofs*/, const void* data, size_t len
 bool id_3ds_zip(const fs::path& zip, GameEntry* e) {
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
-    FILE* f = _wfopen(zip.wstring().c_str(), L"rbN");
+    FILE* f = fopen_p(zip, "rbN");
     if (!f) return false;
     if (!mz_zip_reader_init_cfile(&za, f, 0, 0)) { std::fclose(f); return false; }
     bool ok = false;
@@ -1131,11 +1165,15 @@ size_t cancel_file_write_cb(void* user, mz_uint64 /*ofs*/, const void* data, siz
 
 /* The \\?\ form of an absolute path, used only when the plain one is near MAX_PATH (short paths stay as they are). */
 fs::path long_path(const fs::path& p) {
+#if !RH_WIN
+    return p;   // no MAX_PATH limit on macOS
+#else
     std::wstring w = p.wstring();
     if (w.size() < 200 || w.compare(0, 4, L"\\\\?\\") == 0) return p;
     std::error_code ec;
     fs::path abs = fs::absolute(p, ec);
     return ec ? p : fs::path(L"\\\\?\\" + abs.wstring());
+#endif
 }
 }
 
@@ -1143,6 +1181,7 @@ fs::path long_path(const fs::path& p) {
  * extracted once to data_dir()/rom-cache/<zip name>-<entry crc>/ and that file
  * is what gets identified and launched. Disc images are never extracted. */
 /* Waits for a child process in 100 ms slices; ends it (by its own handle) on cancel or after timeout_ms. 0 = it exited, 1 = timed out and was ended, 2 = cancelled and ended. */
+#if RH_WIN
 int child_wait_cancellable(void* process, unsigned timeout_ms) {
     HANDLE proc = (HANDLE)process;
     const ULONGLONG t0 = GetTickCount64();
@@ -1152,6 +1191,43 @@ int child_wait_cancellable(void* process, unsigned timeout_ms) {
         if (GetTickCount64() - t0 > timeout_ms) { TerminateProcess(proc, 1); WaitForSingleObject(proc, 5000); return 1; }
     }
 }
+#else
+/* macOS: a child process is its pid carried in the void* (the test passes the pid of a process it started). Exited children are reaped here. */
+namespace {
+void* pid_handle(pid_t pid) { return (void*)(intptr_t)pid; }
+pid_t handle_pid(void* h) { return (pid_t)(intptr_t)h; }
+/* Waits up to `ms` for the child; true once it has exited (and been reaped, its exit code in *code: 128+signal when it was killed). */
+bool proc_wait_ms(void* h, unsigned ms, int* code) {
+    const uint64_t t0 = plat::now_ms();
+    for (;;) {
+        int st = 0;
+        pid_t r = waitpid(handle_pid(h), &st, WNOHANG);
+        if (r == handle_pid(h) || (r < 0 && errno != EINTR)) {
+            if (code) *code = r < 0 ? 1 : WIFEXITED(st) ? WEXITSTATUS(st) : 128 + WTERMSIG(st);
+            return true;
+        }
+        if (plat::now_ms() - t0 >= ms) return false;
+        plat::sleep_ms(5);
+    }
+}
+/* SIGKILL, then reap (the child is gone when this returns). */
+void proc_kill_reap(void* h, int* code) {
+    kill(handle_pid(h), SIGKILL);
+    int st = 0;
+    while (waitpid(handle_pid(h), &st, 0) < 0 && errno == EINTR) {}
+    if (code) *code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + WTERMSIG(st);
+}
+}
+
+int child_wait_cancellable(void* process, unsigned timeout_ms) {
+    const uint64_t t0 = plat::now_ms();
+    for (;;) {
+        if (proc_wait_ms(process, 100, nullptr)) return 0;
+        if (g_cancel.load()) { proc_kill_reap(process, nullptr); return 2; }
+        if (plat::now_ms() - t0 > timeout_ms) { proc_kill_reap(process, nullptr); return 1; }
+    }
+}
+#endif
 
 static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom, fs::path* inner_name) {
     if (g_cancel.load()) return false;
@@ -1159,7 +1235,7 @@ static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom, fs::path*
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
     std::string zpath = path_utf8(zip);
-    FILE* f = _wfopen(zip.wstring().c_str(), L"rbN");
+    FILE* f = fopen_p(zip, "rbN");
     if (!f) return false;
     if (!mz_zip_reader_init_cfile(&za, f, 0, 0)) { std::fclose(f); return false; }
     bool ok = false;
@@ -1186,7 +1262,7 @@ static bool extract_zipped_rom(const fs::path& zip, fs::path* out_rom, fs::path*
             fs::create_directories(wdir, ec);
             fs::path tmp = rom; tmp += L".part";
             bool done = false;
-            if (FILE* out = _wfopen(tmp.c_str(), L"wbN")) {   // wide path: works past MAX_PATH
+            if (FILE* out = fopen_p(tmp, "wbN")) {   // wide path: works past MAX_PATH
                 done = mz_zip_reader_extract_to_callback(&za, i, cancel_file_write_cb, out, 0) != 0;   // stops mid-file when the app closes: the .part is removed below
                 done = (std::fclose(out) == 0) && done;
             }
@@ -1318,12 +1394,19 @@ std::vector<ArchiveEntry> parse_tar_listing(const std::string& text) {
     return out;
 }
 
+#if RH_WIN
+#define RH_NATIVE_LIT(s) L##s
+#else
+#define RH_NATIVE_LIT(s) s
+#endif
+
 namespace {
 
 bool is_gc_image_ext(const std::string& ext) {
     return ext == ".iso" || ext == ".gcm" || ext == ".rvz" || ext == ".ciso" || ext == ".gcz" || ext == ".wia";
 }
 
+#if RH_WIN
 fs::path tar_exe() {
     wchar_t buf[MAX_PATH];
     UINT n = GetSystemDirectoryW(buf, MAX_PATH);
@@ -1343,8 +1426,22 @@ bool acp_safe(const std::wstring& w) {
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w.c_str(), (int)w.size(), &b[0], n, nullptr, &used);
     return !used;
 }
+#else
+fs::path tar_exe() { return fs::path("/usr/bin/tar"); }   // bsdtar (libarchive): zip, 7z, rar, tar
+#endif
+
+#if RH_WIN
+#define TAR_MISSING_MSG "Windows' tar.exe was not found (needs Windows 10 version 1803 or newer)"
+using TStr = std::wstring;   // tar command line pieces: the Windows command line is wide
+#define TL(s) L##s
+#else
+#define TAR_MISSING_MSG "/usr/bin/tar was not found"
+using TStr = std::string;    // macOS: UTF-8; split into argv by tar_split_args() (single quotes group, backslash escapes)
+#define TL(s) s
+#endif
 
 /* tar prints names in the ANSI code page too ("F\xE4ke" for "Fäke"); everything else here is UTF-8. A character the code page lacks arrives as '?'. */
+#if RH_WIN
 std::string acp_to_utf8(const std::string& s) {
     if (s.empty() || GetACP() == CP_UTF8) return s;
     int n = MultiByteToWideChar(CP_ACP, 0, s.data(), (int)s.size(), nullptr, 0);
@@ -1353,9 +1450,28 @@ std::string acp_to_utf8(const std::string& s) {
     MultiByteToWideChar(CP_ACP, 0, s.data(), (int)s.size(), &w[0], n);
     return to_utf8(w);
 }
+#else
+/* bsdtar on macOS prints names decomposed (NFD: "a" + combining diaeresis); every other name in the hub is NFC like Windows, so listings are composed. */
+std::string acp_to_utf8(const std::string& s) {
+    CFStringRef cs = CFStringCreateWithBytes(nullptr, (const UInt8*)s.data(), (CFIndex)s.size(), kCFStringEncodingUTF8, false);
+    if (!cs) return s;   // not UTF-8: left alone
+    CFMutableStringRef m = CFStringCreateMutableCopy(nullptr, 0, cs);
+    CFRelease(cs);
+    if (!m) return s;
+    CFStringNormalize(m, kCFStringNormalizationFormC);
+    const CFIndex cap = CFStringGetMaximumSizeForEncoding(CFStringGetLength(m), kCFStringEncodingUTF8) + 1;
+    std::string out((size_t)cap, '\0');
+    const bool ok = CFStringGetCString(m, &out[0], cap, kCFStringEncodingUTF8);
+    CFRelease(m);
+    if (!ok) return s;
+    out.resize(std::strlen(out.c_str()));
+    return out;
+}
+#endif
 
 thread_local std::string t_tar_stdin;   // set by tar_archive_arg() for an archive that cannot go on the command line, consumed by the next tar_spawn() of this thread
 
+#if RH_WIN
 /* Runs tar.exe with stdout = `out` (a pipe end or a file), stderr/stdin = NUL (stdin = the archive when tar_archive_arg() asked for that).
  * `cwd`: working directory (tar extracts there; a path with characters outside the ANSI code page cannot go in "-C"). Returns the process handle or null. */
 HANDLE tar_spawn(const std::wstring& args, HANDLE out, const fs::path* cwd = nullptr) {
@@ -1454,6 +1570,128 @@ std::wstring tar_archive_arg(const std::string& archive) {
     t_tar_stdin = archive;   // the next tar_spawn() on this thread opens the file and gives it to tar as stdin
     return L"-";
 }
+#else
+/* Splits a tar argument string built by tar_member_arg() / tar_archive_arg(): whitespace separates, '...' groups literally, \x is x. */
+std::vector<std::string> tar_split_args(const std::string& a) {
+    std::vector<std::string> v;
+    std::string cur;
+    bool have = false, q = false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        char c = a[i];
+        if (q) { if (c == '\'') q = false; else cur += c; continue; }
+        if (c == '\'') { q = true; have = true; }
+        else if (c == '\\' && i + 1 < a.size()) { cur += a[++i]; have = true; }
+        else if (c == ' ') { if (have) { v.push_back(cur); cur.clear(); have = false; } }
+        else { cur += c; have = true; }
+    }
+    if (have) v.push_back(cur);
+    return v;
+}
+
+/* Runs /usr/bin/tar with stdout = out_fd (a pipe end or a file), stdin/stderr = /dev/null, working directory `cwd`. Only fds 0-2 reach the child. Returns the pid as a handle, or null. */
+void* tar_spawn(const std::string& args, int out_fd, const fs::path* cwd = nullptr) {
+    std::vector<std::string> av = tar_split_args(args);
+    av.insert(av.begin(), "tar");
+    std::vector<char*> argv;
+    for (auto& x : av) argv.push_back(&x[0]);
+    argv.push_back(nullptr);
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_adddup2(&fa, out_fd, 1);
+    posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+    if (cwd) posix_spawn_file_actions_addchdir_np(&fa, cwd->c_str());
+    posix_spawnattr_t at;
+    posix_spawnattr_init(&at);
+    posix_spawnattr_setflags(&at, POSIX_SPAWN_CLOEXEC_DEFAULT);
+    pid_t pid = 0;
+    const std::string exe = tar_exe().string();
+    int rc = posix_spawn(&pid, exe.c_str(), &fa, &at, argv.data(), environ);
+    posix_spawn_file_actions_destroy(&fa);
+    posix_spawnattr_destroy(&at);
+    return rc == 0 ? pid_handle(pid) : nullptr;
+}
+
+/* Captures up to max_bytes of tar's stdout (kills tar once it has enough, or after timeout_ms or when the app closes). */
+bool tar_capture(const std::string& args, size_t max_bytes, unsigned timeout_ms, std::string* out, bool* complete = nullptr) {
+    out->clear();
+    if (complete) *complete = false;
+    if (g_cancel.load()) return false;
+    int fds[2];
+    if (pipe(fds) != 0) return false;
+    void* proc = tar_spawn(args, fds[1]);
+    close(fds[1]);
+    if (!proc) { close(fds[0]); return false; }
+    const uint64_t t0 = plat::now_ms();
+    char buf[1 << 15];
+    bool eof = false;
+    while (out->size() < max_bytes) {
+        if (g_cancel.load() || plat::now_ms() - t0 >= timeout_ms) break;
+        fd_set rs;
+        FD_ZERO(&rs);
+        FD_SET(fds[0], &rs);
+        struct timeval tv{0, 50000};
+        int r = select(fds[0] + 1, &rs, nullptr, nullptr, &tv);
+        if (r < 0) { if (errno == EINTR) continue; break; }
+        if (r == 0) continue;
+        ssize_t got = read(fds[0], buf, std::min<size_t>(sizeof buf, max_bytes - out->size()));
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) { eof = true; break; }
+        out->append(buf, (size_t)got);
+    }
+    close(fds[0]);
+    int code = 1;
+    if (!eof) proc_kill_reap(proc, &code);   // had enough / timed out / cancelled
+    else if (!proc_wait_ms(proc, 5000, &code)) proc_kill_reap(proc, &code);
+    if (complete) *complete = eof && code == 0;
+    return eof ? code == 0 : !out->empty();
+}
+
+/* Shell-style single-quoted argument. */
+std::string tar_quote(const std::string& s) {
+    std::string q = "'";
+    for (char c : s) { if (c == '\'') q += "'\\''"; else q += c; }
+    return q + "'";
+}
+
+/* Extraction pattern for one entry name: glob characters escaped, non-ASCII runs become '*' (the same skeleton member_skeleton() matches on disk). */
+std::string tar_member_arg(const std::string& name) {
+    std::string w;
+    bool star = false;
+    for (unsigned char c : name) {
+        if (c >= 0x80 || c == '?') { if (!star) w += '*'; star = true; continue; }
+        star = false;
+        if (c == '*' || c == '[' || c == ']' || c == '\\') w += '\\';
+        w += (char)c;
+    }
+    return tar_quote(w);
+}
+
+std::string tar_archive_arg(const std::string& archive) {
+    t_tar_stdin.clear();
+    return tar_quote(archive);
+}
+
+/* Runs tar to completion with stdout = out_fd, polling every slice_ms. cur_size() reports progress (bytes produced); keep_going(size) returns
+ * false to cancel. Ends tar on cancel, or when cur_size() has not moved for 3 minutes (stalled). */
+struct TarRun { bool cancelled = false, stalled = false; int code = 1; };
+TarRun tar_run_file(const std::string& args, int out_fd, const fs::path* cwd, unsigned slice_ms,
+                    const std::function<uint64_t()>& cur_size, const std::function<bool(uint64_t)>& keep_going) {
+    TarRun r;
+    void* proc = tar_spawn(args, out_fd, cwd);
+    if (!proc) return r;
+    uint64_t last = 0;
+    uint64_t last_move = plat::now_ms();
+    for (;;) {
+        const bool done = proc_wait_ms(proc, slice_ms, &r.code);
+        const uint64_t sz = cur_size();
+        if (sz != last) { last = sz; last_move = plat::now_ms(); }
+        else if (!done && plat::now_ms() - last_move > 180000) { r.stalled = true; if (!done) proc_kill_reap(proc, &r.code); return r; }
+        if (g_cancel.load() || !keep_going(sz)) { r.cancelled = true; if (!done) proc_kill_reap(proc, &r.code); return r; }
+        if (done) return r;
+    }
+}
+#endif
 
 /* Files inside an archive: zip through miniz (central directory), 7z through tar. */
 struct ListMemo { std::string path; uint64_t size = 0; long long mtime = 0; bool ok = false; std::vector<ArchiveEntry> list; };
@@ -1478,7 +1716,7 @@ bool list_archive_raw(const std::string& archive, std::vector<ArchiveEntry>* out
     if (ext == ".zip") {
         mz_zip_archive za;
         std::memset(&za, 0, sizeof za);
-        FILE* f = _wfopen(utf8_path(archive).wstring().c_str(), L"rbN");
+        FILE* f = fopen_p(utf8_path(archive), "rbN");
         if (!f) return false;
         if (mz_zip_reader_init_cfile(&za, f, 0, 0)) {
             mz_uint n = mz_zip_reader_get_num_files(&za);
@@ -1494,7 +1732,7 @@ bool list_archive_raw(const std::string& archive, std::vector<ArchiveEntry>* out
         std::fclose(f);   // miniz cannot read it (zip64, odd method): let bsdtar try
     }
     std::string text;
-    if (!tar_capture(L"-tvf " + tar_archive_arg(archive), 16u << 20, 120000, &text)) return false;
+    if (!tar_capture(TL("-tvf ") + tar_archive_arg(archive), 16u << 20, 120000, &text)) return false;
     *out = parse_tar_listing(acp_to_utf8(text));
     return true;
 }
@@ -1604,12 +1842,12 @@ static bool id_gc_archive(const fs::path& arch, GameEntry* e) {
     bool ok = false;
     std::string head;
     /* a .gcz keeps its block table (12 bytes per 32 KB block, ~0.5 MB for a full disc) in front of block 0: read that far, the rest is cut off */
-    if (tar_capture(L"-xOf " + tar_archive_arg(path_utf8(arch)) + L" " + tar_member_arg(ent.name), inner_ext == ".gcz" ? (2u << 20) : 0x9000, 60000, &head) && head.size() >= 0x440) {
+    if (tar_capture(TL("-xOf ") + tar_archive_arg(path_utf8(arch)) + TL(" ") + tar_member_arg(ent.name), inner_ext == ".gcz" ? (2u << 20) : 0x9000, 60000, &head) && head.size() >= 0x440) {
         static std::atomic<unsigned> seq{0};
         fs::path probe_dir = lib_dir() / L"rom-cache" / L"_probe";
         std::error_code ec;
         fs::create_directories(probe_dir, ec);
-        fs::path probe = probe_dir / (L"p" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(seq++) + utf8_path(inner_ext).wstring());
+        fs::path probe = probe_dir / (L"p" + std::to_wstring(plat::current_pid()) + L"_" + std::to_wstring(seq++) + utf8_path(inner_ext).wstring());
         {
             std::ofstream o(probe, std::ios::binary);
             o.write(head.data(), (std::streamsize)head.size());
@@ -1715,7 +1953,7 @@ static bool id_ps2_cue_archive(const fs::path& arch, const std::vector<ArchiveEn
             std::string xe = ascii_lower(path_utf8(utf8_path(a.name).extension()));
             if (!archive_entry_safe(a.name) || is_junk_entry(a.name) || a.size < 0x8000 || (xe != ".bin" && xe != ".img" && xe != ".iso")) continue;
             std::string head;
-            if (!tar_capture(L"-xOf " + tar_archive_arg(path_utf8(arch)) + L" " + tar_member_arg(a.name), 8u << 20, 90000, &head) || head.size() < 0x8000) break;
+            if (!tar_capture(TL("-xOf ") + tar_archive_arg(path_utf8(arch)) + TL(" ") + tar_member_arg(a.name), 8u << 20, 90000, &head) || head.size() < 0x8000) break;
             disc::Info info;
             if (disc::probe_buffer(std::make_shared<std::string>(std::move(head)), &info) && info.kind == disc::Cnf::Ps2 && !info.serial.empty()) serial = info.serial;
             break;
@@ -1747,7 +1985,7 @@ static bool id_ps2_archive(const fs::path& arch, GameEntry* e) {
     if (inner_ext == ".chd" && ascii_lower(path_utf8(arch.extension())) == ".zip") {   // a STORED zip entry is a plain byte range: libchdr reads the CHD in place
         mz_zip_archive za;
         std::memset(&za, 0, sizeof za);
-        FILE* zf = _wfopen(arch.wstring().c_str(), L"rbN");
+        FILE* zf = fopen_p(arch, "rbN");
         if (zf) {
             if (mz_zip_reader_init_cfile(&za, zf, 0, 0)) {
                 mz_uint n = mz_zip_reader_get_num_files(&za);
@@ -1755,7 +1993,7 @@ static bool id_ps2_archive(const fs::path& arch, GameEntry* e) {
                     mz_zip_archive_file_stat st;
                     if (!mz_zip_reader_file_stat(&za, i, &st) || st.m_is_directory || st.m_filename != ent.name || st.m_method != 0) continue;
                     unsigned char lh[30];
-                    if (_fseeki64(zf, (long long)st.m_local_header_ofs, SEEK_SET) != 0 || std::fread(lh, 1, 30, zf) != 30) break;
+                    if (plat::fseek64(zf, (long long)st.m_local_header_ofs, SEEK_SET) != 0 || std::fread(lh, 1, 30, zf) != 30) break;
                     uint64_t data = st.m_local_header_ofs + 30 + (lh[26] | (lh[27] << 8)) + (lh[28] | (lh[29] << 8));
                     ok = hub::ps2::identify_chd_slice(path_utf8(arch), data, st.m_uncomp_size, ent.name, &id);
                     if (!ok && id.ps1) { mz_zip_reader_end(&za); std::fclose(zf); return false; }
@@ -1767,13 +2005,13 @@ static bool id_ps2_archive(const fs::path& arch, GameEntry* e) {
     }
     if (!ok && inner_ext == ".iso") {
         auto head = std::make_shared<std::string>();
-        if (tar_capture(L"-xOf " + tar_archive_arg(path_utf8(arch)) + L" " + tar_member_arg(ent.name), 4u << 20, 60000, head.get()) && head->size() > 0x10000)
+        if (tar_capture(TL("-xOf ") + tar_archive_arg(path_utf8(arch)) + TL(" ") + tar_member_arg(ent.name), 4u << 20, 60000, head.get()) && head->size() > 0x10000)
             ok = hub::ps2::identify_buffer(head, &id);
         if (!ok && id.ps1) return false;
     }
     if (!ok && inner_ext == ".cso") {   // compressed ISO: the first blocks hold the volume descriptor and SYSTEM.CNF
         auto head = std::make_shared<std::string>();
-        if (tar_capture(L"-xOf " + tar_archive_arg(path_utf8(arch)) + L" " + tar_member_arg(ent.name), 16u << 20, 90000, head.get()) && head->size() > 0x1000) {
+        if (tar_capture(TL("-xOf ") + tar_archive_arg(path_utf8(arch)) + TL(" ") + tar_member_arg(ent.name), 16u << 20, 90000, head.get()) && head->size() > 0x1000) {
             std::string cnf, serial;
             if (disc::read_system_cnf(psp::cso_buffer_reader(head), &cnf)) {
                 disc::Cnf kind = disc::parse_system_cnf(cnf, &serial);
@@ -1845,7 +2083,7 @@ static bool id_psp_archive(const fs::path& arch, GameEntry* e) {
     const std::string xe = ascii_lower(path_utf8(utf8_path(ent.name).extension()));
     if (xe == ".chd") return false;   // content not readable without unpacking: left to the PS1 / PS2 claims
     auto head = std::make_shared<std::string>();
-    if (!tar_capture(L"-xOf " + tar_archive_arg(path_utf8(arch)) + L" " + tar_member_arg(ent.name), 8u << 20, 60000, head.get()) || head->size() < 0x100) return false;
+    if (!tar_capture(TL("-xOf ") + tar_archive_arg(path_utf8(arch)) + TL(" ") + tar_member_arg(ent.name), 8u << 20, 60000, head.get()) || head->size() < 0x100) return false;
     hub::psp::Ident id;
     if (!hub::psp::identify_buffer(head, &id)) return false;
     GameEntry g;
@@ -1911,25 +2149,25 @@ static uint64_t gc_unpacked_size(const GameEntry& e) {
 static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, uint64_t)>& progress, std::string* out_path, std::string* err) {
     std::vector<ArchiveEntry> l;
     ArchiveEntry ent;
-    if (!fs::exists(tar_exe())) { *err = "Windows' tar.exe was not found (needs Windows 10 version 1803 or newer)"; return false; }
+    if (!fs::exists(tar_exe())) { *err = TAR_MISSING_MSG; return false; }
     if (!list_archive(e.path, &l)) { *err = archive_truncated(e.path) ? kTruncatedMsg : "cannot read the archive"; return false; }
     if (!find_gc_entry(l, &ent, entry_mode(e.system))) { *err = e.system == System::WiiU ? "no .wua inside the archive" : e.system == System::PSP ? "no PSP game image inside the archive" : "no disc image inside the archive"; return false; }
     fs::path dir = gc_unpack_dir(e);
     std::error_code ec;
     fs::remove_all(dir, ec);   // a stale or half-done extraction of the same key
     fs::create_directories(dir, ec);
-    ULARGE_INTEGER free_bytes{};
-    if (GetDiskFreeSpaceExW(dir.wstring().c_str(), &free_bytes, nullptr, nullptr) && free_bytes.QuadPart < ent.size + (64ull << 20)) {
+    if (disk_short(dir, ent.size + (64ull << 20))) {
         *err = "not enough free disk space (" + std::to_string((ent.size >> 20) + 64) + " MB needed)";
         return false;
     }
     std::string ext = ascii_lower(path_utf8(utf8_path(ent.name).extension()));
     fs::path final_path = dir / (L"disc" + utf8_path(ext).wstring());
     fs::path part = dir / (L"disc" + utf8_path(ext).wstring() + L".part");
+#if RH_WIN
     SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
     HANDLE f = CreateFileW(part.wstring().c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) { *err = "cannot write " + path_utf8(part); return false; }
-    HANDLE proc = tar_spawn(L"-xOf " + tar_archive_arg(e.path) + L" " + tar_member_arg(ent.name), f);
+    HANDLE proc = tar_spawn(TL("-xOf ") + tar_archive_arg(e.path) + TL(" ") + tar_member_arg(ent.name), f);
     if (!proc) { CloseHandle(f); fs::remove(part, ec); *err = "cannot start tar.exe"; return false; }
     bool cancelled = false, stalled = false;
     uint64_t last_size = 0;
@@ -1955,6 +2193,23 @@ static bool gc_extract(const GameEntry& e, const std::function<bool(uint64_t, ui
         *err = cancelled ? "cancelled" : stalled ? "extraction stalled (no data for 3 minutes); try again" : "extraction failed (disk full or damaged archive)";
         return false;
     }
+#else
+    int pfd = ::open(part.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (pfd < 0) { *err = "cannot write " + path_utf8(part); return false; }
+    TarRun run = tar_run_file(TL("-xOf ") + tar_archive_arg(e.path) + TL(" ") + tar_member_arg(ent.name), pfd, nullptr, 150,
+                              [&] { struct stat sb{}; return fstat(pfd, &sb) == 0 ? (uint64_t)sb.st_size : (uint64_t)0; },
+                              [&](uint64_t sz) { return !progress || progress(sz, ent.size); });
+    struct stat sb{};
+    fstat(pfd, &sb);
+    fsync(pfd);
+    ::close(pfd);
+    const bool cancelled = run.cancelled, stalled = run.stalled;
+    if (cancelled || run.code != 0 || (uint64_t)sb.st_size != ent.size) {
+        fs::remove(part, ec);
+        *err = cancelled ? "cancelled" : stalled ? "extraction stalled (no data for 3 minutes); try again" : "extraction failed (disk full or damaged archive)";
+        return false;
+    }
+#endif
     fs::rename(part, final_path, ec);
     if (ec) { *err = "cannot move the unpacked image into place"; return false; }
     {
@@ -2044,10 +2299,11 @@ static bool extract_archived_rom(const fs::path& arch, fs::path* out_rom, fs::pa
         fs::remove_all(wdir, ec);
         fs::create_directories(wdir, ec);
         fs::path part = rom; part += L".part";
+#if RH_WIN
         SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
         HANDLE f = CreateFileW(part.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (f == INVALID_HANDLE_VALUE) return false;
-        HANDLE proc = tar_spawn(L"-xOf " + tar_archive_arg(ap) + L" " + tar_member_arg(ent.name), f);
+        HANDLE proc = tar_spawn(TL("-xOf ") + tar_archive_arg(ap) + TL(" ") + tar_member_arg(ent.name), f);
         bool good = false;
         if (proc) {
             const bool stopped = child_wait_cancellable(proc, 300000) != 0;   // short slices: a closing app stops the unpack
@@ -2061,6 +2317,22 @@ static bool extract_archived_rom(const fs::path& arch, fs::path* out_rom, fs::pa
         }
         FlushFileBuffers(f);
         CloseHandle(f);
+#else
+        int pfd = ::open(part.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (pfd < 0) return false;
+        bool good = false;
+        {
+            const uint64_t t0 = plat::now_ms();
+            TarRun run = tar_run_file(TL("-xOf ") + tar_archive_arg(ap) + TL(" ") + tar_member_arg(ent.name), pfd, nullptr, 100,   // short slices: a closing app stops the unpack
+                                      [&] { struct stat sb{}; return fstat(pfd, &sb) == 0 ? (uint64_t)sb.st_size : (uint64_t)0; },
+                                      [&](uint64_t) { return plat::now_ms() - t0 <= 300000; });
+            struct stat sb{};
+            fstat(pfd, &sb);
+            good = !run.cancelled && !run.stalled && run.code == 0 && (uint64_t)sb.st_size == ent.size;
+        }
+        fsync(pfd);
+        ::close(pfd);
+#endif
         if (!good) { fs::remove_all(wdir, ec); return false; }
         fs::rename(part, rom, ec);
         if (ec) { fs::remove_all(wdir, ec); return false; }
@@ -2080,7 +2352,7 @@ static bool id_3ds_archive(const fs::path& arch, GameEntry* e) {
     ArchiveEntry ent;
     if (!list_archive(ap, &l) || !find_gc_entry(l, &ent, 3) || ent.size < kN3dsHeaderBytes) return false;
     std::string head;
-    if (!tar_capture(L"-xOf " + tar_archive_arg(ap) + L" " + tar_member_arg(ent.name), kN3dsHeaderBytes, 60000, &head) || head.size() < kN3dsHeaderBytes) return false;
+    if (!tar_capture(TL("-xOf ") + tar_archive_arg(ap) + TL(" ") + tar_member_arg(ent.name), kN3dsHeaderBytes, 60000, &head) || head.size() < kN3dsHeaderBytes) return false;
     N3dsInfo info;
     if (!parse_3ds_header((const uint8_t*)head.data(), head.size(), &info)) return false;
     if (info.container != "3dsx" && !info.is_application) return false;
@@ -2133,7 +2405,7 @@ std::string archive_skip_reason(const std::string& path) {
     if (ascii_lower(path_utf8(utf8_path(path).extension())) == ".zip") {   // a password protected zip lists fine and then yields nothing
         mz_zip_archive za;
         std::memset(&za, 0, sizeof za);
-        if (FILE* f = _wfopen(utf8_path(path).wstring().c_str(), L"rbN")) {
+        if (FILE* f = fopen_p(utf8_path(path), "rbN")) {
             bool enc = false;
             if (mz_zip_reader_init_cfile(&za, f, 0, 0)) {
                 mz_uint n = mz_zip_reader_get_num_files(&za);
@@ -2361,7 +2633,7 @@ static bool id_ps1_archive(const fs::path& arch, GameEntry* e) {
             std::string xe = ascii_lower(path_utf8(utf8_path(a.name).extension()));
             if (!archive_entry_safe(a.name) || is_junk_entry(a.name) || a.size < 0x8000 || (xe != ".bin" && xe != ".img" && xe != ".iso")) continue;
             std::string head;
-            if (!tar_capture(L"-xOf " + tar_archive_arg(path_utf8(arch)) + L" " + tar_member_arg(a.name), 8u << 20, 90000, &head) || head.size() < 0x8000) break;
+            if (!tar_capture(TL("-xOf ") + tar_archive_arg(path_utf8(arch)) + TL(" ") + tar_member_arg(a.name), 8u << 20, 90000, &head) || head.size() < 0x8000) break;
             disc::Info info;
             if (disc::probe_buffer(std::make_shared<std::string>(std::move(head)), &info) && info.kind == disc::Cnf::Ps1 && !info.serial.empty()) serial = info.serial;
             break;
@@ -2430,8 +2702,7 @@ static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, u
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
-    ULARGE_INTEGER free_bytes{};
-    if (GetDiskFreeSpaceExW(dir.wstring().c_str(), &free_bytes, nullptr, nullptr) && free_bytes.QuadPart < total + (64ull << 20)) {
+    if (disk_short(dir, total + (64ull << 20))) {
         *err = "not enough free disk space (" + std::to_string((total >> 20) + 64) + " MB needed)";
         return false;
     }
@@ -2440,7 +2711,7 @@ static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, u
     if (!use_tar) {
         mz_zip_archive za;
         std::memset(&za, 0, sizeof za);
-        FILE* zf = _wfopen(utf8_path(e.path).wstring().c_str(), L"rbN");
+        FILE* zf = fopen_p(utf8_path(e.path), "rbN");
         if (!zf) { *err = "cannot open the zip"; return false; }
         if (mz_zip_reader_init_cfile(&za, zf, 0, 0)) mz_zip_reader_end(&za); else use_tar = true;   // zip64 / an odd method miniz cannot read: bsdtar does
         std::fclose(zf);
@@ -2448,7 +2719,7 @@ static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, u
     if (!use_tar) {
         mz_zip_archive za;
         std::memset(&za, 0, sizeof za);
-        FILE* zf = _wfopen(utf8_path(e.path).wstring().c_str(), L"rbN");
+        FILE* zf = fopen_p(utf8_path(e.path), "rbN");
         if (!zf) { *err = "cannot open the zip"; return false; }
         if (!mz_zip_reader_init_cfile(&za, zf, 0, 0)) { std::fclose(zf); *err = "not a valid zip"; return false; }
         uint64_t done = 0;
@@ -2459,7 +2730,7 @@ static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, u
             fs::path dst = dir / utf8_path(st.m_filename);
             fs::create_directories(dst.parent_path(), ec);
             ExtractCtx ctx;
-            ctx.f = _wfopen(dst.wstring().c_str(), L"wb");
+            ctx.f = fopen_p(dst, "wb");
             if (!ctx.f) { *err = "cannot write " + path_utf8(dst); ok = false; break; }
             ctx.done = done;
             ctx.total = total;
@@ -2473,11 +2744,12 @@ static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, u
         mz_zip_reader_end(&za);
         std::fclose(zf);
     } else {
-        if (!fs::exists(tar_exe())) { *err = "Windows' tar.exe was not found (needs Windows 10 version 1803 or newer)"; return false; }
+        if (!fs::exists(tar_exe())) { *err = TAR_MISSING_MSG; return false; }
+#if RH_WIN
         SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
         HANDLE nul = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
         /* extracts into the working directory: a "-C <dir>" argument would be squeezed through the ANSI code page */
-        HANDLE proc = nul == INVALID_HANDLE_VALUE ? nullptr : tar_spawn(L"-xf " + tar_archive_arg(e.path), nul, &dir);
+        HANDLE proc = nul == INVALID_HANDLE_VALUE ? nullptr : tar_spawn(TL("-xf ") + tar_archive_arg(e.path), nul, &dir);
         if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
         if (!proc) { *err = "cannot start tar.exe"; return false; }
         ULONGLONG last_move = GetTickCount64();
@@ -2498,6 +2770,26 @@ static bool ps1_extract(const GameEntry& e, const std::function<bool(uint64_t, u
         GetExitCodeProcess(proc, &code);
         CloseHandle(proc);
         if (!cancelled && ok && code != 0) { *err = "extraction failed (disk full or damaged archive)"; ok = false; }
+    
+#else
+        const int nul = ::open("/dev/null", O_WRONLY);
+        /* extracts into the working directory (same as on Windows) */
+        TarRun run = tar_run_file(TL("-xf ") + tar_archive_arg(e.path), nul, &dir, 300,
+                                  [&] {
+                                      uint64_t sz = 0;
+                                      std::error_code e1;
+                                      for (fs::recursive_directory_iterator it(dir, e1), end; !e1 && it != end; it.increment(e1)) {
+                                          std::error_code e2;
+                                          if (it->is_regular_file(e2)) sz += it->file_size(e2);
+                                      }
+                                      return sz;
+                                  },
+                                  [&](uint64_t sz) { return !progress || progress(sz, total); });
+        if (nul >= 0) ::close(nul);
+        if (run.stalled) { *err = "extraction stalled (no data for 3 minutes); try again"; ok = false; }
+        else if (run.cancelled) cancelled = true;
+        else if (run.code != 0) { *err = "extraction failed (disk full or damaged archive)"; ok = false; }
+#endif
     }
     if (cancelled || !ok) {
         fs::remove_all(dir, ec);
@@ -2540,7 +2832,7 @@ uint64_t zip_3ds_unpacked_size(const GameEntry& e) {
     if (is_disc_like(e)) return gc_unpacked_size(e);
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
-    FILE* zf = _wfopen(utf8_path(e.path).wstring().c_str(), L"rbN");
+    FILE* zf = fopen_p(utf8_path(e.path), "rbN");
     if (!zf) return 0;
     if (!mz_zip_reader_init_cfile(&za, zf, 0, 0)) { std::fclose(zf); return 0; }
     uint64_t size = 0;
@@ -2587,7 +2879,7 @@ static bool extract_3ds_zip_impl(const GameEntry& e, const std::function<bool(ui
     fs::path zip = utf8_path(e.path);
     mz_zip_archive za;
     std::memset(&za, 0, sizeof(za));
-    FILE* zf = _wfopen(zip.wstring().c_str(), L"rbN");
+    FILE* zf = fopen_p(zip, "rbN");
     if (!zf) { *err = "cannot open the zip"; return false; }
     if (!mz_zip_reader_init_cfile(&za, zf, 0, 0)) { std::fclose(zf); *err = "not a valid zip"; return false; }
     bool ok = false;
@@ -2604,16 +2896,14 @@ static bool extract_3ds_zip_impl(const GameEntry& e, const std::function<bool(ui
         std::error_code ec;
         fs::remove_all(work, ec);
         fs::create_directories(work, ec);
-        ULARGE_INTEGER free_bytes{};
-        if (GetDiskFreeSpaceExW(work.wstring().c_str(), &free_bytes, nullptr, nullptr) &&
-            free_bytes.QuadPart < st.m_uncomp_size + (64ull << 20)) {
+        if (disk_short(work, st.m_uncomp_size + (64ull << 20))) {
             fs::remove_all(work, ec);
             *err = "not enough free disk space (" + std::to_string((st.m_uncomp_size >> 20) + 64) + " MB needed)";
             break;
         }
         fs::path final_path = dir / name, staged = work / name, part = work / (name.wstring() + L".part");
         ExtractCtx ctx;
-        ctx.f = _wfopen(part.wstring().c_str(), L"wbN");
+        ctx.f = fopen_p(part, "wbN");
         if (!ctx.f) { fs::remove_all(work, ec); *err = "cannot write " + path_utf8(part); break; }
         ctx.total = st.m_uncomp_size;
         ctx.cb = &progress;
@@ -2745,7 +3035,7 @@ void state_load_locked() {
     for (int i = 0; !read && i < 3; ++i) {   // there but held by another program for a moment (antivirus, a sync client)
         std::error_code ec;
         if (!fs::exists(lj, ec) && !ec) break;   // really absent: a fresh start
-        Sleep(100);
+        plat::sleep_ms(100);
         read = read_text(lj, &text);
     }
     if (!read) {
@@ -2971,7 +3261,11 @@ bool is_link_or_junction(const fs::directory_entry& de) {
     std::error_code ec;
     fs::file_status st = de.symlink_status(ec);
     if (ec) return false;
+#if RH_WIN
     return st.type() == fs::file_type::symlink || st.type() == fs::file_type::junction;
+#else
+    return st.type() == fs::file_type::symlink;   // no junctions on macOS
+#endif
 }
 
 constexpr size_t kMaxWalkDepth = 24;   // library-9: a backstop for any loop the link check cannot see
@@ -2994,7 +3288,7 @@ void walk(const fs::path& root, std::vector<Candidate>& out, std::set<std::strin
             if (de.is_symlink(e1) || is_link_or_junction(de)) continue;
             if (de.is_directory(e1)) { if (de.path().filename() != L"__MACOSX") { if (depth < kMaxWalkDepth) subdirs.push_back(de.path()); else if (incomplete) *incomplete = true; } continue; }   // __MACOSX: resource forks of a macOS unzip
             if (!de.is_regular_file(e1) || e1) continue;
-            if (de.path().filename().native().compare(0, 2, L"._") == 0) continue;   // "._Game.z64": the same
+            if (de.path().filename().native().compare(0, 2, RH_NATIVE_LIT("._")) == 0) continue;   // "._Game.z64": the same
             std::string ext = ascii_lower(path_utf8(de.path().extension()));
             if (!scan_extension(ext)) {
                 /* Switch 2 / loose dumps: an extension-less "main" counts only inside a folder called exefs (keeps scans cheap) */
@@ -3046,7 +3340,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
         std::error_code ec;
         fs::path root = fs::absolute(utf8_path(f), ec);
         std::string pre = ascii_lower(path_utf8(root));
-        if (pre.empty() || (pre.back() != '\\' && pre.back() != '/')) pre.push_back('\\');
+        if (pre.empty() || (pre.back() != '\\' && pre.back() != '/')) pre.push_back(plat::kSep);
         FolderScanStatus st;
         st.folder = f;
         if (ec || !fs::is_directory(root, ec)) { st.reachable = false; st.complete = false; unknown_prefixes.push_back(pre); fstat.push_back(st); continue; }
@@ -3094,7 +3388,7 @@ std::vector<GameEntry> scan_library(const std::vector<std::string>& folders,
                 offline_games.push_back(std::move(g));
                 for (auto& fs_ : fstat) {
                     std::string fp = ascii_lower(path_utf8(fs::absolute(utf8_path(fs_.folder))));
-                    if (!fp.empty() && fp.back() != '\\' && fp.back() != '/') fp.push_back('\\');
+                    if (!fp.empty() && fp.back() != '\\' && fp.back() != '/') fp.push_back(plat::kSep);
                     if (fp == pre) ++fs_.kept;
                 }
                 break;

@@ -1,6 +1,7 @@
 // Console test for "Add games" (addgames.cpp): sorting, destination, dedupe, copy job. Scratch dirs only.
 #include "addgames.h"
 #include "library.h"
+#include "test_platform_paths.h"
 #include "winutil.h"
 
 #include <chrono>
@@ -67,12 +68,12 @@ int main() {
     for (const char* e : {"a.nsp", "a.NSZ", "a.xci", "a.xcz", "a.nro", "C:\\x\\Zelda.nup"}) CHECK(is_game_file(e));   // Switch / Switch 2
     CHECK(console_folder(System::N64) == "Nintendo 64" && console_folder(System::WiiU) == "Wii U" && console_folder(System::NDS) == "DS");
     CHECK(console_folder(System::GBC) == "Game Boy Color" && console_folder(System::Unknown) == "Other");
-    CHECK(games_root({"D:\\mine", "E:\\Stuff\\RetroHub Games\\"}, "C:\\Users\\a\\Documents") == "E:\\Stuff\\RetroHub Games");
-    CHECK(games_root({"D:\\mine"}, "C:\\Users\\a\\Documents") == "C:\\Users\\a\\Documents\\RetroHub Games");
-    CHECK(games_root({}, "C:\\Users\\a\\Documents\\") == "C:\\Users\\a\\Documents\\RetroHub Games");
-    CHECK(dest_dir("C:\\G", System::GC) == "C:\\G\\GameCube");
+    CHECK(games_root({wp("D:\\mine"), wp("E:\\Stuff\\RetroHub Games\\")}, wp("C:\\Users\\a\\Documents")) == wp("E:\\Stuff\\RetroHub Games"));
+    CHECK(games_root({wp("D:\\mine")}, wp("C:\\Users\\a\\Documents")) == wp("C:\\Users\\a\\Documents\\RetroHub Games"));
+    CHECK(games_root({}, wp("C:\\Users\\a\\Documents\\")) == wp("C:\\Users\\a\\Documents\\RetroHub Games"));
+    CHECK(dest_dir(wp("C:\\G"), System::GC) == wp("C:\\G\\GameCube"));
     {
-        auto ex = [](const std::string& p) { return p == "d\\a.gba" || p == "d\\a (2).gba"; };
+        auto ex = [](const std::string& p) { return p == plat::join("d", "a.gba") || p == plat::join("d", "a (2).gba"); };
         CHECK(unique_name("d", "a.gba", ex) == "a (3).gba");
         CHECK(unique_name("d", "b.gba", ex) == "b.gba");
     }
@@ -136,8 +137,8 @@ int main() {
     CHECK(items.size() == 1 && items[0].outcome == Outcome::Failed);
 
     // custom destination wins when absolute; relative/empty fall back
-    CHECK(games_root({"D:\\mine"}, "C:\\Docs", "E:\\MyGames\\") == "E:\\MyGames");
-    CHECK(games_root({"D:\\mine"}, "C:\\Docs", "rel\\x") == "C:\\Docs\\RetroHub Games" && is_absolute_path("\\\\nas\\share") && !is_absolute_path(""));
+    CHECK(games_root({wp("D:\\mine")}, wp("C:\\Docs"), wp("E:\\MyGames\\")) == wp("E:\\MyGames"));
+    CHECK(games_root({wp("D:\\mine")}, wp("C:\\Docs"), wp("rel\\x")) == wp("C:\\Docs\\RetroHub Games") && is_absolute_path(wp("\\\\nas\\share")) && !is_absolute_path(""));
     // dedupe against a FRESH hash index of the destination even when the caller knows no keys (unfinished library scan)
     {
         fs::remove_all(root, ec);
